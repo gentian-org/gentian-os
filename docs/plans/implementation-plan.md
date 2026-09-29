@@ -1198,35 +1198,51 @@ invitation actually arriving and working.
 | M3.1 | The administrator can reach the People screen | console `IdentitySection`, director `GET /v1/tenants/{t}/people` | built, needs a browser |
 | M3.2 | The invitation is created and the link sent | director `POST /actions/invite-person` | built, never sent a real mail |
 | M3.3 | The mail leaves the cluster and arrives | realm `smtpServer` → the relay | **the first real test of mail** |
-| M3.4 | The link is accepted by Keycloak | the action token names the zone client | derived; **the redirect is unresolved — see below** |
+| M3.4 | The link is accepted by Keycloak | the action token names the zone client | built: the zone client lists each host's root and the director reads `rootUrl` back — **never exercised with a real mail** |
 | M3.5 | The person sets a password and signs in | Keycloak required actions + the zone session | — |
 | M3.6 | They land in that tenant and no other | zone cookie scoped per host (S7A.7) | built, needs a browser |
 | M3.7 | Their groups reach the authorization graph | the event listener → the operator's projector | built, exercised on v4 |
-| M3.8 | The change is recorded with who was allowed to ask | Keycloak admin event + the director's request id | **half built — see below** |
+| M3.8 | The change is recorded with who was allowed to ask | Keycloak admin event + the director's request id | the director's half is durable; **the listener's request-id read-back is left** |
 
-**M3.4, the decision to make.** An action-token link may carry a
-`redirect_uri`, and Keycloak refuses one that is not on the client's valid
-redirect URIs. The zone client lists each host's `/oauth2/callback` there and
-nothing else, which is the OIDC callback and not a page to land on. So today
-the director sends no redirect, and the person finishes on Keycloak's own
-"your account has been updated" page with no way into the product.
+**M3.4, decided.** An action-token link may carry a `redirect_uri`, and
+Keycloak refuses one that is not on the client's valid redirect URIs. The zone
+client listed each host's `/oauth2/callback` and nothing else — the machine
+end of the OIDC flow, not a page for a person — so the director sent no
+redirect and the invited person finished on Keycloak's own "your account has
+been updated" page with no way into the product.
 
-The fix is to add `https://<host>.<zoneDomain>/*` to the zone client's
-`validRedirectUris`, which `validPostLogoutRedirectUris` already carries. It
-is a widening: an open redirect within the zone's own hosts. Those hosts are
-the platform's own and the post-logout list already allows them, so the
-exposure is small — but it is a loosening of something stated deliberately,
-and it is recorded here rather than taken quietly.
+It now lists **each host's exact root** as well, `https://<host>.<zoneDomain>/`,
+rather than the `/*` this plan first proposed, and that distinction is the
+whole of the decision. `validRedirectUris` is not
+`validPostLogoutRedirectUris`: the post-logout list receives a browser whose
+session is already destroyed and which carries nothing, while this list is
+where an authorization CODE may be delivered, and a code is a credential. The
+two cannot be widened on the same argument. An exact URL cannot serve as an
+open redirect at all, so the loosening this paragraph was written to flag
+never happened.
+
+`crossplane/compositions/tenant-default.yaml` carries the reasoning.
+`internal/director/identity/people.go` reads the client's `rootUrl` back
+rather than deriving the host a second time, and sends no redirect when the
+client states none — which is what a realm composed before this change looks
+like.
 
 **M3.8, what is left of the record.** Keycloak writes an admin event for the
 change, with retention, whether it came through the director or through
 Keycloak's own console — so the "what changed" half needs nothing built. The
 director sets `X-Gentian-Request-Id` on every admin call so the two halves can
-be joined. What is missing is the listener reading that header back off the
-request it is already inside, and somewhere durable for the director's half —
-the caller, the relation, the object. That store is also what roadmap §1.12
-needs for refusals, which by definition reach Keycloak not at all, and it is
-the only piece of S7A.17 deliberately left for later.
+be joined.
+
+The director's half is now durable: `internal/director/record` keeps the
+caller, the relation and the object in the director's own database on
+`kernel-postgres`, with a retention horizon it enforces, and it is what
+roadmap §1.12 will also use for refusals — which by definition reach Keycloak
+not at all. It is optional: a cluster whose director database has not been
+provisioned starts, warns, and keeps the log line only.
+
+What remains is **the listener reading that header back** off the request it
+is already inside, so the two halves join on the request id rather than on a
+timestamp.
 
 **Done when** a tenant administrator invites somebody by address, that person
 receives a mail, sets a password, signs in, lands in that tenant and no other,

@@ -19,7 +19,7 @@ plans are what the code was supposed to become.
 | AD-1 | Nine security principles normative | ✅ |
 | AD-2 | The director is the only writer of `gentian-deployments` | ◐ the director writes; **commit signing and `sourceIntegrity` are not implemented**. On the backlog below |
 | AD-3 | The store runs outside the cluster | ✅ an entry is fetched at the digest the store named, verified, and committed when a tenant installs it. A catalogue with no configured source still syncs wholesale |
-| AD-4 | One catalogue kind, `ComponentProfile` | ◐ steps 1–7 done; `AppProfile` the Go type is unused but not yet deleted |
+| AD-4 | One catalogue kind, `ComponentProfile` | ✅ the type is gone, and deleting it found two live reads of a kind the catalogue stopped shipping — the integration-binding reconciler and `provisionAppGroupUsers`, both on the path to M4 — plus an installer step whose check tested for the deleted CRD |
 | AD-5 | Privileges are requests with one approval path | ✅ |
 | AD-6 | `authMode` mandatory; perimeter enabled per tenant | ✅ a perimeter approver publishes a surface under `can_expose`, bounded by an expiry; the operator stands a proxy in `tenant-<t>-dmz` that forwards only the declared prefixes with no session and no identity. `exposures.yaml` is the registry |
 | AD-7 | Namespaces named by tier | ✅ |
@@ -30,7 +30,7 @@ plans are what the code was supposed to become.
 | AD-12 | The authorization store is a projection; git holds the defaults | ◐ the projection works; the bootstrap drift check is on the backlog below |
 | AD-13 | The edge is the only session authority | ✅ the text now describes what the code does: ending the session at Keycloak ends it, bounded by the access token's lifetime, with no revocation list for the shim to consult |
 | AD-14 | Catalogue sources on the Cluster claim | ✅ `catalogue.sources[]` and `catalogue.storeUrl` are on the Cluster XRD and the installer scaffolds them; the director reads them from the claim in git, the operator projects each open source's tenants as `catalogue_source#open` declaratively, and the director serves each source's index at `GET /v1/tenants/{t}/catalogues[/{s}/entries]` — ce and pe only, no digest from an entitled source, and the rest counted and pointed at the store. The console renders it as a table, on purpose |
-| AD-15 | Multi-language is a core requirement | ☐ see below |
+| AD-15 | Multi-language is a core requirement | ◐ desktop and console both translated; a component's `description` and the store listing's text are still single strings |
 
 ## AD-15 — multi-language
 
@@ -43,10 +43,10 @@ The market is German-speaking, so this is not polish.
 | Keycloak login and account | ✅ every realm enables internationalization; the kernel realm reads `GENTIAN_SUPPORTED_LOCALES`, a tenant realm reads `spec.locales` |
 | A language chooser | ✅ in Settings. Clearing it falls back to the tenant's language, not the browser |
 | Where a person's language comes from | ✅ their own choice (which a settings template also sets, because a template copies preferences and language is one), then the tenant's, then the browser |
-| Admin console | ☐ nothing started. Same approach as the desktop; it is a separate app in `gentian-apps` |
+| Admin console | ✅ 542 strings in `en.json` and `de.json`, extracted with the TypeScript compiler; `npm run build` fails on an inline string, a missing key or a translation that dropped a `{{placeholder}}`. The German wants a native review before it is customer-facing |
 | A component's other catalogue text | ☐ `description` and the store listing's text are single strings |
 | The account's language | ✅ in the desktop's preferences database, one row per user per tenant, so it follows a person between machines. Browser storage is only a first-paint cache |
-| A missing-translation check in CI | ☐ `src/locales/README.md` has the script; nothing runs it |
+| A missing-translation check in CI | ◐ the console's build enforces it (`scripts/i18n.mjs --check`); the desktop still only documents the script |
 
 ## AD-4 — what is left
 
@@ -60,18 +60,21 @@ profile it writes passes the CRD's schema and its CEL rules.
 | 5 | ✅ `Tenant.spec.apps[].profile` resolves a `ComponentProfile`; `profileRef` by catalogue identity is retired with AD-3's metadata |
 | 6 | ✅ 33 profiles in `gentian-apps` and 5 in `gentian-pro`, converted in place with their comments. 135 review items remain, 8 of them tiles on the placeholder |
 | 7 | ✅ `license` became an annotation, `family` became the chart's name, `categories` went with the webhook that checked it |
-| 8 | ◐ `AppCatalogue` and the profile webhook are gone. The `AppProfile` Go type is unused but still defined: `appprofile_types.go` is 1,559 lines and most of it is types `ComponentProfile` still uses, so deleting it is a split rather than a delete |
+| 8 | ✅ `AppCatalogue`, the profile webhook and now the `AppProfile` type itself. The file became `profile_parts.go` — the parts a `ComponentProfile` is made of, which is what it always held. The portal tile, the portal link target and the browser-proxy route went with the kind |
 
-Two implementation gaps the design already names, and both are still open:
+What deleting the type found, which is the argument for deleting a type
+rather than leaving it defined and unused — a dead type keeps every reference
+to it compiling, so code asking the API server for a kind nothing serves looks
+exactly like code that works:
 
-- The component reconciler refuses any package that is not a chart. No addon
-  path, no API path. This is what stops an addon's tile appearing on the v5
-  Component path; the v4 App path, which is what a tenant's apps still use,
-  renders them through the Compositions as before.
-- `BackendRef.component` is declared and unread. An addon's exposure reuses the
-  base's host and must therefore **not** create a second HTTPRoute on it; the
-  tile projection reads the host from the base's route instead. Confirmed: no
-  dedicated URL per addon.
+- `IntegrationBindingReconciler` fetched an `AppProfile` for the provider's
+  Service. Since the catalogue converted, that `Get` has returned NotFound for
+  every binding, so no contract credential has ever been seeded — M4.7.
+- `applifecycle.provisionAppGroupUsers` did the same for one annotation, from
+  four call sites.
+- `D-08`'s `check()` tested `kubectl get crd appprofiles.gentianos.io`, which
+  after the deletion never exists: the step would have reported MISSING on
+  every run, before M1.
 
 One question the migration raised and did not answer: **should the package
 union admit a `composition` alongside a `chart`?** Three apps are delivered as
@@ -106,10 +109,12 @@ none of it blocks the purge.
 
 ## Known and deliberately not now
 
-- A catalogue source has to publish `index.yaml` for a cluster to browse it —
-  `scripts/tools/build-catalogue-index.py` writes one, and nothing runs it in
-  CI yet. A source without one is not an error; it simply cannot be browsed,
-  which the screen shows as an empty catalogue.
+- A catalogue source has to publish `index.yaml` for a cluster to browse it.
+  gentian-apps' CI now builds the flat, https-served shape on every run and
+  deploys it to GitHub Pages on `main` and `develop`
+  (`scripts/build-catalogue-source.py`). **That job fails until Pages is
+  enabled for the repository**, with "GitHub Actions" as the source — one
+  setting, and nothing else in the pipeline depends on it.
 - The cluster's catalogue view lists; it does not install. Installing stays the
   tenant's own act from their own screens, because a third place that installs
   apps — after the store and the desktop — is a third place to keep correct.
