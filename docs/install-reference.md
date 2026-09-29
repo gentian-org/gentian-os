@@ -147,7 +147,7 @@ else — and a value that names a moving tag is warned about, because a
 Deployment on one never rolls by itself and a pod that restarts picks up
 whatever the tag meant at that second.
 
-Nothing advances the pin on its own. `./install.sh --layout v5 --only B-01`
+Nothing advances the pin on its own. `./install.sh --only B-01`
 does, which is how a cluster following a branch takes a newer build; if the
 commit has not been published yet, the preflight says so rather than leaving
 the cluster on an older image. `PORTAL_IMAGE_TAG` follows gentian-ui's tags the

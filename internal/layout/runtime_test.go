@@ -16,12 +16,11 @@ limitations under the License.
 
 import "testing"
 
-func TestAProcessWithoutTheEnvironmentRunsTheV4Layout(t *testing.T) {
-	for fn, want := range map[Function]string{
-		Edge: "platform-kernel", Authentication: "platform-kernel", Control: "gentian-system",
-		GitOps: "argocd", Secrets: "openbao", Provisioning: "crossplane-system", Admission: "kyverno",
-	} {
-		if got := Namespace(fn); got != want {
+// There is one layout, so a process whose chart forgot the environment still
+// answers with this cluster's namespaces rather than with another cluster's.
+func TestAProcessWithoutTheEnvironmentRunsThisLayout(t *testing.T) {
+	for _, fn := range []Function{Edge, Authentication, Control, GitOps, Secrets, Provisioning, Admission} {
+		if got, want := Namespace(fn), Kernel(fn); got != want {
 			t.Errorf("%s: %q, want %q", fn, got, want)
 		}
 	}
@@ -36,8 +35,8 @@ func TestTheEnvironmentSaysWhereAFunctionRuns(t *testing.T) {
 	if got := Namespace(Authentication); got != "kernel-authentication" {
 		t.Errorf("authentication = %q", got)
 	}
-	if got := Namespace(GitOps); got != "argocd" {
-		t.Errorf("an unset function keeps its v4 name, got %q", got)
+	if got := Namespace(GitOps); got != Kernel(GitOps) {
+		t.Errorf("an unset function falls back to this layout, got %q", got)
 	}
 }
 

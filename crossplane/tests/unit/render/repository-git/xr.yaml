@@ -1,5 +1,9 @@
 # A private Git repository the operator also pushes to, with the install host
 # reaching it at a different address than in-cluster pods do.
+#
+# No cluster-config ConfigMap beside this one, which is the case during the
+# install before the Cluster composition has published it. The pair
+# repository-*-with-cluster-config is the same claim once it has.
 apiVersion: gentianos.io/v1alpha1
 kind: XRepository
 metadata:

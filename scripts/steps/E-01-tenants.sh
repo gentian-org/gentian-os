@@ -1,15 +1,28 @@
 #!/usr/bin/env bash
 # step: E-01-tenants
 # phase: handover
-# requires: D-09-app-catalogue
+# requires: D-02-portal-login
 # provides: nothing at install time — tenants are created after installation
-# mutates: Tenant and App CRs, on teardown only
+# mutates: Tenant, Component and App CRs, on teardown only
 
-# The one destroy-only step. Tenants are created by operators through
-# `kubectl gentian` or the admin console, never by the installer, so apply() has
-# nothing to do. It exists because teardown must remove them *first*, and the
-# driver derives teardown order by reversing the step list — so the thing that
-# must be destroyed first has to be the last step.
+# The one destroy-only step, carried over from v4 unchanged in intent.
+#
+# Tenants are created by operators through the console or `kubectl gentian`,
+# never by the installer, so apply() has nothing to do. It exists because
+# teardown must remove them FIRST, and the driver derives teardown order by
+# reversing the step list — so the thing that must be destroyed first has to be
+# the last step.
+#
+# Without it a plain `--uninstall` leaves Tenant, Component and App CRs behind
+# with finalizers, and the reverse pass removes the operator that was the only
+# thing able to clear them. `--purge` covers most of this through its own
+# sweeps; an uninstall has none.
+#
+# v5 adds Components to what v4 removed. A Component carries
+# gentianos.io/component-cleanup, and a Component whose finalizer cannot clear
+# blocks its tenant namespace exactly as an App does — which is not theoretical:
+# two of them deadlocked this cluster on 2026-09-25, terminating and
+# un-finalizable, when a required field was renamed under them.
 
 check() {
     # Never satisfied and never missing: there is no install-time artefact to
@@ -26,6 +39,7 @@ apply() {
 }
 
 destroy() {
+    local tenant ns app comp deadline
     # The operator registers a ValidatingWebhookConfiguration intercepting PATCH
     # on Tenant CRs. With the operator already gone its webhook service is
     # unavailable and every patch fails with "service not found", so the webhook
@@ -36,7 +50,6 @@ destroy() {
             --ignore-not-found=true 2>/dev/null || true
     fi
 
-    local tenant ns app deadline
     # apps.gentianos.io in full, never the `app` shortname.
     #
     # Argo CD's Application registers shortNames `app` AND `apps`. While both
@@ -48,6 +61,32 @@ destroy() {
     #
     # Guarded on the CRD as well as fully qualified: with the CRD absent every
     # call below is an error, and the loops would run for nothing.
+    # Components first: a Component owns the Helm release behind an app, so
+    # removing it before the App CRs gives provider-helm a chance to uninstall
+    # cleanly rather than having the release orphaned under it.
+    if kubectl get crd components.gentianos.io >/dev/null 2>&1; then
+        kubectl get components.gentianos.io -A --no-headers 2>/dev/null |
+            while read -r ns comp _; do
+                [[ -n "$ns" && -n "$comp" ]] || continue
+                kubectl delete components.gentianos.io "$comp" -n "$ns" \
+                    --ignore-not-found=true --wait=false 2>/dev/null || true
+            done
+        deadline=$(( SECONDS + 60 ))
+        while kubectl get components.gentianos.io -A --no-headers 2>/dev/null | grep -q .; do
+            if (( SECONDS >= deadline )); then
+                warn "Component finalizers did not clear; stripping them."
+                kubectl get components.gentianos.io -A --no-headers 2>/dev/null |
+                    while read -r ns comp _; do
+                        [[ -n "$ns" && -n "$comp" ]] || continue
+                        kubectl patch components.gentianos.io "$comp" -n "$ns" --type=merge \
+                            -p '{"metadata":{"finalizers":null}}' 2>/dev/null || true
+                    done
+                break
+            fi
+            sleep 2
+        done
+    fi
+
     if kubectl get crd apps.gentianos.io >/dev/null 2>&1; then
         # `while read` rather than mapfile: macOS ships bash 3.2, which has neither.
         kubectl get tenants.gentianos.io --no-headers -o custom-columns='NAME:.metadata.name' 2>/dev/null |

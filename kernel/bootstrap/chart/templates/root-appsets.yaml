@@ -1,0 +1,62 @@
+---
+# The "app of apps": syncs kernel/appsets — the ApplicationSets that
+# deliver everything Argo CD owns after bootstrap. Applied by C-02, not by
+# B-01: its children need the Cluster claim's AppProject, the ESO store and
+# the seeded paths to exist. The layout goes in as a value, so the wrapper
+# can resolve namespaces by function.
+{{- if .Values.appsets.enabled }}
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: gentian-appsets
+  namespace: {{ include "ns" (list . "gitops") }}
+  finalizers:
+  - resources-finalizer.argocd.argoproj.io
+spec:
+  project: gentian
+  ignoreDifferences:
+  - group: argoproj.io
+    kind: ApplicationSet
+    jsonPointers:
+    - /metadata/annotations/argocd.argoproj.io~1tracking-id
+  - group: argoproj.io
+    kind: Application
+    jsonPointers:
+    - /metadata/finalizers
+  source:
+    repoURL: {{ .Values.osRepo | default "https://github.com/gentian-org/gentian-os" }}
+    targetRevision: {{ .Values.gentianOsBranch }}
+    path: kernel/appsets
+    helm:
+      valuesObject:
+        stage: {{ .Values.stage | quote }}
+        targetRevision: {{ .Values.gentianOsBranch | quote }}
+        kernelDomain: {{ .Values.kernelDomain | quote }}
+        gentianOsRepo: {{ .Values.osRepo | default "https://github.com/gentian-org/gentian-os" | quote }}
+        deploymentsRepo: {{ .Values.deployments.repo | quote }}
+        deploymentsRevision: {{ .Values.deployments.revision | quote }}
+        deploymentsCluster: {{ .Values.deployments.cluster | quote }}
+        {{- /* Which conditional functions this cluster runs. The wrapper in
+             kernel/appsets skips a raw file by name when its function is
+             off, the way v4's does: a raw file is copied verbatim because it
+             carries ApplicationSet templating Argo evaluates later, so a Helm
+             conditional cannot live inside one. */}}
+        mailServiceMode: {{ .Values.mailServiceMode | default "external" | quote }}
+        llmEnabled: {{ .Values.llmEnabled | default "false" | quote }}
+        relayHost: {{ .Values.smtpHost | default "" | quote }}
+        egressHost: {{ .Values.mailEgressHost | default "" | quote }}
+        storageClass: {{ .Values.storageClass | default "" | quote }}
+        llmGpuAcceleration: {{ .Values.llmGpuAcceleration | default "false" | quote }}
+        llmExternalProviders: {{ .Values.llmExternalProviders | default "false" | quote }}
+        namespaces:
+          {{- toYaml .Values.namespaces | nindent 10 }}
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: {{ include "ns" (list . "gitops") }}
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+    - ServerSideApply=true
+{{- end }}

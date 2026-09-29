@@ -635,7 +635,7 @@ From [security-gap-closing.md](security-gap-closing.md).
       selectors for the modular kernel, `catalogue.sources[]` (AD-14),
       `store.signingKeys`, and the `compliance` block of WP-13.
 - [x] **Phase 1 skeleton, `install.sh --layout v5`** (`scripts/steps-v5/`,
-      `kernel/bootstrap-v5/chart`, `kernel/data/kernel-postgres`): one namespace
+      `kernel/bootstrap/chart`, `kernel/data/kernel-postgres`): one namespace
       list, `kernel/namespaces.yaml`, read by the installer
       (`scripts/lib/namespaces.sh`), by Go (`internal/layout`, whose test pins
       it to the file) and by the bootstrap chart (which refuses to render

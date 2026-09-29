@@ -22,7 +22,7 @@ CROSSPLANE_IMAGE ?= xpkg.crossplane.io/crossplane/crossplane:$(CROSSPLANE_CLI_VE
 KUBEBUILDER_ASSETS ?= /tmp/envtest-bins/k8s/1.32.0-linux-amd64
 export KUBEBUILDER_ASSETS
 
-.PHONY: all build generate manifests test lint docker-build clean install-plugin uninstall-plugin validate-steps gen-credentials gen-authz-model check-credentials lint-cluster-config-keys lint-rbac-coverage lint-marker-ascii test-e04-token-classification test-a05-cert-manager-dns01-args lint-composed-resource-names lint-sequencer-targets lint-eso-readable-paths lint-template-placeholders lint-portability lint-image-digests check-render-fixtures lint-resolvable lint-bootstrap-apps lint-step-contracts lint-job-scripts lint-claim-defaults lint-live-identifiers lint-password-schemes test-policy test-policy-openbao test-policy-authz verify-authz-vocabulary test-director-contract run-director-dev validate-steps-v5 lint-namespace-layout verify-claim-applied verify-argocd-config verify-image-updates gen-provider-rbac lint-provider-rbac lint-credential-validators lint-credential-catalogue
+.PHONY: all build generate manifests test lint docker-build clean install-plugin uninstall-plugin validate-steps gen-credentials gen-authz-model check-credentials lint-cluster-config-keys lint-rbac-coverage lint-marker-ascii test-bootstrap-token-classification test-cert-manager-dns01-args lint-composed-resource-names lint-sequencer-targets lint-eso-readable-paths lint-template-placeholders lint-portability lint-image-digests check-render-fixtures lint-resolvable lint-bootstrap-apps lint-step-contracts lint-job-scripts lint-claim-defaults lint-live-identifiers lint-password-schemes test-policy test-policy-openbao test-policy-authz verify-authz-vocabulary test-director-contract run-director-dev lint-namespace-layout verify-claim-applied verify-argocd-config verify-image-updates gen-provider-rbac lint-provider-rbac lint-credential-validators lint-credential-catalogue
 
 all: generate build test
 
@@ -134,7 +134,7 @@ lint-yaml:
 ## The file list and flags must match CI exactly: -x follows sourced files, and no
 ## -S filter means info/style findings fail the build too. Hand-rolling a narrower
 ## invocation is how an SC2153 reached develop green-looking.
-lint-shell: validate-steps lint-step-contracts lint-resolvable lint-bootstrap-apps lint-credential-fields lint-credential-validators lint-credential-catalogue lint-claim-defaults lint-live-identifiers lint-cluster-config-keys lint-template-placeholders lint-provider-rbac lint-password-schemes lint-rbac-coverage lint-composed-resource-names lint-sequencer-targets lint-eso-readable-paths lint-marker-ascii lint-scaffold-schemas lint-plan-defaults lint-legacy-profile-fields lint-step-order test-e04-token-classification test-a05-cert-manager-dns01-args
+lint-shell: validate-steps lint-step-contracts lint-resolvable lint-bootstrap-apps lint-credential-fields lint-credential-validators lint-credential-catalogue lint-claim-defaults lint-live-identifiers lint-cluster-config-keys lint-template-placeholders lint-provider-rbac lint-password-schemes lint-rbac-coverage lint-composed-resource-names lint-sequencer-targets lint-eso-readable-paths lint-marker-ascii lint-scaffold-schemas lint-plan-defaults lint-legacy-profile-fields lint-step-order test-bootstrap-token-classification test-cert-manager-dns01-args
 	@git ls-files -z -- '*.sh' | xargs -0 shellcheck -x scripts/kubectl-gentian
 
 ## Round-trip the recovery kit: export one, load it back, prove every value
@@ -145,11 +145,11 @@ verify-recovery-kit:
 
 ## E-04 must tell the bootstrap credential apart from the cluster-admin session
 ## every run carries after handover. Stubs the bao CLI; needs no cluster.
-test-e04-token-classification:
-	@bash scripts/tests/test-e04-token-classification.sh
+test-bootstrap-token-classification:
+	@bash scripts/tests/test-bootstrap-token-classification.sh
 
-test-a05-cert-manager-dns01-args:
-	@bash scripts/tests/test-a05-cert-manager-dns01-args.sh
+test-cert-manager-dns01-args:
+	@bash scripts/tests/test-cert-manager-dns01-args.sh
 
 ## Report which declared credentials are satisfied. --source picks where to look:
 ## vault (installer preflight), cluster (day-2), git (CI on a deployments branch).
@@ -315,16 +315,12 @@ lint-portability:
 lint-bootstrap-apps:
 	@bash scripts/lint/lint-bootstrap-apps.sh
 
-## Assert every scripts/steps/*.sh declares its contract and defines apply().
-## Reads only the step files — no cluster, no kubeconfig.
-validate-steps:
+## Assert every scripts/steps/*.sh declares its contract and defines apply(),
+## and that none of them names a kernel namespace by hand. Reads only the step
+## files — no cluster, no kubeconfig.
+validate-steps: lint-namespace-layout
 	@SCRIPT_DIR="$(CURDIR)" bash -c 'source scripts/lib/load.sh; source scripts/lib/driver.sh; validate_steps'
-
-## The v5 (kernel-* layout) step set: the same contract checks as validate-steps,
-## plus the lint that no v5 file names a namespace by hand.
-validate-steps-v5: lint-namespace-layout
-	@SCRIPT_DIR="$(CURDIR)" GENTIAN_STEPS_DIR="$(CURDIR)/scripts/steps-v5" bash -c 'source scripts/lib/load.sh; source scripts/lib/driver.sh; validate_steps'
-	@GENTIAN_STEPS_DIR="$(CURDIR)/scripts/steps-v5" bash scripts/lint/lint-step-contracts.sh
+	@bash scripts/lint/lint-step-contracts.sh
 
 lint-namespace-layout:
 	@bash scripts/lint/lint-namespace-layout.sh

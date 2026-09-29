@@ -842,23 +842,14 @@ sys.stdout.write(corefile[:i] + new_block + corefile[j + len(end):])
 _kernel_wildcard_targets() {
     # Which namespaces hold a copy is a property of the layout: the Gateway
     # reads one, and so does whatever else terminates TLS for a kernel host.
-    # GENTIAN_WILDCARD_TARGETS is how a v5 step says so; without it this is
-    # the v4 list.
-    if [[ -n "${GENTIAN_WILDCARD_TARGETS:-}" ]]; then
-        local target
-        for target in ${GENTIAN_WILDCARD_TARGETS}; do
-            kubectl get namespace "${target}" >/dev/null 2>&1 || continue
-            printf '%s\n' "${target}"
-        done
-        return 0
-    fi
-    local app_ns="gentian-${ENV:-dev}"
-    local ns seen=""
-    for ns in "${app_ns}" "$(gentian_services_namespace)" argocd; do
-        [[ " ${seen} " == *" ${ns} "* ]] && continue
-        seen+=" ${ns}"
-        kubectl get namespace "${ns}" >/dev/null 2>&1 || continue
-        printf '%s\n' "${ns}"
+    # C-03 states it in GENTIAN_WILDCARD_TARGETS. Without it there is nothing
+    # to guess at -- the list this used to fall back to belonged to the layout
+    # that no longer exists, and copying a wildcard into namespaces a cluster
+    # does not have is how a step reports satisfied for nothing.
+    local target
+    for target in ${GENTIAN_WILDCARD_TARGETS:-}; do
+        kubectl get namespace "${target}" >/dev/null 2>&1 || continue
+        printf '%s\n' "${target}"
     done
 }
 

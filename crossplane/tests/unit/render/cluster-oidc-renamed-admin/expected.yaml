@@ -7,7 +7,7 @@ status:
   conditions:
   - lastTransitionTime: "2024-01-01T00:00:00Z"
     message: 'Unready resources: argocd-appproject-tenants, eso-cluster-secret-store,
-      gentian-cluster-config, and 25 more'
+      gentian-cluster-config, and 32 more'
     reason: Creating
     status: "False"
     type: Ready
@@ -89,7 +89,7 @@ spec:
             caProvider:
               key: tls.crt
               name: openbao-tls
-              namespace: openbao
+              namespace: kernel-secrets
               type: Secret
             path: secret
             server: https://openbao.openbao.svc.cluster.local:8200
@@ -118,16 +118,15 @@ spec:
       apiVersion: v1
       data:
         certificates.trustAnchorSecret: ""
-        identity.internalUrl: http://gentian-idp-keycloak-keycloakx-http.platform-kernel.svc.cluster.local:8080/auth
+        identity.internalUrl: http://gentian-idp-keycloak-keycloakx-http.kernel-authentication.svc.cluster.local:8080/auth
         identity.kernelRealm: ""
-        kernel.controlNamespace: gentian-system
+        kernel.controlNamespace: kernel-control
         kernel.gitopsNamespace: argocd
-        kernel.layout: v4
         llm.enabled: "false"
         mail.egressHost: ""
         mail.serviceMode: ""
         mail.smtpHost: ""
-        network.edgeNamespace: platform-kernel
+        network.edgeNamespace: kernel-edge
         node.ip: ""
         tenancyMode: multi
         tenant.limitRange.default.cpu: 500m
@@ -140,7 +139,95 @@ spec:
           app.kubernetes.io/managed-by: crossplane
           gentianos.io/config-type: cluster-config
         name: gentian-cluster-config
-        namespace: crossplane-system
+        namespace: kernel-provisioning
+  providerConfigRef:
+    name: kubernetes
+---
+apiVersion: helm.crossplane.io/v1beta1
+kind: Release
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: mariadb-release
+    crossplane.io/external-name: mariadb
+  labels:
+    crossplane.io/composite: dev-cluster
+  name: dev-cluster-mariadb
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XCluster
+    name: dev-cluster
+    uid: ""
+spec:
+  forProvider:
+    chart:
+      name: mariadb
+      repository: https://raw.githubusercontent.com/gentian-org/gentian-os/develop/charts/infra/packages
+      version: 3.0.3
+    namespace: system-mariadb
+    valuesFrom:
+    - configMapKeyRef:
+        key: values.yaml
+        name: mariadb-base-values
+        namespace: system-mariadb
+        optional: false
+    - configMapKeyRef:
+        key: values.yaml
+        name: mariadb-cluster-values
+        namespace: system-mariadb
+        optional: false
+    - secretKeyRef:
+        key: sensitive-values.yaml
+        name: mariadb-sensitive-values
+        namespace: system-mariadb
+        optional: false
+    wait: true
+    waitTimeout: 20m
+  providerConfigRef:
+    name: kubernetes
+---
+apiVersion: helm.crossplane.io/v1beta1
+kind: Release
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: minio-release
+    crossplane.io/external-name: minio
+  labels:
+    crossplane.io/composite: dev-cluster
+  name: dev-cluster-minio
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XCluster
+    name: dev-cluster
+    uid: ""
+spec:
+  forProvider:
+    chart:
+      name: minio
+      repository: https://raw.githubusercontent.com/gentian-org/gentian-os/develop/charts/infra/packages
+      version: 16.0.10
+    namespace: system-s3
+    valuesFrom:
+    - configMapKeyRef:
+        key: values.yaml
+        name: minio-env-values
+        namespace: system-s3
+        optional: false
+    - configMapKeyRef:
+        key: values.yaml
+        name: minio-base-values
+        namespace: system-s3
+        optional: false
+    - configMapKeyRef:
+        key: values.yaml
+        name: minio-cluster-values
+        namespace: system-s3
+        optional: false
+    wait: true
+    waitTimeout: 10m
   providerConfigRef:
     name: kubernetes
 ---
@@ -148,10 +235,10 @@ apiVersion: kubernetes.crossplane.io/v1alpha2
 kind: Object
 metadata:
   annotations:
-    crossplane.io/composition-resource-name: namespace-gentian-system
+    crossplane.io/composition-resource-name: namespace-system-cache
   labels:
     crossplane.io/composite: dev-cluster
-  name: dev-cluster-ns-gentian-system
+  name: dev-cluster-ns-system-cache
   ownerReferences:
   - apiVersion: gentianos.io/v1alpha1
     blockOwnerDeletion: true
@@ -167,8 +254,10 @@ spec:
       metadata:
         labels:
           gentianos.io/cluster: dev-cluster
+          gentianos.io/function: cache
           gentianos.io/managed-by: crossplane
-        name: gentian-system
+          gentianos.io/tier: system
+        name: system-cache
   providerConfigRef:
     name: kubernetes
 ---
@@ -176,10 +265,10 @@ apiVersion: kubernetes.crossplane.io/v1alpha2
 kind: Object
 metadata:
   annotations:
-    crossplane.io/composition-resource-name: namespace-platform-kernel
+    crossplane.io/composition-resource-name: namespace-system-mariadb
   labels:
     crossplane.io/composite: dev-cluster
-  name: dev-cluster-ns-platform-kernel
+  name: dev-cluster-ns-system-mariadb
   ownerReferences:
   - apiVersion: gentianos.io/v1alpha1
     blockOwnerDeletion: true
@@ -195,8 +284,70 @@ spec:
       metadata:
         labels:
           gentianos.io/cluster: dev-cluster
+          gentianos.io/function: mariadb
           gentianos.io/managed-by: crossplane
-        name: platform-kernel
+          gentianos.io/tier: system
+        name: system-mariadb
+  providerConfigRef:
+    name: kubernetes
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: namespace-system-postgresql
+  labels:
+    crossplane.io/composite: dev-cluster
+  name: dev-cluster-ns-system-postgresql
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XCluster
+    name: dev-cluster
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        labels:
+          gentianos.io/cluster: dev-cluster
+          gentianos.io/function: postgresql
+          gentianos.io/managed-by: crossplane
+          gentianos.io/tier: system
+        name: system-postgresql
+  providerConfigRef:
+    name: kubernetes
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: namespace-system-s3
+  labels:
+    crossplane.io/composite: dev-cluster
+  name: dev-cluster-ns-system-s3
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XCluster
+    name: dev-cluster
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        labels:
+          gentianos.io/cluster: dev-cluster
+          gentianos.io/function: s3
+          gentianos.io/managed-by: crossplane
+          gentianos.io/tier: system
+        name: system-s3
   providerConfigRef:
     name: kubernetes
 ---
@@ -256,7 +407,7 @@ spec:
     clientSecretSecretRef:
       key: client-secret
       name: openbao-oidc-client
-      namespace: openbao
+      namespace: kernel-secrets
     directAccessGrantsEnabled: false
     name: OpenBao
     realmId: kernel
@@ -290,7 +441,7 @@ spec:
       kind: ExternalSecret
       metadata:
         name: openbao-oidc-client
-        namespace: openbao
+        namespace: kernel-secrets
       spec:
         data:
         - remoteRef:
@@ -343,6 +494,50 @@ spec:
     realmId: kernel
   providerConfigRef:
     name: keycloak
+---
+apiVersion: helm.crossplane.io/v1beta1
+kind: Release
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: redis-release
+    crossplane.io/external-name: redis
+  labels:
+    crossplane.io/composite: dev-cluster
+  name: dev-cluster-redis
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XCluster
+    name: dev-cluster
+    uid: ""
+spec:
+  forProvider:
+    chart:
+      name: redis
+      repository: https://raw.githubusercontent.com/gentian-org/gentian-os/develop/charts/infra/packages
+      version: 18.6.1
+    namespace: system-cache
+    valuesFrom:
+    - configMapKeyRef:
+        key: values.yaml
+        name: redis-env-values
+        namespace: system-cache
+        optional: false
+    - configMapKeyRef:
+        key: values.yaml
+        name: redis-base-values
+        namespace: system-cache
+        optional: false
+    - configMapKeyRef:
+        key: values.yaml
+        name: redis-cluster-values
+        namespace: system-cache
+        optional: false
+    wait: true
+    waitTimeout: 10m
+  providerConfigRef:
+    name: kubernetes
 ---
 apiVersion: kubernetes.vault.upbound.io/v1alpha1
 kind: AuthBackendConfig
@@ -453,7 +648,7 @@ spec:
     oidcClientSecretSecretRef:
       key: client-secret
       name: openbao-oidc-client
-      namespace: openbao
+      namespace: kernel-secrets
     oidcDiscoveryUrl: https://id.platform.example.test/auth/realms/kernel
     path: oidc
     type: oidc
@@ -564,7 +759,7 @@ spec:
     boundServiceAccountNames:
     - crossplane-provider-vault
     boundServiceAccountNamespaces:
-    - crossplane-system
+    - kernel-provisioning
     roleName: crossplane-provider
     tokenPolicies:
     - crossplane-write
@@ -601,6 +796,35 @@ spec:
   providerConfigRef:
     name: openbao
 ---
+apiVersion: kubernetes.vault.upbound.io/v1alpha1
+kind: AuthBackendRole
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: vault-auth-role-operator
+  labels:
+    crossplane.io/composite: dev-cluster
+  name: dev-cluster-auth-role-operator
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XCluster
+    name: dev-cluster
+    uid: ""
+spec:
+  forProvider:
+    backend: kubernetes
+    boundServiceAccountNames:
+    - gentian-os
+    boundServiceAccountNamespaces:
+    - kernel-control
+    roleName: gentian-os-operator
+    tokenPolicies:
+    - operator-write
+    tokenTtl: 3600
+  providerConfigRef:
+    name: openbao
+---
 apiVersion: kv.vault.upbound.io/v1alpha1
 kind: SecretV2
 metadata:
@@ -621,7 +845,7 @@ spec:
     dataJsonSecretRef:
       key: data.json
       name: gentian-os-kernel-authz-openfga
-      namespace: crossplane-system
+      namespace: kernel-provisioning
     mount: secret
     name: gentian-os/kernel/authz/openfga
   managementPolicies:
@@ -650,7 +874,7 @@ spec:
     dataJsonSecretRef:
       key: data.json
       name: gentian-os-kernel-cache-redis
-      namespace: crossplane-system
+      namespace: kernel-provisioning
     mount: secret
     name: gentian-os/kernel/cache/redis
   managementPolicies:
@@ -679,7 +903,7 @@ spec:
     dataJsonSecretRef:
       key: data.json
       name: gentian-os-kernel-database-mariadb
-      namespace: crossplane-system
+      namespace: kernel-provisioning
     mount: secret
     name: gentian-os/kernel/database/mariadb
   managementPolicies:
@@ -708,7 +932,7 @@ spec:
     dataJsonSecretRef:
       key: data.json
       name: gentian-os-kernel-database-postgresql
-      namespace: crossplane-system
+      namespace: kernel-provisioning
     mount: secret
     name: gentian-os/kernel/database/postgresql
   managementPolicies:
@@ -737,7 +961,7 @@ spec:
     dataJsonSecretRef:
       key: data.json
       name: gentian-os-kernel-identity-keycloak-bootstrap
-      namespace: crossplane-system
+      namespace: kernel-provisioning
     mount: secret
     name: gentian-os/kernel/identity/keycloak-bootstrap
   managementPolicies:
@@ -766,7 +990,7 @@ spec:
     dataJsonSecretRef:
       key: data.json
       name: gentian-os-kernel-mail-dovecot
-      namespace: crossplane-system
+      namespace: kernel-provisioning
     mount: secret
     name: gentian-os/kernel/mail/dovecot
   managementPolicies:
@@ -795,7 +1019,7 @@ spec:
     dataJsonSecretRef:
       key: data.json
       name: gentian-os-kernel-mail-postfix
-      namespace: crossplane-system
+      namespace: kernel-provisioning
     mount: secret
     name: gentian-os/kernel/mail/postfix
   managementPolicies:
@@ -824,7 +1048,7 @@ spec:
     dataJsonSecretRef:
       key: data.json
       name: gentian-os-kernel-oidc-openbao
-      namespace: crossplane-system
+      namespace: kernel-provisioning
     mount: secret
     name: gentian-os/kernel/oidc/openbao
   managementPolicies:
@@ -853,7 +1077,7 @@ spec:
     dataJsonSecretRef:
       key: data.json
       name: gentian-os-kernel-storage-minio
-      namespace: crossplane-system
+      namespace: kernel-provisioning
     mount: secret
     name: gentian-os/kernel/storage/minio
   managementPolicies:
@@ -990,5 +1214,49 @@ spec:
       path "secret/metadata/gentian-os/tenants/*" {
         capabilities = ["list"]
       }
+  providerConfigRef:
+    name: openbao
+---
+apiVersion: vault.vault.upbound.io/v1alpha1
+kind: Policy
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: vault-policy-operator-write
+  labels:
+    crossplane.io/composite: dev-cluster
+  name: dev-cluster-policy-operator-write
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XCluster
+    name: dev-cluster
+    uid: ""
+spec:
+  forProvider:
+    name: operator-write
+    policy: |
+      path "secret/data/gentian-os/*"     { capabilities = ["create","read","update","patch","delete"] }
+      path "secret/metadata/gentian-os/*" { capabilities = ["list","read","delete"] }
+      path "auth/token/create"                    { capabilities = ["update"] }
+      path "auth/token/lookup-self"               { capabilities = ["read"] }
+
+      # Per-tenant JWT auth mounts. A tenant member authenticates in
+      # their own Keycloak realm — that is where their apps' OIDC
+      # clients live — so their portal token is signed by that realm
+      # and the kernel realm's mount cannot verify it. One mount per
+      # realm is what makes the exchange possible.
+      #
+      # Deliberately NOT one mount trusting many keys, which would be
+      # fewer objects and a privilege escalation: a tenant
+      # administrator holds realm-admin in their own realm, so they
+      # can mint a token carrying any groups claim, the cluster admin
+      # group included. Isolation belongs at the mount boundary,
+      # because claim values are precisely what they control.
+      #
+      # Glob, not the + segment wildcard: OpenBao's + matches one
+      # whole path segment, so "oidc-+" matches nothing at all.
+      path "sys/auth/oidc-*"                      { capabilities = ["create","read","update","delete","sudo"] }
+      path "auth/oidc-*"                          { capabilities = ["create","read","update","delete","list"] }
   providerConfigRef:
     name: openbao

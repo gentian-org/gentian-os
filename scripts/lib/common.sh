@@ -2284,7 +2284,6 @@ gentian_claim_name() {
 }
 
 gentian_cluster_claim_name()  { gentian_claim_name cluster    dev-cluster;    }
-gentian_infradata_claim_name() { gentian_claim_name infra-data dev-infra-data; }
 gentian_suze_claim_name()      { gentian_claim_name suze       dev-suze;       }
 
 # =============================================================================

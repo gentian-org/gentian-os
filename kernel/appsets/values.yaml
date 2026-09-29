@@ -1,106 +1,26 @@
-# stage selects which literal the "env: dev" generator element in each
-# raw/*.yaml ApplicationSet gets rewritten to. Set via --set stage=<value>
-# (root-applicationset.yaml.tmpl passes it from ${GENTIAN_DEPLOYMENTS_STAGE}).
+# The v5 wrapper's parameters. Namespaces are not among them by name: raw
+# files address a kernel namespace as ns.<function>.placeholder and the
+# wrapper resolves it from the layout the installer passes in.
 stage: dev
-
-# targetRevision is the git ref every child ApplicationSet tracks back to
-# gentian-os, replacing the "targetRevision: develop" literal in raw/*.yaml.
-# Passed by root-applicationset.yaml.tmpl from ${GENTIAN_OS_BRANCH}, so the
-# children follow whatever branch or release tag the parent was installed from.
 targetRevision: develop
-
-# kernelDomain replaces the "kernel.domain.placeholder" literal carried by
-# raw/*.yaml, so per-service charts can render values that depend on the
-# cluster domain. Passed by root-applicationset.yaml.tmpl from KERNEL_DOMAIN.
 kernelDomain: ""
-
-# storageClass replaces the "storage.class.placeholder" literal carried by
-# raw/08-infra-data.yaml, so the shared PostgreSQL/MariaDB/Redis/MinIO charts
-# render an explicit storageClassName instead of leaving it for the
-# DefaultStorageClass admission plugin to stamp in after the fact — see the
-# comment beside this value in root-applicationset.yaml for what leaving it
-# implicit costs. Passed from STORAGE_CLASS, resolved once by
-# resolve_storage_class() (explicit override, or the cluster's own default).
-storageClass: ""
-
-# The outbound SMTP relay for MAIL_SERVICE_MODE=external, replacing the
-# "external.smtp.host.placeholder" / "external.smtp.port.placeholder" literals in
-# raw/09-infra-helm.yaml. Passed by root-applicationset.yaml.tmpl from
-# EXTERNAL_SMTP_HOST / EXTERNAL_SMTP_PORT.
-#
-# Empty host is kernel mode: Postfix delivers directly and needs no upstream. The
-# mail mode is therefore not a value here — only whether a relay host exists.
-externalSmtpHost: ""
-externalSmtpPort: "587"
-externalSmtpSsl: "false"
-externalSmtpStarttls: "true"
-
-# kernel  — Postfix delivers locally and Dovecot serves the mailboxes.
-# external — Postfix relays to a smarthost; mailboxes live at the provider, so
-#            Dovecot is not deployed and neither is its volume.
-#
-# A separate value from externalSmtpHost on purpose. "Has a relay" and "hosts
-# its own mailboxes" are independent: a kernel-mode cluster commonly relays
-# outbound because port 25 is blocked outbound while still receiving on it.
-mailServiceMode: external
-
-# Whether the LLM ApplicationSet is generated, and whether the mock inference
-# backend goes with it. From the Cluster claim's llm.enabled and
-# llm.gpuAcceleration.
-llmEnabled: "false"
-llmGpuAcceleration: "false"
-
-# Whether the claim lists any spec.llm.providers. Gates the ExternalSecret that
-# carries their API keys into platform-kernel.
-#
-# Declared here with a default even though the parent always passes it, because
-# the failure when it is absent is silent and misleading: the template does
-# `toString $.Values.llmExternalProviders`, an unset value renders the literal
-# "<nil>", and "<nil>" is not "true" — so the gate reads as off rather than as
-# unconfigured, and the only symptom is providers reporting a missing key.
-llmExternalProviders: "false"
-
-# Whether the Kyverno host-namespace exception MetalLB's speaker DaemonSet
-# needs (raw/05b-metallb-exception.yaml) is generated at all. From the Cluster
-# claim's platformParams.metallb — off by default, since a self-hosted cluster
-# not running MetalLB should never get it.
-metallbException: "false"
-
-# Where gentian-os itself comes from. The children hardcoded this URL, so a
-# mirrored or forked install could pin the ref but not the origin (§9, platform
-# provenance). Passed by root-applicationset.yaml.tmpl from GENTIAN_OS_REPO.
 gentianOsRepo: https://github.com/gentian-org/gentian-os
-
-# The deployments repository and which cluster's directory to read. Claims live
-# there, not here, because they are per-cluster configuration (§2, surface 2).
 deploymentsRepo: ""
 deploymentsRevision: main
 deploymentsCluster: ""
+# Filled by the installer from kernel/namespaces.yaml. Never set by hand.
+namespaces: {}
 
-# The hostname outbound mail leaves from, from spec.mail.egressHost on the
-# Cluster claim. Empty means the shared egress address or a smarthost relay.
-mailEgressHost: ""
-
-# Where abuse@ and postmaster@ are delivered, for every domain this cluster
-# accepts mail for. An address OFF this cluster; one inside a hosted domain is
-# refused, because it would alias into a mailbox Dovecot opens for nobody.
-#
-# Empty leaves both addresses accepted and unreadable, which is the state every
-# cluster starts in and the mail reconciler logs on every sync. RFC 5321
-# requires postmaster to work and RFC 2142 requires abuse; Microsoft's JMRP and
-# SNDS enrolments mail both.
-mailAdminContact: ""
-
-# Whether an address nobody owns is accepted: catchall (default), observe or
-# strict.
-#
-# The mailbox map is a catch-all today, so every address in a registered domain
-# is accepted whether or not anyone owns it — unbounded disk, and the behaviour
-# of a spam trap as far as a large provider is concerned. strict replaces it
-# with the addresses Keycloak actually holds; observe builds the same list and
-# only logs it, which is how to check it against real traffic first.
-#
-# strict fails open per domain — an unreachable Keycloak or an empty enumeration
-# keeps that domain's catch-all — because a 550 on real mail is permanent and
-# accepting junk for one more cycle is not.
-mailRecipientPolicy: catchall
+# Which conditional functions this cluster runs, and the values their charts
+# need. Filled by the bootstrap chart from the Cluster claim; a raw file whose
+# function is off is skipped by name in templates/appsets.yaml.
+mailServiceMode: external
+llmEnabled: "false"
+relayHost: ""
+egressHost: ""
+storageClass: ""
+# Whether this cluster has GPUs (spec.llm.gpuAcceleration) and whether the
+# claim lists external providers. The first decides whether the mock backend
+# runs; the second whether the chart reads a vault path for provider keys.
+llmGpuAcceleration: "false"
+llmExternalProviders: "false"

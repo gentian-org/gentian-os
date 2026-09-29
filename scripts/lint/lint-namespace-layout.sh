@@ -16,7 +16,7 @@ old='\b(platform-kernel|gentian-system|crossplane-system|cnpg-system|stakater-sy
 while IFS= read -r hit; do
   fail "an old namespace name in a v5 file: ${hit}"
 done < <(grep -rnE "(namespace:|[[:space:]]-n|--namespace)[[:space:]]+\"?(${old#\\b(}" \
-           "${ROOT}/scripts/steps-v5" "${ROOT}/kernel/bootstrap-v5" "${ROOT}/kernel/appsets-v5" "${ROOT}/kernel/data" 2>/dev/null \
+           "${ROOT}/scripts/steps" "${ROOT}/kernel/bootstrap" "${ROOT}/kernel/appsets" "${ROOT}/kernel/data" 2>/dev/null \
          | grep -vE '^\S+:\s*#' | grep -vE 's/\^?[[:space:]]*namespace: ' || true)
          # Two exclusions, both "the old name here is the point": a comment
          # explaining what moved, and a sed pattern REPLACING the old name with
@@ -85,8 +85,8 @@ while IFS= read -r fn; do
 done <<< "${conditional}"
 
 # The v5 chart refuses to render without the layout.
-if helm template x "${ROOT}/kernel/bootstrap-v5/chart" >/dev/null 2>&1; then
-  fail "kernel/bootstrap-v5/chart renders without a namespace layout; every destination must come from it"
+if helm template x "${ROOT}/kernel/bootstrap/chart" >/dev/null 2>&1; then
+  fail "kernel/bootstrap/chart renders without a namespace layout; every destination must come from it"
 fi
 
 [[ ${status} -eq 0 ]] && echo "OK — the v5 layout addresses namespaces by function only."

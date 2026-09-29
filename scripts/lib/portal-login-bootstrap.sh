@@ -1781,7 +1781,7 @@ print_portal_login_summary() {
                 warn "  Every stored input agrees, so the derivation is right and the value"
                 warn "  Keycloak holds is older — it was set by the last D-02 run, with a"
                 warn "  master password that has since changed."
-                warn "  Re-assert it:  ./install.sh --layout v5 --only D-02 --force"
+                warn "  Re-assert it:  ./install.sh --only D-02 --force"
                 ;;
             *)
                 # Unreachable, mid-rollout, or an answer this does not know.

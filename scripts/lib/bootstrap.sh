@@ -1103,13 +1103,17 @@ apply_cluster_xr() {
         exit 1
     }
 
-    # A claim written for another installer is refused before anything is
-    # applied: the composition places the kernel where the claim's layout says.
+    # A claim left over from the layout this installer no longer builds is
+    # refused before anything is applied. spec.layout is gone from the schema,
+    # so a claim still carrying it is a claim nobody has looked at since the
+    # kernel moved -- and applying it would place the kernel by a composition
+    # that has one answer now, in namespaces the rest of the claim does not
+    # describe.
     local claim_layout
-    claim_layout="$(_gentian_yq '.spec.layout' "${claims_dir}/cluster.yaml" 2>/dev/null || echo v4)"
-    if [[ "${claim_layout}" != "${GENTIAN_LAYOUT:-v4}" ]]; then
-        error "The Cluster claim is written for layout '${claim_layout}'; this installer runs layout '${GENTIAN_LAYOUT:-v4}'."
-        error "  Start the installer with --layout ${claim_layout}, or scaffold a new claim for this layout."
+    claim_layout="$(_gentian_yq '.spec.layout' "${claims_dir}/cluster.yaml" 2>/dev/null || echo "")"
+    if [[ -n "${claim_layout}" && "${claim_layout}" != "v5" && "${claim_layout}" != "null" ]]; then
+        error "The Cluster claim says layout '${claim_layout}'. This installer builds one layout and it is not that one."
+        error "  Remove spec.layout from ${claims_dir}/cluster.yaml, or scaffold a new claim."
         return 1
     fi
     info "Applying Cluster claim from ${claims_dir}/cluster.yaml..."
@@ -1370,81 +1374,6 @@ resync_credential_consumers() {
 }
 
 # =============================================================================
-# Apply root ArgoCD ApplicationSet
-#
-# gentian-appsets is the "app of apps" that syncs kernel/appsets/ into the
-# cluster. Each YAML in that directory becomes an ApplicationSet, driving:
-#   - 02-external-secrets: globals-secrets-dev (ESO ExternalSecrets per env)
-#   - 08-infra-data:        postgres/mariadb/redis/minio ESO + values ConfigMaps (InfraData XR owns Releases)
-#   - 09-suze:              Suze IdP prerequisites (OpenFGA + Keycloak ESO + values)
-#
-# Prerequisites:
-#   - ArgoCD must be installed and the 'gentian' AppProject must exist.
-#   - The 'gentian' AppProject is created by apply_cluster_xr (Cluster XR).
-#   - seed_secrets_remaining must have run so ESO can sync the globals secrets.
-# =============================================================================
-bootstrap_root_appset() {
-    banner "Bootstrap root ArgoCD ApplicationSet (app-of-apps)"
-
-    export GENTIAN_DEPLOYMENTS_STAGE="${GENTIAN_DEPLOYMENTS_STAGE:-dev}"
-    resolve_gentian_os_branch
-    # Provenance and the deployments pointer reach the child ApplicationSets
-    # through here. Defaults keep an unset install working against the public
-    # origin; a mirrored install sets them in install.env (§2, surface 1).
-    export GENTIAN_OS_REPO="${GENTIAN_OS_REPO:-https://github.com/gentian-org/gentian-os}"
-    export GENTIAN_DEPLOYMENTS_REPO="${GENTIAN_DEPLOYMENTS_REPO:-}"
-    export GENTIAN_DEPLOYMENTS_BRANCH="${GENTIAN_DEPLOYMENTS_BRANCH:-main}"
-    export GENTIAN_DEPLOYMENTS_CLUSTER_ID="${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-default-cluster}"
-    # The outbound relay reaches the Postfix chart through here. Set even when
-    # empty, because empty is a meaningful value — kernel mode, delivering
-    # directly — rather than a variable someone forgot to set.
-    #
-    # The chart marks the cluster id required, so an empty one refuses to render
-    # rather than producing Applications that point at clusters//kernel/claims and
-    # never sync.
-    helm template gentian-bootstrap "${SCRIPT_DIR}/kernel/bootstrap/chart" \
-        -s templates/root-applicationset.yaml \
-        --set-string "deploymentsRepo=${GENTIAN_DEPLOYMENTS_REPO}" \
-        --set-string "deploymentsBranch=${GENTIAN_DEPLOYMENTS_BRANCH}" \
-        --set-string "cluster=${GENTIAN_DEPLOYMENTS_CLUSTER_ID}" \
-        --set-string "stage=${GENTIAN_DEPLOYMENTS_STAGE}" \
-        --set-string "osRepo=${GENTIAN_OS_REPO:-https://github.com/gentian-org/gentian-os}" \
-        --set-string "gentianOsBranch=${GENTIAN_OS_BRANCH}" \
-        --set-string "kernelDomain=${KERNEL_DOMAIN:-}" \
-        --set-string "storageClass=${STORAGE_CLASS:-}" \
-        --set-string "smtpHost=${EXTERNAL_SMTP_HOST:-}" \
-        --set-string "smtpPort=${EXTERNAL_SMTP_PORT:-587}" \
-        --set-string "smtpSsl=${EXTERNAL_SMTP_SSL:-false}" \
-        --set-string "smtpStarttls=${EXTERNAL_SMTP_STARTTLS:-true}" \
-        --set-string "mailServiceMode=$(gentian_mail_service_mode)" \
-        --set-string "llmEnabled=${LLM_SUPPORT:-false}" \
-        --set-string "llmGpuAcceleration=${GPU_ACCELERATION:-false}" \
-        --set-string "llmExternalProviders=${LLM_EXTERNAL_PROVIDERS:-false}" \
-        --set-string "mailEgressHost=${MAIL_EGRESS_HOST:-}" \
-        --set-string "metallbException=${METALLB_EXCEPTION:-false}" \
-        | kubectl apply -f -
-    success "gentian-appsets Application applied."
-
-    info "Waiting for gentian-appsets Application to be Synced (up to 2m)..."
-    local i=0
-    until kubectl get application gentian-appsets -n argocd \
-            -o jsonpath='{.status.sync.status}' 2>/dev/null | grep -q "Synced"; do
-        echo -n "."
-        sleep 5; i=$((i + 5))
-        [[ $i -lt 120 ]] || {
-            warn "gentian-appsets not yet Synced after 2m — continuing anyway."
-            echo ""
-            break
-        }
-    done
-    echo ""
-
-    success "Root ApplicationSet bootstrapped — ApplicationSets being deployed."
-    info "  Monitor: kubectl get applicationsets -n argocd"
-    info "  Apps:    kubectl get applications -n argocd"
-}
-
-# =============================================================================
 # Install provider-helm
 # provider-helm deploys Helm charts as Crossplane Managed Resources (InfraData XR,
 # kernel services, tenant apps via compositions).
@@ -1548,17 +1477,15 @@ print_summary_cp() {
     # whole summary.
     mr_count=$({ kubectl get managed -l "crossplane.io/composite=${xr_name}" \
         --no-headers 2>/dev/null || true; } | wc -l | tr -d ' ')
-    # Releases are named <composite>-<chart>, and the composite carries
-    # Crossplane's random suffix (e.g. ifk-l2-prod-infra-data-n6z4s-postgresql).
-    # Looking them up under the *claim* name never matched, so these flags always
-    # read "unknown" regardless of the actual state. Resolve the composite first.
-    local infra_claim infra_xr
-    infra_claim="$(gentian_infradata_claim_name)"
-    infra_xr=$(kubectl get infradata.gentianos.io "${infra_claim}" -n "${CROSSPLANE_NAMESPACE:-crossplane-system}" \
-        -o jsonpath='{.spec.resourceRef.name}' 2>/dev/null || true)
-    infra_xr="${infra_xr:-${infra_claim}}"
+    # The system-tier engines. They are composed by the CLUSTER composite, not
+    # by a kind of their own: this asked an InfraData claim for them, and after
+    # that kind went the four lines read "unknown" on every install -- which
+    # looks exactly like four engines that failed to come up.
+    #
+    # Named <composite>-<chart>, and the composite carries Crossplane's random
+    # suffix, so the composite has to be resolved first (xr_name above).
     _release_ready() {
-        kubectl get "release.helm.crossplane.io/${infra_xr}-$1" \
+        kubectl get "release.helm.crossplane.io/${xr_name}-$1" \
             -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "unknown"
     }
     infra_pg_ready=$(_release_ready postgresql)
@@ -1585,7 +1512,10 @@ print_summary_cp() {
 
     # Resolve these BEFORE the banner to avoid warnings mid-output.
     argocd_url=$(resolve_argocd_url 2>/dev/null)
-    argocd_pw=$(kubectl get secret argocd-initial-admin-secret -n argocd \
+    # _argocd_ns, not the literal: the gitops namespace is kernel-gitops, and
+    # reading the secret from "argocd" printed an empty password on every
+    # install -- the one line somebody needs to get in.
+    argocd_pw=$(kubectl get secret argocd-initial-admin-secret -n "$(_argocd_ns)" \
         -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null || true)
 
     echo ""
@@ -1601,10 +1531,10 @@ print_summary_cp() {
     echo -e "${GREEN}  Tenancy mode   : ${TENANCY_MODE:-multi}${NC}"
     echo -e "${GREEN}  Kernel realm   : ${KERNEL_REALM:-kernel}${NC}"
     echo -e "${GREEN}  Cluster XR     : ${xr_name} (Ready=${xr_ready}, MRs=${mr_count})${NC}"
-    echo -e "${GREEN}  InfraData PG   : ${infra_xr}-postgresql (Ready=${infra_pg_ready})${NC}"
-    echo -e "${GREEN}  InfraData MDB  : ${infra_xr}-mariadb (Ready=${infra_mdb_ready})${NC}"
-    echo -e "${GREEN}  InfraData Redis: ${infra_xr}-redis (Ready=${infra_redis_ready})${NC}"
-    echo -e "${GREEN}  InfraData MinIO: ${infra_xr}-minio (Ready=${infra_minio_ready})${NC}"
+    echo -e "${GREEN}  System PG      : ${xr_name}-postgresql (Ready=${infra_pg_ready})${NC}"
+    echo -e "${GREEN}  System MDB     : ${xr_name}-mariadb (Ready=${infra_mdb_ready})${NC}"
+    echo -e "${GREEN}  System Redis   : ${xr_name}-redis (Ready=${infra_redis_ready})${NC}"
+    echo -e "${GREEN}  System MinIO   : ${xr_name}-minio (Ready=${infra_minio_ready})${NC}"
     echo -e "${GREEN}  Suze XR       : Ready=${suze_ready} (OpenFGA=${openfga_ready}, Keycloak=${keycloak_ready})${NC}"
     echo ""
     if [[ -n "${_gentian_handover_done:-}" ]]; then
@@ -1636,7 +1566,7 @@ print_summary_cp() {
     echo ""
     echo -e "${GREEN}  Inspect Crossplane managed resources:${NC}"
     echo -e "${GREEN}    kubectl get managed -l crossplane.io/composite=${xr_name}${NC}"
-    echo -e "${GREEN}    kubectl get release.helm.crossplane.io | grep ${infra_xr}${NC}"
+    echo -e "${GREEN}    kubectl get release.helm.crossplane.io | grep ${xr_name}${NC}"
     echo ""
     echo -e "${GREEN}  ArgoCD:${NC}"
     echo -e "${GREEN}    URL  : ${argocd_url}${NC}"
@@ -2370,9 +2300,6 @@ metadata:
   name: ${cluster}-${stage}
   namespace: ${CROSSPLANE_NAMESPACE:-crossplane-system}
 spec:
-  # The installer this claim is written for. The installer refuses a claim
-  # whose layout is not the one it was started with (--layout).
-  layout: ${GENTIAN_LAYOUT:-v4}
   kernelDomain: ${domain}
   # Who administers this cluster, by the Keycloak group they are in. The
   # director reads this file from git -- not the object in the cluster -- so
@@ -2387,23 +2314,6 @@ EOF
         generated=1
     fi
 
-    # v5 has no InfraData claim: kernel data is on kernel-postgres, and the
-    # system engines are composed with the tenants, not scaffolded here.
-    if [[ "${GENTIAN_LAYOUT:-v4}" != "v5" && ! -f "${kernel_dir}/claims/infra-data.yaml" ]]; then
-        cat > "${kernel_dir}/claims/infra-data.yaml" <<EOF
-apiVersion: gentianos.io/v1alpha1
-kind: InfraData
-metadata:
-  name: ${cluster}-${stage}-infra-data
-  namespace: ${CROSSPLANE_NAMESPACE:-crossplane-system}
-spec:
-  environment: ${stage}
-  compositeDeletePolicy: Background
-EOF
-        info "Scaffolded ${kernel_dir}/claims/infra-data.yaml"
-        generated=1
-    fi
-
     if [[ ! -f "${kernel_dir}/claims/suze.yaml" ]]; then
         cat > "${kernel_dir}/claims/suze.yaml" <<EOF
 apiVersion: gentianos.io/v1alpha1
@@ -2413,11 +2323,8 @@ metadata:
   namespace: ${CROSSPLANE_NAMESPACE:-crossplane-system}
 spec:
   environment: ${stage}
-$(if [[ "${GENTIAN_LAYOUT:-v4}" == "v5" ]]; then
-    printf '  idpNamespace: kernel-authentication\n  fgaNamespace: kernel-authorization\n'
-  else
-    printf '  idpNamespace: platform-kernel\n'
-  fi)
+  idpNamespace: kernel-authentication
+  fgaNamespace: kernel-authorization
   compositeDeletePolicy: Background
   openfga:
     chartVersion: "0.3.10"
@@ -2711,9 +2618,7 @@ require_cluster_deployment() {
     # nothing in the install output says why. The claims/ directory is synced
     # from git by the gentian-claims ApplicationSet, so scaffolding the file is
     # only half of it: it has to be committed to reach the cluster.
-    local kernel_files="claims/cluster.yaml claims/infra-data.yaml claims/suze.yaml values.yaml"
-    [[ "${GENTIAN_LAYOUT:-v4}" == "v5" ]] &&
-        kernel_files="claims/cluster.yaml claims/suze.yaml claims/deployments-repository.yaml values.yaml"
+    local kernel_files="claims/cluster.yaml claims/suze.yaml claims/deployments-repository.yaml values.yaml"
     for f in ${kernel_files}; do
         [[ -f "${kernel_dir}/${f}" ]] || missing+=("${f}")
     done

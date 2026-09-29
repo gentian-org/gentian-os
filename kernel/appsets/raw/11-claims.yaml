@@ -17,7 +17,7 @@ apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
   name: gentian-claims
-  namespace: argocd
+  namespace: ns.gitops.placeholder
   annotations:
     argocd.argoproj.io/sync-wave: "11"
 spec:
@@ -69,7 +69,7 @@ spec:
           # finalizers. selfHeal reconciles drift; nothing here deletes.
       destination:
         server: https://kubernetes.default.svc
-        namespace: crossplane-system
+        namespace: ns.provisioning.placeholder
       syncPolicy:
         automated:
           # No prune: a claim removed from Git should be removed deliberately,

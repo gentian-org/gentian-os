@@ -89,7 +89,7 @@ and the union's exactly-one rule cannot, so it survives as the annotation
 | --- | --- |
 | ✅ | `claims/deployments-repository.yaml` is required on v5, and an uncommitted working copy is named. Without that claim the director has no push credential and every write answers 503 — no tenant, no invited user |
 | ☐ | Deployment preparation is not DRY: `--prepare-deployment` writes the files and nothing commits them, so the claim reaches the cluster only if somebody remembers. One writer, folded into the normal run |
-| ☐ | `GETTING-STARTED.md` still names `claims/infra-data.yaml`, which v5 does not have and which would compose the system-tier engines a second time |
+| ✅ | `GETTING-STARTED.md` names the claim set that exists, and says plainly that a leftover `claims/infra-data.yaml` must be deleted — the `InfraData` kind itself is gone, so nothing composes those engines twice |
 | ☐ | S7A.4 — no write has ever succeeded against this cluster |
 | ✅ | S7A.17's durable record: the director's own database on `kernel-postgres` holds who was allowed to ask for each identity change, with a retention horizon it enforces. Optional — a cluster without it starts and warns |
 | ☐ | S7A.17's other half: the event listener recording Keycloak **admin** events, carrying the request id so the two records join. It projects group membership today and drops the rest |
@@ -108,6 +108,17 @@ none of it blocks the purge.
 | **Simplify the package union back to one** | The union now admits a chart and a composition together, because three entries genuinely are both. If those three ever render their extra objects some other way — a hook, a sidecar, the chart itself — the pair stops being needed and the rule can go back to exactly one, which is easier to answer without reading it twice |
 
 ## Known and deliberately not now
+
+- **Dead library functions the v4 step set was the only caller of.** Removing
+  the layout deleted 44 step files, and the functions they called are still in
+  `scripts/lib/`. A sweep found about fifty with no call site — `install_*` for
+  cert-manager, Envoy Gateway, ESO, Crossplane, provider-helm, MAC admission,
+  mail and LLM serving, and a tail of helpers behind them. The ones that named
+  the deleted `kernel/bootstrap/` and `kernel/appsets/` trees are gone with
+  them; the rest are left because the sweep is a regular expression over shell
+  and a function dispatched by name (the credential validators are) looks
+  exactly like a dead one. Deleting them wants a real call graph, or one
+  careful pass per file, and neither belongs immediately before a purge.
 
 - A catalogue source has to publish `index.yaml` for a cluster to browse it.
   gentian-apps' CI now builds the flat, https-served shape on every run and

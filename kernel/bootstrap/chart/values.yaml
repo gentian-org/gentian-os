@@ -1,64 +1,110 @@
-# The three values the bootstrap Applications are parameterised on.
-#
-# They were substituted by an allowlisted envsubst, allowlisted because these
-# manifests also carry Argo CD's $values expressions and a substitute-everything
-# run would silently blank them. Helm has no such hazard: $values is not its
-# syntax, so nothing needs listing and nothing can be blanked by omission.
+# The bootstrap Applications are parameterised on these values. Namespaces are
+# not among them: every destination is resolved from kernel/namespaces.yaml,
+# which the installer copies in as `namespaces` (see B-01), so an Application
+# cannot name a namespace the layout does not have.
 gentianOsBranch: develop
-storageClass: ""
-stage: dev
-
-# The operator and portal Applications carry more provenance than the six above:
-# where the code comes from, where the deployments live, and which cluster and
-# stage this is.
 osRepo: https://github.com/gentian-org/gentian-os
-osImageRepository: ghcr.io/gentian-org/gentian-os
-appsRepo: https://github.com/gentian-org/gentian-apps
-deploymentsRepo: ""
-deploymentsBranch: main
-uiRepo: https://github.com/gentian-org/gentian-ui
-uiBranch: develop
-portalImageTag: develop
-cluster: ""
+storageClass: ""
 
-# Who hosts the zone, for external-dns. An entry in kernel/platforms.yaml,
-# which is also where cert-manager's DNS-01 solver comes from — one answer, two
-# consumers. "none" emits no external-dns Application at all.
+# Who hosts the zone, for external-dns; an entry in kernel/platforms.yaml.
+# "none" emits no external-dns Application.
 dnsProvider: none
-
-# Merged in from kernel/platforms.yaml, which is the single definition.
 dnsProviders: {}
-
-# The root ApplicationSet's own parameters.
 kernelDomain: ""
-smtpHost: ""
-smtpPort: "587"
-smtpSsl: "false"
-smtpStarttls: "true"
-
-# Which mail stack this cluster runs, from the Cluster claim's
-# mail.serviceMode. Not inferred from smtpHost: a relay host says only that
-# outbound goes through a smarthost, and a cluster can host its own mailboxes
-# AND relay outbound — the common arrangement when port 25 is blocked
-# outbound but reachable inbound. Inferring would take Dovecot away from it.
-mailServiceMode: external
-
-# How traffic reaches this cluster, from the Cluster claim's networkMode.
-# external-dns's source list branches on it — see its template for why a
-# tunnel cluster must not run the gateway-httproute source.
+# The cluster's id in gentian-deployments: what external-dns owns records as,
+# so two clusters never fight over one zone.
+cluster: ""
+# How traffic reaches this cluster (the Cluster claim's networkMode):
+# tunnel (the claim's default), or static-ip.
 networkMode: tunnel
 
-# Whether this cluster serves LLMs, and whether it has GPUs — from the Cluster
-# claim's llm.enabled and llm.gpuAcceleration. The first decides whether the LLM
-# ApplicationSet is generated at all; the second whether the mock inference
-# backend is deployed alongside LiteLLM.
+# Filled by the installer from kernel/namespaces.yaml. Never set by hand.
+namespaces: {}
+
+# Pins the installer copies in from versions.yaml (B-01). Never set by hand.
+versions:
+  headlamp:
+    chart: ""
+    repo: ""
+
+# The realm the kernel signs people in against. Tenants have their own.
+kernelRealm: kernel
+
+headlamp:
+  oidc:
+    # On once the kernel realm carries the headlamp client and its secret;
+    # a fresh cluster starts with token login, which is enough to look at a
+    # cluster that has no realm yet. The portal login step turns it on.
+    enabled: false
+    proxy:
+      # The maintained fork of jetstack's kube-oidc-proxy, which the archived
+      # original names as its successor.
+      image: docker.io/tremolosecurity/kube-oidc-proxy:1.0.13
+      # Where the image keeps the public roots that verify the issuer.
+      caFile: /etc/ssl/certs/ca-certificates.crt
+
+edge:
+  # The perimeter Gateway the operator reconciles in the edge namespace: the
+  # ACME HTTP-01 solver's routes attach to its :80 listener.
+  gatewayName: perimeter
+
+# The stage and the deployments repository, for the ApplicationSets.
+stage: dev
+deployments:
+  repo: ""
+  revision: main
+  cluster: ""
+# The app of apps is applied by C-02, once its children's prerequisites exist.
+appsets:
+  enabled: false
+
+# What the kernel-services ConfigMap says beyond the layout.
+tenancyMode: multi
+acmeStaging: "true"
+smtpHost: ""
+
+# Whether this cluster serves LLM, from the Cluster claim's llm.enabled. The
+# portal turns it into a capability, and a tile appears only for a capability
+# the cluster actually has.
 llmEnabled: "false"
-llmGpuAcceleration: "false"
-# Whether the claim's llm.providers lists any external provider. Gates the
-# ExternalSecret projecting their API keys into platform-kernel: with no
-# provider there is no OpenBao path behind it, and an ExternalSecret pointed at
-# a path that does not exist reports SecretSyncError forever.
-llmExternalProviders: "false"
-# The hostname outbound mail leaves from, from spec.mail.egressHost on the
-# Cluster claim. Empty means the shared egress address or a smarthost relay.
+
+# The desktop -- a component every tenant gets from the profile the operator
+# chart ships (ui-restructure.md §1). What the bootstrap decides is which
+# branch's chart that profile names: a prerelease per branch on a dev cluster,
+# and only some branches publish.
+desktop:
+  chartBranch: develop
+  # An exact chart version, which is what a cluster runs once the realm
+  # exists: the kernel realm step resolves the branch's newest immutable
+  # version and sets it here, because a Helm release under an unchanged
+  # version string is never upgraded, so the moving version can only ever
+  # install the first build it saw.
+  chartVersion: ""
+
+# The operator (and, with it, the director) — applied by D-01, once the
+# identity services its reconcilers address exist.
+# The administration console's chart, published by gentian-apps. D-02 resolves
+# the moving prerelease for the branch into the immutable version it names and
+# passes that as chartVersion; empty falls back to the moving one, which
+# installs but never upgrades.
+adminConsole:
+  chartBranch: main
+  chartVersion: ""
+
+operator:
+  enabled: false
+  image: ghcr.io/gentian-org/gentian-os
+  # An exact published tag. The installer sets it to the image built from the
+  # checkout's own commit (`<branch>-<sha>`), so the manifests Argo CD syncs
+  # and the binary the kubelet pulls come from one commit. Empty falls back to
+  # the branch tag, which moves and therefore never rolls a Deployment by
+  # itself.
+  tag: ""
+
+# Which mail stack this cluster runs, from the Cluster claim
+# (spec.mail.serviceMode). `system` deploys Postfix and Dovecot into the system
+# tier; `external` relays through a provider and deploys neither.
+mailServiceMode: external
+# The name mail leaves from, when the cluster sends from an address it owns
+# (spec.mail.egressHost). Empty means the shared egress or a smarthost.
 mailEgressHost: ""

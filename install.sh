@@ -88,9 +88,9 @@ source "${SCRIPT_DIR}/scripts/lib/driver.sh"
 # operator-settable version selects an untested combination. The namespace is a
 # constant — references to it are hardcoded across the repo, so presenting it as
 # a knob would invite someone to turn it.
-# v4's namespace; --layout v5 sets kernel-provisioning (kernel/namespaces.yaml).
-export CROSSPLANE_NAMESPACE="${CROSSPLANE_NAMESPACE:-crossplane-system}"
-export GENTIAN_LAYOUT="${GENTIAN_LAYOUT:-v4}"
+# kernel/namespaces.yaml names it; the constant here is what the steps read
+# before the layout is on the cluster to read it from.
+export CROSSPLANE_NAMESPACE="${CROSSPLANE_NAMESPACE:-kernel-provisioning}"
 CROSSPLANE_VERSION="$(gentian_pin crossplane chart)"
 CROSSPLANE_HELM_REPO="$(gentian_pin crossplane repo)"
 export CROSSPLANE_VERSION CROSSPLANE_HELM_REPO
@@ -133,8 +133,6 @@ Running part of it. A step is named by its number or its full id, so
   --skip ID[,ID...]     run everything except these
   --from ID             start here and continue to the end
   --until ID            start at the beginning and stop after this one
-  --layout v5           the kernel-* layout (scripts/steps-v5/): a fresh-install
-                        skeleton being built step by step; v4 is the default
   --phase NAME          one phase: control-plane, secrets, platform,
                         applications, handover — or its letter, A through E
   --force               apply even where check() says satisfied. The way past a
@@ -209,15 +207,15 @@ parse_driver_args() {
                 shift; [[ $# -gt 0 ]] || { error "$0: --phase requires a value"; exit 1; }
                 GENTIAN_PHASE="$1" ;;
             --layout)
-                # v5: the kernel-* namespace layout, from scripts/steps-v5/.
-                # It is a fresh-install layout; the default step set stays the
-                # one release 4.1 shipped until v5 replaces it.
+                # There is one layout. The flag is still read so that a script
+                # or a runbook carrying --layout v5 keeps working rather than
+                # failing on an unknown option; anything else is refused,
+                # because a caller asking for v4 wants something this installer
+                # no longer builds and should hear so.
                 shift; [[ $# -gt 0 ]] || { error "$0: --layout requires a value (v5)"; exit 1; }
                 case "$1" in
-                    v5)  GENTIAN_STEPS_DIR="${SCRIPT_DIR}/scripts/steps-v5"; export GENTIAN_LAYOUT=v5
-                         export CROSSPLANE_NAMESPACE=kernel-provisioning ;;
-                    v4)  GENTIAN_STEPS_DIR="${SCRIPT_DIR}/scripts/steps"; export GENTIAN_LAYOUT=v4 ;;
-                    *)   error "$0: --layout must be v4 or v5, not '$1'"; exit 1 ;;
+                    v5)  warn "--layout v5 is the only layout and is now the default; the flag does nothing." ;;
+                    *)   error "$0: --layout v5 is the only layout; '$1' is not built by this installer." ; exit 1 ;;
                 esac ;;
             --export-recovery-kit)
                 GENTIAN_DIRECTION="export-kit"

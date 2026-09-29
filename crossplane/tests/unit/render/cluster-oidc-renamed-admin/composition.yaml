@@ -26,17 +26,15 @@ spec:
             {{- /* The layout the claim is written for decides where the kernel is.
                  v4: the namespaces release 4.1 installs. v5: kernel/namespaces.yaml,
                  created and labelled by the installer before this claim exists. */}}
-            {{- $layout := default "v4" $spec.layout }}
-            {{- $v5 := eq $layout "v5" }}
-            {{- $provisioningNs := ternary "kernel-provisioning" "crossplane-system" $v5 }}
-            {{- $controlNs      := ternary "kernel-control" "gentian-system" $v5 }}
-            {{- $secretsNs      := ternary "kernel-secrets" "openbao" $v5 }}
+            {{- $provisioningNs := "kernel-provisioning" }}
+            {{- $controlNs      := "kernel-control" }}
+            {{- $secretsNs      := "kernel-secrets" }}
             {{- $obNs           := default $secretsNs (dig "openbao" "namespace" "" $spec) }}
             {{- $openbaoServer    := default (printf "https://openbao.%s.svc.cluster.local:8200" $secretsNs) (dig "openbao" "server" "" $spec) }}
             {{- $kvMount          := default "secret" (dig "openbao" "kvMount" "" $spec) }}
             {{- $authMount        := default "kubernetes" (dig "openbao" "authMount" "" $spec) }}
             {{- $k8sHost          := default "https://kubernetes.default.svc" (dig "openbao" "kubernetesHost" "" $spec) }}
-            {{- $authNs           := ternary "kernel-authentication" "platform-kernel" $v5 }}
+            {{- $authNs           := "kernel-authentication" }}
             {{- /* Keycloak's in-cluster base URL. Derived from the layout, for the
                  reason network.edgeNamespace is: a field that asks for it can name
                  a namespace the layout does not have, and the XRD's default did
@@ -44,8 +42,8 @@ spec:
                  runs in kernel-authentication and platform-kernel does not exist.
                  A claim may still override it; nothing has ever needed to. */}}
             {{- $kcInternalUrl    := default (printf "http://gentian-idp-keycloak-keycloakx-http.%s.svc.cluster.local:8080/auth" $authNs) (dig "identity" "internalUrl" "" $spec) }}
-            {{- $argoNs           := default (ternary "kernel-gitops" "argocd" $v5) (dig "argocd" "namespace" "" $spec) }}
-            {{- $esoNs            := default (ternary "kernel-secrets" "external-secrets" $v5) (dig "eso" "namespace" "" $spec) }}
+            {{- $argoNs           := default ("kernel-gitops") (dig "argocd" "namespace" "" $spec) }}
+            {{- $esoNs            := default ("kernel-secrets") (dig "eso" "namespace" "" $spec) }}
             {{- $esoSa            := default "external-secrets" (dig "eso" "serviceAccount" "" $spec) }}
             {{- $letsencryptEmail := default (printf "admin@%s" $spec.kernelDomain) (dig "certManager" "letsencryptEmail" "" $spec) }}
 
@@ -86,7 +84,6 @@ spec:
 
                  lint-namespace-layout.sh asserts this list equals
                  kernel/namespaces.yaml's. */}}
-            {{- if $v5 }}
             {{- /* The unconditional four, then whatever the claim adds.
                  kernel/namespaces.yaml marks the conditional ones with `when`
                  and the lint asserts both halves against this. */}}
@@ -128,7 +125,6 @@ spec:
               providerConfigRef:
                 name: kubernetes
             {{- end }}
-            {{- end }}
 
             {{- /* ── System-tier engines (provider-helm Releases) ───────────────
                  MariaDB, Redis and MinIO, one per system namespace above.
@@ -154,7 +150,6 @@ spec:
                  Bitnami postgresql is retired rather than moved
                  (namespace-cleanup.md §2.2): it held only kernel databases,
                  and those are on kernel-postgres in kernel-data now. */}}
-            {{- if $v5 }}
             {{- $infraCharts := "https://raw.githubusercontent.com/gentian-org/gentian-os/develop/charts/infra/packages" }}
             {{- /* The ConfigMap names below carry no stage. A cluster has one
                  stage (namespace-cleanup.md §2.2) and the Cluster claim does
@@ -208,31 +203,9 @@ spec:
               providerConfigRef:
                 name: kubernetes
             {{- end }}
-            {{- end }}
 
             {{- /* ── Kernel namespaces ─────────────────────────────────────────── */}}
             {{- /* v5's namespaces exist before the claim does (installer A-01). */}}
-            {{- range (ternary list (list "platform-kernel" "gentian-system") $v5) }}
-            ---
-            apiVersion: kubernetes.crossplane.io/v1alpha2
-            kind: Object
-            metadata:
-              annotations:
-                gotemplating.fn.crossplane.io/composition-resource-name: namespace-{{ . }}
-              name: {{ $name }}-ns-{{ . }}
-            spec:
-              forProvider:
-                manifest:
-                  apiVersion: v1
-                  kind: Namespace
-                  metadata:
-                    name: {{ . }}
-                    labels:
-                      gentianos.io/managed-by: crossplane
-                      gentianos.io/cluster: {{ $name }}
-              providerConfigRef:
-                name: kubernetes
-            {{- end }}
 
             {{- /* ── OpenBao KV v2 mount ───────────────────────────────────────── */}}
             ---
@@ -893,7 +866,6 @@ spec:
                  v5 only. A v4 cluster still gets both from that kernel service,
                  and two owners of one OpenBao policy would take turns writing
                  it. */}}
-            {{- if $v5 }}
             ---
             apiVersion: vault.vault.upbound.io/v1alpha1
             kind: Policy
@@ -950,7 +922,6 @@ spec:
                 tokenTtl: 3600
               providerConfigRef:
                 name: openbao
-            {{- end }}
 
             ---
             apiVersion: kubernetes.vault.upbound.io/v1alpha1
@@ -1140,7 +1111,7 @@ spec:
                     # namespace the layout does not have. The operator answers
                     # the same question from GENTIAN_NS_EDGE, which the chart
                     # sets from the same file this branch encodes.
-                    network.edgeNamespace: {{ ternary "kernel-edge" "platform-kernel" $v5 | quote }}
+                    network.edgeNamespace: {{ "kernel-edge" | quote }}
                     {{- /* Where the kernel's own services run, so a composition
                          that has to put something beside them does not have to
                          guess the layout. The Repository composition needs it:
@@ -1157,7 +1128,6 @@ spec:
                          does not exist on v5, so Argo CD never saw the
                          credential or the ApplicationSet. */}}
                     kernel.gitopsNamespace: {{ $argoNs | quote }}
-                    kernel.layout: {{ $layout | quote }}
                     # Whether this cluster serves one tenant or many.
                     #
                     # Here for the same reason mail.serviceMode is: the operator read it

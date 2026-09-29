@@ -25,7 +25,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-STEP_SETS = ["scripts/steps", "scripts/steps-v5"]
+STEP_SETS = ["scripts/steps"]
 
 STEP_RE = re.compile(r"^#\s*step:\s*(\S+)\s*$", re.MULTILINE)
 REQUIRES_RE = re.compile(r"^#\s*requires:\s*(.+?)\s*$", re.MULTILINE)

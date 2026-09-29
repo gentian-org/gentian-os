@@ -61,17 +61,6 @@ spec:
                     587. Use 'external' with an smtp-relay credential, or switch
                     to networkMode 'static-ip' with a reachable SMTP ingress.
               properties:
-                layout:
-                  type: string
-                  enum: [v4, v5]
-                  default: v4
-                  description: >
-                    Which installer this claim is written for. v4 is the layout
-                    release 4.1 installs (platform-kernel, crossplane-system,
-                    openbao, ...); v5 is the kernel-<function> layout of
-                    kernel/namespaces.yaml. The installer refuses a claim whose
-                    layout is not the one it was started with, and the
-                    composition reads it to place what it creates.
                 identity:
                   type: object
                   # The object itself defaults, not just its fields. A nested default
@@ -117,12 +106,12 @@ spec:
                         collapsing them would silently give one consumer the other's
                         contract.
 
-                        No default. It carried the v4 namespace, which the API server
-                        then materialised onto every composite including v5 ones, where
-                        platform-kernel does not exist -- so a tenant realm's broker IdP
-                        would fetch tokens from an address that resolves to nothing.
-                        Left unset, the composition derives it from spec.layout, the way
-                        it derives the edge namespace.
+                        No default. It used to carry a namespace name, which the API
+                        server then materialised onto every composite -- including the
+                        ones where that namespace does not exist, so a tenant realm's
+                        broker IdP would fetch tokens from an address that resolves to
+                        nothing. Left unset, the composition derives it from
+                        kernel/namespaces.yaml, the way it derives the edge namespace.
                 catalogue:
                   type: object
                   description: >

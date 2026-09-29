@@ -1302,7 +1302,7 @@ operator and the network policies name six of them.
 
 **The design is not missing, only unbuilt.**
 [namespace-cleanup.md](namespace-cleanup.md) §2.2 carries the whole table, and
-`kernel/bootstrap-v5/chart/templates/kernel-postgres.yaml` states the division
+`kernel/bootstrap/chart/templates/kernel-postgres.yaml` states the division
 in one line: "Kernel identity does not share a data plane with tenants; the
 tenant engines are system-* namespaces composed from the Cluster claim." So the
 composer is decided — the Cluster claim — and it is the Cluster composition

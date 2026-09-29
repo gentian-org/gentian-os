@@ -1,0 +1,39 @@
+# A v5 cluster that runs the platform's own mail stack.
+#
+# Every other cluster fixture is v4, and that is exactly how a v5-only branch
+# goes untested: the goldens agree with each other and with the bug. The
+# repository fixtures had the same gap and the literal `namespace: argocd` in
+# repository-default survived it for weeks.
+#
+# What this asserts is the conditional half of the system tier: mail.serviceMode
+# `system` composes system-mail and system-mail-dmz, and the DMZ carries tier
+# system-dmz rather than system -- the label the policies deciding what may
+# reach the internet select on. The sibling fixture, with mail relayed, must
+# compose neither.
+apiVersion: gentianos.io/v1alpha1
+kind: XCluster
+metadata:
+  name: dev-cluster
+  annotations:
+    crossplane.io/external-name: dev-cluster
+spec:
+  kernelDomain: platform.example.test
+  masterPasswordSecretRef:
+    name: gentian-os-master-password
+    namespace: kernel-provisioning
+  openbao:
+    server: https://openbao.kernel-secrets.svc.cluster.local:8200
+    kvMount: secret
+    authMount: kubernetes
+    kubernetesHost: https://kubernetes.default.svc
+  argocd:
+    sourceRepos: []
+  eso:
+    namespace: kernel-secrets
+    serviceAccount: external-secrets
+  certManager:
+    letsencryptEmail: admin@platform.example.test
+  mail:
+    serviceMode: system
+  compositeDeletePolicy: Background
+  resourceRefs: []

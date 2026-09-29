@@ -135,18 +135,24 @@ install; the claim says what the cluster is.
 ```
 
 It asks for the kernel domain, then writes `clusters/<cluster-id>/kernel` into
-your deployments checkout: `claims/cluster.yaml`, `claims/infra-data.yaml`,
-`claims/suze.yaml` and `values.yaml`. It commits nothing, pushes nothing, and
-does not contact the cluster.
+your deployments checkout: `claims/cluster.yaml`, `claims/suze.yaml`,
+`claims/deployments-repository.yaml` and `values.yaml`. It commits nothing,
+pushes nothing, and does not contact the cluster.
 
 ## 4. Edit what it generated
 
 These files are what the cluster becomes. Read them.
 
 - `claims/cluster.yaml` — everything that describes this cluster.
-- `claims/infra-data.yaml` — the shared Postgres, MariaDB, Redis and MinIO.
-- `claims/suze.yaml` — Cluster security (incl. Keycloak and OpenFGA).
+- `claims/suze.yaml` — cluster security (Keycloak and OpenFGA).
+- `claims/deployments-repository.yaml` — where the director pushes. Without it
+  every write answers 503: no tenant can be created and nobody can be invited.
 - `values.yaml` — this cluster's Helm overlay.
+
+There is no `claims/infra-data.yaml`. The shared Postgres, MariaDB, Redis and
+MinIO are composed with the cluster into the system tier (`system-postgresql`,
+`system-mariadb`, `system-cache`, `system-s3`), so a leftover InfraData claim
+from an older checkout would compose a second copy of all four. Delete it.
 
 `--prepare-deployment` asks for the four settings that decide whether the
 install works at all — domain, network mode, certificate issuer and mail — and

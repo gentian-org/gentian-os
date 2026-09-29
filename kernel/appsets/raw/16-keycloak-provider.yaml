@@ -10,7 +10,7 @@ apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
   name: gentian-keycloak-provider
-  namespace: argocd
+  namespace: ns.gitops.placeholder
   annotations:
     argocd.argoproj.io/sync-wave: "16"
 spec:
@@ -41,6 +41,8 @@ spec:
           parameters:
             - name: env
               value: '{{.env}}'
+            - name: keycloakUrl
+              value: 'http://gentian-idp-keycloak-keycloakx-http.ns.authentication.placeholder.svc.cluster.local:8080/auth'
           # Only stages that genuinely differ carry a values file; the rest
           # inherit the chart defaults.
           valueFiles:
@@ -48,7 +50,7 @@ spec:
           ignoreMissingValueFiles: true
       destination:
         server: https://kubernetes.default.svc
-        namespace: crossplane-system
+        namespace: ns.provisioning.placeholder
       syncPolicy:
         automated:
           prune: true
