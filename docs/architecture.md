@@ -579,7 +579,7 @@ gentian-apps/            # The catalogue (versioned artifact)
 ├── profiles/            # One AppProfile YAML per app
 ├── apps/                # First-party app source (FastAPI + React + Helm)
 │   ├── _template/       # gentian-app-template copy
-│   └── app-store/       # Tenant admin App Store UI
+│   └── admin-console/   # The administration console
 ├── app-profile-guide.md # Wrap upstream charts (profile only)
 ├── custom-app-guide.md  # Build new Gentian-native apps
 └── contracts/           # Contract schema definitions

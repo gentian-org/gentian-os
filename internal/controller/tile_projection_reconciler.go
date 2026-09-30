@@ -19,7 +19,9 @@ package controller
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"sort"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -80,6 +82,11 @@ type TileProjectionReconciler struct {
 	// KernelRealm is the realm the platform's own accounts live in. Keycloak's
 	// administration console is per realm, so the tile has to name it.
 	KernelRealm string
+	// KernelDomain and TenancyMode are what a tenant's own domain is derived
+	// from. A link tile names the tenant to the service it leads to, and that
+	// name is the tenant's domain.
+	KernelDomain string
+	TenancyMode  string
 }
 
 // primaryExposureName is what a component's own host is called: the first
@@ -262,11 +269,13 @@ func (r *TileProjectionReconciler) componentTiles(ctx context.Context) ([]tileca
 		return nil, err
 	}
 	byNamespace := map[string]string{}
+	domains := map[string]string{}
 	for i := range tenants.Items {
 		if tenants.Items[i].DeletionTimestamp != nil {
 			continue
 		}
 		byNamespace[tenants.Items[i].NamespaceName()] = tenants.Items[i].Name
+		domains[tenants.Items[i].Name] = tenants.Items[i].EffectiveDomain(r.KernelDomain, r.TenancyMode)
 	}
 
 	var out []tilecatalogue.Tile
@@ -289,6 +298,12 @@ func (r *TileProjectionReconciler) componentTiles(ctx context.Context) ([]tileca
 				continue
 			}
 			return nil, err
+		}
+		// An entry that runs nothing: its tile is a link, and leads where the
+		// profile says. No route is looked for because none exists -- the
+		// service is somebody else's and the cluster puts nothing in front.
+		if link := linkTile(profile, tenant, comp.Name, domains[tenant]); link != nil {
+			out = append(out, *link)
 		}
 		for j := range profile.Spec.Expose {
 			e := &profile.Spec.Expose[j]
@@ -349,6 +364,43 @@ func (r *TileProjectionReconciler) componentTiles(ctx context.Context) ([]tileca
 	// ConfigMap and wake everything that watches it.
 	sort.Slice(out, func(a, b int) bool { return out[a].Name < out[b].Name })
 	return out, nil
+}
+
+// linkTile is the tile of an entry that runs nothing, or nil.
+//
+// Only for runtime redirect. A proxied entry is reached through a host of the
+// cluster's, and a tile that named the service behind it would walk a person
+// around the proxy that was put there to hold the credential.
+func linkTile(profile *gentianov1alpha1.ComponentProfile, tenant, component, domain string) *tilecatalogue.Tile {
+	if !profile.IsAPI() || profile.Spec.Package.API.Tile == nil {
+		return nil
+	}
+	api := profile.Spec.Package.API
+	if api.Runtime != "" && api.Runtime != gentianov1alpha1.APIIntegrationRuntimeRedirect {
+		return nil
+	}
+	target, err := url.Parse(api.BaseURL)
+	if err != nil || target.Host == "" || (target.Scheme != "https" && target.Scheme != "http") {
+		return nil
+	}
+	if api.TenantBinding != gentianov1alpha1.APIIntegrationTenantBindingNone && domain != "" {
+		query := target.Query()
+		query.Set("tenantDomain", domain)
+		target.RawQuery = query.Encode()
+	}
+	if api.Tile.Path != "" {
+		target.Path = strings.TrimSuffix(target.Path, "/") + api.Tile.Path
+	}
+	return &tilecatalogue.Tile{
+		Name:         tenant + "/" + component + "/link",
+		DisplayName:  api.Tile.DisplayName,
+		DisplayNames: api.Tile.DisplayNames,
+		Description:  api.Tile.Description,
+		Icon:         api.Tile.Logo,
+		URL:          target.String(),
+		Object:       tileObject(api.Tile, tenant, profile.Name),
+		AnyOf:        []string{api.Tile.Relation},
+	}
 }
 
 // tileObject is the graph object a tile's relation is checked against.

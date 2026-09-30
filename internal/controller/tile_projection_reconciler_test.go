@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -59,7 +60,8 @@ func project(t *testing.T, objs ...client.Object) []tilecatalogue.Tile {
 		t.Fatal(err)
 	}
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objs...).Build()
-	r := &TileProjectionReconciler{Client: c, Cluster: "demo-cluster", KernelRealm: "kernel"}
+	r := &TileProjectionReconciler{Client: c, Cluster: "demo-cluster", KernelRealm: "kernel",
+		KernelDomain: "k.example", TenancyMode: "multi"}
 	if _, err := r.Reconcile(context.Background(), ctrl.Request{}); err != nil {
 		t.Fatal(err)
 	}
@@ -257,7 +259,8 @@ func TestAnUnchangedCatalogueIsNotRewritten(t *testing.T) {
 	}
 	c := fake.NewClientBuilder().WithScheme(scheme).
 		WithObjects(tileFixtureRoute(kernelRouteArgoCD, servicesNamespace, "argocd.k.example")).Build()
-	r := &TileProjectionReconciler{Client: c, Cluster: "demo-cluster", KernelRealm: "kernel"}
+	r := &TileProjectionReconciler{Client: c, Cluster: "demo-cluster", KernelRealm: "kernel",
+		KernelDomain: "k.example", TenancyMode: "multi"}
 	ctx := context.Background()
 	key := types.NamespacedName{Name: tilecatalogue.ConfigMapName, Namespace: layout.Namespace(layout.Control)}
 	versions := make([]string, 0, 2)
@@ -273,5 +276,62 @@ func TestAnUnchangedCatalogueIsNotRewritten(t *testing.T) {
 	}
 	if versions[0] != versions[1] {
 		t.Fatalf("the ConfigMap was rewritten: %v", versions)
+	}
+}
+
+// An entry that runs nothing has no route to read a host from, and needs
+// none: its tile leads where the profile says, naming the tenant on the way.
+func tileFixtureLinkProfile(name, baseURL string, tile *gentianov1alpha1.ExposureTile) *gentianov1alpha1.ComponentProfile {
+	profile := &gentianov1alpha1.ComponentProfile{}
+	profile.Name = name
+	profile.Spec.Package.API = &gentianov1alpha1.APIIntegration{
+		Runtime: gentianov1alpha1.APIIntegrationRuntimeRedirect,
+		BaseURL: baseURL,
+		Tile:    tile,
+	}
+	return profile
+}
+
+func TestAnEntryThatRunsNothingIsALink(t *testing.T) {
+	tile := &gentianov1alpha1.ExposureTile{
+		DisplayName: "Subscriptions", Logo: testTileLogo,
+		Relation: "can_administer", Object: gentianov1alpha1.TileObjectTenant,
+	}
+	tenant := tileFixtureTenant("demo")
+	comp := tileFixtureComponent("subscriptions", "tenant-demo", "subscriptions")
+
+	got := project(t, tenant, comp, tileFixtureLinkProfile("subscriptions", "https://corp.example/billing?plan=any", tile))
+	if len(got) != 1 {
+		t.Fatalf("got %v", tileNames(got))
+	}
+	link := got[0]
+	if link.Name != "demo/subscriptions/link" || link.Object != "tenant:demo" ||
+		fmt.Sprint(link.AnyOf) != "[can_administer]" {
+		t.Fatalf("tile = %+v", link)
+	}
+	// Straight to the service, with what it already said and the tenant's name.
+	if !strings.HasPrefix(link.URL, "https://corp.example/billing?") ||
+		!strings.Contains(link.URL, "plan=any") || !strings.Contains(link.URL, "tenantDomain=demo.k.example") {
+		t.Fatalf("url = %s", link.URL)
+	}
+
+	// No tile declared, no tile: an integration is not an advertisement.
+	if got := project(t, tenant, comp, tileFixtureLinkProfile("subscriptions", "https://corp.example", nil)); len(got) != 0 {
+		t.Fatalf("an entry with no tile got one: %v", tileNames(got))
+	}
+
+	// A proxied entry is reached through a host of the cluster's. A tile
+	// naming the service behind it would walk a person around the proxy.
+	proxied := tileFixtureLinkProfile("subscriptions", "https://corp.example", tile)
+	proxied.Spec.Package.API.Runtime = gentianov1alpha1.APIIntegrationRuntimePortalProxy
+	if got := project(t, tenant, comp, proxied); len(got) != 0 {
+		t.Fatalf("a proxied entry got a link: %v", tileNames(got))
+	}
+
+	// The service is told nothing about the tenant when the profile says so.
+	silent := tileFixtureLinkProfile("subscriptions", "https://corp.example/", tile)
+	silent.Spec.Package.API.TenantBinding = gentianov1alpha1.APIIntegrationTenantBindingNone
+	if got := project(t, tenant, comp, silent); len(got) != 1 || got[0].URL != "https://corp.example/" {
+		t.Fatalf("got %+v", got)
 	}
 }

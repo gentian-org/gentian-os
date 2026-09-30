@@ -446,7 +446,7 @@ func (r *TenantExportReconciler) captureUnits(
 // — it retries on a loop while the read that started it blocks waiting for a
 // sync that will not come. A reconcile carries no deadline, so on 2026-08-30 a
 // missing `persistentvolumeclaims` rule did not surface as the Forbidden it was.
-// It surfaced as an export that paused app-store-me, logged "paused app for
+// It surfaced as an export that paused an app, logged "paused app for
 // capture", and never logged again: one worker wedged forever, the tenant's app
 // offline, no error anywhere. An uncached read returns the Forbidden and the
 // export fails the way a failure should look.

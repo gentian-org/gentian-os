@@ -17,9 +17,10 @@ belongs to the workspace and **which apps and capabilities** each person may use
 
 See [architecture.md §2](../architecture.md#2-the-os-analogy) (OS analogy) and
 [architecture.md §5](../architecture.md#5-the-kernel--default-install-components)
-(kernel default install). The Admin Console sits alongside the Gentian Portal as
-a **kernel shell component** — not a catalogue app tenants install, but
-infrastructure every tenant relies on:
+(kernel default install). The Admin Console is **an app** — a component with
+its own profile, built from the app template like any other — that every tenant
+gets by default rather than one a tenant chooses. It reaches a person as a tile
+on the desktop, held by administrators and by nobody else:
 
 | Traditional OS | Gentian OS |
 |---|---|
@@ -44,11 +45,16 @@ in [iam.md](iam.md) and [multi-tenancy.md §8](multi-tenancy.md#81-admin--user-s
 | **Audit** | Sign-in and admin-action history | P6 — read-only event log, export |
 | **Notifications** | Scoped broadcasts | P7 — `admin-notifications` contract (**done**) |
 | **Resources** | Resource plans, ceilings, usage history | P10 — see [§4.8](#48-resources-p10) and [resource-plans.md](resource-plans.md) (**done**) |
-| **App Store** | Catalogue installs | **Stage 2** — see [§9](#9-stage-2--authorization-and-governance) |
+| **Catalogue** | What this cluster's own sources hold | The bare index (AD-14): coordinate, version, edition, trust tier. Installing is the App Store's |
 
-Implementation: Gentian BFF + React UI (`gentian-ui`, `ui_kits/console` aesthetic)
-calling **Keycloak Admin API** (Suze), Gentian kernel services, and (from P6) aggregated
-event stores.
+The **App Store is not a module of the console.** It is a tile of its own
+beside it, opening the store that runs outside the cluster (AD-3,
+[store-contract.md](store-contract.md) §7).
+
+Implementation: its own BFF and React UI (`gentian-apps/apps/admin-console`,
+`ui_kits/console` aesthetic), installed from its ComponentProfile. It holds no
+credential: every call is the director's, made with the identity the gateway
+asserts.
 
 ---
 

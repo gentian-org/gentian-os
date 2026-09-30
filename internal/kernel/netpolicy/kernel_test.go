@@ -40,7 +40,7 @@ func TestKernelAccessNetworkPolicy_ProfileKernelEgressNamespaces(t *testing.T) {
 			}},
 		},
 	}
-	np := netpolicy.KernelAccessNetworkPolicy("demo", "tenant-demo", "app-store", profile, netpolicy.DefaultConfig())
+	np := netpolicy.KernelAccessNetworkPolicy("demo", "tenant-demo", "notes", profile, netpolicy.DefaultConfig())
 	if np == nil {
 		t.Fatal("expected network policy")
 	}

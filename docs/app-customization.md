@@ -934,7 +934,7 @@ gentian-apps/profiles/<n>/
 
 Populating `spec.customization` for the existing catalogue — the families **odoo**, **nextcloud**,
 **xwiki**, **element**, **openproject**, **activepieces**, **litellm**, plus the first-party
-**app-store** and **gentian-subscriptions** — is the highest-value first implementation step: it is
+**admin-console** — is the highest-value first implementation step: it is
 pure documentation work that immediately makes the agent procedure executable. Grades are recorded
 per family in `profiles/<n>/customization.md`; addon profiles (`odoo-cb-*`, `nextcloud-office*`)
 inherit their base profile's declaration rather than repeating it.

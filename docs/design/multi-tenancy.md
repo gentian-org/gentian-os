@@ -210,10 +210,10 @@ via the [Gentian Admin Console](admin-console.md).
 the deployments repo via PR (process-controlled), and manage members/groups in
 the Admin Console (when deployed).
 
-**App Store (current):** tenant admins use the **App Store** web UI
-(`app-store` AppProfile) or `kubectl gentian apps` to install catalogue apps.
-Installs commit to `gentian-deployments` (GitOps) or create namespace-scoped
-`App` claims when `INSTALL_MODE=k8s`. See [commands.md](../commands.md) §5.
+**App Store (current):** tenant admins use the **App Store** tile on their
+desktop or `kubectl gentian apps` to install catalogue apps. The store runs
+outside the cluster; an install is a commit to `gentian-deployments` made by
+the director as the person who asked. See [commands.md](../commands.md) §5.
 
 **Future:** further self-service (tenant config, quotas) via the same surfaces
 without requiring YAML edits.

@@ -458,6 +458,10 @@ func main() {
 		Client:      mgr.GetClient(),
 		Cluster:     envOrDefault("GENTIAN_DEPLOYMENTS_CLUSTER_ID", "default-cluster"),
 		KernelRealm: kernelRealmOrDefault(os.Getenv("KERNEL_REALM")),
+		// What a tenant's own domain is derived from: a link tile names the
+		// tenant to the service it leads to.
+		KernelDomain: os.Getenv("KERNEL_DOMAIN"),
+		TenancyMode:  tenancyMode,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "TileProjection")
 		os.Exit(1)
