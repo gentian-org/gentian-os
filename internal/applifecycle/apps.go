@@ -77,6 +77,16 @@ type AppState struct {
 	// While any is listed the install waits on a person, not on the cluster.
 	PendingPrivileges []string       `json:"pendingPrivileges,omitempty"`
 	Conditions        []AppCondition `json:"conditions,omitempty"`
+	// Reserved is what the app's pods request: what it costs against the
+	// tenant's ceiling, not what it happens to be using. Absent for an app
+	// with no pods.
+	Reserved *AppReservation `json:"reserved,omitempty"`
+}
+
+// AppReservation is the sum of an app's container requests.
+type AppReservation struct {
+	CPUMilli    int64 `json:"cpuMilli"`
+	MemoryBytes int64 `json:"memoryBytes"`
 }
 
 // AppCondition is one condition of the Component, as reported.
@@ -130,11 +140,13 @@ func (s *Service) AppStates(ctx context.Context, tenantName string) ([]AppState,
 			return nil, fmt.Errorf("get componentprofile %q: %w", profile, err)
 		}
 		state := componentState(comp)
+		pods, err := s.componentPods(ctx, comp)
+		if err != nil {
+			return nil, err
+		}
+		state.Reserved = reservation(pods)
 		if !state.Ready {
-			failure, err := s.workloadFailure(ctx, comp)
-			if err != nil {
-				return nil, err
-			}
+			failure := workloadFailure(pods)
 			if failure != "" {
 				state.Phase, state.Failure = AppPhaseFailing, failure
 				if state.Message == "" {
@@ -192,25 +204,52 @@ var failingWaits = map[string]bool{
 	"CreateContainerError":       true,
 }
 
-// workloadFailure says what is wrong with a component's pods, or nothing.
+// componentPods are the pods of a component's release.
 //
 // Found by the release the component's chart was installed as, which is the
 // label Helm puts on what it renders. A component with no pods -- an external
-// service, a chart still rendering -- has nothing to find and says nothing.
-func (s *Service) workloadFailure(ctx context.Context, comp *gentianov1alpha1.Component) (string, error) {
+// service, a chart still rendering -- has nothing to find.
+func (s *Service) componentPods(ctx context.Context, comp *gentianov1alpha1.Component) ([]corev1.Pod, error) {
 	var pods corev1.PodList
 	err := s.client.List(ctx, &pods,
 		client.InNamespace(comp.Namespace),
 		client.MatchingLabels{"app.kubernetes.io/instance": comp.Namespace + "-" + comp.Name})
 	if err != nil {
-		return "", fmt.Errorf("list pods of %s: %w", comp.Name, err)
+		return nil, fmt.Errorf("list pods of %s: %w", comp.Name, err)
 	}
-	for i := range pods.Items {
-		pod := &pods.Items[i]
+	return pods.Items, nil
+}
+
+// reservation sums what the pods request. A finished pod holds nothing, so
+// a completed Job is not counted against the app that ran it.
+func reservation(pods []corev1.Pod) *AppReservation {
+	var out AppReservation
+	counted := false
+	for i := range pods {
+		pod := &pods[i]
+		if pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed {
+			continue
+		}
+		for _, c := range pod.Spec.Containers {
+			out.CPUMilli += c.Resources.Requests.Cpu().MilliValue()
+			out.MemoryBytes += c.Resources.Requests.Memory().Value()
+			counted = true
+		}
+	}
+	if !counted {
+		return nil
+	}
+	return &out
+}
+
+// workloadFailure says what is wrong with a component's pods, or nothing.
+func workloadFailure(pods []corev1.Pod) string {
+	for i := range pods {
+		pod := &pods[i]
 		for _, c := range pod.Status.Conditions {
 			if c.Type == corev1.PodScheduled && c.Status == corev1.ConditionFalse &&
 				c.Reason == corev1.PodReasonUnschedulable {
-				return "no node can run " + pod.Name + ": " + c.Message, nil
+				return "no node can run " + pod.Name + ": " + c.Message
 			}
 		}
 		statuses := append(append([]corev1.ContainerStatus{}, pod.Status.InitContainerStatuses...),
@@ -221,11 +260,11 @@ func (s *Service) workloadFailure(ctx context.Context, comp *gentianov1alpha1.Co
 				if w.Message != "" {
 					msg += ": " + w.Message
 				}
-				return cs.Name + " in " + pod.Name + " — " + msg, nil
+				return cs.Name + " in " + pod.Name + " — " + msg
 			}
 		}
 	}
-	return "", nil
+	return ""
 }
 
 // ErrStillInstalled is a purge asked of an app the tenant still has.
@@ -325,11 +364,20 @@ func (s *Service) ProvisionApp(ctx context.Context, tenantName, profile string) 
 	if err != nil {
 		return nil, err
 	}
+	// An app of the tenant's, or an add-on switched on inside one: an add-on
+	// has a group of its own, and who may use it is decided separately from
+	// who may use its base.
 	installed := false
 	for _, a := range tenant.Spec.Apps {
 		if a.Profile == profile {
 			installed = true
 			break
+		}
+		for _, addon := range a.Addons {
+			if addon == profile {
+				installed = true
+				break
+			}
 		}
 	}
 	if !installed {

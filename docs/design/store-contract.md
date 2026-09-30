@@ -111,7 +111,8 @@ Reads are authorised by `can_view`, never by the write relation.
 
 `/apps` answers from git: what the tenant is meant to have. `/apps/status` is
 the operator's answer, relayed: each app is `installing`, `ready` or
-`failing`, with the reason in the reconciler's own words. `failing` is a
+`failing`, with the reason in the reconciler's own words, and carries what
+its pods reserve against the tenant's plan. `failing` is a
 workload that cannot start — an image that cannot be pulled, a container that
 keeps exiting — which Kubernetes retries for ever and which therefore reads as
 "still installing" to anything that only looks at readiness.
@@ -127,9 +128,9 @@ POST /v1/tenants/{t}/actions/provision-app   {"profile": "<name>"}   can_grant
 A purge deletes what an uninstalled app left behind — databases, object
 storage, secrets. It is refused with `409` while the tenant still has the app
 or while the cluster is still taking it down, so removing an app never takes
-its data with it by accident. Provisioning grants an installed app to
-everybody who is a member now, and marks it granted by default to whoever
-joins later.
+its data with it by accident. Provisioning grants an installed app — or an
+add-on switched on inside one, by its own name — to everybody who is a member
+now, and marks it granted by default to whoever joins later.
 
 ## 6. Without the store
 
@@ -224,7 +225,7 @@ desktop → store   {"gentian":"store-bridge","v":1,"id":"<id>","ok":true,"statu
 | `resources.get` | `GET /resources` | |
 | `entitlements.list` | `GET /entitlements` | |
 | `catalogues.list`, `catalogues.entries` | `GET /catalogues`, `GET /catalogues/{s}/entries` | |
-| `apps.install` | `POST /apps/{p}` with the coordinate | yes |
+| `apps.install` | `POST /apps/{p}` with the coordinate and the digest | yes |
 | `apps.uninstall` | `DELETE /apps/{p}` | yes |
 | `apps.purge` | `POST /actions/purge-app` | yes |
 | `apps.provision` | `POST /actions/provision-app` | yes |

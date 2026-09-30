@@ -23,6 +23,7 @@ import (
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -115,6 +116,13 @@ func TestAWorkloadThatCannotStartIsFailingNotInstalling(t *testing.T) {
 				Name: "wiki-0", Namespace: "tenant-demo",
 				Labels: map[string]string{"app.kubernetes.io/instance": "tenant-demo-wiki"},
 			},
+			Spec: corev1.PodSpec{Containers: []corev1.Container{{
+				Name: "xwiki",
+				Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{
+					corev1.ResourceCPU:    resource.MustParse("250m"),
+					corev1.ResourceMemory: resource.MustParse("512Mi"),
+				}},
+			}}},
 			Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{{
 				Name: "xwiki",
 				State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{
@@ -142,6 +150,9 @@ func TestAWorkloadThatCannotStartIsFailingNotInstalling(t *testing.T) {
 		t.Fatalf("states = %+v", states)
 	}
 	wiki := states[0]
+	if wiki.Reserved == nil || wiki.Reserved.CPUMilli != 250 || wiki.Reserved.MemoryBytes != 512<<20 {
+		t.Fatalf("reserved = %+v", wiki.Reserved)
+	}
 	if wiki.Phase != AppPhaseFailing || !strings.Contains(wiki.Failure, "ImagePullBackOff") ||
 		!strings.Contains(wiki.Failure, "wiki-0") {
 		t.Fatalf("wiki = %+v", wiki)
@@ -193,6 +204,23 @@ func TestProvisioningNeedsTheAppToBeInstalled(t *testing.T) {
 	s := appsService(t, demoTenant())
 	_, err := s.ProvisionApp(context.Background(), "demo", "wiki")
 	if err == nil || !strings.Contains(err.Error(), "not installed") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+// An add-on has a group of its own, so it is provisioned by its own name.
+func TestAnAddonSwitchedOnCountsAsInstalledForProvisioning(t *testing.T) {
+	tenant := demoTenant()
+	tenant.Spec.Apps = []gentianov1alpha1.TenantApp{{Profile: "cloud", Addons: []string{"cloud-calendar"}}}
+	s := appsService(t, tenant)
+
+	// Past the "is it installed" question, which is the one asked here; what
+	// follows needs a Keycloak this test does not have.
+	_, err := s.ProvisionApp(context.Background(), "demo", "cloud-calendar")
+	if err == nil || strings.Contains(err.Error(), "not installed") {
+		t.Fatalf("err = %v", err)
+	}
+	if _, err := s.ProvisionApp(context.Background(), "demo", "cloud-notes"); err == nil || !strings.Contains(err.Error(), "not installed") {
 		t.Fatalf("err = %v", err)
 	}
 }
