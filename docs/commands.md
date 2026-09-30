@@ -189,21 +189,17 @@ kubectl get tenant demo
 
 ## 5. Tenant App Store
 
-Tenant admins install apps via the **App Store** web UI (preferred) or the CLI.
+Tenant admins install apps from the **App Store** (preferred) or the CLI.
 
-### Web UI
+### The App Store tile
 
-When `app-store` is installed for a tenant, open:
-
-```text
-https://store.<tenant>.<kernel-domain>
-```
-
-The UI lists `AppCatalogue` entries, shows kernel requirements, and installs or
-uninstalls apps via GitOps commits to `gentian-deployments` (default) or direct
-`App` claims when `INSTALL_MODE=k8s` is set on the App Store deployment.
-
-Portal: tenant admins see an **App Store** tile (`allowedGroup: Tenant Admins`).
+An administrator's desktop carries an **App Store** tile whenever the Cluster
+claim names a store (`catalogue.storeUrl`). It opens the store in a window.
+Nothing of the store runs in the cluster: what it shows of this tenant —
+what is installed, how it is doing, how much of the plan is used — and what it
+does to it — install, remove, purge, add-ons — it asks of the desktop, which
+asks the director as the person signed in. Each change is confirmed in a
+dialog the desktop draws. See [design/store-contract.md](design/store-contract.md) §7.
 
 ### CLI (fallback)
 

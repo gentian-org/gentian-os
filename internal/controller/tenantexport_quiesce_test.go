@@ -245,16 +245,16 @@ func TestFailedCaptureResumesAppAndStampsQuiesceEnd(t *testing.T) {
 	export := &gentianov1alpha1.TenantExport{
 		ObjectMeta: metav1.ObjectMeta{Name: "export-x", Namespace: "tenant-demo"},
 		Status: gentianov1alpha1.TenantExportStatus{
-			Quiesced: []string{"app-store-me"},
+			Quiesced: []string{"notes"},
 			Apps: []gentianov1alpha1.AppExportStatus{{
-				Name:         "app-store-me",
+				Name:         "notes",
 				Phase:        gentianov1alpha1.TenantExportPhaseRunning,
 				QuiesceStart: &start,
 			}},
 		},
 	}
 	tenant := &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "demo"}}
-	paused := deployment("app-store-me", "app-store-me", 0)
+	paused := deployment("notes", "notes", 0)
 	paused.Annotations = map[string]string{replicaMemoAnnotation: "2"}
 
 	c := fake.NewClientBuilder().WithScheme(s).
@@ -263,11 +263,11 @@ func TestFailedCaptureResumesAppAndStampsQuiesceEnd(t *testing.T) {
 	r := &TenantExportReconciler{Client: c, Scheme: s,
 		Reconciler: &TenantReconciler{Client: c, Scheme: s}}
 
-	if _, err := r.failApp(context.Background(), export, tenant, "app-store-me", "boom"); err != nil {
+	if _, err := r.failApp(context.Background(), export, tenant, "notes", "boom"); err != nil {
 		t.Fatalf("failApp: %v", err)
 	}
 
-	entry := appStatus(&export.Status.Apps, "app-store-me")
+	entry := appStatus(&export.Status.Apps, "notes")
 	if entry.Phase != gentianov1alpha1.TenantExportPhaseFailed {
 		t.Fatalf("app phase = %q, want Failed", entry.Phase)
 	}
@@ -277,7 +277,7 @@ func TestFailedCaptureResumesAppAndStampsQuiesceEnd(t *testing.T) {
 	if len(export.Status.Quiesced) != 0 {
 		t.Fatalf("status.quiesced = %v, want empty", export.Status.Quiesced)
 	}
-	if got := *getDeployment(t, c, "app-store-me").Spec.Replicas; got != 2 {
+	if got := *getDeployment(t, c, "notes").Spec.Replicas; got != 2 {
 		t.Fatalf("replicas = %d, want the memoed 2", got)
 	}
 }
@@ -302,17 +302,17 @@ func TestDeletingAnExportResumesAppsCleansBundleThenReleases(t *testing.T) {
 		},
 		Status: gentianov1alpha1.TenantExportStatus{
 			Phase:    gentianov1alpha1.TenantExportPhaseRunning,
-			Quiesced: []string{"app-store-me"},
+			Quiesced: []string{"notes"},
 			Bundle: &gentianov1alpha1.BundleRef{
 				Bucket: "demo-gentian-backup",
 				Prefix: "export-x",
 			},
 		},
 	}
-	paused := deployment("app-store-me", "app-store-me", 0)
+	paused := deployment("notes", "notes", 0)
 	paused.Annotations = map[string]string{replicaMemoAnnotation: "1"}
 	captureJob := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{
-		Name:      "tx-export-x-app-store-me-pg",
+		Name:      "tx-export-x-notes-pg",
 		Namespace: s3Namespace,
 		Labels:    map[string]string{backup.ExportLabel: "export-x"},
 	}}
@@ -337,7 +337,7 @@ func TestDeletingAnExportResumesAppsCleansBundleThenReleases(t *testing.T) {
 	if _, err := r.Reconcile(ctx, req); err != nil {
 		t.Fatalf("reconcile 1: %v", err)
 	}
-	if got := *getDeployment(t, c, "app-store-me").Spec.Replicas; got != 1 {
+	if got := *getDeployment(t, c, "notes").Spec.Replicas; got != 1 {
 		t.Fatalf("replicas = %d, want resumed 1", got)
 	}
 	if err := c.Get(ctx, types.NamespacedName{Name: captureJob.Name, Namespace: s3Namespace}, &batchv1.Job{}); err == nil {
@@ -383,12 +383,12 @@ func TestCompletedUnitIsNotRerunAfterItsJobDisappears(t *testing.T) {
 		t.Fatalf("add gentian scheme: %v", err)
 	}
 
-	const jobName = "tx-export-x-app-store-me-pg"
+	const jobName = "tx-export-x-notes-pg"
 	export := &gentianov1alpha1.TenantExport{
 		ObjectMeta: metav1.ObjectMeta{Name: "export-x", Namespace: "tenant-demo"},
 		Status: gentianov1alpha1.TenantExportStatus{
 			Apps: []gentianov1alpha1.AppExportStatus{{
-				Name:           "app-store-me",
+				Name:           "notes",
 				CompletedUnits: []string{jobName},
 			}},
 		},
@@ -401,7 +401,7 @@ func TestCompletedUnitIsNotRerunAfterItsJobDisappears(t *testing.T) {
 	unit := captureUnit{JobName: jobName, Job: &batchv1.Job{ObjectMeta: metav1.ObjectMeta{
 		Name:      jobName,
 		Namespace: s3Namespace,
-		Labels:    map[string]string{meta.AppLabel: "app-store-me"},
+		Labels:    map[string]string{meta.AppLabel: "notes"},
 	}}}
 	done, err := r.ensureCaptureJob(context.Background(), export, unit)
 	if err != nil {
@@ -531,7 +531,7 @@ func (forbiddenReader) List(context.Context, client.ObjectList, ...client.ListOp
 }
 
 // On 2026-08-30 this permission was missing on corp and the export did not fail.
-// It paused app-store-me, blocked on a cache that could never sync, and left the
+// It paused an app, blocked on a cache that could never sync, and left the
 // app scaled to zero with `Running` on the CR and nothing in the log. Failing is
 // the requirement; that the app comes back is the reason it matters.
 //

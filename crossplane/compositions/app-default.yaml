@@ -831,7 +831,7 @@ spec:
             {{- $identity := default dict $kr.identity }}
             {{- /* Outside the OIDC block on purpose: an entitlement group is per
                  APP, not per OIDC client. The groups Job makes one either way, and
-                 app-store-me has no oidc block in its profile — so a group rendered
+                 a profile with no oidc block still has one — so a group rendered
                  inside that conditional silently skipped it. */}}
             {{- $entGroup := printf "gentian:tenant:%s:app:%s" $tenant $app | lower | replace ":" "-" | replace "_" "-" | replace "." "-" }}
             {{- /* The app's entitlement group.

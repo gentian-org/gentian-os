@@ -512,6 +512,14 @@ func (s *Server) routes() {
 	// plan, is can_set_plan, model v1's own verb for it, and it is a commit:
 	// the operator learns the plan from git like everything else.
 	if s.cfg.Lifecycle != nil {
+		// What the cluster made of what git says is installed, and the two
+		// acts on an app that are not desired state. Purging is whoever may
+		// install's to do, as uninstalling is; provisioning hands an app to
+		// people, which is can_grant's.
+		s.guarded("GET /v1/tenants/{t}/apps/status", "can_view", tenantObject, s.appStates)
+		s.guarded("POST /v1/tenants/{t}/actions/purge-app", "can_install_app", tenantObject, s.purgeApp)
+		s.guarded("POST /v1/tenants/{t}/actions/provision-app", "can_grant", tenantObject, s.provisionApp)
+
 		s.guarded("GET /v1/tenants/{t}/resources", "can_view", tenantObject, s.resourceState)
 		s.guarded("GET /v1/tenants/{t}/resources/plans", "can_view", tenantObject, s.resourcePlans)
 		s.guarded("GET /v1/tenants/{t}/resources/usage", "can_view", tenantObject, s.resourceUsage)

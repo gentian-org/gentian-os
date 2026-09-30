@@ -44,6 +44,7 @@ type operator struct {
 	// actor and lastAction record what an action arrived as.
 	actor      string
 	lastAction string
+	lastBody   map[string]any
 }
 
 func startOperator(t *testing.T) *operator {
@@ -155,12 +156,27 @@ func startOperator(t *testing.T) *operator {
 			"totalRecords": 0, "carriedDeltas": 0, "byRung": map[string]any{}, "records": []any{},
 		})
 	})
+	mux.HandleFunc("GET /v1/tenants/{t}/apps/status", func(w http.ResponseWriter, r *http.Request) {
+		if !known(w, r) {
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"tenant": r.PathValue("t"),
+			"apps": []map[string]any{
+				{"profile": "nextcloud-base-ce", "name": "nextcloud-base-ce", "ready": true, "phase": "ready"},
+				{"profile": "xwiki-ce", "name": "xwiki-ce", "ready": false, "phase": "failing",
+					"failure": "xwiki in xwiki-0 — ImagePullBackOff"},
+			},
+		})
+	})
 	mux.HandleFunc("POST /v1/tenants/{t}/actions/{action}", func(w http.ResponseWriter, r *http.Request) {
 		if !known(w, r) {
 			return
 		}
 		op.actor = r.Header.Get("X-Gentian-Actor")
 		op.lastAction = r.PathValue("action")
+		op.lastBody = map[string]any{}
+		_ = json.NewDecoder(r.Body).Decode(&op.lastBody)
 		w.WriteHeader(http.StatusAccepted)
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"action": r.PathValue("action"), "tenant": r.PathValue("t"),

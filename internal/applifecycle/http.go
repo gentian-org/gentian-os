@@ -107,6 +107,7 @@ func (h *HTTPServer) Start(ctx context.Context) error {
 	guarded.HandleFunc("POST /v1/tenants/{tenant}/apps/{profile}", h.handleInstall)
 	guarded.HandleFunc("DELETE /v1/tenants/{tenant}/apps/{profile}", h.handleUninstall)
 	guarded.HandleFunc("PUT /v1/tenants/{tenant}/apps/{profile}/addons", h.handleSetAddons)
+	h.registerAppRoutes(guarded)
 	h.registerResourceRoutes(guarded)
 	h.registerBackupRoutes(guarded)
 	h.registerPlatformRoutes(guarded)

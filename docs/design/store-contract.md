@@ -101,11 +101,35 @@ token, filtered by what that person may see:
 
 ```
 GET /v1/tenants/{t}/apps                  installed profiles and their addons
+GET /v1/tenants/{t}/apps/status           what the cluster made of them
 GET /v1/tenants/{t}/apps/{p}/addons
+GET /v1/tenants/{t}/resources             the plan, and what is used of it
 GET /v1/tenants/{t}/entitlements          the recorded facts
 ```
 
 Reads are authorised by `can_view`, never by the write relation.
+
+`/apps` answers from git: what the tenant is meant to have. `/apps/status` is
+the operator's answer, relayed: each app is `installing`, `ready` or
+`failing`, with the reason in the reconciler's own words. `failing` is a
+workload that cannot start — an image that cannot be pulled, a container that
+keeps exiting — which Kubernetes retries for ever and which therefore reads as
+"still installing" to anything that only looks at readiness.
+
+Two things can be done to an app that are not a change to what the tenant is,
+and so are actions rather than commits; the person is named on the request:
+
+```
+POST /v1/tenants/{t}/actions/purge-app       {"profile": "<name>"}   can_install_app
+POST /v1/tenants/{t}/actions/provision-app   {"profile": "<name>"}   can_grant
+```
+
+A purge deletes what an uninstalled app left behind — databases, object
+storage, secrets. It is refused with `409` while the tenant still has the app
+or while the cluster is still taking it down, so removing an app never takes
+its data with it by accident. Provisioning grants an installed app to
+everybody who is a member now, and marks it granted by default to whoever
+joins later.
 
 ## 6. Without the store
 
@@ -173,4 +197,62 @@ attribution, the audit trail, and every check on the profile itself — a
 side-loaded profile meets the same CEL rules, admission policies and
 privilege approvals as one the store lists. Only the questions the store
 answers — presentation and payment — go unanswered.
+
+## 7. The desktop bridge
+
+The store holds no credential for a cluster (§1), and the person's token is
+forwarded to the desktop and to nothing else (AD-13). So the store is shown in
+a window on the desktop, and what it needs of the cluster it asks of the
+desktop, which asks the director as the person sitting at it. §4 and §5 are
+what is asked; this is how.
+
+The wire is `window.postMessage` between the store's page and the desktop
+that framed it:
+
+```
+store → desktop   {"gentian":"store-bridge","v":1,"id":"<id>","op":"<op>","args":{…}}
+desktop → store   {"gentian":"store-bridge","v":1,"id":"<id>","ok":true,"status":200,"data":{…}}
+                  {"gentian":"store-bridge","v":1,"id":"<id>","ok":false,"status":403,"error":"…"}
+```
+
+| Operation | Asks the director | Confirmed by the person |
+|---|---|---|
+| `context` | — (cluster, tenant, the caller's relations, their language) | |
+| `apps.list` | `GET /apps` | |
+| `apps.status` | `GET /apps/status` | |
+| `addons.get` | `GET /apps/{p}/addons` | |
+| `resources.get` | `GET /resources` | |
+| `entitlements.list` | `GET /entitlements` | |
+| `catalogues.list`, `catalogues.entries` | `GET /catalogues`, `GET /catalogues/{s}/entries` | |
+| `apps.install` | `POST /apps/{p}` with the coordinate | yes |
+| `apps.uninstall` | `DELETE /apps/{p}` | yes |
+| `apps.purge` | `POST /actions/purge-app` | yes |
+| `apps.provision` | `POST /actions/provision-app` | yes |
+| `addons.set` | `PUT /apps/{p}/addons` | yes |
+| `entitlements.deliver` | `POST /entitlements` with the statement | yes |
+
+Four rules, and each is enforced by the desktop rather than asked of the
+store:
+
+* **One origin.** A message is read only if it comes from the origin of
+  `catalogue.storeUrl` on the Cluster claim, and only from a frame the desktop
+  itself opened. Which store may ask anything of a cluster is recorded in git.
+  A cluster that names no store listens to nothing.
+* **A closed list.** The table is all there is. No operation takes a path or
+  a method, so there is no request the store can phrase that reaches another
+  route of the director.
+* **Names are names.** A profile or a catalogue lands in a URL path and is
+  matched against what a name may be before anything is sent — in the browser
+  and again in the desktop's backend.
+* **Writes are confirmed on the cluster's origin.** Each waits for the person
+  to say yes in a dialog the desktop draws. A page in a frame can ask for an
+  install; it cannot press the button. A refusal answers with status `499`.
+
+The checkout runs in a tab of its own, because a sign-in page will not be
+framed. What it produces — the grant — it hands to the framed page, and the
+framed page is what delivers it: a tab the person opened has the store's
+origin and is still not a frame of the desktop's, so it is not listened to.
+
+Opened on its own, outside a desktop, the store has nobody to ask. It lists
+and sells, and says that installing is done from the desktop.
 

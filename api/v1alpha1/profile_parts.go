@@ -459,6 +459,20 @@ type APIIntegration struct {
 	// +kubebuilder:default=tenant-domain
 	// +kubebuilder:validation:Enum=tenant-domain;none
 	TenantBinding APIIntegrationTenantBinding `json:"tenantBinding,omitempty"`
+
+	// Tile puts this entry on the desktop of whoever holds its relation.
+	//
+	// An entry that runs nothing has nothing to expose, so it cannot carry a
+	// tile the way a component does, under an exposure with a backend. The
+	// tile is here instead and leads straight to baseUrl: there is no host
+	// of the cluster's in between, because a redirect through one would be a
+	// route, a certificate and a session for the sake of a link.
+	//
+	// Read for runtime redirect only. The proxy runtimes put a host of the
+	// cluster's in front of the service, and that host is what a tile of
+	// theirs would name.
+	// +optional
+	Tile *ExposureTile `json:"tile,omitempty"`
 }
 
 // APIIntegrationRuntime selects how an ApiProfile reaches its external service.

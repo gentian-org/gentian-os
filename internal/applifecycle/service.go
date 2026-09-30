@@ -376,7 +376,12 @@ func (s *Service) ListInstalled(ctx context.Context, tenant string) ([]Result, e
 
 func (s *Service) loadKeycloakAdmin(ctx context.Context) (string, string, string, error) {
 	secret := &corev1.Secret{}
-	err := s.client.Get(ctx, types.NamespacedName{Name: "keycloak-admin", Namespace: "platform-kernel"}, secret)
+	// Where External Secrets projects it: beside Keycloak, in the layout's
+	// authentication namespace. This read "platform-kernel", a namespace v5
+	// never creates, so every provisioning failed on a Secret that was not
+	// there and no app group ever got its members.
+	err := s.client.Get(ctx, types.NamespacedName{
+		Name: "keycloak-admin", Namespace: layout.Namespace(layout.Authentication)}, secret)
 	if err != nil {
 		return "", "", "", err
 	}
