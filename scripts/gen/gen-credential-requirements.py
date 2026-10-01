@@ -44,6 +44,9 @@ def provider_requirements(platforms):
                 "vaultPath": cred["vaultPath"],
                 "fields": cred["fields"],
                 "consumedBy": [{"kind": "XCluster", "name": "cluster"}],
+                # The vendor, for grouping: the table key unless the table says
+                # otherwise (route53 is AWS, cf-tunnel is Cloudflare).
+                "provider": profile.get("vendor", name),
             }
             if cred.get("description"):
                 req["description"] = cred["description"]
@@ -253,6 +256,10 @@ def build_documents(catalogue):
                         "gentianos.io/credential-phase": req["phase"],
                         "gentianos.io/credential-scope": req["scope"],
                         **({"gentianos.io/tenant": req["tenant"]} if req.get("tenant") else {}),
+                        # Who issues the credential, so the credential manager
+                        # can group one vendor's tokens together. A label, not
+                        # spec: it describes the requirement, it asks nothing.
+                        **({"gentianos.io/credential-provider": req["provider"]} if req.get("provider") else {}),
                     },
                 },
                 "spec": spec,

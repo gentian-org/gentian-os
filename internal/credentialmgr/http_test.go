@@ -845,3 +845,30 @@ func TestAProbeThatRefusesStillBlocksTheWrite(t *testing.T) {
 		t.Fatalf("a refused probe did not block the write: %d %s", w.Code, w.Body.String())
 	}
 }
+
+// TestListingCarriesTheProvider is what lets a screen keep one vendor's
+// tokens together: the catalogue's provider label comes back as a field, and
+// a requirement without one carries none.
+func TestListingCarriesTheProvider(t *testing.T) {
+	dns := requirement("acme-dns-infomaniak", "cluster", "gentian-os/kernel/dns/infomaniak", 0)
+	dns.Labels = map[string]string{ProviderLabel: "infomaniak"}
+	s, _ := newServer(t, dns, requirement("master-password", "cluster", "gentian-os/kernel/master", 0))
+
+	w := do(t, s, "GET", "/v1/credentials", "")
+	var got struct {
+		Credentials []Status `json:"credentials"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decoding listing: %v\n%s", err, w.Body.String())
+	}
+	providers := map[string]string{}
+	for _, st := range got.Credentials {
+		providers[st.Name] = st.Provider
+	}
+	if providers["acme-dns-infomaniak"] != "infomaniak" {
+		t.Errorf("provider label not carried: %q", providers["acme-dns-infomaniak"])
+	}
+	if p, ok := providers["master-password"]; !ok || p != "" {
+		t.Errorf("an unlabelled requirement should be listed with no provider, got %q (listed=%v)", p, ok)
+	}
+}

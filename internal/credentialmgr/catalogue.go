@@ -27,6 +27,10 @@ import (
 	gentianv1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
+// ProviderLabel names who issues a requirement's credential; the catalogue
+// generator sets it from kernel/platforms.yaml and credentials.yaml.
+const ProviderLabel = "gentianos.io/credential-provider"
+
 // Field is one input a form must collect. Note what is absent: there is no
 // Value. This type describes the shape of a credential, never its content.
 type Field struct {
@@ -42,16 +46,20 @@ type Field struct {
 // The read-back prohibition lives here as a type: there is no field capable of
 // carrying a credential value, so no handler can accidentally serialise one.
 type Status struct {
-	Name        string  `json:"name"`
-	DisplayName string  `json:"displayName"`
-	Description string  `json:"description,omitempty"`
-	Phase       string  `json:"phase"`
-	Scope       string  `json:"scope"`
-	Tenant      string  `json:"tenant,omitempty"`
-	Optional    bool    `json:"optional"`
-	VaultPath   string  `json:"vaultPath"`
-	Fields      []Field `json:"fields"`
-	Validator   string  `json:"validator,omitempty"`
+	Name        string `json:"name"`
+	DisplayName string `json:"displayName"`
+	Description string `json:"description,omitempty"`
+	Phase       string `json:"phase"`
+	Scope       string `json:"scope"`
+	Tenant      string `json:"tenant,omitempty"`
+	// Provider is who issues the credential (cloudflare, infomaniak, aws...),
+	// from the catalogue's gentianos.io/credential-provider label, so a screen
+	// can keep one vendor's tokens together. Empty for the platform's own.
+	Provider  string  `json:"provider,omitempty"`
+	Optional  bool    `json:"optional"`
+	VaultPath string  `json:"vaultPath"`
+	Fields    []Field `json:"fields"`
+	Validator string  `json:"validator,omitempty"`
 	// ValidateHost is the endpoint the validator probes, when the requirement
 	// declares one. Not a credential — an OCI registry or a git remote's own
 	// address — so exposing it alongside VaultPath carries the same weight.
@@ -124,6 +132,7 @@ func (c *Catalogue) List(ctx context.Context, v Viewer) ([]Status, error) {
 			Phase:       r.Spec.Phase,
 			Scope:       r.Spec.Scope,
 			Tenant:      r.Spec.Tenant,
+			Provider:    r.Labels[ProviderLabel],
 			Optional:    r.Spec.Optional,
 			VaultPath:   r.Spec.VaultPath,
 		}

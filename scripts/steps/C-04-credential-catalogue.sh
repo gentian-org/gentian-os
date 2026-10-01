@@ -49,6 +49,73 @@ _cc_render() {
         "$(_catalogue_file)"
 }
 
+# What this cluster asks for, not the whole catalogue.
+#
+# The catalogue describes the platform -- every DNS provider, every source
+# repository, every LLM provider -- and applying all of it filled the
+# credential manager with forms nothing on the cluster would ever read: six
+# DNS providers on a Cloudflare cluster, NOT SET under each. An entry is
+# applied when _requirement_applies says this cluster uses it (the same gate
+# the installer's prompts use), and not when a composed requirement -- a
+# Repository claim's -- already declares the same OpenBao path, which listed
+# the deployments credential twice.
+_cc_composed_paths() {
+    kubectl get credentialrequirements -o json 2>/dev/null \
+        | jq -r '.items[] | select((.metadata.ownerReferences // []) | length > 0) | .spec.vaultPath' \
+        2>/dev/null || true
+}
+
+_cc_wanted() {
+    local name path composed
+    composed="$(_cc_composed_paths)"
+    while IFS= read -r name; do
+        [[ -n "${name}" ]] || continue
+        _requirement_applies "${name}" || continue
+        path="$(catalogue_get "${name}" vaultPath)"
+        if [[ -n "${path}" ]] && grep -qxF -- "${path}" <<<"${composed}"; then
+            continue
+        fi
+        echo "${name}"
+    done < <(catalogue_names)
+}
+
+# _cc_select <names> — the rendered catalogue, reduced to these requirements
+# and their probes. A probe is named credreq-<requirement>.
+_cc_select() {
+    # shellcheck disable=SC2016 # awk's own fields
+    awk -v keep="$1" '
+        BEGIN { n = split(keep, k, "\n"); for (i = 1; i <= n; i++) if (k[i] != "") want[k[i]] = 1 }
+        function flush() {
+            if (doc != "" && (name in want)) printf "---\n%s", doc
+            doc = ""; name = ""; meta = 0
+        }
+        /^---$/                { flush(); next }
+        /^metadata:/           { meta = 1 }
+        /^[a-z]/ && !/^metadata:/ { meta = 0 }
+        meta && /^  name: /    { name = $2; sub(/^credreq-/, "", name) }
+        { doc = doc $0 "\n" }
+        END { flush() }
+    '
+}
+
+# _cc_prune <names> — remove catalogue requirements this cluster no longer
+# asks for, and their probes. Only what the catalogue applied: a requirement
+# with an owner was composed by something else and is that thing's to remove.
+# The declaration goes; a value already stored in OpenBao stays.
+_cc_prune() {
+    local wanted="$1" name ns
+    ns="$(_cc_ns)"
+    while IFS= read -r name; do
+        [[ -n "${name}" ]] || continue
+        grep -qxF -- "${name}" <<<"${wanted}" && continue
+        kubectl get credentialrequirement "${name}" >/dev/null 2>&1 || continue
+        [[ -z "$(kubectl get credentialrequirement "${name}" -o jsonpath='{.metadata.ownerReferences}' 2>/dev/null)" ]] || continue
+        info "  ${name}: not requested on this cluster; removing its declaration (a stored value stays in OpenBao)"
+        kubectl delete credentialrequirement "${name}" --ignore-not-found >/dev/null 2>&1 || true
+        kubectl delete externalsecret "credreq-${name}" -n "${ns}" --ignore-not-found >/dev/null 2>&1 || true
+    done < <(catalogue_names)
+}
+
 check() {
     kubectl get crd credentialrequirements.gentianos.io >/dev/null 2>&1 || return 1
     # Both halves, because they have different lifetimes: the requirements are
@@ -61,8 +128,17 @@ check() {
     # SecretSyncedError for ever, and check-credentials calls the credential
     # missing; a check testing only that the object is there would skip the
     # apply that corrects it.
-    local name want have ns
+    local name want have ns wanted
     ns="$(_cc_ns)"
+    wanted="$(_cc_wanted)"
+    # And nothing it no longer asks for: a requirement left from before shows
+    # a form nobody needs, so its presence is as unsatisfied as an absence.
+    while IFS= read -r name; do
+        [[ -n "${name}" ]] || continue
+        grep -qxF -- "${name}" <<<"${wanted}" && continue
+        [[ -n "$(kubectl get credentialrequirement "${name}" -o jsonpath='{.metadata.ownerReferences}' 2>/dev/null)" ]] && continue
+        kubectl get credentialrequirement "${name}" >/dev/null 2>&1 && return 1
+    done < <(catalogue_names)
     while IFS= read -r name; do
         [[ -n "${name}" ]] || continue
         kubectl get credentialrequirement "${name}" >/dev/null 2>&1 || return 1
@@ -72,7 +148,7 @@ check() {
             -o jsonpath='{range .spec.data[*]}{.remoteRef.property}{"\n"}{end}' \
             2>/dev/null | sort | tr '\n' ' ')" || return 1
         [[ -n "${have}" && "${want}" == "${have}" ]] || return 1
-    done < <(catalogue_names)
+    done <<<"${wanted}"
     return 0
 }
 
@@ -102,8 +178,9 @@ apply() {
     # A placeholder that survived substitution would become a host nothing
     # can reach, and the probe would then report a good credential as bad --
     # which is worse than not probing at all.
-    local rendered
-    rendered="$(_cc_render)"
+    local rendered wanted
+    wanted="$(_cc_wanted)"
+    rendered="$(_cc_render | _cc_select "${wanted}")"
     if grep -q '__GENTIAN_' <<<"${rendered}"; then
         error "The credential catalogue still holds an unsubstituted placeholder:"
         grep -o '__GENTIAN_[A-Z_]*__' <<<"${rendered}" | sort -u | while IFS= read -r ph; do
@@ -111,7 +188,10 @@ apply() {
         done
         return 1
     fi
-    printf '%s\n' "${rendered}" | gentian_run kubectl apply -f -
+    if [[ -n "${rendered}" ]]; then
+        printf '%s\n' "${rendered}" | gentian_run kubectl apply -f -
+    fi
+    _cc_prune "${wanted}"
 }
 
 destroy() {

@@ -209,6 +209,9 @@ dnsProviders:
 
   route53:
     displayName: AWS Route 53
+    # Who issues this credential, when it is not the key above. The credential
+    # manager groups a cluster's credentials by it, so one vendor's tokens sit together.
+    vendor: aws
     requiredParams:
       - region
       - hostedZoneID
@@ -246,6 +249,9 @@ dnsProviders:
 
   clouddns:
     displayName: Google Cloud DNS
+    # Who issues this credential, when it is not the key above. The credential
+    # manager groups a cluster's credentials by it, so one vendor's tokens sit together.
+    vendor: google
     requiredParams:
       - project
     credential:
@@ -273,6 +279,9 @@ dnsProviders:
 
   azuredns:
     displayName: Azure DNS
+    # Who issues this credential, when it is not the key above. The credential
+    # manager groups a cluster's credentials by it, so one vendor's tokens sit together.
+    vendor: azure
     requiredParams:
       - subscriptionID
       - tenantID
@@ -434,6 +443,9 @@ edgeIngress:
   # would be their own entry, not another value of one "tunnel" setting.
   cf-tunnel:
     displayName: Cloudflare Tunnel
+    # Who issues this credential, when it is not the key above. The credential
+    # manager groups a cluster's credentials by it, so one vendor's tokens sit together.
+    vendor: cloudflare
     credential:
       secretName: cloudflare-tunnel-api-token
       vaultPath: gentian-os/kernel/edge/cf-tunnel
