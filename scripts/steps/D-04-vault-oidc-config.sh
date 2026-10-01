@@ -200,7 +200,10 @@ check() {
     # that could not reach the vault here would silently never configure the
     # mount. apply() says what is wrong; a check must not be why a step is
     # skipped.
-    _oidc_bao_addr || return "${CHECK_MISSING}"
+    if ! _oidc_bao_addr; then
+        gentian_handed_over && return "${CHECK_UNDEFINED}"
+        return "${CHECK_MISSING}"
+    fi
 
     # Configured means the discovery URL matches the claim, not merely that some
     # config exists — a mount pointed at the wrong realm authenticates nobody and
@@ -214,7 +217,9 @@ check() {
     local have rc=0
     have="$(bao read -field=oidc_discovery_url auth/oidc/config 2>&1)" || rc=$?
     if [[ ${rc} -ne 0 ]]; then
-        grep -qi 'permission denied' <<<"${have}" && return "${CHECK_MISSING}"
+        # After handover the installer holds no token by design; the mount
+        # was configured before it was revoked (gentian_handed_over).
+        gentian_handed_over && return "${CHECK_UNDEFINED}"
         return "${CHECK_MISSING}"
     fi
     [[ "${have}" == "${OIDC_DISCOVERY_URL}" ]]

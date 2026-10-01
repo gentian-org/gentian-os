@@ -24,8 +24,13 @@
 check() {
     local addr token
     addr="$(gentian_service_addr openbao "$(ns_kernel secrets)" 8200 https 2>/dev/null)" || return 1
-    token="$(jq -r '.root_token // empty' "${OPENBAO_INIT_FILE:-${HOME}/.gentian/openbao-init.json}" 2>/dev/null)" || return 1
-    [[ -n "${token}" ]] || return 1
+    token="$(jq -r '.root_token // empty' "${OPENBAO_INIT_FILE:-${HOME}/.gentian/openbao-init.json}" 2>/dev/null)" || true
+    if [[ -z "${token}" ]]; then
+        # Revoked at handover, with the init file: nothing here can read the
+        # vault any more, and the seeding was done before that could happen.
+        gentian_handed_over && return "${CHECK_UNDEFINED}"
+        return "${CHECK_MISSING}"
+    fi
     local p
     for p in dns/cloudflare repositories/deployments; do
         [[ "$(curl -sk -o /dev/null -w '%{http_code}' --max-time 5 -H "X-Vault-Token: ${token}" "${addr}/v1/secret/data/gentian-os/kernel/${p}")" == "200" ]] || return 1

@@ -663,3 +663,16 @@ seed_secrets() {
         "${SMTP_RELAY_PASSWORD:-}"
     success "All kernel secrets seeded."
 }
+
+# gentian_handed_over — the bootstrap token was revoked at handover (E-03).
+#
+# After that this shell holds no OpenBao token by design, so a step whose
+# check needs one cannot verify anything -- and that is not the same as the
+# step being undone. Such checks answer undefined then, so a finished cluster
+# does not list them as outstanding and a re-run does not walk into a 403.
+# Before handover the same gap stays MISSING, which is what makes apply() run
+# and say what is wrong.
+gentian_handed_over() {
+    [[ "$(kubectl get configmap gentian-handover -n "$(ns_kernel control)" \
+        -o jsonpath='{.data.bootstrapCredentialRevoked}' 2>/dev/null)" == "true" ]]
+}
