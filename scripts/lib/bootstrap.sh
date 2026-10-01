@@ -2107,7 +2107,9 @@ _cluster_scaffold_paths() {
 gentian_commit_cluster_deployment() {
     local kernel_dir="$1" cluster="$2" dirty sign_args branch
     local -a paths
-    mapfile -t paths < <(_cluster_scaffold_paths "${cluster}")
+    local _p
+    paths=()
+    while IFS= read -r _p; do paths+=("${_p}"); done < <(_cluster_scaffold_paths "${cluster}")
     command -v git >/dev/null 2>&1 || return 0
     git -C "${GENTIAN_DEPLOYMENTS_PATH}" rev-parse --git-dir >/dev/null 2>&1 || {
         warn "${GENTIAN_DEPLOYMENTS_PATH} is not a git repository, so nothing was committed."
@@ -2198,7 +2200,9 @@ _warn_uncommitted_cluster_deployment() {
     # Untracked or modified, under what step 0 scaffolds only: any other
     # tenant being edited in the repository is not this step's business.
     local -a paths
-    mapfile -t paths < <(_cluster_scaffold_paths "${cluster}")
+    local _p
+    paths=()
+    while IFS= read -r _p; do paths+=("${_p}"); done < <(_cluster_scaffold_paths "${cluster}")
     dirty="$(git -C "${GENTIAN_DEPLOYMENTS_PATH}" status --porcelain -- \
         "${paths[@]}" 2>/dev/null)" || return 0
     [[ -n "${dirty}" ]] || return 0
