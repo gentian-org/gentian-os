@@ -28,6 +28,8 @@ check() {
         # console reachable at all; a step that reports satisfied without it
         # leaves a redirect loop nothing else in the sequence looks at.
         [[ "$(kubectl get configmap argocd-cmd-params-cm -n "${ns}" -o jsonpath='{.data.server\.insecure}' 2>/dev/null)" == "true" ]] &&
+        # And the diff computed the way the sync applies: see apply().
+        [[ "$(kubectl get configmap argocd-cmd-params-cm -n "${ns}" -o jsonpath='{.data.controller\.diff\.server\.side}' 2>/dev/null)" == "true" ]] &&
         [[ "$(kubectl get clusterrolebinding argocd-application-controller -o jsonpath='{.subjects[0].namespace}' 2>/dev/null)" == "${ns}" ]]
 }
 
@@ -65,17 +67,30 @@ apply() {
     # minutes matches the reconciliation window, and a webhook still shortens
     # it to seconds where one is registered.
     #
+    # controller.diff.server.side is set with them, because most of what Argo
+    # CD syncs here syncs with ServerSideApply=true. Under server-side apply
+    # the API server fills a CRD's schema defaults at apply time; Argo CD's
+    # default diff is computed client-side and does not know them, so it
+    # reports a difference no sync can remove. On the first fresh v5 install
+    # nine Applications sat OutOfSync and Healthy that way -- the data-plane
+    # engines, the claims, the operator among them -- and C-02 waited fifteen
+    # minutes on one whose live object matched git exactly. Server-side diff
+    # asks the API server, which is the same question the sync asked.
+    #
     # Framing is NOT set here. The console opens Argo CD in a window on the
     # desktop, and what may frame a kernel host is the Gateway's answer for
     # every one of them -- Argo CD's own setting would be a second writer of
     # the same header, and its x-frame-options cannot be turned off through a
     # parameter anyway: an empty value falls back to the default.
     kubectl patch configmap argocd-cmd-params-cm -n "${ns}" --type merge \
-        -p '{"data":{"server.insecure":"true","reposerver.repo.cache.expiration":"3m"}}' >/dev/null
+        -p '{"data":{"server.insecure":"true","reposerver.repo.cache.expiration":"3m","controller.diff.server.side":"true"}}' >/dev/null
     kubectl rollout restart deployment argocd-server argocd-repo-server -n "${ns}" >/dev/null
+    # The application controller is what diffs, and reads its parameters at start.
+    kubectl rollout restart statefulset argocd-application-controller -n "${ns}" >/dev/null
+    kubectl rollout status statefulset argocd-application-controller -n "${ns}" --timeout=180s >/dev/null
     kubectl rollout status deployment argocd-server -n "${ns}" --timeout=180s >/dev/null
     kubectl rollout status deployment argocd-repo-server -n "${ns}" --timeout=180s >/dev/null
-    success "Argo CD serving plain HTTP behind the Gateway, with a 3-minute repo cache."
+    success "Argo CD serving plain HTTP behind the Gateway, with a 3-minute repo cache and server-side diff."
 
     banner "Argo CD Image Updater"
     helm repo add argo "$(gentian_pin argocd repo)" --force-update >/dev/null
