@@ -190,7 +190,7 @@ one. Every question shows its default; Enter takes it.
 | Kernel domain | — | Always asked; there is no default |
 | `networkMode` | `tunnel` | DNS points straight at a node — `static-ip`, which then asks for `nodeIp` |
 | `certificates.issuerMode` | `acme-dns01` | The domain is not publicly resolvable (`self-signed`), or port 80 is reachable but you have no DNS API token (`acme-http01`) |
-| `certificates.acmeEnv` | `staging` on a `dev` stage, else `production` | Names are settled and you want trusted certificates on dev |
+| `certificates.acmeEnv` | `production` | Only to test issuance itself: the kernel sign-in does not trust `staging` certificates |
 | `certificates.dnsProvider` | `cloudflare` | The zone is hosted elsewhere |
 | `mail.serviceMode` | `external` | You want in-cluster Postfix/Dovecot (`kernel`, needs `static-ip`) |
 | `mail.host` | unset | `external` mode: the relay's hostname. Its credentials are a credential, supplied in step 5 — not asked here |

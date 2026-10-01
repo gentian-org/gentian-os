@@ -1485,14 +1485,13 @@ prompt_cluster_settings() {
     prompt_claim_value TENANCY_MODE "tenancyMode" multi "multi single"
     prompt_claim_value SECRET_MODE "secretMode" derived "derived random"
     if [[ "${CERT_ISSUER_MODE:-acme-dns01}" == acme-* ]]; then
-        # Staging on dev: a dev cluster is rebuilt often, and Let's Encrypt
-        # allows five duplicate certificates per name per week.
-        local acme_default=production acme_label="certificates.acmeEnv"
-        if [[ "${GENTIAN_DEPLOYMENTS_STAGE:-dev}" == "dev" ]]; then
-            acme_default=staging
-            acme_label="certificates.acmeEnv (dev stage: staging — untrusted certs, generous rate limits)"
+        # Production on every stage: see the scaffold in bootstrap.sh for why
+        # staging stopped being the dev default.
+        prompt_claim_value ACME_ENV "certificates.acmeEnv" production "production staging"
+        if [[ "${ACME_ENV}" == "staging" ]]; then
+            warn "  acmeEnv staging: Envoy Gateway does not trust a staging chain, so the"
+            warn "  kernel sign-in (D-03) will not come up. Use it only to test issuance."
         fi
-        prompt_claim_value ACME_ENV "${acme_label}" "${acme_default}" "staging production"
     fi
     if [[ "${CERT_ISSUER_MODE:-acme-dns01}" == "acme-dns01" ]]; then
         prompt_claim_value DNS_PROVIDER "certificates.dnsProvider" cloudflare \

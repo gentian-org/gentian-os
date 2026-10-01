@@ -1342,7 +1342,6 @@ _claim_cluster_fields() {
     local im="${CERT_ISSUER_MODE:-acme-dns01}"
     local pf="${PLATFORM:-}"
     local dp="${DNS_PROVIDER:-cloudflare}"
-    local st="${GENTIAN_DEPLOYMENTS_STAGE:-dev}"
 
     printf '\n'
     printf '  # Where this cluster runs. Selects the edge load-balancer settings\n'
@@ -1394,19 +1393,16 @@ _claim_cluster_fields() {
     printf '  certificates:\n'
     printf '    issuerMode: %s\n' "${im}"
     if [[ "${im}" == acme-* ]]; then
-        # Asked by prompt_cluster_settings; staging on dev unless answered
-        # otherwise. A dev cluster is rebuilt often and Let's Encrypt allows
-        # five duplicate certificates per name per week, which one bad
-        # afternoon exhausts — and the rate limit is per name, so it outlives
-        # the cluster that spent it.
-        local ae="${ACME_ENV:-}"
-        if [[ -z "${ae}" ]]; then
-            ae=production
-            [[ "${st}" == "dev" ]] && ae=staging
-        fi
+        # Asked by prompt_cluster_settings; production unless answered
+        # otherwise, on every stage. Staging used to be the dev default, for
+        # its rate limits, but the kernel's own sign-in fetches Keycloak's
+        # discovery document through the in-cluster gateway, which serves
+        # this certificate: Envoy Gateway refuses a staging chain, so a dev
+        # install stopped at D-03 with every SecurityPolicy Invalid.
+        local ae="${ACME_ENV:-production}"
         if [[ "${ae}" == "staging" ]]; then
-            printf '    # staging: untrusted certificates, generous rate limits.\n'
-            printf '    # Switch to production once the names are settled.\n'
+            printf '    # staging: untrusted certificates. The kernel sign-in refuses\n'
+            printf '    # them; use only to test issuance itself.\n'
         fi
         printf '    acmeEnv: %s\n' "${ae}"
     fi

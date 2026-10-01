@@ -16,6 +16,12 @@ check() {
     # --status pass carries no DNS_PROVIDER and would otherwise report a
     # cluster that is serving the certificate as undefined.
     [[ "$(gentian_dns_provider)" == "none" ]] && return "${CHECK_UNDEFINED}"
+    # Issued by the issuer the claim names now. A switch from staging to
+    # production otherwise left the staging certificate in place for good:
+    # it was still there and still propagated, which was all this asked.
+    [[ "$(kubectl get certificate wildcard-kernel -n "$(gentian_cert_manager_namespace)" \
+        -o jsonpath='{.spec.issuerRef.name}' 2>/dev/null)" == "$(gentian_dns01_cluster_issuer_name)" ]] \
+        || return "${CHECK_MISSING}"
     GENTIAN_WILDCARD_TARGETS="$(_v5_wildcard_targets)" kernel_wildcard_propagated
 }
 
