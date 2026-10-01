@@ -43,6 +43,7 @@ advance() {
 # inside rather than with bash -u, as install.sh does it: the host's own
 # startup files are not ours to hold to it.
 sync() {
+    # shellcheck disable=SC2016 # the inner script is for the child shell to expand
     env -i HOME="${SANDBOX}/home" PATH="${PATH}" SCRIPT_DIR="${REPO}" GENTIAN_DEPLOYMENTS_BRANCH=main \
         bash -c 'set -u; source scripts/lib/load.sh >/dev/null 2>&1; rc=0; gentian_sync_deployments_checkout '"${1:-}"' || rc=$?; echo "rc=${rc}"' 2>&1
 }
