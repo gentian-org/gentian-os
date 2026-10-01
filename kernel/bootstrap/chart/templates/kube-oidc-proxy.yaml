@@ -16,7 +16,7 @@
 #
 # The implementation is the maintained fork of jetstack's kube-oidc-proxy,
 # which the archived original names as its successor.
-{{- if .Values.headlamp.oidc.enabled }}
+{{- if eq (toString .Values.headlamp.oidc.enabled) "true" }}
 {{- $ns := include "ns" (list . "observability") }}
 {{- $issuer := printf "https://id.%s/auth/realms/%s" .Values.kernelDomain .Values.kernelRealm }}
 apiVersion: v1

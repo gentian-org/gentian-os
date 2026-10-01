@@ -120,3 +120,11 @@ mailEgressHost: ""
 # would fix it.
 signing:
   keys: []
+
+# On the switches above (appsets.enabled, operator.enabled,
+# headlamp.oidc.enabled): the templates compare them to "true" rather than
+# testing them for truth. The installer passes every value with --set-string,
+# and in a template the string "false" is true -- any non-empty string is. A
+# fresh cluster rendered the operator, the appsets and Headlamp's OIDC in B-01,
+# phases before any of them could work, and Headlamp waited on a Secret only
+# D-02 writes.

@@ -4,7 +4,7 @@
 # B-01: its children need the Cluster claim's AppProject, the ESO store and
 # the seeded paths to exist. The layout goes in as a value, so the wrapper
 # can resolve namespaces by function.
-{{- if .Values.appsets.enabled }}
+{{- if eq (toString .Values.appsets.enabled) "true" }}
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

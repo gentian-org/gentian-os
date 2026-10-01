@@ -2,7 +2,7 @@
 # The operator, in the control namespace. It takes the namespace layout as
 # values, so it addresses kernel namespaces by function rather than by the one
 # name v4 had for all of them.
-{{- if .Values.operator.enabled }}
+{{- if eq (toString .Values.operator.enabled) "true" }}
 {{- /*
   The manifests come from a git ref; the image comes from a published tag, and
   the installer resolves that to the image built from THIS CHECKOUT'S COMMIT
