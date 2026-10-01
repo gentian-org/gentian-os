@@ -316,7 +316,7 @@ credential the desktop no longer holds. It becomes a component like any other,
 visible only to holders of the relation, whose only job is to be a GUI over
 the director's API.
 
-**Shipped and running.** It lives in `gentian-apps/apps/admin-console`, built
+**Shipped and running.** It lives in `gentian-ui/apps/admin-console`, built
 from the restated app template, described by the `admin-console`
 `ComponentProfile` the operator chart ships, published as chart
 `admin-console` with its own images, and installed into every tenant by
