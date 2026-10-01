@@ -47,6 +47,10 @@ apply() {
     info "waiting for gentian-os to be Synced and Healthy"
     t=$((SECONDS + 900))
     until _v5_delivered "${ns}" gentian-os; do
+        # As C-02: an Application whose retries are spent is asked again,
+        # not waited on.
+        unstick_argo_hook_job "${ns}" gentian-os
+        request_argo_sync_if_stalled "${ns}" gentian-os
         if (( SECONDS > t )); then
             error "gentian-os is not Synced and Healthy after 15m:"
             kubectl get application gentian-os -n "${ns}" -o jsonpath='{"  sync: "}{.status.sync.status}{"  health: "}{.status.health.status}{" "}{.status.health.message}{"\n"}' 2>/dev/null

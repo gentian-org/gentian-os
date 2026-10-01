@@ -124,6 +124,11 @@ apply() {
         info "waiting for ${app} to be Synced and Healthy"
         t=$((SECONDS + 900))
         until _v5_delivered "${ns}" "${app}"; do
+            # Never a passive wait. An Application that spent its retries --
+            # on a fresh cluster, while what it reads was still arriving --
+            # does not sync again on its own, however long this loop waits.
+            unstick_argo_hook_job "${ns}" "${app}"
+            request_argo_sync_if_stalled "${ns}" "${app}"
             if (( SECONDS > t )); then
                 error "${app} is not Synced and Healthy after 15m:"
                 kubectl get application "${app}" -n "${ns}" -o jsonpath='{"  sync: "}{.status.sync.status}{"  health: "}{.status.health.status}{" "}{.status.health.message}{"\n"}' 2>/dev/null
