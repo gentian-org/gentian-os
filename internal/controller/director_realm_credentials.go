@@ -29,6 +29,7 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/authz"
+	"github.com/gentian-org/gentian-os/internal/layout"
 )
 
 // The director's per-realm Keycloak credentials, provisioned and handed over.
@@ -46,6 +47,14 @@ import (
 // and has no Kubernetes identity to go and look with, which is the same
 // property as the tile catalogue: the operator holds the credential, the
 // director is given what it needs.
+
+// directorRealmSecretNamespace is where the director runs and mounts the Secret
+// from: the control namespace, beside the tile catalogue the operator hands it
+// the same way. It was servicesNamespace, which the v5 layout made the edge
+// namespace -- the Secret was written there with the kernel realm's key in it,
+// the director mounted an absent Secret from its own namespace, and People
+// answered 503 "holds no credential for the realm kernel" on a finished install.
+func directorRealmSecretNamespace() string { return layout.Namespace(layout.Control) }
 
 // DirectorRealmSecretName is the Secret the director mounts, one key per realm
 // whose value is that realm's client secret. The client id is the same in
@@ -141,13 +150,13 @@ func (r *KeycloakPlatformReconciler) ensureDirectorRealmCredentials(ctx context.
 func writeDirectorRealmSecret(ctx context.Context, c client.Client, data map[string][]byte, complete bool) error {
 	existing := &corev1.Secret{}
 	err := c.Get(ctx, types.NamespacedName{
-		Name: DirectorRealmSecretName, Namespace: servicesNamespace}, existing)
+		Name: DirectorRealmSecretName, Namespace: directorRealmSecretNamespace()}, existing)
 	switch {
 	case apierrors.IsNotFound(err):
 		return c.Create(ctx, &corev1.Secret{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      DirectorRealmSecretName,
-				Namespace: servicesNamespace,
+				Namespace: directorRealmSecretNamespace(),
 				Labels: map[string]string{
 					"app.kubernetes.io/managed-by": "gentian-operator",
 					"app.kubernetes.io/part-of":    "gentian-os",
@@ -161,7 +170,7 @@ func writeDirectorRealmSecret(ctx context.Context, c client.Client, data map[str
 			Data: data,
 		})
 	case err != nil:
-		return fmt.Errorf("read %s/%s: %w", servicesNamespace, DirectorRealmSecretName, err)
+		return fmt.Errorf("read %s/%s: %w", directorRealmSecretNamespace(), DirectorRealmSecretName, err)
 	}
 
 	merged := data

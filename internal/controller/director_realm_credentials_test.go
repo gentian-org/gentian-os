@@ -41,7 +41,7 @@ func TestDirectorRealmSecretReplacesOnACompletePass(t *testing.T) {
 	existing := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      controller.DirectorRealmSecretName,
-			Namespace: controller.ServicesNamespaceForTest(),
+			Namespace: controller.DirectorRealmSecretNamespaceForTest(),
 		},
 		Data: map[string][]byte{"kernel": []byte("old"), "retired": []byte("gone")},
 	}
@@ -54,7 +54,7 @@ func TestDirectorRealmSecretReplacesOnACompletePass(t *testing.T) {
 	}
 	got := &corev1.Secret{}
 	if err := c.Get(context.Background(), types.NamespacedName{
-		Name: controller.DirectorRealmSecretName, Namespace: controller.ServicesNamespaceForTest()}, got); err != nil {
+		Name: controller.DirectorRealmSecretName, Namespace: controller.DirectorRealmSecretNamespaceForTest()}, got); err != nil {
 		t.Fatal(err)
 	}
 	if string(got.Data["kernel"]) != "new" || string(got.Data["demo"]) != "d" {
@@ -70,7 +70,7 @@ func TestDirectorRealmSecretMergesOnAPartialPass(t *testing.T) {
 	existing := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      controller.DirectorRealmSecretName,
-			Namespace: controller.ServicesNamespaceForTest(),
+			Namespace: controller.DirectorRealmSecretNamespaceForTest(),
 		},
 		Data: map[string][]byte{"kernel": []byte("k"), "demo": []byte("d")},
 	}
@@ -84,7 +84,7 @@ func TestDirectorRealmSecretMergesOnAPartialPass(t *testing.T) {
 	}
 	got := &corev1.Secret{}
 	if err := c.Get(context.Background(), types.NamespacedName{
-		Name: controller.DirectorRealmSecretName, Namespace: controller.ServicesNamespaceForTest()}, got); err != nil {
+		Name: controller.DirectorRealmSecretName, Namespace: controller.DirectorRealmSecretNamespaceForTest()}, got); err != nil {
 		t.Fatal(err)
 	}
 	if string(got.Data["kernel"]) != "k2" {
@@ -105,7 +105,7 @@ func TestDirectorRealmSecretIsCreatedWhenAbsent(t *testing.T) {
 	}
 	got := &corev1.Secret{}
 	if err := c.Get(context.Background(), types.NamespacedName{
-		Name: controller.DirectorRealmSecretName, Namespace: controller.ServicesNamespaceForTest()}, got); err != nil {
+		Name: controller.DirectorRealmSecretName, Namespace: controller.DirectorRealmSecretNamespaceForTest()}, got); err != nil {
 		t.Fatalf("the Secret was not created: %v", err)
 	}
 	if string(got.Data["kernel"]) != "k" {
@@ -121,14 +121,14 @@ func TestAnUnchangedPassDoesNotWrite(t *testing.T) {
 	existing := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      controller.DirectorRealmSecretName,
-			Namespace: controller.ServicesNamespaceForTest(),
+			Namespace: controller.DirectorRealmSecretNamespaceForTest(),
 		},
 		Data: map[string][]byte{"kernel": []byte("k")},
 	}
 	c := fake.NewClientBuilder().WithScheme(controller.SchemeForTest(t)).WithObjects(existing).Build()
 	before := &corev1.Secret{}
 	if err := c.Get(context.Background(), types.NamespacedName{
-		Name: controller.DirectorRealmSecretName, Namespace: controller.ServicesNamespaceForTest()}, before); err != nil {
+		Name: controller.DirectorRealmSecretName, Namespace: controller.DirectorRealmSecretNamespaceForTest()}, before); err != nil {
 		t.Fatal(err)
 	}
 
@@ -138,7 +138,7 @@ func TestAnUnchangedPassDoesNotWrite(t *testing.T) {
 	}
 	after := &corev1.Secret{}
 	if err := c.Get(context.Background(), types.NamespacedName{
-		Name: controller.DirectorRealmSecretName, Namespace: controller.ServicesNamespaceForTest()}, after); err != nil {
+		Name: controller.DirectorRealmSecretName, Namespace: controller.DirectorRealmSecretNamespaceForTest()}, after); err != nil {
 		t.Fatal(err)
 	}
 	if before.ResourceVersion != after.ResourceVersion {

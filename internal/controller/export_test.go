@@ -97,3 +97,6 @@ func WriteDirectorRealmSecretForTest(ctx context.Context, c client.Client, data 
 
 // ServicesNamespaceForTest is where the hand-over Secret lands.
 func ServicesNamespaceForTest() string { return servicesNamespace }
+
+// DirectorRealmSecretNamespaceForTest is where the director's realm credentials are written.
+func DirectorRealmSecretNamespaceForTest() string { return directorRealmSecretNamespace() }
