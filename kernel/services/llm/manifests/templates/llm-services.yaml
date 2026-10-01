@@ -19,6 +19,12 @@ spec:
       labels:
         app: litellm-proxy
     spec:
+      # The kernel's admission baseline (gentian-baseline): a seccomp profile
+      # and no privilege escalation, or Kyverno refuses the Pods and the
+      # Deployment never gets a replica.
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
       volumes:
       # The cluster's own serving chain, so the proxy can verify kernel
       # endpoints it calls back-channel. tls.crt only — the private key has no
@@ -59,6 +65,8 @@ spec:
       # external providers it routes to — api.infomaniak.com and the rest.
       - name: ca-trust
         image: ghcr.io/berriai/litellm:latest
+        securityContext:
+          allowPrivilegeEscalation: false
         command:
         - /bin/sh
         - -ec
@@ -87,6 +95,8 @@ spec:
       containers:
       - name: litellm
         image: ghcr.io/berriai/litellm:latest
+        securityContext:
+          allowPrivilegeEscalation: false
         volumeMounts:
         - name: ca-trust
           mountPath: /trust
@@ -266,9 +276,17 @@ spec:
       labels:
         app: redis-llm
     spec:
+      # The kernel's admission baseline (gentian-baseline): a seccomp profile
+      # and no privilege escalation, or Kyverno refuses the Pods and the
+      # Deployment never gets a replica.
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
       containers:
       - name: redis
         image: redis:alpine
+        securityContext:
+          allowPrivilegeEscalation: false
         # requirepass, from the credential that has existed since this file was
         # written and was never used. redis:alpine with no arguments listens
         # unauthenticated, and the namespace has no NetworkPolicy, so every

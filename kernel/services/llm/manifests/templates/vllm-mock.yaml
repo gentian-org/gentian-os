@@ -89,9 +89,17 @@ spec:
       labels:
         app: vllm-inference
     spec:
+      # The kernel's admission baseline (gentian-baseline): a seccomp profile
+      # and no privilege escalation, or Kyverno refuses the Pods and the
+      # Deployment never gets a replica.
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
       containers:
       - name: vllm-server
         image: python:3.11-alpine
+        securityContext:
+          allowPrivilegeEscalation: false
         command: ["python", "/app/mock_openai.py"]
         ports:
         - containerPort: 8000
