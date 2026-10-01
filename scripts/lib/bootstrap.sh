@@ -1663,6 +1663,7 @@ _claim_default_line() {
 # With `check`, it only reports: --validate and --dry-run promise to change
 # nothing, and moving the checkout is a change.
 gentian_sync_deployments_checkout() {
+    resolve_deployments_path
     local mode="${1:-sync}" path="${GENTIAN_DEPLOYMENTS_PATH}" branch behind ahead dirty
     [[ -d "${path}/.git" ]] || return 0   # scaffold_cluster_deployment reports this
     git -C "${path}" remote get-url origin >/dev/null 2>&1 || return 0
