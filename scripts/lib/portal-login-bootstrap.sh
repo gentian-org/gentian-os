@@ -260,9 +260,18 @@ ensure_argocd_oidc_secret() {
 
 ensure_litellm_sso_secret() {
     local ns
-    ns="$(_pl_edge_ns)"
+    # Where its one reader runs: the proxy in the llm system namespace mounts
+    # it by name. v5 wrote it to the edge namespace, so on a fresh install the
+    # proxy sat in CreateContainerConfigError on "secret not found".
+    ns="$(ns_system llm)"
     local secret
     secret="$(_litellm_sso_derive_secret)"
+    # No llm namespace means the cluster serves no models (llm.enabled=false):
+    # nothing to mount it. The Keycloak client still gets the derived secret.
+    if ! kubectl get namespace "${ns}" >/dev/null 2>&1; then
+        echo "${secret}"
+        return 0
+    fi
     # >&2 on the apply, and this is not cosmetic. This function's stdout IS its
     # return value -- callers do secret="$(ensure_litellm_sso_secret)" -- so
     # kubectl's own "secret/litellm-dashboard-sso configured" line was captured

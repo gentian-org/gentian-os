@@ -39,6 +39,24 @@ ns_kernel() {
     echo "${name}"
 }
 
+# ns_system <function> — the system namespace with that function, from the
+# same table. System namespaces are composed from the Cluster claim, so the
+# name existing here does not mean the namespace exists on the cluster.
+ns_system() {
+    local fn="${1:?ns_system <function>}" name
+    # Its own pass over the system section rather than a third section in
+    # _ns_table, whose other readers (ns_ensure_kernel among them) would then
+    # start labelling namespaces Crossplane owns.
+    name="$(awk -v fn="${fn}" '
+        /^system:/  { in_sys = 1; next }
+        /^[a-z]/    { in_sys = 0; next }
+        in_sys && /^  - name:/     { name = $NF; next }
+        in_sys && /^    function:/ { if ($NF == fn) print name }
+    ' "${NAMESPACES_FILE}")"
+    [[ -n "${name}" ]] || { echo "no system namespace has function '${fn}' in ${NAMESPACES_FILE}" >&2; return 1; }
+    echo "${name}"
+}
+
 ns_kernel_all() {
     _ns_table | awk '$2 == "kernel" && $1 ~ /^kernel-/ { print $1 }'
 }
