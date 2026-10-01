@@ -261,6 +261,36 @@ func TestComponentProfileRules(t *testing.T) {
 	for _, c := range cases {
 		expect(t, c.name, v.check(t, profileHead+c.spec, ""), c.want)
 	}
+
+	// A link to a service hosted elsewhere: no chart, no exposure, and the
+	// tile on package.api. Refused outright until the launch rules counted it.
+	linkHead := `
+apiVersion: gentianos.io/v1alpha1
+kind: ComponentProfile
+metadata: {name: x}
+spec:
+  version: "1.0.0"
+  classes: [app]
+  trustTier: experimental
+`
+	apiTile := `
+  package:
+    api:
+      runtime: redirect
+      baseUrl: "https://example.com"
+      tile: {displayName: Billing, logo: "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PHJlY3Qgd2lkdGg9IjI0IiBoZWlnaHQ9IjI0Ii8+PC9zdmc+", relation: can_administer, object: tenant}
+`
+	apiNoTile := `
+  package:
+    api: {runtime: redirect, baseUrl: "https://example.com"}
+`
+	for _, c := range []struct{ name, spec, want string }{
+		{"a link tile, and launch says so", "  launch: tile" + apiTile, ""},
+		{"a link tile the profile does not own up to", "  launch: none" + apiTile, "a tile means launch tile"},
+		{"launch tile on a link with no tile", "  launch: tile" + apiNoTile, "launch tile needs a tile"},
+	} {
+		expect(t, c.name, v.check(t, linkHead+c.spec, ""), c.want)
+	}
 }
 
 // Every profile the conversion tool produced from the real catalogue must be

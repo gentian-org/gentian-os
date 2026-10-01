@@ -102,8 +102,12 @@ const (
 // +kubebuilder:validation:XValidation:rule="!has(self.customization) || !has(self.customization.addon)",message="an addon is package.addon on this kind, not customization.addon"
 // +kubebuilder:validation:XValidation:rule="self.launch != 'from' || (has(self.launchFrom) && self.launchFrom.size() > 0)",message="launch from needs launchFrom: which contract's provider opens this"
 // +kubebuilder:validation:XValidation:rule="self.launch == 'from' || !has(self.launchFrom) || self.launchFrom.size() == 0",message="launchFrom is meaningless unless launch is from"
-// +kubebuilder:validation:XValidation:rule="self.launch != 'tile' || (has(self.expose) && self.expose.exists(e, has(e.tile)))",message="launch tile needs a tile on an exposure: an app nobody can open is installed and lost"
-// +kubebuilder:validation:XValidation:rule="self.launch == 'tile' || !has(self.expose) || !self.expose.exists(e, has(e.tile))",message="a tile means launch tile: say how a person reaches this"
+// A tile is on an exposure, or on package.api for a component that is only a
+// link to a service hosted elsewhere -- it has no exposure to carry one, and
+// counting exposures alone refused every such profile. `package` is a CEL
+// reserved word, so the API server names the field __package__.
+// +kubebuilder:validation:XValidation:rule="self.launch != 'tile' || (has(self.expose) && self.expose.exists(e, has(e.tile))) || (has(self.__package__.api) && has(self.__package__.api.tile))",message="launch tile needs a tile on an exposure or on package.api: an app nobody can open is installed and lost"
+// +kubebuilder:validation:XValidation:rule="self.launch == 'tile' || ((!has(self.expose) || !self.expose.exists(e, has(e.tile))) && !(has(self.__package__.api) && has(self.__package__.api.tile)))",message="a tile means launch tile: say how a person reaches this"
 type ComponentProfileSpec struct {
 	// Classes lists the modes this component may be deployed under. It is a
 	// certification claim, not a choice: whether a component *can* serve
