@@ -785,17 +785,26 @@ install_kernel_wildcard() {
     #    The Tenant operator issues per-tenant wildcard certs (tenant-*-wildcard-tls),
     #    but the kernel service namespaces are not managed by the operator.
     #    Wait up to 180 s for the cert to be issued first.
-    info "Waiting for wildcard-kernel-tls to be issued (max 180s)..."
-    local i
-    for i in {1..90}; do
-        if kubectl get secret wildcard-kernel-tls -n "$(gentian_cert_manager_namespace)" &>/dev/null; then
-            success "wildcard-kernel-tls Secret exists after ${i}x2s."
-            break
+    # Current, not merely present. A Secret from the previous issuer exists
+    # throughout a reissue -- after a switch from staging to production it
+    # stayed for the eight minutes DNS-01 took -- and waiting only for
+    # existence copied that old certificate to the Gateway and moved on, so
+    # the cluster served staging until somebody re-ran C-03. DNS-01 needs the
+    # TXT records to propagate, which takes minutes, not the 180s this was.
+    local timeout="${GENTIAN_WILDCARD_WAIT_SECS:-900}"
+    local deadline=$(( SECONDS + timeout )) reported=0
+    info "Waiting for wildcard-kernel-tls to be issued by ${DNS01_CLUSTER_ISSUER} (max $(( timeout / 60 ))m)..."
+    until kernel_wildcard_current; do
+        if (( SECONDS > deadline )); then break; fi
+        if (( SECONDS - reported >= 60 )); then
+            reported=${SECONDS}
+            info "  $(kubectl get certificate wildcard-kernel -n "$(gentian_cert_manager_namespace)" \
+                -o jsonpath='{.status.conditions[?(@.type=="Ready")].message}' 2>/dev/null)"
         fi
-        sleep 2
+        sleep 5
     done
     local app_ns="gentian-${ENV:-dev}"
-    if ! kubectl get secret wildcard-kernel-tls -n "$(gentian_cert_manager_namespace)" &>/dev/null; then
+    if ! kernel_wildcard_current; then
         warn "wildcard-kernel-tls not yet issued (LE rate-limited or still pending)."
         warn "Re-run install.sh or manually copy the secret once the Certificate is Ready."
         return
@@ -838,6 +847,21 @@ install_kernel_wildcard() {
 # environment), and removed by --purge --cluster-infra -- the same flag that
 # removes the published DNS records, for the same reason.
 
+# kernel_wildcard_current — the wildcard Secret holds what the Certificate
+# asks for now: Ready, and issued by the issuer it names. cert-manager records
+# the issuer on the Secret, so a certificate left from a previous issuer --
+# present, valid, and wrong -- does not pass.
+kernel_wildcard_current() {
+    local ns want ready have
+    ns="$(gentian_cert_manager_namespace)"
+    read -r want ready < <(kubectl get certificate wildcard-kernel -n "${ns}" \
+        -o jsonpath='{.spec.issuerRef.name} {.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null)
+    [[ -n "${want}" && "${ready}" == "True" ]] || return 1
+    have="$(kubectl get secret wildcard-kernel-tls -n "${ns}" \
+        -o jsonpath='{.metadata.annotations.cert-manager\.io/issuer-name}' 2>/dev/null)"
+    [[ "${have}" == "${want}" ]]
+}
+
 gentian_wildcard_cache_file() {
     printf '%s/%s.json' "${GENTIAN_CERT_CACHE:-${HOME}/.gentian/certs}" "${KERNEL_DOMAIN:?}"
 }
@@ -850,6 +874,9 @@ gentian_wildcard_cache_file() {
 save_kernel_wildcard() {
     [[ -n "${KERNEL_DOMAIN:-}" ]] || return 0
     command -v jq >/dev/null 2>&1 || return 0
+    # Only what the claim asks for: mid-reissue the Secret still holds the
+    # previous issuer's certificate, and keeping that would keep the wrong one.
+    kernel_wildcard_current || return 0
     local file json tmp
     file="$(gentian_wildcard_cache_file)"
     json="$(kubectl get secret wildcard-kernel-tls -n "$(gentian_cert_manager_namespace)" -o json 2>/dev/null \

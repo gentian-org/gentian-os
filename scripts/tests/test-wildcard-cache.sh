@@ -11,6 +11,9 @@
 # kubectl is a shell function over files in a throwaway directory; the
 # certificates are self-signed, made here. No cluster is touched.
 # =============================================================================
+# Every check is a condition string evaluated after the run it inspects, so
+# its expansions are meant to wait:
+# shellcheck disable=SC2016
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.." || exit 1
 REPO="$(pwd)"
@@ -20,7 +23,9 @@ pass=0; fail=0
 
 SANDBOX="$(mktemp -d)"
 trap 'rm -rf "${SANDBOX}"' EXIT
-command -v openssl >/dev/null && command -v jq >/dev/null || { echo "openssl and jq required"; exit 1; }
+if ! command -v openssl >/dev/null || ! command -v jq >/dev/null; then
+    echo "openssl and jq required"; exit 1
+fi
 
 # cert <name> <days> <issuer-cn> [<san>] — a TLS Secret as kubectl -o json.
 cert() {
@@ -48,12 +53,16 @@ run() {
     rm -f "${SANDBOX}/applied"
     # shellcheck disable=SC2016 # expanded by the child shell
     env -i HOME="${SANDBOX}/home" PATH="${PATH}" SCRIPT_DIR="${REPO}" KERNEL_DOMAIN=example.test \
-        LIVE="${live}" APPLIED="${SANDBOX}/applied" \
+        LIVE="${live}" APPLIED="${SANDBOX}/applied" CERT_ISSUER="${CERT_ISSUER:-old}" \
         bash -c 'set -u; source scripts/lib/load.sh >/dev/null 2>&1
             gentian_cert_manager_namespace() { echo kernel-edge; }
             kubectl() {
                 case "$1 $2" in
-                    "get secret") [[ -n "${LIVE}" ]] && cat "${LIVE}" ;;
+                    "get certificate") printf "%s True" "${CERT_ISSUER}" ;;
+                    "get secret")
+                        [[ -n "${LIVE}" ]] || return 1
+                        if [[ "$*" == *issuer-name* ]]; then jq -r ".metadata.annotations[\"cert-manager.io/issuer-name\"]" "${LIVE}"
+                        else cat "${LIVE}"; fi ;;
                     "apply -f")   cat > "${APPLIED}" ;;
                     *)            return 1 ;;
                 esac
@@ -77,6 +86,10 @@ check "save keeps only cert-manager annotations and no server fields" \
     '[[ "$(jq -c ".metadata" "${CACHE}")" == "{\"name\":\"wildcard-kernel-tls\",\"labels\":{},\"annotations\":{\"cert-manager.io/issuer-name\":\"old\"}}" ]]'
 out="$(run "${SANDBOX}/good.json" save_kernel_wildcard)"
 check "save of an unchanged Secret says nothing" '[[ -z "${out}" ]]' "${out}"
+rm -f "${CACHE}"
+out="$(CERT_ISSUER=letsencrypt-dns01-cloudflare run "${SANDBOX}/good.json" save_kernel_wildcard)"
+check "save skips a Secret from a previous issuer (mid-reissue)" '[[ ! -f "${CACHE}" && -z "${out}" ]]' "${out}"
+run "${SANDBOX}/good.json" save_kernel_wildcard >/dev/null
 
 out="$(run "${SANDBOX}/good.json" 'restore_kernel_wildcard letsencrypt-dns01-cloudflare')"
 check "restore leaves a live Secret alone" '[[ ! -f "${SANDBOX}/applied" && -f "${CACHE}" ]]' "${out}"

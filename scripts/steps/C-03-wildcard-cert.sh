@@ -22,6 +22,10 @@ check() {
     [[ "$(kubectl get certificate wildcard-kernel -n "$(gentian_cert_manager_namespace)" \
         -o jsonpath='{.spec.issuerRef.name}' 2>/dev/null)" == "$(gentian_dns01_cluster_issuer_name)" ]] \
         || return "${CHECK_MISSING}"
+    # And issued by it: during a reissue the old certificate is still in the
+    # Secret and already copied everywhere, which the comparison below
+    # cannot tell from done.
+    kernel_wildcard_current || return "${CHECK_MISSING}"
     GENTIAN_WILDCARD_TARGETS="$(_v5_wildcard_targets)" kernel_wildcard_propagated
 }
 
