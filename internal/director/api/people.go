@@ -20,11 +20,16 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
+	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/gentian-org/gentian-os/internal/director/gitops"
 	"github.com/gentian-org/gentian-os/internal/director/identity"
 	"github.com/gentian-org/gentian-os/internal/director/record"
 )
@@ -79,8 +84,13 @@ func (s *Server) realmFor(w http.ResponseWriter, r *http.Request) (identity.Real
 	// A tenant that has a realm to itself is confined by the credential. A
 	// tenant that shares the kernel realm is not, and there the group subtree
 	// is the only boundary left -- so it is stated rather than assumed.
-	if realm != tenant {
-		token = token.Scoped("gentian:tenant:" + tenant + ":")
+	//
+	// Except the platform tenant, which does not share the kernel realm but
+	// owns it: its people are the kernel realm's administrators and its groups
+	// are gentian:platform:*, so confining it to gentian:tenant:platform:
+	// showed it none of its own groups.
+	if realm != tenant && tenant != gitops.PlatformTenant {
+		token = token.Scoped(tenantGroupPrefix(tenant))
 	}
 	return token, true
 }
@@ -170,10 +180,16 @@ func (s *Server) tenantIdentitySettings(w http.ResponseWriter, r *http.Request, 
 		s.identityError(w, r, err)
 		return
 	}
+	// The domain a login is composed under, so the invitation form can show
+	// "@<domain>" beside the part a person types. Empty when it cannot be
+	// read, and the form then asks for a whole address.
+	domain, _ := s.cfg.Repo.TenantLoginDomain(r.Context(), r.PathValue("t"))
 	s.json(w, http.StatusOK, map[string]any{
 		"tenant":         r.PathValue("t"),
 		"realm":          realm.Name(),
 		"passwordPolicy": policy,
+		"loginDomain":    domain,
+		"templates":      s.cfg.DesktopAPI != "",
 	})
 }
 
@@ -185,11 +201,32 @@ func (s *Server) invitePerson(w http.ResponseWriter, r *http.Request, c call) {
 		return
 	}
 	var body struct {
-		Email  string   `json:"email"`
-		Groups []string `json:"groups"`
+		// Email is where the invitation goes.
+		Email string `json:"email"`
+		// Username is the part before @<login domain>; empty makes the
+		// address the login, as before.
+		Username         string   `json:"username"`
+		FirstName        string   `json:"firstName"`
+		LastName         string   `json:"lastName"`
+		RequireTOTP      bool     `json:"requireTotp"`
+		SettingsTemplate string   `json:"settingsTemplate"`
+		Groups           []string `json:"groups"`
 	}
 	if !s.decode(w, r, &body) {
 		return
+	}
+	login := ""
+	if local := strings.ToLower(strings.TrimSpace(body.Username)); local != "" {
+		if !localPart.MatchString(local) {
+			s.fail(w, r, http.StatusBadRequest, "a username is letters, digits, dots, dashes and underscores")
+			return
+		}
+		domain, err := s.cfg.Repo.TenantLoginDomain(r.Context(), r.PathValue("t"))
+		if err != nil || domain == "" {
+			s.fail(w, r, http.StatusServiceUnavailable, "this tenant's login domain cannot be read")
+			return
+		}
+		login = local + "@" + domain
 	}
 	ctx := identityContext(r)
 	client := s.inviteClientID(realm)
@@ -201,6 +238,10 @@ func (s *Server) invitePerson(w http.ResponseWriter, r *http.Request, c call) {
 	}
 	person, err := s.cfg.Identity.Invite(ctx, realm, identity.Invitation{
 		Email:       body.Email,
+		Username:    login,
+		FirstName:   body.FirstName,
+		LastName:    body.LastName,
+		RequireTOTP: body.RequireTOTP,
 		Groups:      body.Groups,
 		ClientID:    client,
 		RedirectURI: redirect,
@@ -225,7 +266,301 @@ func (s *Server) invitePerson(w http.ResponseWriter, r *http.Request, c call) {
 		return
 	}
 	s.recordIdentityAction(r, c, "invite", realm, person.Username)
-	s.json(w, http.StatusAccepted, map[string]any{"person": person, "mailed": true})
+	out := map[string]any{"person": person, "mailed": true}
+	// The desktop's settings, copied from a template before they first sign
+	// in. Not fatal: the person exists and the invitation went, and saying
+	// the template did not apply is a repair somebody can make on the
+	// template screen, where failing the invitation would not be.
+	if body.SettingsTemplate != "" {
+		if err := s.applyTemplate(r, body.SettingsTemplate, person.ID); err != nil {
+			out["templateApplied"] = false
+			out["warning"] = "the settings template was not applied: " + err.Error()
+		} else {
+			out["templateApplied"] = true
+		}
+	}
+	s.json(w, http.StatusAccepted, out)
+}
+
+// localPart is what a person may type before @<login domain>.
+var localPart = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,62}$`)
+
+// tenantGroupPrefix is the subtree a tenant's own groups live in.
+func tenantGroupPrefix(tenant string) string {
+	if tenant == gitops.PlatformTenant {
+		return "gentian:platform:"
+	}
+	return "gentian:tenant:" + tenant + ":"
+}
+
+// groupLabel is the part of a custom group's name an administrator types.
+// No colon, so a label can never reach into the names the platform composes
+// (":app:<profile>", ":admin").
+var groupLabel = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,40}$`)
+
+// reservedGroupLabels are names the platform composes itself.
+var reservedGroupLabels = map[string]bool{"admin": true, "admins": true, "app-admins": true, "members": true}
+
+// updatePerson changes somebody's names, delivery address or whether they may
+// sign in.
+func (s *Server) updatePerson(w http.ResponseWriter, r *http.Request, c call) {
+	realm, ok := s.realmFor(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		Person    string  `json:"person"`
+		FirstName *string `json:"firstName"`
+		LastName  *string `json:"lastName"`
+		Enabled   *bool   `json:"enabled"`
+		Email     *string `json:"email"`
+	}
+	if !s.decode(w, r, &body) {
+		return
+	}
+	person, err := s.cfg.Identity.UpdatePerson(identityContext(r), realm, body.Person, identity.PersonUpdate{
+		FirstName: body.FirstName, LastName: body.LastName, Enabled: body.Enabled, Email: body.Email,
+	})
+	if err != nil {
+		if isAddressError(err) {
+			s.fail(w, r, http.StatusBadRequest, "that is not an address")
+			return
+		}
+		s.identityError(w, r, err)
+		return
+	}
+	s.recordIdentityAction(r, c, "update-person", realm, body.Person)
+	s.json(w, http.StatusOK, person)
+}
+
+// removePerson deletes somebody from the tenant's realm.
+func (s *Server) removePerson(w http.ResponseWriter, r *http.Request, c call) {
+	realm, ok := s.realmFor(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		Person string `json:"person"`
+	}
+	if !s.decode(w, r, &body) {
+		return
+	}
+	// Nobody removes themselves: the screen they are on would be the last
+	// thing they could do, and a tenant whose only administrator did it has
+	// nobody left to undo it.
+	if body.Person != "" && body.Person == c.meta.Subject {
+		s.fail(w, r, http.StatusBadRequest, "you cannot remove yourself")
+		return
+	}
+	if err := s.cfg.Identity.RemovePerson(identityContext(r), realm, body.Person); err != nil {
+		s.identityError(w, r, err)
+		return
+	}
+	s.recordIdentityAction(r, c, "remove-person", realm, body.Person)
+	s.json(w, http.StatusOK, map[string]any{"person": body.Person, "removed": true})
+}
+
+// requireTOTP makes somebody enrol an authenticator, and mails them the link
+// when asked to.
+func (s *Server) requireTOTP(w http.ResponseWriter, r *http.Request, c call) {
+	realm, ok := s.realmFor(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		Person string `json:"person"`
+		Mail   bool   `json:"mail"`
+	}
+	if !s.decode(w, r, &body) {
+		return
+	}
+	ctx := identityContext(r)
+	client := s.inviteClientID(realm)
+	redirect := s.cfg.InviteRedirectURI
+	if redirect == "" && body.Mail {
+		redirect = s.cfg.Identity.ZoneLanding(ctx, realm, client)
+	}
+	if err := s.cfg.Identity.RequireTOTP(ctx, realm, body.Person, body.Mail, client, redirect); err != nil {
+		s.identityError(w, r, err)
+		return
+	}
+	s.recordIdentityAction(r, c, "require-totp", realm, body.Person)
+	s.json(w, http.StatusOK, map[string]any{"person": body.Person, "totpRequired": true, "mailed": body.Mail})
+}
+
+// removeTOTP deletes somebody's authenticators, for a lost device.
+func (s *Server) removeTOTP(w http.ResponseWriter, r *http.Request, c call) {
+	realm, ok := s.realmFor(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		Person string `json:"person"`
+	}
+	if !s.decode(w, r, &body) {
+		return
+	}
+	if err := s.cfg.Identity.RemoveTOTP(identityContext(r), realm, body.Person); err != nil {
+		s.identityError(w, r, err)
+		return
+	}
+	s.recordIdentityAction(r, c, "remove-totp", realm, body.Person)
+	s.json(w, http.StatusOK, map[string]any{"person": body.Person, "totpRequired": false, "totpConfigured": false})
+}
+
+// createGroup makes a custom group in the tenant's subtree.
+func (s *Server) createGroup(w http.ResponseWriter, r *http.Request, c call) {
+	realm, ok := s.realmFor(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		Name string `json:"name"`
+	}
+	if !s.decode(w, r, &body) {
+		return
+	}
+	label := strings.ToLower(strings.TrimSpace(body.Name))
+	if !groupLabel.MatchString(label) || reservedGroupLabels[label] {
+		s.fail(w, r, http.StatusBadRequest, "a group name is lower-case letters, digits and dashes, and not one the platform uses")
+		return
+	}
+	group, err := s.cfg.Identity.CreateGroup(identityContext(r), realm, tenantGroupPrefix(r.PathValue("t"))+label)
+	if err != nil {
+		if errors.Is(err, identity.ErrConflict) {
+			s.fail(w, r, http.StatusConflict, "that group already exists")
+			return
+		}
+		s.identityError(w, r, err)
+		return
+	}
+	s.recordIdentityAction(r, c, "create-group", realm, group.Path)
+	s.json(w, http.StatusCreated, group)
+}
+
+// deleteGroup removes a custom group.
+func (s *Server) deleteGroup(w http.ResponseWriter, r *http.Request, c call) {
+	realm, ok := s.realmFor(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		Group string `json:"group"`
+	}
+	if !s.decode(w, r, &body) {
+		return
+	}
+	if err := s.cfg.Identity.DeleteGroup(identityContext(r), realm, body.Group); err != nil {
+		if errors.Is(err, identity.ErrNotCustom) {
+			s.fail(w, r, http.StatusBadRequest, "this group is the platform's: it is removed with the app or tenant it belongs to")
+			return
+		}
+		s.identityError(w, r, err)
+		return
+	}
+	s.recordIdentityAction(r, c, "delete-group", realm, body.Group)
+	s.json(w, http.StatusOK, map[string]any{"group": body.Group, "deleted": true})
+}
+
+// listGroupMembers answers who is in one group.
+func (s *Server) listGroupMembers(w http.ResponseWriter, r *http.Request, _ call) {
+	realm, ok := s.realmFor(w, r)
+	if !ok {
+		return
+	}
+	group := r.URL.Query().Get("group")
+	people, err := s.cfg.Identity.GroupMembers(identityContext(r), realm, group)
+	if err != nil {
+		s.identityError(w, r, err)
+		return
+	}
+	s.json(w, http.StatusOK, map[string]any{"group": group, "people": people})
+}
+
+// listTemplates answers the desktop's settings templates for this tenant.
+//
+// They live in the desktop, which keeps a person's settings; the director
+// relays the caller's own token there rather than holding a copy, so the
+// desktop's own check -- is this a tenant administrator -- still decides.
+func (s *Server) listTemplates(w http.ResponseWriter, r *http.Request, _ call) {
+	if s.cfg.DesktopAPI == "" {
+		s.json(w, http.StatusOK, map[string]any{"templates": []any{}})
+		return
+	}
+	resp, err := s.desktop(r, http.MethodGet, "/prefs/templates", nil)
+	if err != nil {
+		s.fail(w, r, http.StatusBadGateway, "the desktop could not be reached")
+		return
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		s.fail(w, r, http.StatusBadGateway, fmt.Sprintf("the desktop answered %d", resp.StatusCode))
+		return
+	}
+	var raw []struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&raw); err != nil {
+		s.fail(w, r, http.StatusBadGateway, "the desktop's answer could not be read")
+		return
+	}
+	s.json(w, http.StatusOK, map[string]any{"templates": raw})
+}
+
+// applyTemplate copies one template onto a person's desktop settings.
+func (s *Server) applyTemplate(r *http.Request, template, personID string) error {
+	if s.cfg.DesktopAPI == "" {
+		return errors.New("this director reaches no desktop")
+	}
+	body, _ := json.Marshal(map[string]string{"target_user_sub": personID})
+	resp, err := s.desktop(r, http.MethodPost, "/prefs/templates/"+url.PathEscape(template)+"/apply", body)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode >= 300 {
+		return fmt.Errorf("the desktop answered %d", resp.StatusCode)
+	}
+	return nil
+}
+
+// desktop calls the tenant's desktop API with the caller's own token.
+func (s *Server) desktop(r *http.Request, method, path string, body []byte) (*http.Response, error) {
+	base := fmt.Sprintf(s.cfg.DesktopAPI, r.PathValue("t"))
+	var rd io.Reader
+	if body != nil {
+		rd = strings.NewReader(string(body))
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	req, err := http.NewRequestWithContext(ctx, method, strings.TrimSuffix(base, "/")+path, rd)
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+	req.Header.Set("Authorization", r.Header.Get("Authorization"))
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+	resp.Body = cancelOnClose{resp.Body, cancel}
+	return resp, nil
+}
+
+// cancelOnClose releases a request's context when its body is closed.
+type cancelOnClose struct {
+	io.ReadCloser
+	cancel context.CancelFunc
+}
+
+func (c cancelOnClose) Close() error {
+	err := c.ReadCloser.Close()
+	c.cancel()
+	return err
 }
 
 // inviteClientID is the client the invitation link is for.

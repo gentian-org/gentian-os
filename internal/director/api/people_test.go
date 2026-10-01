@@ -53,6 +53,10 @@ type fakeIdentity struct {
 	lastInvite identity.Invitation
 	// landing is what the zone client says its root is.
 	landing string
+	// lastGroup is the path the last group operation named.
+	lastGroup string
+	// removed is every person removed.
+	removed []string
 }
 
 func newFakeIdentity(realms ...string) *fakeIdentity {
@@ -462,5 +466,130 @@ func TestAMemberCannotSendSomebodyElseAReset(t *testing.T) {
 		h.token(t, "tenant-demo", "mia"), `{"person":"u1"}`)
 	if status != http.StatusForbidden {
 		t.Fatalf("status %d, want 403", status)
+	}
+}
+
+func (f *fakeIdentity) UpdatePerson(ctx context.Context, r identity.Realm, id string, _ identity.PersonUpdate) (identity.Person, error) {
+	f.note(ctx, r)
+	return identity.Person{ID: id}, nil
+}
+
+func (f *fakeIdentity) RemovePerson(ctx context.Context, r identity.Realm, id string) error {
+	f.note(ctx, r)
+	f.mu.Lock()
+	f.removed = append(f.removed, id)
+	f.mu.Unlock()
+	return nil
+}
+
+func (f *fakeIdentity) RequireTOTP(ctx context.Context, r identity.Realm, _ string, _ bool, _, _ string) error {
+	f.note(ctx, r)
+	return nil
+}
+
+func (f *fakeIdentity) RemoveTOTP(ctx context.Context, r identity.Realm, _ string) error {
+	f.note(ctx, r)
+	return nil
+}
+
+func (f *fakeIdentity) CreateGroup(ctx context.Context, r identity.Realm, path string) (identity.Group, error) {
+	f.note(ctx, r)
+	f.mu.Lock()
+	f.lastGroup = path
+	f.mu.Unlock()
+	return identity.Group{ID: "g-new", Path: path, Name: path, Custom: true}, nil
+}
+
+func (f *fakeIdentity) DeleteGroup(ctx context.Context, r identity.Realm, path string) error {
+	f.note(ctx, r)
+	f.mu.Lock()
+	f.lastGroup = path
+	f.mu.Unlock()
+	return nil
+}
+
+func (f *fakeIdentity) GroupMembers(ctx context.Context, r identity.Realm, _ string) ([]identity.Person, error) {
+	f.note(ctx, r)
+	return nil, nil
+}
+
+// The form sends the part before the @; the director composes the login under
+// the tenant's own domain, and reports that domain for the form to show.
+func TestInviteComposesTheLoginUnderTheTenantsDomain(t *testing.T) {
+	f := newFakeIdentity("demo")
+	h := startWithIdentity(t, f)
+	tok := h.token(t, "tenant-demo", "tom")
+
+	status, settings := h.do(t, http.MethodGet, "/v1/tenants/demo/identity", tok, "")
+	if status != http.StatusOK {
+		t.Fatalf("identity: %d %v", status, settings)
+	}
+	domain, _ := settings["loginDomain"].(string)
+	if !strings.HasPrefix(domain, "demo.") {
+		t.Fatalf("a tenant with its own realm signs in under <tenant>.<kernel>: %q", domain)
+	}
+
+	status, body := h.do(t, http.MethodPost, "/v1/tenants/demo/actions/invite-person", tok,
+		`{"email":"jane@example.org","username":"Jane-Doe","firstName":"Jane","lastName":"Doe","requireTotp":true}`)
+	if status != http.StatusAccepted {
+		t.Fatalf("invite: %d %v", status, body)
+	}
+	f.mu.Lock()
+	inv := f.lastInvite
+	f.mu.Unlock()
+	if inv.Username != "jane-doe@"+domain || inv.Email != "jane@example.org" ||
+		inv.FirstName != "Jane" || inv.LastName != "Doe" || !inv.RequireTOTP {
+		t.Fatalf("invitation: %+v", inv)
+	}
+
+	status, _ = h.do(t, http.MethodPost, "/v1/tenants/demo/actions/invite-person", tok,
+		`{"email":"x@example.org","username":"not/a/name"}`)
+	if status != http.StatusBadRequest {
+		t.Fatalf("a username with a slash: %d, want 400", status)
+	}
+}
+
+// A custom group is made inside the tenant's subtree from a label, and a label
+// cannot name one of the platform's own groups or reach past a colon.
+func TestCustomGroupsLiveInTheTenantsSubtree(t *testing.T) {
+	f := newFakeIdentity("demo")
+	h := startWithIdentity(t, f)
+	tok := h.token(t, "tenant-demo", "tom")
+
+	status, body := h.do(t, http.MethodPost, "/v1/tenants/demo/actions/create-group", tok, `{"name":"Sales"}`)
+	if status != http.StatusCreated {
+		t.Fatalf("create: %d %v", status, body)
+	}
+	f.mu.Lock()
+	got := f.lastGroup
+	f.mu.Unlock()
+	if got != "gentian:tenant:demo:sales" {
+		t.Fatalf("created %q", got)
+	}
+	for _, bad := range []string{`{"name":"admin"}`, `{"name":"app:x"}`, `{"name":""}`} {
+		if status, _ := h.do(t, http.MethodPost, "/v1/tenants/demo/actions/create-group", tok, bad); status != http.StatusBadRequest {
+			t.Errorf("%s: %d, want 400", bad, status)
+		}
+	}
+}
+
+// Nobody removes themselves from here.
+func TestRemovingYourselfIsRefused(t *testing.T) {
+	f := newFakeIdentity("demo")
+	h := startWithIdentity(t, f)
+	tok := h.token(t, "tenant-demo", "tom")
+
+	status, _ := h.do(t, http.MethodPost, "/v1/tenants/demo/actions/remove-person", tok, `{"person":"tom"}`)
+	if status != http.StatusBadRequest {
+		t.Fatalf("removing yourself: %d, want 400", status)
+	}
+	status, _ = h.do(t, http.MethodPost, "/v1/tenants/demo/actions/remove-person", tok, `{"person":"u1"}`)
+	if status != http.StatusOK {
+		t.Fatalf("removing somebody else: %d", status)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.removed) != 1 || f.removed[0] != "u1" {
+		t.Fatalf("removed %v", f.removed)
 	}
 }

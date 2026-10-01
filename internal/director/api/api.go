@@ -69,6 +69,7 @@ type Repository interface {
 	RetireTenant(ctx context.Context, tenant string, meta gitops.Meta) (gitops.Result, error)
 	Tenants(ctx context.Context) ([]string, error)
 	TenantRealm(ctx context.Context, tenant string) (string, error)
+	TenantLoginDomain(ctx context.Context, tenant string) (string, error)
 	SetResourcePlan(ctx context.Context, tenant string, plan gitops.Plan, meta gitops.Meta) (gitops.Result, error)
 	SetTenantBackupPolicy(ctx context.Context, tenant string, policy gitops.BackupPolicy, meta gitops.Meta) (gitops.Result, error)
 	ClearTenantBackupPolicy(ctx context.Context, tenant string, meta gitops.Meta) (gitops.Result, error)
@@ -186,6 +187,10 @@ type Config struct {
 	// empty until the zone client accepts somewhere worth landing.
 	InviteClientID    string
 	InviteRedirectURI string
+	// DesktopAPI is where a tenant's desktop API answers, with %s for the
+	// tenant: the settings templates live there, and the director relays the
+	// caller's own token to them. Empty means templates are not offered.
+	DesktopAPI string
 }
 
 // Identity is the part of the Keycloak client this API uses. An interface so
@@ -202,6 +207,13 @@ type Identity interface {
 	SetPasswordPolicy(ctx context.Context, r identity.Realm, policy string) error
 	ZoneLanding(ctx context.Context, r identity.Realm, clientID string) string
 	SendPasswordReset(ctx context.Context, r identity.Realm, userID, clientID, redirectURI string) error
+	UpdatePerson(ctx context.Context, r identity.Realm, id string, u identity.PersonUpdate) (identity.Person, error)
+	RemovePerson(ctx context.Context, r identity.Realm, id string) error
+	RequireTOTP(ctx context.Context, r identity.Realm, id string, mail bool, clientID, redirectURI string) error
+	RemoveTOTP(ctx context.Context, r identity.Realm, id string) error
+	CreateGroup(ctx context.Context, r identity.Realm, path string) (identity.Group, error)
+	DeleteGroup(ctx context.Context, r identity.Realm, path string) error
+	GroupMembers(ctx context.Context, r identity.Realm, path string) ([]identity.Person, error)
 }
 
 // StoreConfig is what the entitlement write needs.
@@ -657,6 +669,17 @@ func (s *Server) routes() {
 		s.action("POST /v1/tenants/{t}/actions/set-membership", "can_manage_users", tenantObject, s.setMembership)
 		s.action("POST /v1/tenants/{t}/actions/send-password-reset", "can_manage_users", tenantObject, s.sendPasswordReset)
 		s.action("POST /v1/tenants/{t}/actions/set-password-policy", "can_set_policy", tenantObject, s.setPasswordPolicy)
+
+		// Editing somebody, and the groups they are put in. can_manage_users
+		// throughout, like the invitation they extend.
+		s.guarded("GET /v1/tenants/{t}/group-members", "can_manage_users", tenantObject, s.listGroupMembers)
+		s.guarded("GET /v1/tenants/{t}/templates", "can_manage_users", tenantObject, s.listTemplates)
+		s.action("POST /v1/tenants/{t}/actions/update-person", "can_manage_users", tenantObject, s.updatePerson)
+		s.action("POST /v1/tenants/{t}/actions/remove-person", "can_manage_users", tenantObject, s.removePerson)
+		s.action("POST /v1/tenants/{t}/actions/require-totp", "can_manage_users", tenantObject, s.requireTOTP)
+		s.action("POST /v1/tenants/{t}/actions/remove-totp", "can_manage_users", tenantObject, s.removeTOTP)
+		s.action("POST /v1/tenants/{t}/actions/create-group", "can_manage_users", tenantObject, s.createGroup)
+		s.action("POST /v1/tenants/{t}/actions/delete-group", "can_manage_users", tenantObject, s.deleteGroup)
 	}
 }
 

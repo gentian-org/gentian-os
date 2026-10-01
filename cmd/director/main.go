@@ -369,7 +369,10 @@ func run(log *slog.Logger) error {
 		TilesPath: envOr("DIRECTOR_TILES_PATH", "/etc/gentian/tiles/tiles.yaml"),
 		Lifecycle: lc, Identity: ident,
 		InviteClientID:    os.Getenv("DIRECTOR_INVITE_CLIENT_ID"),
-		InviteRedirectURI: os.Getenv("DIRECTOR_INVITE_REDIRECT_URI")})
+		InviteRedirectURI: os.Getenv("DIRECTOR_INVITE_REDIRECT_URI"),
+		// Where a tenant's desktop API answers, %s for the tenant: the
+		// settings templates an invitation may apply live there.
+		DesktopAPI: os.Getenv("DIRECTOR_DESKTOP_API_URL")})
 	if err != nil {
 		return err
 	}

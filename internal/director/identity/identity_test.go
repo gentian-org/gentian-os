@@ -48,6 +48,8 @@ type fakeKeycloak struct {
 	clients map[string][]clientRep
 	// mints counts token requests per realm, for the cache test.
 	mints map[string]int
+	// creds per user id, for the two-factor reads.
+	creds map[string][]map[string]string
 }
 
 type recorded struct {
@@ -68,6 +70,7 @@ func newFake(t *testing.T) (*fakeKeycloak, *httptest.Server) {
 		policy:  map[string]string{},
 		clients: map[string][]clientRep{},
 		mints:   map[string]int{},
+		creds:   map[string][]map[string]string{},
 	}
 	srv := httptest.NewServer(http.HandlerFunc(f.serve))
 	t.Cleanup(srv.Close)
@@ -140,6 +143,17 @@ func (f *fakeKeycloak) serve(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusCreated)
 	case r.Method == http.MethodPut && strings.HasSuffix(path, "/execute-actions-email"):
 		w.WriteHeader(http.StatusNoContent)
+	case r.Method == http.MethodGet && strings.HasSuffix(path, "/credentials") && strings.HasPrefix(path, "/users/"):
+		id := strings.TrimSuffix(strings.TrimPrefix(path, "/users/"), "/credentials")
+		f.mu.Lock()
+		out := f.creds[id]
+		f.mu.Unlock()
+		if out == nil {
+			out = []map[string]string{}
+		}
+		_ = json.NewEncoder(w).Encode(out)
+	case r.Method == http.MethodGet && strings.HasSuffix(path, "/members") && strings.HasPrefix(path, "/groups/"):
+		_ = json.NewEncoder(w).Encode(users)
 	case r.Method == http.MethodGet && strings.HasSuffix(path, "/groups") && strings.HasPrefix(path, "/users/"):
 		_ = json.NewEncoder(w).Encode(groups)
 	case r.Method == http.MethodGet && strings.HasPrefix(path, "/users/"):
@@ -532,4 +546,105 @@ type clientRep struct {
 	ClientID string `json:"clientId"`
 	RootURL  string `json:"rootUrl"`
 	BaseURL  string `json:"baseUrl"`
+}
+
+func (f *fakeKeycloak) callsTo(method, suffix string) []recorded {
+	var out []recorded
+	for _, c := range f.recorded() {
+		if c.method == method && strings.HasSuffix(c.path, suffix) {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// The login and the mailbox are two addresses: <local>@<tenant domain> to
+// sign in with, and the address the invitation reaches. Keycloak mails the
+// email field, so that is the delivery address, mirrored in an attribute.
+func TestInviteSeparatesTheLoginFromTheMailbox(t *testing.T) {
+	f, srv := newFake(t)
+	f.groups["demo"] = []groupRep{{ID: "g1", Path: "/members"}}
+	c := clientFor(t, srv, StaticSource{"demo": {Realm: "demo", ClientID: "a", ClientSecret: "s"}})
+	r, _ := c.Realm("demo")
+
+	p, err := c.Invite(context.Background(), r, Invitation{
+		Email: "Jane@Example.org", Username: "jane-doe@demo.k.example",
+		FirstName: " Jane ", LastName: "Doe", RequireTOTP: true, Groups: []string{"members"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Username != "jane-doe@demo.k.example" || p.Email != "jane@example.org" || !p.TOTPRequired {
+		t.Fatalf("person: %+v", p)
+	}
+	posts := f.callsTo(http.MethodPost, "/users")
+	if len(posts) != 1 {
+		t.Fatalf("one creation, got %d", len(posts))
+	}
+	var body map[string]any
+	_ = json.Unmarshal([]byte(posts[0].body), &body)
+	if body["username"] != "jane-doe@demo.k.example" || body["email"] != "jane@example.org" ||
+		body["firstName"] != "Jane" || body["lastName"] != "Doe" {
+		t.Fatalf("created with: %v", body)
+	}
+	attrs, _ := body["attributes"].(map[string]any)
+	if v, _ := attrs["gentian.inviteEmail"].([]any); len(v) != 1 || v[0] != "jane@example.org" {
+		t.Fatalf("delivery address not mirrored: %v", attrs)
+	}
+	mails := f.callsTo(http.MethodPut, "/execute-actions-email")
+	if len(mails) != 1 || !strings.Contains(mails[0].body, "CONFIGURE_TOTP") {
+		t.Fatalf("two-factor must be part of accepting: %+v", mails)
+	}
+}
+
+func TestRemoveTOTPDeletesOnlyAuthenticatorsAndTheRequirement(t *testing.T) {
+	f, srv := newFake(t)
+	f.users["demo"] = []userRep{{ID: "abc123", Username: "ada@example.com", Enabled: true,
+		RequiredActions: []string{"CONFIGURE_TOTP", "UPDATE_PROFILE"}}}
+	f.creds["abc123"] = []map[string]string{{"id": "pw1", "type": "password"}, {"id": "otp1", "type": "otp"}}
+	c := clientFor(t, srv, StaticSource{"demo": {Realm: "demo", ClientID: "a", ClientSecret: "s"}})
+	r, _ := c.Realm("demo")
+
+	if err := c.RemoveTOTP(context.Background(), r, "abc123"); err != nil {
+		t.Fatal(err)
+	}
+	dels := f.callsTo(http.MethodDelete, "/credentials/otp1")
+	if len(dels) != 1 || len(f.callsTo(http.MethodDelete, "/credentials/pw1")) != 0 {
+		t.Fatalf("only the authenticator goes: %+v", f.recorded())
+	}
+	puts := f.callsTo(http.MethodPut, "/users/abc123")
+	if len(puts) != 1 || strings.Contains(puts[0].body, "CONFIGURE_TOTP") || !strings.Contains(puts[0].body, "UPDATE_PROFILE") {
+		t.Fatalf("the requirement goes and the others stay: %+v", puts)
+	}
+}
+
+func TestCustomGroupsAreMadeInScopeAndOnlyTheyAreDeleted(t *testing.T) {
+	f, srv := newFake(t)
+	f.groups["kernel"] = []groupRep{
+		{ID: "g1", Path: "/gentian:tenant:demo:admin"},
+		{ID: "g2", Path: "/gentian:tenant:demo:sales", Attributes: map[string][]string{CustomGroupAttribute: {"true"}}},
+	}
+	c := clientFor(t, srv, StaticSource{"kernel": {Realm: "kernel", ClientID: "a", ClientSecret: "s"}})
+	base, _ := c.Realm("kernel")
+	r := base.Scoped("gentian:tenant:demo:")
+
+	if _, err := c.CreateGroup(context.Background(), r, "gentian:tenant:other:x"); !errors.Is(err, ErrOutOfScope) {
+		t.Fatalf("a group in another tenant's subtree: %v", err)
+	}
+	if err := c.DeleteGroup(context.Background(), r, "gentian:tenant:demo:admin"); !errors.Is(err, ErrNotCustom) {
+		t.Fatalf("a platform group must not be deleted: %v", err)
+	}
+	if err := c.DeleteGroup(context.Background(), r, "gentian:tenant:demo:sales"); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.callsTo(http.MethodDelete, "/groups/g2")) != 1 || len(f.callsTo(http.MethodDelete, "/groups/g1")) != 0 {
+		t.Fatalf("deleted: %+v", f.recorded())
+	}
+	if _, err := c.CreateGroup(context.Background(), r, "gentian:tenant:demo:support"); err != nil && !errors.Is(err, ErrNotFound) {
+		t.Fatal(err)
+	}
+	posts := f.callsTo(http.MethodPost, "/groups")
+	if len(posts) != 1 || !strings.Contains(posts[0].body, CustomGroupAttribute) {
+		t.Fatalf("a created group is marked custom: %+v", posts)
+	}
 }

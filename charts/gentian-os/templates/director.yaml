@@ -199,6 +199,12 @@ spec:
             # the public issuer, and the public host refuses /auth/admin by
             # design (sp-kernel-id-admin redirects it to a sign-in), so every
             # call came back as an HTML page and People answered 502.
+            # Each tenant's desktop API, where the settings templates an
+            # invitation may apply live. %s is the tenant; the desktop is the
+            # component named "desktop" in the tenant's namespace. The director
+            # relays the caller's own token, so the desktop still decides.
+            - name: DIRECTOR_DESKTOP_API_URL
+              value: {{ .Values.director.desktopAPI | default "http://desktop-gentian-portal-api.tenant-%s.svc.cluster.local:8000/api/v1" | quote }}
             - name: DIRECTOR_IDENTITY_BASE_URL
               value: {{ .Values.director.jwksBaseURL | default (printf "http://gentian-idp-keycloak-keycloakx-http.%s.svc.cluster.local:8080/auth" (.Values.layout.authentication | default .Values.servicesNamespace)) | quote }}
             - name: DIRECTOR_AUDIENCE

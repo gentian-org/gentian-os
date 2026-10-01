@@ -72,6 +72,9 @@ type Tenant struct {
 // this is the second lock, on the path a person can reach through a UI.
 const platformTenant = "platform"
 
+// PlatformTenant is that tenant's name, for a caller outside this package.
+const PlatformTenant = platformTenant
+
 // TenantRealm is the Keycloak realm one tenant's people live in.
 //
 // Read from the manifest, and defaulted to the tenant's own name exactly as
@@ -105,6 +108,54 @@ func (g *GitOps) TenantRealm(ctx context.Context, tenant string) (string, error)
 		return realm, nil
 	}
 	return tenant, nil
+}
+
+// TenantLoginDomain is the domain a tenant's people sign in under: the part
+// after the @ in a login the console composes from a local part.
+//
+// The tenant's own domain when its manifest names one. The kernel domain for
+// a tenant that adopts another realm -- the platform tenant, whose people are
+// the kernel realm's administrators (admin@<kernel>, not
+// admin@platform.<kernel>) -- and under single tenancy, where the one tenant
+// is the cluster. Otherwise <tenant>.<kernel>, the operator's default.
+func (g *GitOps) TenantLoginDomain(ctx context.Context, tenant string) (string, error) {
+	if !ValidName(tenant) {
+		return "", fmt.Errorf("%w: tenant %q", ErrInvalidName, tenant)
+	}
+	file, err := g.TenantFile(ctx, tenant)
+	if err != nil {
+		return "", err
+	}
+	b, err := os.ReadFile(file)
+	if err != nil {
+		return "", err
+	}
+	var doc struct {
+		Spec struct {
+			Domain    string `json:"domain"`
+			Isolation struct {
+				KeycloakRealm string `json:"keycloakRealm"`
+			} `json:"isolation"`
+		} `json:"spec"`
+	}
+	if err := yaml.Unmarshal(b, &doc); err != nil {
+		return "", fmt.Errorf("read %s: %w", file, err)
+	}
+	if doc.Spec.Domain != "" {
+		return doc.Spec.Domain, nil
+	}
+	kernel, err := g.KernelDomain(ctx)
+	if err != nil {
+		return "", err
+	}
+	if realm := doc.Spec.Isolation.KeycloakRealm; realm != "" && realm != tenant {
+		return kernel, nil
+	}
+	settings, err := g.ClusterSettingValues(ctx)
+	if err == nil && settings["tenancyMode"] == "single" {
+		return kernel, nil
+	}
+	return tenant + "." + kernel, nil
 }
 
 // TenantDetails lists this cluster's tenants with what the manifests say.

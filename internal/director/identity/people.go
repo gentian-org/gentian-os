@@ -49,8 +49,16 @@ type Person struct {
 	Username string `json:"username"`
 	Email    string `json:"email"`
 	// Name is the display name, empty until the person sets it.
-	Name    string `json:"name,omitempty"`
-	Enabled bool   `json:"enabled"`
+	Name string `json:"name,omitempty"`
+	// FirstName and LastName are the two halves, for a form that edits them.
+	FirstName string `json:"firstName,omitempty"`
+	LastName  string `json:"lastName,omitempty"`
+	Enabled   bool   `json:"enabled"`
+	// TOTPConfigured reports an authenticator the person has enrolled;
+	// TOTPRequired one they must enrol at their next sign-in. Filled only by
+	// the call that reads one person, like Groups.
+	TOTPConfigured bool `json:"totpConfigured"`
+	TOTPRequired   bool `json:"totpRequired"`
 	// Pending reports somebody who has been invited and has not finished:
 	// the address is unverified or a required action is outstanding.
 	Pending bool `json:"pending"`
@@ -68,7 +76,22 @@ type Group struct {
 	// should say too.
 	Path string `json:"path"`
 	Name string `json:"name"`
+	// Custom marks a group an administrator made, as opposed to one the
+	// platform composes (a tenant's admin group, an app's entitlement).
+	// Only a custom group can be deleted from here.
+	Custom bool `json:"custom"`
 }
+
+// CustomGroupAttribute marks a group created through CreateGroup.
+const CustomGroupAttribute = "gentian.custom"
+
+// configureTOTP is Keycloak's required action for enrolling an authenticator.
+const configureTOTP = "CONFIGURE_TOTP"
+
+// inviteEmailAttribute mirrors the delivery address on the person, for
+// whoever reads Keycloak's own console; the email field is what Keycloak
+// actually mails.
+const inviteEmailAttribute = "gentian.inviteEmail"
 
 // Scoped confines a realm token to one group subtree.
 //
@@ -125,6 +148,18 @@ func (c *Client) Person(ctx context.Context, r Realm, id string) (Person, error)
 		return Person{}, err
 	}
 	p := u.person()
+	p.TOTPRequired = containsString(u.RequiredActions, configureTOTP)
+	var creds []struct {
+		Type string `json:"type"`
+	}
+	if err := c.call(ctx, r, http.MethodGet, "/users/"+url.PathEscape(id)+"/credentials", nil, nil, &creds); err != nil {
+		return Person{}, err
+	}
+	for _, cr := range creds {
+		if cr.Type == "otp" {
+			p.TOTPConfigured = true
+		}
+	}
 	var groups []groupRep
 	if err := c.call(ctx, r, http.MethodGet, "/users/"+url.PathEscape(id)+"/groups", nil, nil, &groups); err != nil {
 		return Person{}, err
@@ -146,7 +181,8 @@ func (c *Client) Person(ctx context.Context, r Realm, id string) (Person, error)
 // Groups lists the groups this realm token may administer.
 func (c *Client) Groups(ctx context.Context, r Realm) ([]Group, error) {
 	var raw []groupRep
-	q := url.Values{"max": {strconv.Itoa(maxPeople)}}
+	// The full representation, for the attribute that marks a custom group.
+	q := url.Values{"max": {strconv.Itoa(maxPeople)}, "briefRepresentation": {"false"}}
 	if err := c.call(ctx, r, http.MethodGet, "/groups", q, nil, &raw); err != nil {
 		return nil, err
 	}
@@ -156,7 +192,8 @@ func (c *Client) Groups(ctx context.Context, r Realm) ([]Group, error) {
 		if !r.permits(path) {
 			continue
 		}
-		out = append(out, Group{ID: g.ID, Path: path, Name: g.Name})
+		custom := len(g.Attributes[CustomGroupAttribute]) > 0 && g.Attributes[CustomGroupAttribute][0] == "true"
+		out = append(out, Group{ID: g.ID, Path: path, Name: g.Name, Custom: custom})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
 	return out, nil
@@ -205,10 +242,17 @@ func (c *Client) ZoneLanding(ctx context.Context, r Realm, clientID string) stri
 
 // Invitation is what the caller asked for.
 type Invitation struct {
-	// Email is the address. It is also the username: one identifier for a
-	// person, so an invitation and a sign-in cannot disagree about who they
-	// are.
+	// Email is where the invitation goes, and later a password reset: the
+	// address Keycloak mails. When Username is empty it is also the login.
 	Email string
+	// Username is the login, <local>@<tenant domain>, when it is not the
+	// mailing address -- a workspace address the person does not yet read
+	// mail at. The caller composes it; this package only checks its shape.
+	Username string
+	// FirstName and LastName are what the realm greets them with.
+	FirstName, LastName string
+	// RequireTOTP makes enrolling an authenticator part of accepting.
+	RequireTOTP bool
 	// Groups are the group paths to put them in, each of which must be
 	// inside the realm token's scope.
 	Groups []string
@@ -236,6 +280,13 @@ func (c *Client) Invite(ctx context.Context, r Realm, inv Invitation) (Person, e
 	if !looksLikeAddress(email) {
 		return Person{}, fmt.Errorf("not an address: %q", inv.Email)
 	}
+	username := strings.TrimSpace(strings.ToLower(inv.Username))
+	if username == "" {
+		username = email
+	}
+	if !looksLikeAddress(username) {
+		return Person{}, fmt.Errorf("not an address: %q", inv.Username)
+	}
 	groups, err := c.resolveGroups(ctx, r, inv.Groups)
 	if err != nil {
 		return Person{}, err
@@ -247,11 +298,16 @@ func (c *Client) Invite(ctx context.Context, r Realm, inv Invitation) (Person, e
 	// there permanently -- signed in, entitled to nothing, and invisible on
 	// the screen that lists a group's members.
 	body := map[string]any{
-		"username":      email,
+		"username":      username,
 		"email":         email,
+		"firstName":     strings.TrimSpace(inv.FirstName),
+		"lastName":      strings.TrimSpace(inv.LastName),
 		"enabled":       true,
 		"emailVerified": false,
 		"groups":        groupPaths(groups),
+	}
+	if username != email {
+		body["attributes"] = map[string][]string{inviteEmailAttribute: {email}}
 	}
 	resp, err := c.do(ctx, r, http.MethodPost, "/users", nil, body)
 	if err != nil {
@@ -277,16 +333,20 @@ func (c *Client) Invite(ctx context.Context, r Realm, inv Invitation) (Person, e
 		q.Set("redirect_uri", inv.RedirectURI)
 	}
 	actions := []string{"VERIFY_EMAIL", "UPDATE_PASSWORD"}
+	if inv.RequireTOTP {
+		actions = append(actions, configureTOTP)
+	}
 	if err := c.call(ctx, r, http.MethodPut,
 		"/users/"+url.PathEscape(id)+"/execute-actions-email", q, actions, nil); err != nil {
 		// The person exists and the mail did not go. Say exactly that: the
 		// repair is to re-send, not to invite again, and an error that hid
 		// the creation would send somebody to the wrong one.
-		return Person{ID: id, Username: email, Email: email, Enabled: true, Pending: true},
-			fmt.Errorf("invited %s but the mail was not sent: %w", email, err)
+		return Person{ID: id, Username: username, Email: email, Enabled: true, Pending: true},
+			fmt.Errorf("invited %s but the mail was not sent: %w", username, err)
 	}
-	return Person{ID: id, Username: email, Email: email, Enabled: true, Pending: true,
-		Groups: groupPaths(groups)}, nil
+	return Person{ID: id, Username: username, Email: email, Enabled: true, Pending: true,
+		FirstName: strings.TrimSpace(inv.FirstName), LastName: strings.TrimSpace(inv.LastName),
+		TOTPRequired: inv.RequireTOTP, Groups: groupPaths(groups)}, nil
 }
 
 // SendPasswordReset mails somebody a link that lets them set a new password.
@@ -340,6 +400,209 @@ func (c *Client) SetMembership(ctx context.Context, r Realm, userID, groupPath s
 		method = http.MethodPut
 	}
 	return c.call(ctx, r, method, path, nil, nil, nil)
+}
+
+// PersonUpdate names what to change; a nil field is left as it is.
+type PersonUpdate struct {
+	FirstName *string
+	LastName  *string
+	Enabled   *bool
+	// Email is the delivery address: where a reset or a two-factor link goes.
+	Email *string
+}
+
+// UpdatePerson changes a person's names, delivery address or whether they
+// may sign in.
+//
+// Read-modify-write of the user, because Keycloak's user update replaces the
+// attributes it is sent: a partial body would drop the ones it did not name.
+func (c *Client) UpdatePerson(ctx context.Context, r Realm, id string, u PersonUpdate) (Person, error) {
+	if !plainID(id) {
+		return Person{}, fmt.Errorf("%w: user %q", ErrNotFound, id)
+	}
+	var cur map[string]any
+	if err := c.call(ctx, r, http.MethodGet, "/users/"+url.PathEscape(id), nil, nil, &cur); err != nil {
+		return Person{}, err
+	}
+	if u.FirstName != nil {
+		cur["firstName"] = strings.TrimSpace(*u.FirstName)
+	}
+	if u.LastName != nil {
+		cur["lastName"] = strings.TrimSpace(*u.LastName)
+	}
+	if u.Enabled != nil {
+		cur["enabled"] = *u.Enabled
+	}
+	if u.Email != nil {
+		email := strings.TrimSpace(strings.ToLower(*u.Email))
+		if !looksLikeAddress(email) {
+			return Person{}, fmt.Errorf("not an address: %q", *u.Email)
+		}
+		cur["email"] = email
+		attrs, _ := cur["attributes"].(map[string]any)
+		if attrs == nil {
+			attrs = map[string]any{}
+		}
+		if username, _ := cur["username"].(string); username != email {
+			attrs[inviteEmailAttribute] = []string{email}
+		} else {
+			delete(attrs, inviteEmailAttribute)
+		}
+		cur["attributes"] = attrs
+	}
+	if err := c.call(ctx, r, http.MethodPut, "/users/"+url.PathEscape(id), nil, cur, nil); err != nil {
+		return Person{}, err
+	}
+	return c.Person(ctx, r, id)
+}
+
+// RemovePerson deletes somebody from the realm.
+func (c *Client) RemovePerson(ctx context.Context, r Realm, id string) error {
+	if !plainID(id) {
+		return fmt.Errorf("%w: user %q", ErrNotFound, id)
+	}
+	return c.call(ctx, r, http.MethodDelete, "/users/"+url.PathEscape(id), nil, nil, nil)
+}
+
+// RequireTOTP makes a person enrol an authenticator at their next sign-in,
+// and when mail is asked for, sends them the link to do it now.
+func (c *Client) RequireTOTP(ctx context.Context, r Realm, id string, mail bool, clientID, redirectURI string) error {
+	if !plainID(id) {
+		return fmt.Errorf("%w: user %q", ErrNotFound, id)
+	}
+	if err := c.setRequiredAction(ctx, r, id, configureTOTP, true); err != nil {
+		return err
+	}
+	if !mail {
+		return nil
+	}
+	q := url.Values{}
+	if clientID != "" {
+		q.Set("client_id", clientID)
+	}
+	if redirectURI != "" {
+		q.Set("redirect_uri", redirectURI)
+	}
+	return c.call(ctx, r, http.MethodPut,
+		"/users/"+url.PathEscape(id)+"/execute-actions-email", q, []string{configureTOTP}, nil)
+}
+
+// RemoveTOTP deletes every authenticator a person enrolled and drops the
+// requirement, for somebody who lost their device.
+func (c *Client) RemoveTOTP(ctx context.Context, r Realm, id string) error {
+	if !plainID(id) {
+		return fmt.Errorf("%w: user %q", ErrNotFound, id)
+	}
+	var creds []struct {
+		ID   string `json:"id"`
+		Type string `json:"type"`
+	}
+	if err := c.call(ctx, r, http.MethodGet, "/users/"+url.PathEscape(id)+"/credentials", nil, nil, &creds); err != nil {
+		return err
+	}
+	for _, cr := range creds {
+		if cr.Type != "otp" || !plainID(cr.ID) {
+			continue
+		}
+		if err := c.call(ctx, r, http.MethodDelete,
+			"/users/"+url.PathEscape(id)+"/credentials/"+url.PathEscape(cr.ID), nil, nil, nil); err != nil {
+			return err
+		}
+	}
+	return c.setRequiredAction(ctx, r, id, configureTOTP, false)
+}
+
+// setRequiredAction adds or removes one required action, keeping the others.
+func (c *Client) setRequiredAction(ctx context.Context, r Realm, id, action string, on bool) error {
+	var cur map[string]any
+	if err := c.call(ctx, r, http.MethodGet, "/users/"+url.PathEscape(id), nil, nil, &cur); err != nil {
+		return err
+	}
+	var actions []string
+	if raw, ok := cur["requiredActions"].([]any); ok {
+		for _, a := range raw {
+			if s, ok := a.(string); ok && s != action {
+				actions = append(actions, s)
+			}
+		}
+	}
+	if on {
+		actions = append(actions, action)
+	}
+	if actions == nil {
+		actions = []string{}
+	}
+	cur["requiredActions"] = actions
+	return c.call(ctx, r, http.MethodPut, "/users/"+url.PathEscape(id), nil, cur, nil)
+}
+
+// CreateGroup makes a custom group at the given path. The caller composes
+// the path inside its tenant's subtree; it must be inside this token's scope.
+func (c *Client) CreateGroup(ctx context.Context, r Realm, path string) (Group, error) {
+	path = strings.TrimPrefix(path, "/")
+	if path == "" || strings.Contains(path, "/") {
+		return Group{}, fmt.Errorf("%w: group %q", ErrNotFound, path)
+	}
+	if !r.permits(path) {
+		return Group{}, fmt.Errorf("%w: %q", ErrOutOfScope, path)
+	}
+	body := map[string]any{
+		"name":       path,
+		"attributes": map[string][]string{CustomGroupAttribute: {"true"}},
+	}
+	if err := c.call(ctx, r, http.MethodPost, "/groups", nil, body, nil); err != nil {
+		return Group{}, err
+	}
+	groups, err := c.resolveGroups(ctx, r, []string{path})
+	if err != nil {
+		return Group{}, err
+	}
+	return groups[0], nil
+}
+
+// ErrNotCustom is a group the platform composes, which is not deleted from here.
+var ErrNotCustom = errors.New("group is the platform's, not a custom one")
+
+// DeleteGroup removes a custom group. A group the platform composed -- an
+// app's entitlement, the tenant's admins -- is refused: its owner would only
+// make it again, and everybody in it would lose access until it did.
+func (c *Client) DeleteGroup(ctx context.Context, r Realm, path string) error {
+	groups, err := c.resolveGroups(ctx, r, []string{path})
+	if err != nil {
+		return err
+	}
+	if !groups[0].Custom {
+		return fmt.Errorf("%w: %q", ErrNotCustom, groups[0].Path)
+	}
+	return c.call(ctx, r, http.MethodDelete, "/groups/"+url.PathEscape(groups[0].ID), nil, nil, nil)
+}
+
+// GroupMembers lists the people in one group.
+func (c *Client) GroupMembers(ctx context.Context, r Realm, path string) ([]Person, error) {
+	groups, err := c.resolveGroups(ctx, r, []string{path})
+	if err != nil {
+		return nil, err
+	}
+	var raw []userRep
+	q := url.Values{"max": {strconv.Itoa(maxPeople)}, "briefRepresentation": {"true"}}
+	if err := c.call(ctx, r, http.MethodGet, "/groups/"+url.PathEscape(groups[0].ID)+"/members", q, nil, &raw); err != nil {
+		return nil, err
+	}
+	out := make([]Person, 0, len(raw))
+	for _, u := range raw {
+		out = append(out, u.person())
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Username < out[j].Username })
+	return out, nil
+}
+
+func containsString(list []string, s string) bool {
+	for _, v := range list {
+		if v == s {
+			return true
+		}
+	}
+	return false
 }
 
 // PasswordPolicy reads the realm's policy, in Keycloak's own spelling
@@ -430,19 +693,26 @@ type userRep struct {
 func (u userRep) person() Person {
 	name := strings.TrimSpace(u.FirstName + " " + u.LastName)
 	return Person{
-		ID:       u.ID,
-		Username: u.Username,
-		Email:    u.Email,
-		Name:     name,
-		Enabled:  u.Enabled,
-		Pending:  !u.EmailVerified || len(u.RequiredActions) > 0,
+		ID:        u.ID,
+		Username:  u.Username,
+		Email:     u.Email,
+		Name:      name,
+		FirstName: u.FirstName,
+		LastName:  u.LastName,
+		Enabled:   u.Enabled,
+		// Pending is somebody who has not finished accepting: an unverified
+		// address, or a password not yet set. A two-factor requirement added
+		// later to a person who signs in already is not "pending".
+		Pending:      !u.EmailVerified || containsString(u.RequiredActions, "UPDATE_PASSWORD"),
+		TOTPRequired: containsString(u.RequiredActions, configureTOTP),
 	}
 }
 
 type groupRep struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
-	Path string `json:"path"`
+	ID         string              `json:"id"`
+	Name       string              `json:"name"`
+	Path       string              `json:"path"`
+	Attributes map[string][]string `json:"attributes"`
 }
 
 // plainID rejects anything that is not a Keycloak id, before it reaches a
