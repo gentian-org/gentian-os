@@ -2097,8 +2097,19 @@ _claims_this_checkout_cannot_apply() {
 # the director's push credential. That failure used to be a warning that
 # scrolled past, and the install that followed looked fine until its first
 # write answered 503.
+# _cluster_scaffold_paths <cluster> — what step 0 scaffolds, and so commits:
+# the kernel directory and Tenant/platform beside it. Committing only kernel/
+# left the platform tenant on the install host's disk, the tenants
+# ApplicationSet generated nothing, and D-03 waited for a Tenant that could
+# never arrive.
+_cluster_scaffold_paths() {
+    printf '%s\n' "clusters/$1/kernel" "clusters/$1/tenants/platform"
+}
+
 gentian_commit_cluster_deployment() {
     local kernel_dir="$1" cluster="$2" dirty sign_args branch
+    local -a paths
+    mapfile -t paths < <(_cluster_scaffold_paths "${cluster}")
     command -v git >/dev/null 2>&1 || return 0
     git -C "${GENTIAN_DEPLOYMENTS_PATH}" rev-parse --git-dir >/dev/null 2>&1 || {
         warn "${GENTIAN_DEPLOYMENTS_PATH} is not a git repository, so nothing was committed."
@@ -2108,7 +2119,7 @@ gentian_commit_cluster_deployment() {
     }
 
     dirty="$(git -C "${GENTIAN_DEPLOYMENTS_PATH}" status --porcelain -- \
-        "clusters/${cluster}/kernel" 2>/dev/null || true)"
+        "${paths[@]}" 2>/dev/null || true)"
     [[ -n "${dirty}" ]] || return 0
 
     # Refuse to commit a claim nothing here can apply.
@@ -2140,14 +2151,14 @@ gentian_commit_cluster_deployment() {
         sign_args="$(gentian_git_sign_args break-glass)"
     fi
 
-    info "Committing clusters/${cluster}/kernel:"
+    info "Committing clusters/${cluster} (kernel/, tenants/platform/):"
     while IFS= read -r line; do
         [[ -n "${line}" ]] && info "    ${line}"
     done <<< "${dirty}"
 
     local -a SIGN
     read -r -a SIGN <<< "${sign_args}"
-    git -C "${GENTIAN_DEPLOYMENTS_PATH}" add -- "clusters/${cluster}/kernel" || {
+    git -C "${GENTIAN_DEPLOYMENTS_PATH}" add -- "${paths[@]}" || {
         _warn_uncommitted_cluster_deployment "${kernel_dir}" "${cluster}"
         return 0
     }
@@ -2159,7 +2170,7 @@ gentian_commit_cluster_deployment() {
 Written by install.sh (step 0) and signed with this cluster's
 break-glass key: before the cluster exists there is no director to write it,
 and AD-2 names that case." 2>&1; then
-        error "The commit failed; clusters/${cluster}/kernel is still uncommitted."
+        error "The commit failed; clusters/${cluster} is still uncommitted."
         _warn_uncommitted_cluster_deployment "${kernel_dir}" "${cluster}"
         return 1
     fi
@@ -2178,7 +2189,7 @@ and AD-2 names that case." 2>&1; then
         error "  Then run ./install.sh again."
         return 1
     fi
-    success "Committed and pushed clusters/${cluster}/kernel (signed, break-glass)."
+    success "Committed and pushed clusters/${cluster} (signed, break-glass)."
 }
 
 _warn_uncommitted_cluster_deployment() {
@@ -2186,14 +2197,15 @@ _warn_uncommitted_cluster_deployment() {
     command -v git >/dev/null 2>&1 || return 0
     git -C "${GENTIAN_DEPLOYMENTS_PATH}" rev-parse --git-dir >/dev/null 2>&1 || return 0
 
-    # Untracked or modified, under this cluster's kernel directory only: a
-    # tenant being edited elsewhere in the repository is not this step's
-    # business.
+    # Untracked or modified, under what step 0 scaffolds only: any other
+    # tenant being edited in the repository is not this step's business.
+    local -a paths
+    mapfile -t paths < <(_cluster_scaffold_paths "${cluster}")
     dirty="$(git -C "${GENTIAN_DEPLOYMENTS_PATH}" status --porcelain -- \
-        "clusters/${cluster}/kernel" 2>/dev/null)" || return 0
+        "${paths[@]}" 2>/dev/null)" || return 0
     [[ -n "${dirty}" ]] || return 0
 
-    warn "clusters/${cluster}/kernel has uncommitted changes:"
+    warn "clusters/${cluster} has uncommitted changes:"
     while IFS= read -r line; do
         [[ -n "${line}" ]] && warn "    ${line}"
     done <<< "${dirty}"
