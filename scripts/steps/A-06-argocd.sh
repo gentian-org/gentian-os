@@ -23,7 +23,11 @@ check() {
         # helm for check(), and a release that exists while its Deployment
         # does not is a step reporting satisfied for something that is not
         # running. Asking Kubernetes answers the question the step is about.
-        kubectl get deployment argocd-image-updater -n "${ns}" >/dev/null 2>&1 &&
+        # By label, not name: chart 1.x names it argocd-image-updater-controller,
+        # and asking for the 0.x name left this check failing forever, so every
+        # run re-installed the updater (thirteen Helm revisions on one cluster).
+        kubectl get deployment -n "${ns}" -l app.kubernetes.io/name=argocd-image-updater \
+            -o name 2>/dev/null | grep -q . &&
         # Serving plain HTTP is not a preference here, it is what makes the
         # console reachable at all; a step that reports satisfied without it
         # leaves a redirect loop nothing else in the sequence looks at.
