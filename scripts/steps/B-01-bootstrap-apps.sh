@@ -2,7 +2,7 @@
 # step: B-01-bootstrap-apps
 # phase: secrets
 # requires: A-06-argocd
-# provides: the gentian AppProject and the kernel Applications of kernel/bootstrap/chart (reloader, cnpg, kernel-postgres, kyverno, headlamp Synced and Healthy; openbao and openbao-transit Synced, awaiting their init), each in its layout namespace
+# provides: the gentian AppProject and the kernel Applications of kernel/bootstrap/chart (reloader, cnpg, kyverno, headlamp Synced and Healthy; openbao and openbao-transit Synced, awaiting their init; kernel-postgres created, awaited by C-02), each in its layout namespace
 # mutates: a placeholder Secret openbao-transit-unseal in the seal namespace; the vault's self-signed Issuer and Certificate in the secrets namespace; Application and AppProject objects in the gitops namespace; what they sync lands in the seal, secrets, data, admission, observability and edge namespaces
 # pins: headlamp
 
@@ -33,9 +33,19 @@ _v5_delivered() {
     esac
 }
 
-_v5_apps_healthy() { echo "reloader cnpg kernel-postgres kyverno headlamp"; }
+_v5_apps_healthy() { echo "reloader cnpg kyverno headlamp"; }
 _v5_apps_synced()  { echo "openbao openbao-transit"; }
-_v5_apps()         { echo "$(_v5_apps_healthy) $(_v5_apps_synced)"; }
+# Created here, waited for later. kernel-postgres's role passwords are
+# ExternalSecrets on the ClusterSecretStore the Cluster claim composes (C-01),
+# reading a vault B-03 initialises -- so on a fresh cluster neither exists yet,
+# Argo CD stops the sync at that wave, and the database itself is never
+# applied. Waiting for it to be Healthy here could only time out. Nothing in
+# this phase needs Postgres (OpenBao keeps its own storage); its first readers
+# are Keycloak and OpenFGA, and C-02 waits for it before them. Earlier
+# installs never saw this because they ran where a previous install's store
+# was still standing.
+_v5_apps_deferred() { echo "kernel-postgres"; }
+_v5_apps()         { echo "$(_v5_apps_healthy) $(_v5_apps_synced) $(_v5_apps_deferred)"; }
 
 # _v5_keep_chart_version — do not downgrade a component chart this cluster has
 # already resolved.
@@ -147,7 +157,7 @@ apply() {
     _v5_render | kubectl apply -f -
     local ns app want
     ns="$(ns_kernel gitops)"
-    for app in $(_v5_apps); do
+    for app in $(_v5_apps_healthy) $(_v5_apps_synced); do
         want=healthy
         case " $(_v5_apps_synced) " in *" ${app} "*) want=synced ;; esac
         info "waiting for ${app} to be Synced$([[ ${want} == healthy ]] && echo ' and Healthy')"

@@ -2,7 +2,7 @@
 # step: C-02-appsets
 # phase: platform
 # requires: B-08-seed-secrets
-# provides: the gentian-appsets Application (kernel/appsets) Synced, and its children — the system tier's data plane, the identity values in their namespaces, the claims of the deployments repository — Synced and Healthy
+# provides: the kernel Postgres (kernel-postgres) Synced and Healthy, the gentian-appsets Application (kernel/appsets) Synced, and its children — the system tier's data plane, the identity values in their namespaces, the claims of the deployments repository — Synced and Healthy
 # mutates: the gentian-appsets Application and the ApplicationSets it creates in the gitops namespace; what they sync
 
 # _v5_render and _v5_delivered are B-01's; a step file is a library of verbs
@@ -76,6 +76,7 @@ _v5_engines_ready() {
 check() {
     local ns app
     ns="$(ns_kernel gitops)"
+    for app in $(_v5_apps_deferred); do _v5_delivered "${ns}" "${app}" || return 1; done
     _v5_delivered "${ns}" gentian-appsets || return 1
     for app in $(_v5_appsets_children); do _v5_delivered "${ns}" "${app}" || return 1; done
     _v5_engines_ready
@@ -94,9 +95,31 @@ apply() {
         GENTIAN_SYSTEM_NAMESPACE="$(ns_kernel control)" \
         ensure_keycloak_listener_keypair
 
-    V5_APPSETS=true _v5_render | kubectl apply -f - >/dev/null
     local ns app t
     ns="$(ns_kernel gitops)"
+
+    # The kernel Postgres first: Keycloak and OpenFGA below are its readers.
+    # B-01 created it and could not wait for it -- its role passwords come
+    # through the store C-01 composed, from the vault B-03 initialised -- and
+    # Argo CD spent its retries on it in the meantime, so it is asked for a
+    # fresh sync rather than waited on.
+    for app in $(_v5_apps_deferred); do
+        info "waiting for ${app} to be Synced and Healthy"
+        t=$((SECONDS + 900))
+        until _v5_delivered "${ns}" "${app}"; do
+            unstick_argo_hook_job "${ns}" "${app}"
+            request_argo_sync_if_stalled "${ns}" "${app}"
+            if (( SECONDS > t )); then
+                error "${app} is not Synced and Healthy after 15m:"
+                kubectl get application "${app}" -n "${ns}" -o jsonpath='{"  sync: "}{.status.sync.status}{"  health: "}{.status.health.status}{" "}{.status.health.message}{"\n"}' 2>/dev/null
+                return 1
+            fi
+            sleep 10
+        done
+        success "${app} delivered"
+    done
+
+    V5_APPSETS=true _v5_render | kubectl apply -f - >/dev/null
     for app in gentian-appsets $(_v5_appsets_children); do
         info "waiting for ${app} to be Synced and Healthy"
         t=$((SECONDS + 900))
