@@ -208,6 +208,61 @@ gentian_dns_resolves() {
     getent hosts "${host}" >/dev/null 2>&1
 }
 
+# gentian_dns_wait_for <hosts, one per line> — wait for public names to resolve.
+# D-02 waits for id before D-03; D-05 for the console D-03 creates. Never
+# fatal: the steps that need a name wait for it in their own right.
+gentian_dns_wait_for() {
+    local timeout="${GENTIAN_DNS_WAIT_SECS:-900}"
+    local deadline=$(( SECONDS + timeout ))
+    local host hosts="$1" pending reported=0
+
+    if [[ -z "${hosts}" ]]; then
+        info "No kernel domain resolved from the claim; nothing to wait for."
+        return 0
+    fi
+
+    # external-dns first: until it runs, nothing is publishing anything, and
+    # saying so is more useful than a name that will not resolve for reasons the
+    # operator cannot see.
+    if ! kubectl get deploy -n "$(ns_kernel edge)" -l app.kubernetes.io/name=external-dns \
+        -o name 2>/dev/null | grep -q .; then
+        info "Waiting for external-dns to be deployed (Argo CD delivers it)..."
+    fi
+
+    while (( SECONDS < deadline )); do
+        pending=""
+        while IFS= read -r host; do
+            [[ -n "${host}" ]] || continue
+            # The zone's own nameservers, not this machine's resolver: see
+            # gentian_dns_resolves. A resolver that asked before the record
+            # existed caches "no" for the zone's negative TTL, which is longer
+            # than this wait and would time out on DNS that is already live.
+            gentian_dns_resolves "${host}" "${KERNEL_DOMAIN:-}" \
+                || pending="${pending}${host} "
+        done <<< "${hosts}"
+
+        if [[ -z "${pending}" ]]; then
+            success "Kernel hostnames resolve: $(printf '%s' "${hosts}" | tr '\n' ' ')"
+            return 0
+        fi
+
+        if (( reported == 0 )) || (( SECONDS % 60 < 10 )); then
+            info "  waiting for DNS: ${pending%% }"
+            reported=1
+        fi
+        sleep 10
+    done
+
+    # Not an error. The steps after this one wait for what they need in their own
+    # right, and a cluster whose DNS an operator publishes by hand is a supported
+    # arrangement rather than a fault.
+    warn "Kernel hostnames did not resolve within $(( timeout / 60 ))m: ${pending%% }"
+    warn "  external-dns publishes them from the Gateway's hostnames once it is"
+    warn "  running, and its Cloudflare credential must cover this zone."
+    warn "  Continuing — the steps that need a public name wait for it themselves."
+    return 0
+}
+
 # _helm_retry — the same idea as _kubectl_retry, for helm.
 #
 # Every chart this installer applies is fetched over the network, from a chart

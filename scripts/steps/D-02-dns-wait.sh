@@ -2,7 +2,7 @@
 # step: D-02-dns-wait
 # phase: applications
 # requires: D-01-operator
-# provides: the kernel hostnames resolving publicly
+# provides: id.<kernel> resolving publicly, for the OIDC discovery D-03 is the first to need
 # check: none — a pure wait; DNS either resolves or it does not, and there is no artefact to test for
 # mutates: nothing — waits on a condition
 
@@ -40,64 +40,16 @@ _dns_wait_hosts() {
     # KERNEL_DOMAIN, which the installer resolves from the claim before any step
     # runs and every other step reads the same way.
     #
-    # Two names, not every hostname the cluster serves: these are the ones the
-    # steps after this actually reach over the public internet — id for the OIDC
-    # discovery document, portal for the sign-in the handover waits on. Waiting
-    # for more would make this fail for services nothing here depends on.
+    # id only: the OIDC discovery document D-03 fetches. console.<kernel> is
+    # the platform tenant's desktop, which D-03 creates -- nothing routes it
+    # before then, so nothing can have published it, and waiting for it here
+    # waited out the full timeout on the first fresh install. D-05 waits for
+    # it, after D-03, with the same function.
     local d="${KERNEL_DOMAIN:-}"
     [[ -n "${d}" ]] || return 0
-    printf '%s\n' "id.${d}" "console.${d}"
+    printf '%s\n' "id.${d}"
 }
 
 apply() {
-    local timeout="${GENTIAN_DNS_WAIT_SECS:-900}"
-    local deadline=$(( SECONDS + timeout ))
-    local host hosts pending reported=0
-
-    hosts="$(_dns_wait_hosts)"
-    if [[ -z "${hosts}" ]]; then
-        info "No kernel domain resolved from the claim; nothing to wait for."
-        return 0
-    fi
-
-    # external-dns first: until it runs, nothing is publishing anything, and
-    # saying so is more useful than a name that will not resolve for reasons the
-    # operator cannot see.
-    if ! kubectl get deploy -n "$(ns_kernel edge)" -l app.kubernetes.io/name=external-dns \
-        -o name 2>/dev/null | grep -q .; then
-        info "Waiting for external-dns to be deployed (Argo CD delivers it)..."
-    fi
-
-    while (( SECONDS < deadline )); do
-        pending=""
-        while IFS= read -r host; do
-            [[ -n "${host}" ]] || continue
-            # The zone's own nameservers, not this machine's resolver: see
-            # gentian_dns_resolves. A resolver that asked before the record
-            # existed caches "no" for the zone's negative TTL, which is longer
-            # than this wait and would time out on DNS that is already live.
-            gentian_dns_resolves "${host}" "${KERNEL_DOMAIN:-}" \
-                || pending="${pending}${host} "
-        done <<< "${hosts}"
-
-        if [[ -z "${pending}" ]]; then
-            success "Kernel hostnames resolve: $(printf '%s' "${hosts}" | tr '\n' ' ')"
-            return 0
-        fi
-
-        if (( reported == 0 )) || (( SECONDS % 60 < 10 )); then
-            info "  waiting for DNS: ${pending%% }"
-            reported=1
-        fi
-        sleep 10
-    done
-
-    # Not an error. The steps after this one wait for what they need in their own
-    # right, and a cluster whose DNS an operator publishes by hand is a supported
-    # arrangement rather than a fault.
-    warn "Kernel hostnames did not resolve within $(( timeout / 60 ))m: ${pending%% }"
-    warn "  external-dns publishes them from the Gateway's hostnames once it is"
-    warn "  running, and its Cloudflare credential must cover this zone."
-    warn "  Continuing — the steps that need a public name wait for it themselves."
-    return 0
+    gentian_dns_wait_for "$(_dns_wait_hosts)"
 }
