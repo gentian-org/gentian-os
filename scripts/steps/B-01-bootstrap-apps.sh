@@ -139,6 +139,13 @@ check() {
     ns="$(ns_kernel gitops)"
     kubectl get appproject gentian -n "${ns}" >/dev/null 2>&1 || return 1
     kubectl get certificate openbao-tls -n "$(ns_kernel secrets)" >/dev/null 2>&1 || return 1
+    # The claim's ACME environment as rendered. App pods choose their trust
+    # mount from it, and a claim moved off staging otherwise kept "true" here
+    # for good: everything else this checks was still in place.
+    local want_staging=false
+    [[ "${ACME_ENV:-production}" == "staging" ]] && want_staging=true
+    [[ "$(kubectl get configmap gentian-kernel-services -n "$(ns_kernel control)" \
+        -o jsonpath='{.data.ACME_STAGING}' 2>/dev/null)" == "${want_staging}" ]] || return 1
     for app in $(_v5_apps_healthy); do _v5_delivered "${ns}" "${app}" || return 1; done
     for app in $(_v5_apps_synced);  do _v5_delivered "${ns}" "${app}" synced || return 1; done
     return 0
