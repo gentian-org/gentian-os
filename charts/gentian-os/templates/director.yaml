@@ -194,6 +194,13 @@ spec:
               value: {{ printf "https://id.%s/auth" .Values.kernelDomain | quote }}
             - name: DIRECTOR_JWKS_BASE_URL
               value: {{ .Values.director.jwksBaseURL | default (printf "http://gentian-idp-keycloak-keycloakx-http.%s.svc.cluster.local:8080/auth" (.Values.layout.authentication | default .Values.servicesNamespace)) | quote }}
+            # Where the director calls Keycloak's admin API for People and the
+            # realm settings: in-cluster, like the keys. Unset it defaulted to
+            # the public issuer, and the public host refuses /auth/admin by
+            # design (sp-kernel-id-admin redirects it to a sign-in), so every
+            # call came back as an HTML page and People answered 502.
+            - name: DIRECTOR_IDENTITY_BASE_URL
+              value: {{ .Values.director.jwksBaseURL | default (printf "http://gentian-idp-keycloak-keycloakx-http.%s.svc.cluster.local:8080/auth" (.Values.layout.authentication | default .Values.servicesNamespace)) | quote }}
             - name: DIRECTOR_AUDIENCE
               value: {{ .Values.director.audience | quote }}
             - name: OPENFGA_API_URL
