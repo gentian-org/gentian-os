@@ -443,19 +443,31 @@ _wait_for_sign_in() {
     # naming them here, on the screen that has stopped, is the most it can do.
     warn "  3. SUPPLY THE RUNTIME CREDENTIALS"
     warn "     Once signed in, open the Credentials tab and fill in what the"
-    warn "     cluster is still missing. Do the SMTP relay FIRST."
+    warn "     cluster is still missing."
+    # The relay only where there is one. Under system mail the cluster runs
+    # its own and derives that password itself, so there is nothing to supply
+    # -- and "do the relay first" there sent people looking for a credential
+    # that does not apply.
     local mail_mode
     mail_mode="$(kubectl get cluster.gentianos.io -n "$(ns_kernel provisioning)" \
         -o jsonpath='{.items[0].spec.mail.serviceMode}' 2>/dev/null || true)"
-    if [[ "${mail_mode}" == "external" ]]; then
-        warn "     This cluster's mail.serviceMode is 'external', so nothing"
-        warn "     sends until the relay is set — and any tenant app that asks"
-        warn "     for SMTP will not install at all: its credentials never"
-        warn "     reach OpenBao, so its secret never syncs."
-    else
-        warn "     Without it no realm can send, so you cannot invite anyone,"
-        warn "     and tenant apps that ask for SMTP will not install."
-    fi
+    case "${mail_mode}" in
+        external)
+            warn "     Do the SMTP relay FIRST. This cluster's mail.serviceMode is"
+            warn "     'external', so nothing sends until the relay is set — and any"
+            warn "     tenant app that asks for SMTP will not install at all: its"
+            warn "     credentials never reach OpenBao, so its secret never syncs."
+            ;;
+        system)
+            info "     Mail is the cluster's own (mail.serviceMode system): there is"
+            info "     no relay to supply."
+            ;;
+        *)
+            warn "     The claim's mail.serviceMode could not be read. If this cluster"
+            warn "     relays mail externally, do the SMTP relay first: until it is set"
+            warn "     no realm can send and tenant apps that ask for SMTP will not install."
+            ;;
+    esac
     echo ""
     info "  Signing in proves someone other than the installer can write"
     info "  credentials. Until it happens the installer's own credential has to"
