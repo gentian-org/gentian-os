@@ -262,13 +262,47 @@ func (c *KeycloakAdminClient) grantDirectorRoles(ctx context.Context, token, rea
 	}
 	// Everything wanted is already held: "available" lists what is NOT yet
 	// granted, so an empty intersection means there is nothing to do.
-	if len(grant) == 0 {
+	if len(grant) > 0 {
+		if _, err := c.doAdminExpect(ctx, token, http.MethodPost, fmt.Sprintf(
+			"/admin/realms/%s/users/%s/role-mappings/clients/%s",
+			url.PathEscape(realm), url.PathEscape(account.ID), url.PathEscape(management.ID)),
+			grant, http.StatusNoContent, http.StatusOK); err != nil {
+			return err
+		}
+	}
+	return c.scopeDirectorRoles(ctx, token, realm, clientUUID, management.ID)
+}
+
+// scopeDirectorRoles puts the same roles into the client's scope, so its
+// tokens carry them.
+//
+// Holding a role is not enough. The client is fullScopeAllowed: false, on
+// purpose, and a client without a full scope mints tokens holding only the
+// roles in its scope mappings -- none, until this runs. Keycloak's admin API
+// reads roles from the token, so the service account held all five and every
+// People call answered 403. Mapped here are exactly the granted five, which
+// keeps the narrow scope the flag exists for.
+func (c *KeycloakAdminClient) scopeDirectorRoles(ctx context.Context, token, realm, clientUUID, managementUUID string) error {
+	base := fmt.Sprintf("/admin/realms/%s/clients/%s/scope-mappings/clients/%s",
+		url.PathEscape(realm), url.PathEscape(clientUUID), url.PathEscape(managementUUID))
+	var available []keycloakRoleRecord
+	if err := c.getAdminJSON(ctx, token, base+"/available", &available); err != nil {
+		return fmt.Errorf("keycloak realm %s: scope of %s: %w", realm, DirectorClientID, err)
+	}
+	wanted := map[string]bool{}
+	for _, r := range directorRealmRoles {
+		wanted[r] = true
+	}
+	var scope []keycloakRoleRecord
+	for _, r := range available {
+		if wanted[r.Name] {
+			scope = append(scope, r)
+		}
+	}
+	if len(scope) == 0 {
 		return nil
 	}
-	_, err = c.doAdminExpect(ctx, token, http.MethodPost, fmt.Sprintf(
-		"/admin/realms/%s/users/%s/role-mappings/clients/%s",
-		url.PathEscape(realm), url.PathEscape(account.ID), url.PathEscape(management.ID)),
-		grant, http.StatusNoContent, http.StatusOK)
+	_, err := c.doAdminExpect(ctx, token, http.MethodPost, base, scope, http.StatusNoContent, http.StatusOK)
 	return err
 }
 

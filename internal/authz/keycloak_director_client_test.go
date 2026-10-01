@@ -36,6 +36,8 @@ type fakeRealm struct {
 	director *keycloakClientRecord
 	// granted is the set of realm-management roles the service account holds.
 	granted map[string]bool
+	// scoped is the set the client's scope maps, i.e. what its tokens carry.
+	scoped map[string]bool
 	// calls records method+path, for asserting what was and was not done.
 	calls []string
 	// createdBody is the representation the client was created with.
@@ -46,7 +48,9 @@ type fakeRealm struct {
 	noManagement bool
 }
 
-func newFakeRealm() *fakeRealm { return &fakeRealm{granted: map[string]bool{}} }
+func newFakeRealm() *fakeRealm {
+	return &fakeRealm{granted: map[string]bool{}, scoped: map[string]bool{}}
+}
 
 // allRealmManagementRoles is what a real realm offers; the director must take
 // only its five from it.
@@ -136,6 +140,27 @@ func (f *fakeRealm) server(t *testing.T) *httptest.Server {
 			f.mu.Lock()
 			for _, r := range roles {
 				f.granted[r.Name] = true
+			}
+			f.mu.Unlock()
+			w.WriteHeader(http.StatusNoContent)
+
+		case r.URL.Path == "/admin/realms/demo/clients/director-uuid/scope-mappings/clients/mgmt-uuid/available":
+			f.mu.Lock()
+			out := []keycloakRoleRecord{}
+			for _, name := range allRealmManagementRoles {
+				if !f.scoped[name] {
+					out = append(out, keycloakRoleRecord{ID: "role-" + name, Name: name})
+				}
+			}
+			f.mu.Unlock()
+			_ = json.NewEncoder(w).Encode(out)
+
+		case r.URL.Path == "/admin/realms/demo/clients/director-uuid/scope-mappings/clients/mgmt-uuid" && r.Method == http.MethodPost:
+			var roles []keycloakRoleRecord
+			_ = json.Unmarshal(body, &roles)
+			f.mu.Lock()
+			for _, r := range roles {
+				f.scoped[r.Name] = true
 			}
 			f.mu.Unlock()
 			w.WriteHeader(http.StatusNoContent)
@@ -279,6 +304,41 @@ func TestEnsureDirectorRealmClient_IsIdempotent(t *testing.T) {
 	}
 	if f.did(http.MethodPut, "/admin/realms/demo/clients/director-uuid") {
 		t.Error("a client already in the right shape was rewritten")
+	}
+	if f.did(http.MethodPost, "/admin/realms/demo/clients/director-uuid/scope-mappings/clients/mgmt-uuid") {
+		t.Error("the scope was mapped again when it already carried the roles")
+	}
+}
+
+// Holding a role is not carrying it. The client is fullScopeAllowed: false, so
+// its tokens carry only what its scope maps; without the mapping the service
+// account held all five roles and Keycloak answered every People call 403.
+// The scope must carry exactly the granted five -- realm-admin in it would
+// undo the point of the narrow scope.
+func TestEnsureDirectorRealmClient_TokensCarryTheGrantedRoles(t *testing.T) {
+	t.Parallel()
+	f := newFakeRealm()
+	srv := f.server(t)
+	c := NewKeycloakAdminClient(srv.URL, "admin", "pw")
+
+	if _, err := c.EnsureDirectorRealmClient(context.Background(), "demo"); err != nil {
+		t.Fatal(err)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, want := range directorRealmRoles {
+		if !f.scoped[want] {
+			t.Errorf("role %q is held but not in the client's scope: its tokens will not carry it", want)
+		}
+	}
+	for name := range f.scoped {
+		wanted := false
+		for _, w := range directorRealmRoles {
+			wanted = wanted || w == name
+		}
+		if !wanted {
+			t.Errorf("role %q is in the client's scope and is not on the list", name)
+		}
 	}
 }
 
