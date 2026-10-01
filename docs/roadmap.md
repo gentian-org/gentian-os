@@ -87,11 +87,13 @@ For the current baseline design of the system, refer to [architecture.md](archit
 
 ### 1.8 Cryptographic Entropy for App Secret Seeds (*)
 * **Target Domain**: Platform Security & Secrets Management
-* **Context**: App-internal seeds are generated deterministically as `sha256(xrName:app:secretName)`, which lacks sufficient entropy.
-* **Proposed Solution**: Transition the secret generation mechanism to use HKDF-SHA256 (HMAC-based Key Derivation Function) or cryptographically secure random number generation (`crypto/rand`).
+* **Context**: App-internal seeds are generated deterministically as `sha256(xrName:app:secretName)`. Every input is a name, not a secret, so the first value of every generated app secret (database passwords and the like) can be computed by anyone who knows the tenant and app names; unless the app rotates it after install, it is effectively public. provider-vault writes the seed to OpenBao once and never overwrites it, so the predictable value is the lasting one. Affected: `crossplane/compositions/app-default.yaml` (app secrets and sidecar secrets) and gentian-apps' own app compositions (`app-element`, `app-openproject`, `app-odoo`), which copy the same pattern.
+* **Proposed Solution**: Seed from a source an attacker cannot reproduce: cryptographically random bytes generated once per secret (`crypto/rand`, e.g. a Password object or the operator), or a keyed derivation (HKDF/HMAC-SHA256) whose key is a cluster secret held in OpenBao. HKDF over the same public names alone would remain predictable. Write-once must survive the change, so a reinstall still observes the existing value.
 * **Backlog Items**:
-  - `[ ]` Replace deterministic SHA-256 hash formatting with an HKDF-based key derivation function in Crossplane compositions.
-  - `[ ]` Standardize all secret generation templates to consume keys from secure random generators.
+  - `[ ]` Replace the `sha256sum` seed in `app-default.yaml` (both seed blocks) with a random or secret-keyed value, keeping the Observe+Create, Orphan-delete SecretV2 semantics.
+  - `[ ]` Apply the same change to the gentian-apps app compositions (`app-element`, `app-openproject`, `app-odoo`).
+  - `[ ]` Decide what happens to secrets already seeded with the predictable value: rotate them, or document that installs before the fix must rotate.
+  - `[ ]` A render test or lint that refuses a seed computed only from names.
 
 ### 1.9 Secure Dependency & Supply Chain Verification (**)
 * **Target Domain**: Platform Security & Build Pipeline
