@@ -51,7 +51,7 @@ The **App Store is not a module of the console.** It is a tile of its own
 beside it, opening the store that runs outside the cluster (AD-3,
 [store-contract.md](store-contract.md) §7).
 
-Implementation: its own BFF and React UI (`gentian-apps/apps/admin-console`,
+Implementation: its own BFF and React UI (`gentian-ui/apps/admin-console`,
 `ui_kits/console` aesthetic), installed from its ComponentProfile. It holds no
 credential: every call is the director's, made with the identity the gateway
 asserts.

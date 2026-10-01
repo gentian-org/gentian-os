@@ -83,12 +83,12 @@ desktop:
 
 # The operator (and, with it, the director) — applied by D-01, once the
 # identity services its reconcilers address exist.
-# The administration console's chart, published by gentian-apps. D-03 resolves
-# the moving prerelease for the branch into the immutable version it names and
-# passes that as chartVersion; empty falls back to the moving one, which
-# installs but never upgrades.
+# The administration console's chart, published by gentian-ui beside the
+# desktop's. D-03 resolves the moving prerelease for the branch into the
+# immutable version it names and passes that as chartVersion; empty falls back
+# to the moving one, which installs but never upgrades.
 adminConsole:
-  chartBranch: main
+  chartBranch: develop
   chartVersion: ""
 
 operator:

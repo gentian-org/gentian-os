@@ -91,6 +91,11 @@ check() {
     pinned="$(kubectl get componentprofile desktop -o jsonpath='{.spec.package.chart.version}' 2>/dev/null)"
     deployed="$(kubectl get release tenant-platform-desktop -o jsonpath='{.spec.forProvider.chart.version}' 2>/dev/null)"
     [[ -n "${pinned}" && "${pinned}" == "${deployed}" ]] || return "${CHECK_MISSING}"
+    # And the administration console beside it, on the same terms.
+    [[ "$(kubectl get component admin-console -n tenant-platform -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null)" == "True" ]] || return "${CHECK_MISSING}"
+    pinned="$(kubectl get componentprofile admin-console -o jsonpath='{.spec.package.chart.version}' 2>/dev/null)"
+    deployed="$(kubectl get release tenant-platform-admin-console -o jsonpath='{.spec.forProvider.chart.version}' 2>/dev/null)"
+    [[ -n "${pinned}" && "${pinned}" == "${deployed}" ]] || return "${CHECK_MISSING}"
     # Headlamp signs in with the client secret its kubeconfig names, and this
     # step is what puts it there. A kubeconfig still carrying the chart's
     # placeholder means the step has not finished its job, whatever else is
@@ -124,7 +129,8 @@ apply() {
     local desktop_chart_version admin_console_chart_version
     desktop_chart_version="$(_d02_component_chart_version gentian-org/charts/gentian-portal "0.1.0-${PORTAL_IMAGE_TAG:-develop}")" || return 1
     info "Desktop chart: ${desktop_chart_version}"
-    admin_console_chart_version="$(_d02_component_chart_version gentian-org/charts/admin-console "0.1.1-${GENTIAN_APPS_BRANCH:-main}")" || return 1
+    # Both from gentian-ui, so both follow its branch.
+    admin_console_chart_version="$(_d02_component_chart_version gentian-org/charts/admin-console "0.1.1-${PORTAL_IMAGE_TAG:-develop}")" || return 1
     info "Administration console chart: ${admin_console_chart_version}"
     DESKTOP_CHART_VERSION="${desktop_chart_version}" \
         ADMIN_CONSOLE_CHART_VERSION="${admin_console_chart_version}" \
@@ -170,39 +176,48 @@ apply() {
     done
     success "The kernel UIs sit behind the kernel zone's session and the ext-auth shim."
 
-    # The platform desktop: the component reconciler installs it from the
-    # desktop profile once the zone exists and the database credential is
-    # delivered; its chart comes from the registry the profile names.
-    info "Waiting for the platform desktop (Component tenant-platform/desktop) on chart ${desktop_chart_version}..."
+    # The platform's two UIs: the component reconciler installs each from its
+    # profile once the zone exists and its credentials are delivered; the
+    # chart comes from the registry the profile names. Both, because waiting
+    # for the desktop alone let the install finish while the console's
+    # release had been refused, and the first sign was a 500 at admin.<kernel>.
+    _d03_wait_component desktop "${desktop_chart_version}" "console.${KERNEL_DOMAIN}" || return 1
+    _d03_wait_component admin-console "${admin_console_chart_version}" "admin.${KERNEL_DOMAIN}" || return 1
+}
+
+# _d03_wait_component <component> <chart-version> <host> — a platform-tenant
+# component Ready on the chart the profile pins.
+_d03_wait_component() {
+    local name="$1" want="$2" host="$3" deadline have_version
+    info "Waiting for Component tenant-platform/${name} on chart ${want}..."
     deadline=$((SECONDS + 900))
-    until [[ "$(kubectl get release tenant-platform-desktop -o jsonpath='{.spec.forProvider.chart.version}' 2>/dev/null)" == "${desktop_chart_version}" \
-        && "$(kubectl get component desktop -n tenant-platform -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null)" == "True" ]]; do
+    until [[ "$(kubectl get release "tenant-platform-${name}" -o jsonpath='{.spec.forProvider.chart.version}' 2>/dev/null)" == "${want}" \
+        && "$(kubectl get component "${name}" -n tenant-platform -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null)" == "True" ]]; do
         if (( SECONDS > deadline )); then
-            error "The platform desktop is not Ready after 15 minutes."
+            error "Component tenant-platform/${name} is not Ready after 15 minutes."
             # Both halves of the condition, because reporting one of two is
             # how this came to print "not Ready" directly above a line
             # reading Ready=True: the Component was Ready and the Release was
             # still on the moving chart version, and only the Component was
             # shown.
-            local have_version
-            have_version="$(kubectl get release tenant-platform-desktop -o jsonpath='{.spec.forProvider.chart.version}' 2>/dev/null)"
-            if [[ "${have_version}" != "${desktop_chart_version}" ]]; then
-                error "  chart: release is on ${have_version:-<no release>}, waiting for ${desktop_chart_version}"
-                kubectl get release tenant-platform-desktop -o jsonpath='{range .status.conditions[*]}  release {.type}={.status} {.reason}: {.message}{"\n"}{end}' 2>/dev/null || true
+            have_version="$(kubectl get release "tenant-platform-${name}" -o jsonpath='{.spec.forProvider.chart.version}' 2>/dev/null)"
+            if [[ "${have_version}" != "${want}" ]]; then
+                error "  chart: release is on ${have_version:-<no release>}, waiting for ${want}"
+                kubectl get release "tenant-platform-${name}" -o jsonpath='{range .status.conditions[*]}  release {.type}={.status} {.reason}: {.message}{"\n"}{end}' 2>/dev/null || true
             fi
-            kubectl get component desktop -n tenant-platform -o jsonpath='{range .status.conditions[*]}  component {.type}={.status} {.reason}: {.message}{"\n"}{end}' 2>/dev/null || \
-                error "  Component tenant-platform/desktop does not exist: is the operator running and the desktop profile installed?"
+            kubectl get component "${name}" -n tenant-platform -o jsonpath='{range .status.conditions[*]}  component {.type}={.status} {.reason}: {.message}{"\n"}{end}' 2>/dev/null || \
+                error "  Component tenant-platform/${name} does not exist: is the operator running and the ${name} profile installed?"
             # A Component stuck terminating cannot be repaired or removed by
             # anything the installer does, and it is invisible in the
             # conditions above.
-            if [[ -n "$(kubectl get component desktop -n tenant-platform -o jsonpath='{.metadata.deletionTimestamp}' 2>/dev/null)" ]]; then
+            if [[ -n "$(kubectl get component "${name}" -n tenant-platform -o jsonpath='{.metadata.deletionTimestamp}' 2>/dev/null)" ]]; then
                 error "  the Component is terminating and its finalizer is not clearing; the operator cannot reconcile it"
             fi
             return 1
         fi
         sleep 10
     done
-    success "The platform desktop serves console.${KERNEL_DOMAIN} behind the kernel zone's session."
+    success "${name} serves ${host} behind the kernel zone's session."
 }
 
 destroy() {

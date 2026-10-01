@@ -119,7 +119,7 @@ _v5_render() {
         --set-string "kernelRealm=${KERNEL_REALM:-kernel}" \
         --set-string "desktop.chartBranch=${PORTAL_IMAGE_TAG:-develop}" \
         --set-string "desktop.chartVersion=$(_v5_keep_chart_version desktop "${DESKTOP_CHART_VERSION:-}")" \
-        --set-string "adminConsole.chartBranch=${GENTIAN_APPS_BRANCH:-main}" \
+        --set-string "adminConsole.chartBranch=${PORTAL_IMAGE_TAG:-develop}" \
         --set-string "adminConsole.chartVersion=$(_v5_keep_chart_version admin-console "${ADMIN_CONSOLE_CHART_VERSION:-}")" \
         --set-string "llmEnabled=${LLM_SUPPORT:-false}" \
         --set-string "tenancyMode=${TENANCY_MODE:-multi}" \
