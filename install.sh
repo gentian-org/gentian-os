@@ -101,6 +101,32 @@ export CROSSPLANE_NAMESPACE="${CROSSPLANE_NAMESPACE:-kernel-provisioning}"
 # `--verify-only` looked in a namespace v5 never creates and reported a
 # handover that had happened as not started.
 export GENTIAN_SYSTEM_NAMESPACE="${GENTIAN_SYSTEM_NAMESPACE:-$(ns_kernel control)}"
+
+# The rest of the layout, once, for every step and library that names a
+# namespace through a variable.
+#
+# Each step used to export the few it needed itself -- B-04, B-08, C-01, E-02
+# and E-03 all set OPENBAO_NAMESPACE -- and a step that did not fell through to
+# the library's own default, which is still the old layout's name for the
+# namespace. B-03 did not: on the first fresh v5 install it looked for the
+# vault in namespace "openbao", which no longer exists, and stopped with
+# "Neither the ClusterIP nor a kubectl port-forward responded" while the vault
+# sat Ready in kernel-secrets. Set here, before any step runs, no step can
+# forget. A value already in the environment is kept.
+export OPENBAO_NAMESPACE="${OPENBAO_NAMESPACE:-$(ns_kernel secrets)}"
+export TRANSIT_NAMESPACE="${TRANSIT_NAMESPACE:-$(ns_kernel seal)}"
+export CERT_MANAGER_NAMESPACE="${CERT_MANAGER_NAMESPACE:-$(ns_kernel edge)}"
+export CERT_MANAGER_NS="${CERT_MANAGER_NS:-${CERT_MANAGER_NAMESPACE}}"
+export ENVOY_GATEWAY_NAMESPACE="${ENVOY_GATEWAY_NAMESPACE:-$(ns_kernel edge)}"
+export SERVICES_NAMESPACE="${SERVICES_NAMESPACE:-$(ns_kernel edge)}"
+export KERNEL_NAMESPACE="${KERNEL_NAMESPACE:-${SERVICES_NAMESPACE}}"
+export GENTIAN_OPERATOR_NAMESPACE="${GENTIAN_OPERATOR_NAMESPACE:-$(ns_kernel control)}"
+export GENTIAN_ARGOCD_NAMESPACE="${GENTIAN_ARGOCD_NAMESPACE:-$(ns_kernel gitops)}"
+export GITOPS_NAMESPACE="${GITOPS_NAMESPACE:-$(ns_kernel gitops)}"
+export EDGE_NAMESPACE="${EDGE_NAMESPACE:-$(ns_kernel edge)}"
+export IDENTITY_NAMESPACE="${IDENTITY_NAMESPACE:-$(ns_kernel authentication)}"
+export AUTHZ_NAMESPACE="${AUTHZ_NAMESPACE:-$(ns_kernel authorization)}"
+export OBSERVABILITY_NAMESPACE="${OBSERVABILITY_NAMESPACE:-$(ns_kernel observability)}"
 CROSSPLANE_VERSION="$(gentian_pin crossplane chart)"
 CROSSPLANE_HELM_REPO="$(gentian_pin crossplane repo)"
 export CROSSPLANE_VERSION CROSSPLANE_HELM_REPO

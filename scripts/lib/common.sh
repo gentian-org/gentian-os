@@ -398,7 +398,7 @@ INSTALL_VERIFY_ONLY="${INSTALL_VERIFY_ONLY:-0}"
 # re-runs do not re-prompt. Gitignored. Set INSTALL_STATE_FILE=/dev/null to
 # disable persistence.
 INSTALL_STATE_FILE="${INSTALL_STATE_FILE:-${SCRIPT_DIR}/.install-state.env}"
-CERT_MANAGER_NAMESPACE="${CERT_MANAGER_NAMESPACE:-cert-manager}"
+CERT_MANAGER_NAMESPACE="${CERT_MANAGER_NAMESPACE:-$(ns_kernel edge)}"
 
 # Input precedence (highest -> lowest):
 #   1) CLI flags / existing shell environment
@@ -461,7 +461,7 @@ INPUT_HIERARCHY_VARS=(
 ESO_CHART_VERSION="$(gentian_pin external-secrets chart)"
 export ESO_CHART_VERSION
 ENVOY_GATEWAY_CHART_VERSION="${ENVOY_GATEWAY_CHART_VERSION:-$(gentian_pin envoy-gateway chart)}"
-ENVOY_GATEWAY_NAMESPACE="${ENVOY_GATEWAY_NAMESPACE:-envoy-gateway-system}"
+ENVOY_GATEWAY_NAMESPACE="${ENVOY_GATEWAY_NAMESPACE:-$(ns_kernel edge)}"
 GENTIAN_GATEWAY_CONTROLLER_NAME="${GENTIAN_GATEWAY_CONTROLLER_NAME:-gateway.envoyproxy.io/gentian-gatewayclass-controller}"
 
 usage() {
