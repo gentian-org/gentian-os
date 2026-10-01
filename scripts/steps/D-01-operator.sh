@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # step: D-01-operator
-# phase: platform
+# phase: applications
 # requires: C-02-appsets
 # provides: the gentian-os operator AND the director in the control namespace, the CRDs and webhook, and the kernel Gateway the operator reconciles in the edge namespace
 # mutates: the gentian-os Application in the gitops namespace; the operator's and the director's Deployments, RBAC and webhook; the Gateway and its routes

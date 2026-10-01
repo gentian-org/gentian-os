@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # step: C-04-credential-catalogue
-# phase: claims
+# phase: platform
 # requires: C-01-cluster-claim
 # provides: CredentialRequirement catalogue and its ESO satisfaction probes
 # mutates: cluster-scoped CredentialRequirement objects, ExternalSecrets in the control namespace

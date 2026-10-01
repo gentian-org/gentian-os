@@ -121,9 +121,16 @@ func authorizationGraph(log logr.Logger) *authz.OpenFGA {
 		defer cancel()
 		store, model, err := authz.Bootstrap(ctx, opts)
 		if err != nil {
-			log.Error(err, "authorization graph unavailable: the cluster's roles and tenants are not projected, "+
-				"so nobody administers this cluster until it is reachable")
-			return nil
+			// Exit, so the pod restarts and asks again. Carrying on without
+			// the graph was carrying on for good: nothing retried, the store
+			// was never created, and the director and the edge shim -- which
+			// only read it -- crash-looped on "no authorization store yet"
+			// long after OpenFGA was answering. A configured OpenFGA that
+			// does not answer is a dependency not up yet, and a restart with
+			// back-off is how this cluster already waits for one.
+			log.Error(err, "authorization graph unavailable; exiting so the pod restarts and asks again",
+				"openfga", url)
+			os.Exit(1)
 		}
 		if opts.StoreID == "" {
 			opts.StoreID = store
