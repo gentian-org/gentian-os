@@ -621,7 +621,7 @@ _apply_keycloak_smtp_secret() {
     return 0
 }
 
-# Configure Keycloak kernel realm SMTP (standalone Job; used by ./install.sh --step D-04-mail).
+# Configure Keycloak kernel realm SMTP (standalone Job; D-03 runs it after the realm bootstrap).
 configure_keycloak_realm_smtp() {
     local ns
     ns="$(_pl_identity_ns)"
@@ -962,8 +962,8 @@ run_keycloak_portal_bootstrap_job() {
         )
     else
         warn "SMTP credentials incomplete — Keycloak invite/reset emails will not send" \
-             "until ./install.sh --step D-04-mail (set the claim's mail block:" \
-             "serviceMode kernel, or host/port for an external relay)."
+             "until the claim's mail block is set (serviceMode system, or host/port" \
+             "for an external relay) and ./install.sh --force --only D-03 is re-run."
         bootstrap_secret_args+=(
             --from-literal=smtp_configure=false
             --from-literal=mail_service_mode="$(gentian_mail_service_mode)"
@@ -1533,7 +1533,7 @@ ${smtp_shell}
                 printf '\033[1;33m[WARN]\033[0m  %s\n' "could not set the realm themes on \${REALM}" >&2
               fi
 
-              echo "Portal bootstrap complete for \${PORTAL_USERNAME}@\${KERNEL_DOMAIN}"
+              echo "Portal bootstrap complete for \${PORTAL_USERNAME}"
           env:
             - name: KEYCLOAK_URL
               valueFrom:
@@ -1672,7 +1672,11 @@ EOF
     gentian_job_logs "${ns}" "${job_name}" Succeeded 20
     success "Kernel realm ${kernel_realm}: clients, group and platform admin ${username} are ready."
     info "OIDC issuer: https://id.${kernel_domain}/auth/realms/${kernel_realm}"
-    info "  Username: ${username}  (or ${email})"
+    if [[ "${username}" == "${email}" ]]; then
+        info "  Username: ${username}"
+    else
+        info "  Username: ${username}  (or ${email})"
+    fi
     info "  Password: ${password}"
 }
 
