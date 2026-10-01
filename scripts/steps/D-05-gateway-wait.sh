@@ -4,7 +4,7 @@
 # requires: D-04-vault-oidc-config
 # provides: kernel Gateway reporting Programmed, and console.<kernel> resolving publicly
 # check: none — a pure wait, non-fatal by design; a Gateway that is not yet Programmed does not invalidate the steps that follow
-# mutates: nothing — waits on a condition
+# mutates: nothing in the cluster — waits on a condition; on this host, the kept copy of the wildcard under ~/.gentian/certs
 
 # One place that asserts the Gateway is programmed, named in the step graph so
 # the dependency is something validate-steps and --status can see.
@@ -25,6 +25,9 @@ apply() {
     export SERVICES_NAMESPACE
     SERVICES_NAMESPACE="$(ns_kernel edge)"
     wait_for_gateway_platform || warn "Gateway platform not ready; continuing."
+    # C-03 keeps the wildcard only if it was issued within its own wait; by
+    # now it has been, and a cluster wiped without --purge keeps it too.
+    save_kernel_wildcard
     # The address the handover sends a person to. It exists from D-03, which
     # creates the platform tenant and with it the desktop that serves it, so
     # this is the first step that can wait for it to resolve.

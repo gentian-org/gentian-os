@@ -3,7 +3,7 @@
 # phase: platform
 # requires: C-02-appsets
 # provides: the cluster issuers and the wildcard certificate for *.<kernelDomain>, copied into the namespaces that terminate TLS for a kernel host
-# mutates: ClusterIssuers, the Certificate in cert-manager, and wildcard-tls Secrets in the edge and gitops namespaces
+# mutates: ClusterIssuers, the Certificate in cert-manager, and wildcard-tls Secrets in the edge and gitops namespaces; on this host, the kept copy of the wildcard under ~/.gentian/certs
 
 # The Gateway's listener reads wildcard-tls from its own namespace: without it
 # the listener is invalid and the Gateway is never programmed, whatever else
@@ -35,6 +35,8 @@ apply() {
 
 destroy() {
     local ns
+    # Before the namespace that holds it goes: the next install reuses it.
+    save_kernel_wildcard
     for ns in $(_v5_wildcard_targets); do
         kubectl delete secret wildcard-tls -n "${ns}" --ignore-not-found >/dev/null 2>&1 || true
     done

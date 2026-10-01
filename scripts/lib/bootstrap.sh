@@ -1398,12 +1398,14 @@ _claim_cluster_fields() {
         # its rate limits, but the kernel's own sign-in fetches Keycloak's
         # discovery document through the in-cluster gateway, which serves
         # this certificate: Envoy Gateway refuses a staging chain, so a dev
-        # install stopped at D-03 with every SecurityPolicy Invalid.
+        # install stopped at D-03 with every SecurityPolicy Invalid. The rate
+        # limits are met instead by keeping the issued wildcard across purges
+        # (save_kernel_wildcard).
         local ae="${ACME_ENV:-production}"
-        if [[ "${ae}" == "staging" ]]; then
-            printf '    # staging: untrusted certificates. The kernel sign-in refuses\n'
-            printf '    # them; use only to test issuance itself.\n'
-        fi
+        printf '    # production. staging is not needed for rebuilds: the installer\n'
+        printf '    # keeps the issued wildcard across purges, so a reinstall orders\n'
+        printf '    # no new certificate. It also breaks the kernel sign-in, which does\n'
+        printf '    # not trust its chain. The option may be removed.\n'
         printf '    acmeEnv: %s\n' "${ae}"
     fi
     if [[ "${im}" == "acme-dns01" ]]; then

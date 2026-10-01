@@ -765,6 +765,10 @@ install_kernel_wildcard() {
     # printed its error, applied nothing, and the step went on to announce the
     # Certificate as applied. So the kernel wildcard Certificate was never
     # created by this path at all.
+    #
+    # A wildcard kept from an earlier install goes back first, so cert-manager
+    # adopts it instead of ordering a new one (see save_kernel_wildcard).
+    restore_kernel_wildcard "${DNS01_CLUSTER_ISSUER}"
     helm template gentian-cert-manager "${SCRIPT_DIR}/kernel/manifests/cert-manager/chart" \
         -f "$(gentian_platforms_values)" \
         -s templates/wildcard-kernel-cert.yaml \
@@ -796,6 +800,7 @@ install_kernel_wildcard() {
         warn "Re-run install.sh or manually copy the secret once the Certificate is Ready."
         return
     fi
+    save_kernel_wildcard
     # Remove stale fallback Certificate CR if present from a prior install.
     if kubectl get certificate wildcard-dev-tls -n "${app_ns}" &>/dev/null; then
         kubectl delete certificate wildcard-dev-tls -n "${app_ns}"
@@ -811,4 +816,138 @@ install_kernel_wildcard() {
             "${staging_ca_script}" "${app_ns}" || warn "gentian-trust-anchor-tls creation failed (tenant apps may not trust id.${KERNEL_DOMAIN})."
         fi
     fi
+}
+
+# =============================================================================
+# The kernel wildcard, kept on this host across purges
+# =============================================================================
+#
+# Let's Encrypt allows five certificates per week for the same set of names,
+# and a purge throws the wildcard away with its namespace -- so a debugging
+# week of reinstalls ran out of production certificates, and dev clusters used
+# staging instead, whose chain nothing in the cluster trusts. Keeping the
+# issued certificate here and handing it back to cert-manager before it orders
+# a new one makes a reinstall cost nothing: cert-manager adopts a Secret whose
+# certificate matches the Certificate's names and issuer, and renews it only
+# when it is due, which is once in some sixty days however often the cluster
+# is rebuilt.
+#
+# One file per kernel domain, mode 0600, beside the break-glass key that is
+# already on this host. It is overwritten rather than accumulated, removed
+# the moment it can no longer be used (expired, other names, other ACME
+# environment), and removed by --purge --cluster-infra -- the same flag that
+# removes the published DNS records, for the same reason.
+
+gentian_wildcard_cache_file() {
+    printf '%s/%s.json' "${GENTIAN_CERT_CACHE:-${HOME}/.gentian/certs}" "${KERNEL_DOMAIN:?}"
+}
+
+# save_kernel_wildcard — keep the issued wildcard for the next install.
+#
+# The Secret as cert-manager wrote it, annotations included: they name the
+# issuer and the Certificate, and cert-manager compares them before deciding
+# whether a Secret it finds is its own.
+save_kernel_wildcard() {
+    [[ -n "${KERNEL_DOMAIN:-}" ]] || return 0
+    command -v jq >/dev/null 2>&1 || return 0
+    local file json tmp
+    file="$(gentian_wildcard_cache_file)"
+    json="$(kubectl get secret wildcard-kernel-tls -n "$(gentian_cert_manager_namespace)" -o json 2>/dev/null \
+        | jq -c 'select((.data["tls.crt"] // "") != "" and (.data["tls.key"] // "") != "")
+                 | {apiVersion, kind, type, data,
+                    metadata: {name: .metadata.name,
+                               labels: (.metadata.labels // {}),
+                               annotations: ((.metadata.annotations // {})
+                                 | with_entries(select(.key | startswith("cert-manager.io/"))))}}' \
+        2>/dev/null)" || return 0
+    [[ -n "${json}" ]] || return 0
+    [[ -f "${file}" && "$(cat "${file}")" == "${json}" ]] && return 0
+    mkdir -p "$(dirname "${file}")" && chmod 700 "$(dirname "${file}")" || return 0
+    tmp="$(mktemp "${file}.XXXXXX")" || return 0
+    chmod 600 "${tmp}"
+    if ! { printf '%s\n' "${json}" > "${tmp}" && mv -f "${tmp}" "${file}"; }; then
+        rm -f "${tmp}"
+        return 0
+    fi
+    info "Kept the kernel wildcard in ${file} for the next install (rate limits)."
+}
+
+# _cached_wildcard_unusable <file> <issuer> — why the copy cannot be reused,
+# or nothing when it can.
+_cached_wildcard_unusable() {
+    local file="$1" issuer="$2" crt key want have ca
+    command -v openssl >/dev/null 2>&1 || { echo "openssl is not installed"; return 0; }
+    crt="$(jq -r '.data["tls.crt"] // empty' "${file}" 2>/dev/null | base64 -d 2>/dev/null)"
+    key="$(jq -r '.data["tls.key"] // empty' "${file}" 2>/dev/null | base64 -d 2>/dev/null)"
+    [[ -n "${crt}" && -n "${key}" ]] || { echo "it is not a readable TLS Secret"; return 0; }
+
+    # A day's margin: a certificate that expires mid-install is no saving.
+    openssl x509 -noout -checkend 86400 <<< "${crt}" >/dev/null 2>&1 \
+        || { echo "it has expired or expires within a day"; return 0; }
+    [[ "$(openssl x509 -noout -pubkey <<< "${crt}" 2>/dev/null)" == \
+       "$(openssl pkey -pubout <<< "${key}" 2>/dev/null)" ]] \
+        || { echo "its key does not match its certificate"; return 0; }
+
+    # Exactly the names the Certificate asks for; anything else and
+    # cert-manager would reissue anyway.
+    want="$(printf '%s\n' "${KERNEL_DOMAIN}" "*.${KERNEL_DOMAIN}" | sort)"
+    have="$(openssl x509 -noout -ext subjectAltName <<< "${crt}" 2>/dev/null \
+        | tr ',' '\n' | sed -n 's/^[[:space:]]*DNS://p' | sort)"
+    [[ "${have}" == "${want}" ]] || { echo "it covers other names ($(echo "${have}" | tr '\n' ' '))"; return 0; }
+
+    # The ACME environment the claim names now: a staging certificate kept
+    # from before a switch to production is exactly the one not to restore.
+    ca="$(openssl x509 -noout -issuer <<< "${crt}" 2>/dev/null)"
+    if [[ "${issuer}" == *staging* ]]; then
+        [[ "${ca}" == *STAGING* ]] || echo "it is a production certificate and the claim asks for staging"
+    else
+        [[ "${ca}" != *STAGING* ]] || echo "it is a staging certificate and the claim asks for production"
+    fi
+    return 0
+}
+
+# restore_kernel_wildcard <cluster-issuer> — hand a kept wildcard back to
+# cert-manager before the Certificate is applied, so it is adopted rather than
+# ordered again. Never fatal: without a usable copy, cert-manager issues as it
+# always did.
+restore_kernel_wildcard() {
+    local issuer="$1" ns file why
+    [[ -n "${KERNEL_DOMAIN:-}" ]] || return 0
+    command -v jq >/dev/null 2>&1 || return 0
+    file="$(gentian_wildcard_cache_file)"
+    [[ -f "${file}" ]] || return 0
+    ns="$(gentian_cert_manager_namespace)"
+    # A live Secret is cert-manager's own and newer than any copy.
+    kubectl get secret wildcard-kernel-tls -n "${ns}" >/dev/null 2>&1 && return 0
+
+    why="$(_cached_wildcard_unusable "${file}" "${issuer}")"
+    if [[ -n "${why}" ]]; then
+        info "Not reusing the kept kernel wildcard: ${why}. Removing ${file}."
+        rm -f "${file}"
+        return 0
+    fi
+    # The issuer annotations follow the claim: the copy was checked against
+    # its ACME environment above, and a matching name is what lets
+    # cert-manager adopt it.
+    if jq --arg ns "${ns}" --arg issuer "${issuer}" \
+        '.metadata.namespace = $ns
+         | .metadata.annotations["cert-manager.io/issuer-name"] = $issuer
+         | .metadata.annotations["cert-manager.io/issuer-kind"] = "ClusterIssuer"
+         | .metadata.annotations["cert-manager.io/issuer-group"] = "cert-manager.io"
+         | .metadata.annotations["cert-manager.io/certificate-name"] = "wildcard-kernel"' \
+        "${file}" | kubectl apply -f - >/dev/null; then
+        success "Reused the kept kernel wildcard (valid until $(jq -r '.data["tls.crt"]' "${file}" \
+            | base64 -d | openssl x509 -noout -enddate 2>/dev/null | cut -d= -f2)); cert-manager adopts it instead of ordering."
+    else
+        warn "Could not restore the kept kernel wildcard; cert-manager will issue a new one."
+    fi
+}
+
+# purge_kernel_wildcard_cache — under --purge --cluster-infra only.
+purge_kernel_wildcard_cache() {
+    [[ -n "${KERNEL_DOMAIN:-}" ]] || return 0
+    local file; file="$(gentian_wildcard_cache_file)"
+    [[ -f "${file}" ]] || return 0
+    rm -f "${file}" && success "Removed ${file}."
+    rmdir "$(dirname "${file}")" 2>/dev/null || true
 }

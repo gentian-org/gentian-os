@@ -652,6 +652,11 @@ purge_local_state() {
         [[ -e "${f}" ]] || continue
         rm -f "${f}" && success "Removed ${f}."
     done
+    # The kept kernel wildcard outlives a purge for the reason the DNS records
+    # do (rate limits outlive the cluster), and goes with them.
+    if [[ "${GENTIAN_PURGE_CLUSTER_INFRA:-0}" == "1" ]]; then
+        purge_kernel_wildcard_cache
+    fi
 }
 
 # purge_report_remaining — what a purge does not touch, said out loud.
@@ -817,6 +822,12 @@ purge_report_remaining() {
     info "  clusters/${cluster}/kernel in gentian-deployments — this cluster's"
     info "    configuration. Remove it with a commit if the cluster is gone for good."
     info "  Anything another workload put on this cluster."
+    if [[ "${GENTIAN_PURGE_CLUSTER_INFRA:-0}" != "1" && -n "${KERNEL_DOMAIN:-}" \
+          && -f "$(gentian_wildcard_cache_file)" ]]; then
+        info "  $(gentian_wildcard_cache_file) — the kernel wildcard, so the next"
+        info "    install reuses it instead of spending a Let's Encrypt order."
+        info "    --purge --cluster-infra removes it."
+    fi
 }
 
 # purge_confirm — the one prompt in the teardown path.

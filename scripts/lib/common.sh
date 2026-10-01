@@ -1489,8 +1489,12 @@ prompt_cluster_settings() {
         # staging stopped being the dev default.
         prompt_claim_value ACME_ENV "certificates.acmeEnv" production "production staging"
         if [[ "${ACME_ENV}" == "staging" ]]; then
-            warn "  acmeEnv staging: Envoy Gateway does not trust a staging chain, so the"
-            warn "  kernel sign-in (D-03) will not come up. Use it only to test issuance."
+            warn "  acmeEnv staging: not needed for rebuilds (the issued wildcard is kept"
+            warn "  across purges), and the kernel sign-in (D-03) will not come up --"
+            warn "  Envoy Gateway does not trust a staging chain. May be removed."
+        else
+            _decided "rebuilds reuse the issued wildcard (kept in ~/.gentian/certs), so"
+            _decided "  a purge-and-reinstall orders no new certificate."
         fi
     fi
     if [[ "${CERT_ISSUER_MODE:-acme-dns01}" == "acme-dns01" ]]; then
