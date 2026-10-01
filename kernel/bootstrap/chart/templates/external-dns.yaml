@@ -48,6 +48,12 @@ metadata:
 # The same credential cert-manager uses for DNS-01, from the same OpenBao path.
 # One credential with one writer of record, rather than a second token to rotate
 # separately and forget.
+#
+# And the same OBJECT: kernel/manifests/cert-manager/chart/templates/
+# dns-credentials-externalsecret.yaml renders this name in this namespace too,
+# and must render this spec exactly -- see its header for what differing cost.
+# mergePolicy Merge keeps the provider's own keys, which the issuers read,
+# beside the mapped ones external-dns reads.
 apiVersion: external-secrets.io/v1
 kind: ExternalSecret
 metadata:
@@ -66,6 +72,7 @@ spec:
     deletionPolicy: Retain
     template:
       engineVersion: v2
+      mergePolicy: Merge
       data:
         {{- /*
         The key names the external-dns chart reads, which are not the key names
