@@ -1180,6 +1180,29 @@ prompt_kernel_domain() {
 # waits for a certificate that will never be issued, and the symptom names a
 # missing Secret rather than an unreachable ACME endpoint.
 # =============================================================================
+# _decided <text> — a setting step 0 settled from an earlier answer.
+#
+# Said out loud, because a question that is never asked is otherwise a
+# decision nobody saw being made: a tunnel cluster is never asked about mail,
+# and without a line saying why, that reads as the installer forgetting.
+_decided() {
+    info "  → $*"
+}
+
+# explain_network_mode — what the exposure answer settles. Interview only.
+explain_network_mode() {
+    if [[ "${NETWORK_MODE:-tunnel}" == "static-ip" ]]; then
+        if [[ -n "${NODE_IP:-}" ]]; then
+            _decided "nodeIp ${NODE_IP}: DNS points straight at this address."
+        else
+            _decided "nodeIp: detected from the node at install; DNS points straight at it."
+        fi
+    else
+        _decided "nodeIp: not asked — traffic arrives through the tunnel, not at a node address."
+    fi
+    return 0
+}
+
 prompt_issuer_mode() {
     local valid="acme-dns01 acme-http01 private-ca self-signed"
     if [[ -n "${CERT_ISSUER_MODE:-}" ]]; then
@@ -1215,6 +1238,28 @@ prompt_issuer_mode() {
     export CERT_ISSUER_MODE="$v"
 }
 
+# explain_issuer_mode — what the issuer answer settles, with the exposure one.
+explain_issuer_mode() {
+    case "${CERT_ISSUER_MODE:-acme-dns01}" in
+        acme-dns01)
+            _decided "a DNS API token for the zone is asked for with the credentials."
+            if [[ "${NETWORK_MODE:-tunnel}" == "static-ip" ]]; then
+                _decided "externalDns: on — external-dns publishes the kernel hosts at nodeIp."
+            else
+                _decided "externalDns: off — no fixed address to publish; tenant hosts go through the tunnel's CNAMEs."
+            fi
+            ;;
+        acme-http01)
+            _decided "port 80 must reach this cluster from the internet; no wildcard certificate."
+            _decided "dnsProvider: not asked — only DNS-01 uses it."
+            ;;
+        *)
+            _decided "acmeEnv and dnsProvider: not asked — only the ACME issuers use them."
+            ;;
+    esac
+    return 0
+}
+
 # =============================================================================
 # prompt_mail_mode — where this cluster's mail goes.
 #
@@ -1224,19 +1269,31 @@ prompt_issuer_mode() {
 # or a password reset, and nothing reports that until someone tries.
 # =============================================================================
 prompt_mail_mode() {
-    if [[ -z "${MAIL_SERVICE_MODE:-}" ]]; then
+    # "kernel" is what this question used to offer and what install.env files
+    # may still say; the claim's word for it is "system". Written verbatim,
+    # "kernel" is a claim the schema refuses.
+    [[ "${MAIL_SERVICE_MODE:-}" == "kernel" ]] && MAIL_SERVICE_MODE="system"
+    if [[ -z "${MAIL_SERVICE_MODE:-}" && "${NETWORK_MODE:-tunnel}" != "static-ip" ]]; then
+        # Not a question on a tunnel: the tunnel carries HTTP and HTTPS only,
+        # so nothing can deliver mail to the cluster on port 25, and in-cluster
+        # mail is not on offer.
+        MAIL_SERVICE_MODE="external"
+        echo ""
+        _decided "mail.serviceMode: external — a tunnel carries HTTP(S) only, so mail goes out through a relay. In-cluster mail needs networkMode static-ip."
+    elif [[ -z "${MAIL_SERVICE_MODE:-}" ]]; then
         if [[ "${GENTIAN_NONINTERACTIVE:-0}" == "1" ]]; then
             MAIL_SERVICE_MODE="external"
         else
             echo ""
             info "Mail — how this cluster sends mail:"
             info "  external : relay through an SMTP provider. Needs its address and credentials."
-            info "  kernel   : in-cluster Postfix/Dovecot. Requires networkMode=static-ip."
+            info "  system   : in-cluster Postfix/Dovecot, at nodeIp."
             local v
             while true; do
-                read -rp "  mail.serviceMode [external|kernel] (default: external): " v
+                read -rp "  mail.serviceMode [external|system] (default: external): " v
                 v="${v:-external}"
-                [[ "$v" == "external" || "$v" == "kernel" ]] && break
+                [[ "$v" == "kernel" ]] && v="system"
+                [[ "$v" == "external" || "$v" == "system" ]] && break
                 warn "Invalid value '${v}'."
             done
             MAIL_SERVICE_MODE="$v"
@@ -1245,7 +1302,7 @@ prompt_mail_mode() {
     export MAIL_SERVICE_MODE
 
     if [[ "${MAIL_SERVICE_MODE}" == "system" && "${NETWORK_MODE:-tunnel}" != "static-ip" ]]; then
-        error "mail.serviceMode=kernel requires networkMode=static-ip; this cluster is ${NETWORK_MODE:-tunnel}."
+        error "mail.serviceMode=system requires networkMode=static-ip; this cluster is ${NETWORK_MODE:-tunnel}."
         error "  Choose external, or re-run with NETWORK_MODE=static-ip."
         exit 1
     fi
@@ -1299,6 +1356,8 @@ prompt_mail_mode() {
         # which stopped step 0 before it wrote anything at all.
         if [[ -n "${EXTERNAL_SMTP_HOST:-}" ]]; then
             export EXTERNAL_SMTP_HOST
+        else
+            _decided "mail.host: unset — nothing sends mail until it is set on the claim."
         fi
     fi
     return 0
@@ -1373,9 +1432,12 @@ prompt_cluster_settings() {
     if [[ "${CERT_ISSUER_MODE:-acme-dns01}" == acme-* ]]; then
         # Staging on dev: a dev cluster is rebuilt often, and Let's Encrypt
         # allows five duplicate certificates per name per week.
-        local acme_default=production
-        [[ "${GENTIAN_DEPLOYMENTS_STAGE:-dev}" == "dev" ]] && acme_default=staging
-        prompt_claim_value ACME_ENV "certificates.acmeEnv" "${acme_default}" "staging production"
+        local acme_default=production acme_label="certificates.acmeEnv"
+        if [[ "${GENTIAN_DEPLOYMENTS_STAGE:-dev}" == "dev" ]]; then
+            acme_default=staging
+            acme_label="certificates.acmeEnv (dev stage: staging — untrusted certs, generous rate limits)"
+        fi
+        prompt_claim_value ACME_ENV "${acme_label}" "${acme_default}" "staging production"
     fi
     if [[ "${CERT_ISSUER_MODE:-acme-dns01}" == "acme-dns01" ]]; then
         prompt_claim_value DNS_PROVIDER "certificates.dnsProvider" cloudflare \
@@ -1386,6 +1448,11 @@ prompt_cluster_settings() {
     prompt_claim_value LLM_SUPPORT "llm.enabled (this cluster serves models)" false "true false"
     if [[ "${LLM_SUPPORT:-false}" == "true" ]]; then
         prompt_claim_value GPU_ACCELERATION "llm.gpuAcceleration (the cluster has GPUs)" false "true false"
+    else
+        _decided "llm.gpuAcceleration: not asked — this cluster serves no models."
+    fi
+    if [[ "${SECRET_MODE:-derived}" == "random" ]]; then
+        _decided "secretMode random: a rebuild cannot reproduce these credentials — keep the recovery kit."
     fi
     return 0
 }

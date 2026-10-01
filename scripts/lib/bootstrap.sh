@@ -1466,7 +1466,7 @@ _claim_cluster_fields() {
     printf '  # Where mail goes.\n'
     printf '  #   external  relay through an SMTP provider; supply the smtp-relay\n'
     printf '  #             credential to the credential manager after install\n'
-    printf '  #   kernel    in-cluster Postfix/Dovecot; requires networkMode static-ip\n'
+    printf '  #   system    in-cluster Postfix/Dovecot; requires networkMode static-ip\n'
     printf '  mail:\n'
     printf '    serviceMode: %s\n' "${mm}"
     if [[ "${mm}" == "external" ]]; then
@@ -1478,7 +1478,7 @@ _claim_cluster_fields() {
         printf '    # port: 587                 defaults to 587\n'
         printf '    # starttls: true            defaults to true\n'
     else
-        printf '    # host:                     not used while serviceMode is kernel\n'
+        printf '    # host:                     not used while serviceMode is system\n'
     fi
 
     # egressHost, in both modes, because load_deployments_cluster_settings reads
@@ -1495,7 +1495,7 @@ _claim_cluster_fields() {
     # scaffold invented would be wrong in a way that looks configured.
     if [[ -n "${MAIL_EGRESS_HOST:-}" ]]; then
         printf '    egressHost: %s\n' "${MAIL_EGRESS_HOST}"
-    elif [[ "${mm}" == "kernel" ]]; then
+    elif [[ "${mm}" == "system" ]]; then
         printf '    # egressHost:               the name outbound mail leaves from, e.g.\n'
         printf '    #                           mail-egress.%s — required for SPF to pass.\n' "${KERNEL_DOMAIN:-example.com}"
         printf '    #                           Needs a PTR back to it and an A record to the\n'

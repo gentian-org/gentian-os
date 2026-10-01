@@ -386,7 +386,9 @@ ensure_cluster_deployment() {
         info "clusters/${GENTIAN_DEPLOYMENTS_CLUSTER_ID}/kernel/claims/cluster.yaml exists; its settings are read from it."
     else
         prompt_network_mode
+        explain_network_mode
         prompt_issuer_mode
+        explain_issuer_mode
         prompt_mail_mode
         prompt_cluster_settings
     fi
