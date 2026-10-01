@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# step: D-03-vault-oidc-config
+# step: D-04-vault-oidc-config
 # phase: applications
-# requires: D-02-portal-login
+# requires: D-03-portal-login
 # provides: OpenBao's oidc mount configured against the kernel realm, so `bao login -method=oidc` works
 # mutates: auth/oidc/config in OpenBao
 
@@ -290,7 +290,7 @@ apply() {
 # SAYS, never whether it proceeds, so a false negative costs a misleading line
 # and not a failed install.
 _dd_resolves() {
-    # Shared with D-03, and asks the zone's nameservers rather than this
+    # Shared with the DNS wait (D-02), and asks the zone's nameservers rather than this
     # machine's resolver — whose negative cache outlives this wait.
     gentian_dns_resolves "$1" "${KERNEL_DOMAIN:-}"
 }

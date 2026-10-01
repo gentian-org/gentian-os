@@ -65,7 +65,7 @@ is the whole of a reconfigure.
 | `undefined` | The step has nothing persistent to check, or does not apply to this cluster — a feature that is switched off, or no install-time artefact |
 
 `undefined` is never a failure. `E-01-tenants` always reads that way — tenants
-are created after installation; `B-09` and `D-03` do on a cluster without
+are created after installation; `B-09` and `D-04` do on a cluster without
 OIDC, `C-03` on one with no DNS provider, `B-10` until the signing keys are in
 the deployments repository.
 

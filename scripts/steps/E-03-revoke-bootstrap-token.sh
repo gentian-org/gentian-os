@@ -11,9 +11,9 @@
 # installer's disk.
 #
 # It was also unsatisfiable until now. Its guard requires a proven OIDC login,
-# and with no D-03 there was no auth/oidc/config for anybody to log in
+# and with no D-04 there was no auth/oidc/config for anybody to log in
 # through — so even a migrated version of this step would have correctly
-# refused on every run. D-03 is what makes it reachable.
+# refused on every run. D-04 is what makes it reachable.
 
 # Every read below names a namespace only through GENTIAN_SYSTEM_NAMESPACE or
 # OPENBAO_NAMESPACE, both defaulting to v4's names, so exporting them is most
@@ -260,7 +260,7 @@ _oidc_write_path_ready() {
     local ns
     ns="$(kubectl get cluster.gentianos.io -n "$(ns_kernel provisioning)" \
         -o jsonpath='{.items[0].spec.openbao.namespace}' 2>/dev/null || true)"
-    # v4's namespace, and wrong here for the reason D-03 documents: the claim
+    # v4's namespace, and wrong here for the reason D-04 documents: the claim
     # rarely carries the field, and on v5 the secret is in the secrets
     # namespace.
     ns="${ns:-$(ns_kernel secrets)}"
@@ -397,7 +397,7 @@ _wait_for_sign_in() {
     #
     # This said "credentials are in the summary above" — and the summary is
     # printed AFTER the steps, so at this moment there is no summary above.
-    # D-02 printed them, several hundred lines and many minutes earlier. An
+    # D-03 printed them, several hundred lines and many minutes earlier. An
     # instruction to sign in that does not say what to sign in with sends the
     # operator scrolling, which is the opposite of what a step that has stopped
     # to wait for them should do.

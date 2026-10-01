@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# step: C-06-os-repository-handoff
+# step: C-05-os-repository-handoff
 # phase: platform
-# requires: C-05-credential-catalogue
+# requires: C-04-credential-catalogue
 # provides: removal of the bootstrap repo-creds bridge once Repository/gentian-os reads its credential from the vault
 # mutates: deletes the bootstrap repo-creds Secret in the gitops namespace
 
@@ -11,9 +11,9 @@
 # credential is applied by the shell instead of flowing through ESO, and it is
 # meant to last exactly as long as the bootstrap window.
 #
-# This step closes the window. It runs after C-05 because Repository/gentian-os
+# This step closes the window. It runs after C-04 because Repository/gentian-os
 # cannot report credentialSatisfied until the CredentialRequirement CRD exists,
-# and that CRD is C-05's. Confirm, then delete: there is never a moment with no
+# and that CRD is C-04's. Confirm, then delete: there is never a moment with no
 # working credential for the repository, so a handoff that cannot be confirmed
 # leaves the bridge standing rather than removing the only thing that works.
 #
@@ -56,7 +56,7 @@ apply() {
         if (( SECONDS > deadline )); then
             warn "Repository/gentian-os is not credentialSatisfied after 2m — keeping the bootstrap bridge."
             warn "  Re-run this step once the credential is in the vault:"
-            warn "    ./install.sh --only C-06-os-repository-handoff"
+            warn "    ./install.sh --only C-05-os-repository-handoff"
             return 0
         fi
         sleep 5

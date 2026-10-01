@@ -33,8 +33,8 @@ steps within it. Five phases, in this order:
 |---|---|---|---|
 | **A** | `control-plane` | A-01 … A-09 | Namespaces, cert-manager, External Secrets, Crossplane, Envoy Gateway, Argo CD, metrics-server, pre-pulled images, cluster issuers |
 | **B** | `secrets` | B-01 … B-10 | The kernel bootstrap Applications, the transit seal and OpenBao, Crossplane providers and definitions, the seeded credentials, the deployment signing keys |
-| **C** | `platform` | C-01 … C-06 | The Cluster claim, the ApplicationSets, the wildcard certificate, DNS, the credential catalogue, the repository hand-off |
-| **D** | `applications` | D-01 … D-04 | The operator and the director, the kernel realm and the platform desktop, OpenBao's OIDC login, the kernel Gateway |
+| **C** | `platform` | C-01 … C-05 | The Cluster claim, the ApplicationSets, the wildcard certificate, the credential catalogue, the repository hand-off |
+| **D** | `applications` | D-01 … D-05 | The operator and the director, the kernel hostnames resolving, the kernel realm and the platform desktop, OpenBao's OIDC login, the kernel Gateway |
 | **E** | `handover` | E-01 … E-03 | The recovery kit, then revoking the installer's own credential |
 
 `./install.sh --explain` prints every step with what it provides and what it
@@ -315,7 +315,7 @@ and interrupting it costs nothing. Sign in whenever you like, then:
 Every step reads `satisfied`, except steps that do not apply to this cluster —
 those read `undefined`, and `undefined` is never a failure. `E-01-tenants`
 always reads that way (tenants are created after installation); `B-09` and
-`D-03` do so on a cluster without OIDC, `C-03` on one with no DNS provider, and
+`D-04` do so on a cluster without OIDC, `C-03` on one with no DNS provider, and
 `B-10` until the signing keys exist in the deployments repository.
 
 ```bash
@@ -611,7 +611,7 @@ the inputs exported, which rewrites the credential in Keycloak:
 
 ```bash
 export MASTER_PASSWORD=... DERIVATION_SALT=...
-./install.sh --force --only D-02
+./install.sh --force --only D-03
 ```
 
 ### A commit to the deployments repository is not synced

@@ -108,7 +108,7 @@ apply() {
     # (GENTIAN_OS_AUTH=none), which is why v5 got this far without it.
     #
     # Deliberately not in check(): the bridge is conditional, and
-    # C-06-os-repository-handoff deletes it as soon as the Repository claim
+    # C-05-os-repository-handoff deletes it as soon as the Repository claim
     # proves it can read the same credential from OpenBao. Requiring it here
     # would leave this step unsatisfiable from that moment on.
     _apply_argocd_repo_creds gentian-os GENTIAN_OS_REPO GENTIAN_OS_AUTH \

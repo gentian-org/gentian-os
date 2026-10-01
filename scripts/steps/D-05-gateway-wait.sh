@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# step: D-04-gateway-wait
+# step: D-05-gateway-wait
 # phase: applications
-# requires: D-03-vault-oidc-config
+# requires: D-04-vault-oidc-config
 # provides: kernel Gateway reporting Programmed
 # check: none — a pure wait, non-fatal by design; a Gateway that is not yet Programmed does not invalidate the steps that follow
 # mutates: nothing — waits on a condition
@@ -9,7 +9,7 @@
 # One place that asserts the Gateway is programmed, named in the step graph so
 # the dependency is something validate-steps and --status can see.
 #
-# v5 had none, and D-02 is the first step that reaches the cluster over a
+# v5 had none, and D-03 is the first step that reaches the cluster over a
 # kernel hostname. A Gateway stuck on an invalid listener — a missing
 # wildcard-tls, most often — surfaced inside the realm bootstrap as a
 # connection failure rather than as a named step, which is a diagnosability

@@ -4,10 +4,10 @@
 # =============================================================================
 # The bootstrap chart has three switches the installer turns on phase by
 # phase: the ApplicationSets (C-02), the operator (D-01) and Headlamp's OIDC
-# (D-02). The installer passes them with --set-string, so "off" arrives as the
+# (D-03). The installer passes them with --set-string, so "off" arrives as the
 # string "false" -- which a template that tests it for truth reads as ON. A
 # fresh install rendered all three in B-01, and Headlamp waited ten minutes on
-# a Secret that only D-02 writes.
+# a Secret that only D-03 writes.
 #
 # Rendered exactly as B-01 passes them, with helm and no cluster.
 # =============================================================================
@@ -59,9 +59,9 @@ check "B-01 (all \"false\"): Headlamp does not read headlamp-oidc" "$(has "${off
 check "B-01 (all \"false\"): no kube-oidc-proxy"              "$(has "${off}" 'name: kube-oidc-proxy$' && echo 0 || echo 1)"
 
 on="$(render true true true)"
-check "D-02 (all \"true\"): gentian-appsets Application"      "$(has "${on}" 'name: gentian-appsets$' && echo 1 || echo 0)"
-check "D-02 (all \"true\"): operator Application"             "$(has "${on}" 'name: gentian-os$' && echo 1 || echo 0)"
-check "D-02 (all \"true\"): Headlamp reads headlamp-oidc"     "$(has "${on}" 'headlamp-oidc' && echo 1 || echo 0)"
+check "D-03 (all \"true\"): gentian-appsets Application"      "$(has "${on}" 'name: gentian-appsets$' && echo 1 || echo 0)"
+check "D-03 (all \"true\"): operator Application"             "$(has "${on}" 'name: gentian-os$' && echo 1 || echo 0)"
+check "D-03 (all \"true\"): Headlamp reads headlamp-oidc"     "$(has "${on}" 'headlamp-oidc' && echo 1 || echo 0)"
 
 echo ""
 if (( fail > 0 )); then

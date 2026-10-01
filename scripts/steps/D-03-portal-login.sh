@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# step: D-02-portal-login
+# step: D-03-portal-login
 # phase: applications
-# requires: D-01-operator
+# requires: D-02-dns-wait
 # provides: the kernel realm with its clients and the administrator user, Argo CD and Headlamp signing in against it, the platform tenant Ready and its desktop serving console.<kernel>
 # mutates: Keycloak realm, clients, groups and users; Secrets in the edge and gitops namespaces; the argocd-cm, argocd-rbac-cm and argocd-tls-certs-cm ConfigMaps; the bootstrap Applications (Headlamp's OIDC on); the gentian-portal Application
 

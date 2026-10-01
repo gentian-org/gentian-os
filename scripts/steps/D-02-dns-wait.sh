@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# step: C-04-dns-wait
-# phase: claims
-# requires: C-03-wildcard-cert
+# step: D-02-dns-wait
+# phase: applications
+# requires: D-01-operator
 # provides: the kernel hostnames resolving publicly
 # check: none — a pure wait; DNS either resolves or it does not, and there is no artefact to test for
 # mutates: nothing — waits on a condition
@@ -21,11 +21,16 @@
 #   The second hostname is console.<kernel>, not portal.<kernel>: the portal in
 #   the edge namespace was retired in S7 and the desktop serves console.
 #
-#   It runs at the END of the claims phase rather than inside applications,
-#   because on v5 the first step to reach the cluster from outside is
-#   D-02-portal-login, which bootstraps the kernel realm. A slow publish
-#   surfaces there as Keycloak being unreachable rather than as DNS not yet
-#   being live — which is the exact confusion this step was written about.
+#   It runs right after the operator and right before D-03-portal-login, the
+#   first step to reach the cluster from outside. Not earlier: on a tunnel
+#   cluster the kernel hostnames are published from a DNSEndpoint the
+#   operator writes, and on a static-ip one external-dns reads them off the
+#   kernel Gateway the operator reconciles -- so before D-01 nothing can have
+#   published them. It sat at the end of the claims phase and, on the first
+#   fresh install, waited out its fifteen minutes for a record that only the
+#   next phase could create. Not later: a slow publish would surface in
+#   D-03 as Keycloak being unreachable rather than as DNS not yet live --
+#   the exact confusion this step was written about.
 #
 # Non-fatal by design. A cluster reached over a private DNS view, or one whose
 # records an operator maintains by hand, is legitimate — this says so and moves

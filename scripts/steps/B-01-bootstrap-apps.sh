@@ -50,13 +50,13 @@ _v5_apps()         { echo "$(_v5_apps_healthy) $(_v5_apps_synced) $(_v5_apps_def
 # _v5_keep_chart_version — do not downgrade a component chart this cluster has
 # already resolved.
 #
-# D-02 resolves a branch's newest IMMUTABLE chart version and passes it in.
+# D-03 resolves a branch's newest IMMUTABLE chart version and passes it in.
 # Every other caller passes nothing, and nothing used to mean "the moving
 # version" -- so running B-01 on its own quietly reverted the desktop and the
 # administration console to a version string that never changes, which
 # provider-helm never upgrades, which means the first build the cluster ever
 # saw. On this cluster that put the desktop back on an image old enough to
-# loop on sign-in, hours after D-02 had moved it off.
+# loop on sign-in, hours after D-03 had moved it off.
 #
 # So an unset version means "keep what is installed", and only an empty
 # cluster falls through to the moving one.

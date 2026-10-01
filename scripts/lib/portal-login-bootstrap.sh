@@ -112,7 +112,7 @@ _headlamp_derive_secret() {
 # every other tenant's zone does. What this library still does for the zone is
 # create the realm the client lives in, which has to exist first.
 
-# The placeholder the chart writes where the client secret belongs. D-02's
+# The placeholder the chart writes where the client secret belongs. D-03's
 # check() reads it too, before this library is sourced, so it carries the same
 # literal as a default there.
 HEADLAMP_KUBECONFIG_PLACEHOLDER="PLACEHOLDER_REPLACED_BY_THE_INSTALLER"
@@ -124,7 +124,7 @@ HEADLAMP_KUBECONFIG_PLACEHOLDER="PLACEHOLDER_REPLACED_BY_THE_INSTALLER"
 # that one line in place and leaves the rest of the file exactly as the chart
 # wrote it, so the two cannot drift.
 #
-# MUST RUN AFTER THE LAST RENDER OF THE BOOTSTRAP CHART. D-02 renders that
+# MUST RUN AFTER THE LAST RENDER OF THE BOOTSTRAP CHART. D-03 renders that
 # chart a second time, to turn Headlamp's OIDC on now that the realm exists,
 # and that render carries the placeholder. Filling the secret in before it
 # means the render puts the placeholder straight back: the step reports
@@ -189,7 +189,7 @@ ensure_headlamp_oidc_secret() {
     # The kubeconfig Headlamp builds its token exchange from is NOT written
     # here. It names the client AND its secret, because Headlamp exchanges the
     # code with what the kubeconfig's auth-provider says and not with its own
-    # -oidc-client-secret flag. But the chart renders that file, and D-02
+    # -oidc-client-secret flag. But the chart renders that file, and D-03
     # renders the chart again after this point, so writing it here is writing
     # it too early. ensure_headlamp_kubeconfig does it after the last render.
     kubectl create secret generic headlamp-oidc -n "${ns}" \
@@ -1778,9 +1778,9 @@ print_portal_login_summary() {
                 echo ""
                 warn "Keycloak does not accept this password."
                 warn "  Every stored input agrees, so the derivation is right and the value"
-                warn "  Keycloak holds is older — it was set by the last D-02 run, with a"
+                warn "  Keycloak holds is older — it was set by the last D-03 run, with a"
                 warn "  master password that has since changed."
-                warn "  Re-assert it:  ./install.sh --only D-02 --force"
+                warn "  Re-assert it:  ./install.sh --only D-03 --force"
                 ;;
             *)
                 # Unreachable, mid-rollout, or an answer this does not know.

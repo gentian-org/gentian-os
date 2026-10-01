@@ -22,7 +22,7 @@ done < <(grep -rnE "(namespace:|[[:space:]]-n|--namespace)[[:space:]]+\"?(${old#
          # explaining what moved, and a sed pattern REPLACING the old name with
          # the layout's. The second used to require the pattern to start
          # immediately at `namespace:`, so an anchored one with leading spaces
-         # -- `s/^  namespace: gentian-system$/` in C-05 -- was reported as a
+         # -- `s/^  namespace: gentian-system$/` in C-04 -- was reported as a
          # v4 name surviving in a v5 file, which is the opposite of what it is.
 
 # Every kernel namespace in the file is kernel-<function>, and the function
