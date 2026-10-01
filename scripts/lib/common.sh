@@ -939,7 +939,15 @@ claim_map_setting() {
     export "${var?}"
 }
 
-load_deployments_cluster_settings() {
+# resolve_deployments_path — where the deployments checkout is, settled once.
+#
+# Its own function because two callers need it in a fixed order: step 0
+# brings the checkout up to date with its remote BEFORE the claim in it is
+# read, and reading the claim is what load_deployments_cluster_settings does.
+# The sync used to read the variable raw and ran first, so on a host whose
+# install.env does not name a path it stopped the installer on its first line
+# with "unbound variable". Idempotent: a second call finds the path set.
+resolve_deployments_path() {
     # Whether the operator named a path, recorded before the default fills it
     # in. A configured path that does not exist is a mistake to report, not an
     # invitation to pick a different repository: the installer writes claims
@@ -947,6 +955,7 @@ load_deployments_cluster_settings() {
     # substituting another checkout silently configures the wrong cluster.
     local _configured_path="${GENTIAN_DEPLOYMENTS_PATH:-}"
     : "${GENTIAN_DEPLOYMENTS_PATH:=${HOME}/.gentian/gentian-deployments}"
+    export GENTIAN_DEPLOYMENTS_PATH
 
     # Local developer layout often checks out sibling repos under the same
     # parent directory (../gentian-deployments). Prefer that path when the
@@ -960,6 +969,11 @@ load_deployments_cluster_settings() {
             info "Using sibling deployments repo at ${GENTIAN_DEPLOYMENTS_PATH}."
         fi
     fi
+    return 0
+}
+
+load_deployments_cluster_settings() {
+    resolve_deployments_path
 
     local cluster="${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-default-cluster}"
     local settings_file="${GENTIAN_DEPLOYMENTS_PATH}/clusters/${cluster}/kernel/cluster-settings.env"
