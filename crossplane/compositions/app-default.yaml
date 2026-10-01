@@ -36,7 +36,7 @@ spec:
                   - key: gentianos.io/profile-name
                     type: FromCompositeFieldPath
                     valueFromFieldPath: spec.profileRef.name
-            # Reads the gentian-kernel-services ConfigMap from gentian-system to make
+            # Reads the gentian-kernel-services ConfigMap (the control namespace) to make
             # cluster-specific infrastructure endpoints available for extraValues
             # substitution: ${S3_ENDPOINT}, ${MYSQL_HOST}, ${REDIS_HOST}.
             # The ConfigMap is published by the gentian-os Helm chart via kernelServices values.
@@ -50,7 +50,7 @@ spec:
                   - key: gentianos.io/config-type
                     type: Value
                     value: kernel-services
-            # Reads the gentian-cluster-config ConfigMap (crossplane-system) to supply
+            # Reads the gentian-cluster-config ConfigMap (the provisioning namespace) to supply
             # cluster-specific identity URLs and secret generation mode to
             # app init Jobs emitted by this Composition.
             - kind: ConfigMap
@@ -149,6 +149,13 @@ spec:
             {{- $ccRes      := dig "clusterConfig" list $extraRes }}
             {{- $ccCM       := default dict (index $ccRes 0) }}
             {{- $ccData     := dig "data" dict $ccCM }}
+            {{- /* The namespace Crossplane and its providers run in, where the
+                 seed Secrets below are written and read back by provider-vault.
+                 Taken from where the cluster composition put this ConfigMap
+                 rather than named: v4 wrote crossplane-system here, a namespace
+                 the v5 layout does not have, so every app with an internal
+                 secret composed an Object that could never be created. */}}
+            {{- $provNs     := dig "metadata" "namespace" "kernel-provisioning" $ccCM }}
             {{- $nodeIP        := dig "node.ip"        "" $ccData }}
 
             {{- /* OIDC pack scopes from the profile's OIDCPackCatalog CR.
@@ -316,7 +323,7 @@ spec:
 
             {{- /* ── Emit OpenBao KV seeders for each app-internal secret ──────── */}}
             {{- /* For each appSecret we emit two composed resources:               */}}
-            {{- /*   1. A k8s Secret in crossplane-system holding a deterministic   */}}
+            {{- /*   1. A k8s Secret in the provisioning namespace, holding a seed  */}}
             {{- /*      seed value (SHA-256 of the XApp name + secret name).        */}}
             {{- /*   2. A provider-vault SecretV2 (Observe+Create, Orphan delete)   */}}
             {{- /*      that creates the OpenBao KV path on first reconcile and     */}}
@@ -341,7 +348,7 @@ spec:
                   kind: Secret
                   metadata:
                     name: {{ $seedName }}
-                    namespace: crossplane-system
+                    namespace: {{ $provNs }}
                   type: Opaque
                   stringData:
                     data.json: '{"value":"{{ $seedVal }}"}'
@@ -378,7 +385,7 @@ spec:
                 name: {{ $kvPath }}
                 dataJsonSecretRef:
                   name: {{ $seedName }}
-                  namespace: crossplane-system
+                  namespace: {{ $provNs }}
                   key: data.json
               providerConfigRef:
                 name: openbao
@@ -901,7 +908,7 @@ spec:
                   kind: ExternalSecret
                   metadata:
                     name: {{ $xrName }}-oidc-client-creds
-                    namespace: crossplane-system
+                    namespace: {{ $provNs }}
                   spec:
                     refreshInterval: 1h
                     secretStoreRef:
@@ -971,7 +978,7 @@ spec:
                 {{- if eq (default "PUBLIC" $oidcCl.accessType) "CONFIDENTIAL" }}
                 clientSecretSecretRef:
                   name: {{ $xrName }}-oidc-client-creds
-                  namespace: crossplane-system
+                  namespace: {{ $provNs }}
                   key: client-secret
                 {{- end }}
               providerConfigRef:
@@ -1666,7 +1673,7 @@ spec:
                   kind: Secret
                   metadata:
                     name: {{ $scSeedName }}
-                    namespace: crossplane-system
+                    namespace: {{ $provNs }}
                   type: Opaque
                   stringData:
                     data.json: '{"value":"{{ $scSeedVal }}"}'
@@ -1693,7 +1700,7 @@ spec:
                 name: {{ $scKvPath }}
                 dataJsonSecretRef:
                   name: {{ $scSeedName }}
-                  namespace: crossplane-system
+                  namespace: {{ $provNs }}
                   key: data.json
               providerConfigRef:
                 name: openbao
