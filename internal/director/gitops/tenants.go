@@ -331,7 +331,14 @@ func (g *GitOps) RetireTenant(ctx context.Context, tenant string, meta Meta) (Re
 // is pruned as the cluster last saw it -- Retain -- and the data the purge was
 // for stays. So the removal waits until the live Tenant carries Delete; the
 // caller watches for that and then calls RetireTenant.
-func (g *GitOps) RequestTenantPurge(ctx context.Context, tenant string, now time.Time, meta Meta) (Result, error) {
+// PurgeOptions refine a purge.
+type PurgeOptions struct {
+	// KeepBundles spares the tenant's backup bucket: the offboarding case,
+	// where the tenant was handed a copy and a provider keeps one.
+	KeepBundles bool `json:"keepBundles,omitempty"`
+}
+
+func (g *GitOps) RequestTenantPurge(ctx context.Context, tenant string, now time.Time, opts PurgeOptions, meta Meta) (Result, error) {
 	if !ValidName(tenant) {
 		return Result{}, fmt.Errorf("%w: tenant %q", ErrInvalidName, tenant)
 	}
@@ -343,6 +350,14 @@ func (g *GitOps) RequestTenantPurge(ctx context.Context, tenant string, now time
 			out, policyChanged, err := setKeyPath(text, "spec", []string{"deletionPolicy"}, "Delete")
 			if err != nil {
 				return "", "", false, err
+			}
+			if opts.KeepBundles {
+				var kept bool
+				out, kept, err = setKeyPath(out, "spec", []string{"deletion", "keepBundles"}, "true")
+				if err != nil {
+					return "", "", false, err
+				}
+				policyChanged = policyChanged || kept
 			}
 			marked := tenantPurgeRequested(out)
 			if !marked {

@@ -646,8 +646,8 @@ func (r *TenantReconciler) reconcileDelete(ctx context.Context, tenant *gentiano
 	}
 
 	// Clean up database resources before removing the namespace.
-	if err := r.deleteDatabase(ctx, tenant); err != nil {
-		return ctrl.Result{}, err
+	if requeue, res, err := awaitJob(r.deleteDatabase(ctx, tenant)); requeue {
+		return res, err
 	}
 
 	// Clean up MariaDB resources before removing the namespace.

@@ -29,6 +29,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/backup"
@@ -176,14 +177,66 @@ func (r *TenantReconciler) ensureRoleJob(ctx context.Context, tenant *gentianov1
 }
 
 // deleteDatabase handles database cleanup on tenant deletion.
-// DeletionPolicy=Delete: deletes all tenant-labeled CloudNativePG Database CRs
-// (including databases from previously uninstalled apps).
+// DeletionPolicy=Delete: drops every PostgreSQL database and role the tenant
+// was ever provisioned, then deletes the tenant-labeled CloudNativePG Database
+// CRs. The CRs alone were what used to go, and CloudNativePG's default
+// reclaim policy retains the database behind a deleted CR, so a purged tenant
+// kept every table and a login role nobody could remove from the console.
 // DeletionPolicy=Retain: no-op — databases and data are preserved.
 func (r *TenantReconciler) deleteDatabase(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
 	if tenant.Spec.DeletionPolicy != gentianov1alpha1.DeletionPolicyDelete {
 		return nil
 	}
+	apps, err := r.collectPostgresAppsForDelete(ctx, tenant)
+	if err != nil {
+		return err
+	}
+	if err := r.ensureDeleteJobs(ctx, postgresNamespace, tenant, apps, pgDeleteJobName, makePostgresDeleteJob); err != nil {
+		return err
+	}
 	return r.deleteTenantLabeledDatabaseCRs(ctx, tenant.Name)
+}
+
+// collectPostgresAppsForDelete is every app a database was provisioned for:
+// the ones the spec names now and the ones a Database CR still records,
+// which covers apps uninstalled without a purge.
+func (r *TenantReconciler) collectPostgresAppsForDelete(ctx context.Context, tenant *gentianov1alpha1.Tenant) ([]string, error) {
+	apps, err := r.collectPostgresApps(ctx, tenant)
+	if err != nil {
+		return nil, err
+	}
+	dbList := &unstructured.UnstructuredList{}
+	dbList.SetGroupVersionKind(schema.GroupVersionKind{Group: cnpgGroup, Version: cnpgVersion, Kind: cnpgDatabaseKind + "List"})
+	if err := r.List(ctx, dbList, client.InNamespace(postgresNamespace), tenantKernelLabelSelector(tenant.Name)); err != nil {
+		return nil, fmt.Errorf("list Database CRs for tenant %s: %w", tenant.Name, err)
+	}
+	for i := range dbList.Items {
+		if app := dbList.Items[i].GetLabels()[appLabel]; app != "" {
+			apps = appendUniqueStrings(apps, app)
+		}
+	}
+	return apps, nil
+}
+
+// makePostgresDeleteJob drops an app's database, every database its role
+// still owns (apps allowed to create their own), and the role. The same
+// statements the app purge runs, as a Job because tenant teardown has no pod
+// to exec into.
+func makePostgresDeleteJob(tenant *gentianov1alpha1.Tenant, appName string) *batchv1.Job {
+	container := psqlContainer("delete-db", buildPostgresDeleteScript(databaseName(tenant, appName), roleUserName(tenant.Name, appName)), "")
+	return newKernelProvisioningJob(pgDeleteJobName(tenant.Name, appName), postgresNamespace, tenant, appName, container)
+}
+
+func buildPostgresDeleteScript(dbName, roleName string) string {
+	return fmt.Sprintf(`set -euo pipefail
+for db in $(psql -tAc "SELECT d.datname FROM pg_database d JOIN pg_roles r ON r.oid = d.datdba WHERE r.rolname = '%[2]s' AND NOT d.datistemplate" postgres) "%[1]s"; do
+  psql -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '${db}';" postgres >/dev/null
+  psql -c "DROP DATABASE IF EXISTS \"${db}\";" postgres
+  echo "database ${db} dropped"
+done
+psql -c "DO \$\$ BEGIN IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '%[2]s') THEN EXECUTE 'DROP OWNED BY \"%[2]s\"'; END IF; END \$\$;" postgres
+psql -c "DROP ROLE IF EXISTS \"%[2]s\";" postgres
+echo "role %[2]s dropped"`, dbName, roleName)
 }
 
 // --- CR constructors ---------------------------------------------------------
@@ -390,4 +443,8 @@ func roleUserName(tenantName, appName string) string {
 
 func roleJobName(tenantName, appName string) string {
 	return fmt.Sprintf("pg-role-%s-%s", tenantName, appName)
+}
+
+func pgDeleteJobName(tenantName, appName string) string {
+	return fmt.Sprintf("pg-delete-%s-%s", tenantName, appName)
 }

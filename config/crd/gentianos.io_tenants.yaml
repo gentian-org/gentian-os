@@ -211,6 +211,18 @@ spec:
                   - message: either profile or profileRef is required
                     rule: has(self.profile) || has(self.profileRef)
                 type: array
+              deletion:
+                description: Deletion refines what a Delete leaves behind.
+                properties:
+                  keepBundles:
+                    description: |-
+                      KeepBundles keeps the tenant's backup bucket and the bundles in it
+                      when everything else is deleted: the offboarding case, where the
+                      tenant was handed a copy and a provider keeps one under contract.
+                      Off by default -- a purge that leaves the backups behind has not
+                      purged.
+                    type: boolean
+                type: object
               deletionPolicy:
                 default: Retain
                 description: |-

@@ -192,7 +192,7 @@ func TestAPurgeIsRequestedBeforeTheTenantIsRemoved(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
-	res, err := g.RequestTenantPurge(ctx, "acme", now, tenantMeta())
+	res, err := g.RequestTenantPurge(ctx, "acme", now, gitops.PurgeOptions{KeepBundles: true}, tenantMeta())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -208,6 +208,9 @@ func TestAPurgeIsRequestedBeforeTheTenantIsRemoved(t *testing.T) {
 		Spec struct {
 			DeletionPolicy string `json:"deletionPolicy"`
 			DisplayName    string `json:"displayName"`
+			Deletion       struct {
+				KeepBundles bool `json:"keepBundles"`
+			} `json:"deletion"`
 		} `json:"spec"`
 	}
 	if err := yaml.Unmarshal([]byte(text), &doc); err != nil {
@@ -215,6 +218,9 @@ func TestAPurgeIsRequestedBeforeTheTenantIsRemoved(t *testing.T) {
 	}
 	if doc.Spec.DeletionPolicy != "Delete" {
 		t.Fatalf("deletionPolicy = %q, want Delete", doc.Spec.DeletionPolicy)
+	}
+	if !doc.Spec.Deletion.KeepBundles {
+		t.Fatalf("deletion.keepBundles not set:\n%s", text)
 	}
 	if doc.Metadata.Annotations[gitops.PurgeAnnotation] != "2026-10-02T12:00:00Z" {
 		t.Fatalf("annotations = %v, want the purge mark", doc.Metadata.Annotations)
@@ -226,7 +232,7 @@ func TestAPurgeIsRequestedBeforeTheTenantIsRemoved(t *testing.T) {
 		t.Fatal("the manifest's comments were lost")
 	}
 
-	again, err := g.RequestTenantPurge(ctx, "acme", now.Add(time.Hour), tenantMeta())
+	again, err := g.RequestTenantPurge(ctx, "acme", now.Add(time.Hour), gitops.PurgeOptions{KeepBundles: true}, tenantMeta())
 	if err != nil || again.Changed || again.Status != "purge_pending" {
 		t.Fatalf("second request = %+v, %v; want purge_pending and no commit", again, err)
 	}
@@ -239,7 +245,7 @@ func TestAPurgeIsRequestedBeforeTheTenantIsRemoved(t *testing.T) {
 func TestThePlatformTenantCannotBePurged(t *testing.T) {
 	remote := dt.Remote(t, "demo")
 	g := gitops.NewGitOps(dt.Clone(t, remote), remote, dt.Cluster, director)
-	if _, err := g.RequestTenantPurge(context.Background(), "platform", time.Now(), tenantMeta()); !errors.Is(err, gitops.ErrTenantProtected) {
+	if _, err := g.RequestTenantPurge(context.Background(), "platform", time.Now(), gitops.PurgeOptions{}, tenantMeta()); !errors.Is(err, gitops.ErrTenantProtected) {
 		t.Fatalf("purge platform = %v, want ErrTenantProtected", err)
 	}
 }

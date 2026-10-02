@@ -178,6 +178,11 @@ Other options:
   --activate-admin      issue a new activation link for the cluster administrator
                         (admin@<kernel-domain>), mailed or shown once — for a lost
                         password when nobody can sign in to ask the director
+  --disable-api-extensions
+                        leave the Gentian Corp extensions -- the Operations
+                        Console's service and the API-extension grant it needs
+                        -- out of the scaffold. Everything of Gentian OS stays:
+                        export, import, purge and the bundle need no extension
   --no-cluster-infra    skip cert-manager / CNPG / reloader on install
   --cluster-infra       with --purge, also remove them and their CRDs: CNPG,
                         Reloader, external-dns, cert-manager. They may serve
@@ -253,6 +258,7 @@ parse_driver_args() {
             --recover)
                 shift; [[ $# -gt 0 ]] || { error "$0: --recover requires a kit path"; exit 1; }
                 GENTIAN_RECOVER_FROM="$1" ;;
+            --disable-api-extensions) export GENTIAN_DISABLE_API_EXTENSIONS="1" ;;
             --no-cluster-infra)  INSTALL_CLUSTER_INFRA="0" ;;
             --cluster-infra)     INSTALL_CLUSTER_INFRA="1"; GENTIAN_PURGE_CLUSTER_INFRA=1 ;;
             --config-file)

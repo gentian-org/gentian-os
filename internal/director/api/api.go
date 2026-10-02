@@ -69,7 +69,7 @@ type Repository interface {
 	TenantDetails(ctx context.Context) ([]gitops.Tenant, error)
 	CreateTenant(ctx context.Context, req gitops.NewTenant, meta gitops.Meta) (gitops.Result, error)
 	RetireTenant(ctx context.Context, tenant string, meta gitops.Meta) (gitops.Result, error)
-	RequestTenantPurge(ctx context.Context, tenant string, now time.Time, meta gitops.Meta) (gitops.Result, error)
+	RequestTenantPurge(ctx context.Context, tenant string, now time.Time, opts gitops.PurgeOptions, meta gitops.Meta) (gitops.Result, error)
 	PendingPurges(ctx context.Context) ([]string, error)
 	Tenants(ctx context.Context) ([]string, error)
 	TenantRealm(ctx context.Context, tenant string) (string, error)

@@ -1454,35 +1454,47 @@ _claim_cluster_fields() {
 
     # Where software may enter this cluster (AD-14).
     #
-    # Commented rather than set, because a cluster with no source materialises
-    # nothing on reference and that is a working cluster: its profiles arrive
-    # with the kernel. Adding a source is a deliberate act, and having it be an
-    # edit to this file rather than an environment variable on the director is
-    # the point -- opening a catalogue to a tenant is then a commit with an
-    # author and a date, and "what may this cluster install from" is answerable
-    # without cluster access.
+    # The App Store and its catalogue are set, because a vanilla installation
+    # comes with them (sovereignty-concept.md §5.4): the store is where people
+    # are sent for apps, and the Gentian source is where the Operations
+    # Console's entries come from. Changing a source is an edit to this file
+    # rather than an environment variable on the director -- opening a
+    # catalogue to a tenant is then a commit with an author and a date, and
+    # "what may this cluster install from" is answerable without cluster
+    # access. A cluster with no source still works: it materialises nothing on
+    # reference, and its profiles arrive with the kernel.
     printf '\n'
     printf '  # Catalogues this cluster may fetch profiles from. A tenant installing\n'
-    printf '  # "main/nextcloud-base-ce" gets the bundle from the source named main,\n'
-    printf '  # at the digest the App Store stated -- the source itself is not trusted.\n'
+    printf '  # "gentian/nextcloud-base-ce" gets the bundle from the source named\n'
+    printf '  # gentian, at the digest the App Store stated -- the source itself is\n'
+    printf '  # not trusted.\n'
     printf '  #\n'
     printf '  #   access: entitled   the store decides, per tenant, with a signed grant\n'
     printf '  #   access: open       your own repository; the tenants listed here may\n'
     printf '  #                      install from it with no grant. Nothing is open by\n'
     printf '  #                      default, and removing a tenant closes it again.\n'
-    printf '  # catalogue:\n'
-    printf '  #   # Where people are sent for everything the cluster does not\n'
-    printf '  #   # list itself: the maintained (me) and licensed (ee) editions.\n'
-    printf '  #   # A cluster lists only ce and pe from its own sources.\n'
-    printf '  #   storeUrl: https://gentian.org/apps\n'
-    printf '  #   sources:\n'
-    printf '  #     - name: main\n'
-    printf '  #       url: https://store.gentian.org/catalogue\n'
-    printf '  #       access: entitled\n'
-    printf '  #     - name: in-house\n'
-    printf '  #       url: https://git.example.com/profiles\n'
-    printf '  #       access: open\n'
-    printf '  #       tenants: [demo]\n'
+    printf '  catalogue:\n'
+    printf '    # Where people are sent for everything the cluster does not list\n'
+    printf '    # itself: the maintained (me) and licensed (ee) editions. A cluster\n'
+    printf '    # lists only ce and pe from its own sources.\n'
+    printf '    storeUrl: %s\n' "${GENTIAN_STORE_URL:-https://gentian.org/apps}"
+    printf '    sources:\n'
+    printf '      - name: gentian\n'
+    printf '        url: %s\n' "${GENTIAN_STORE_CATALOGUE_URL:-https://store.gentian.org/catalogue}"
+    printf '        access: entitled\n'
+    printf '      # - name: in-house\n'
+    printf '      #   url: https://git.example.com/profiles\n'
+    printf '      #   access: open\n'
+    printf '      #   tenants: [demo]\n'
+    # The Gentian Corp extensions. Recorded here even while nothing reads it,
+    # so the choice an installer made is in git beside everything else it
+    # chose; the grant and the service entries follow when the catalogue
+    # serves them (sovereignty-concept.md §5.2, §5.4).
+    if [[ "${GENTIAN_DISABLE_API_EXTENSIONS:-0}" == "1" ]]; then
+        printf '  # apiExtensions: disabled (--disable-api-extensions): no Operations Console\n'
+    else
+        printf '  # apiExtensions: enabled: the Operations Console installs by default\n'
+    fi
     return 0
 }
 

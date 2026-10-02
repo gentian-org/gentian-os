@@ -380,8 +380,10 @@ func TestDB_DeleteDeletePolicy_DeletesDatabaseCR(t *testing.T) {
 	if err := testClient.Delete(context.Background(), tenant); err != nil {
 		t.Fatalf("delete tenant: %v", err)
 	}
-	// deleteIdentity runs before deleteDatabase; mark its jobs.
+	// deleteIdentity runs before deleteDatabase; mark its jobs. The purge
+	// drops the database and role through a Job before the CR goes.
 	go markJobCompleteWhenReady("keycloak-realm-delete-dbdelete", layout.Namespace(layout.Authentication))
+	go markJobCompleteWhenReady("pg-delete-dbdelete-pg-app4", "system-postgresql")
 
 	// Database CR should be deleted from platform-kernel.
 	waitFor(t, jobAppearTimeout, func() bool {
@@ -451,6 +453,9 @@ func TestDB_DeleteDeletePolicy_DeletesOrphanedDatabaseCR(t *testing.T) {
 		t.Fatalf("delete tenant: %v", err)
 	}
 	go markJobCompleteWhenReady("keycloak-realm-delete-dborphan", layout.Namespace(layout.Authentication))
+	// The purge drops every database a CR records, the orphan's included.
+	go markJobCompleteWhenReady("pg-delete-dborphan-pg-app5", "system-postgresql")
+	go markJobCompleteWhenReady("pg-delete-dborphan-legacy-app", "system-postgresql")
 
 	waitFor(t, jobAppearTimeout, func() bool {
 		db := &unstructured.Unstructured{}

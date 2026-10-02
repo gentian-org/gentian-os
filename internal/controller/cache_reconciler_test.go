@@ -315,6 +315,9 @@ func TestCache_DeleteDeletePolicy_CreatesDeleteJobsAndDeletesApplication(t *test
 	}
 	// deleteIdentity runs before deleteCache; mark its jobs.
 	go markJobCompleteWhenReady("keycloak-realm-delete-cachedelete", layout.Namespace(layout.Authentication))
+	// deleteStorage runs before deleteCache, and a purge always removes the
+	// backup bucket, so that Job has to finish before the cache's is made.
+	go markJobCompleteWhenReady("s3-delete-cachedelete-gentian-backup", "system-s3")
 
 	// Redis delete Job should appear.
 	deleteJob := waitForKernelJob(t, "redis-acl-delete-cachedelete-redis-app3", "cachedelete")

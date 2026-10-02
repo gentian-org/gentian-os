@@ -55,7 +55,16 @@ func (s *Server) purgeTenant(w http.ResponseWriter, r *http.Request, c call) {
 		return
 	}
 	tenant := r.PathValue("t")
-	res, err := s.cfg.Repo.RequestTenantPurge(r.Context(), tenant, time.Now(), c.meta)
+	// An empty body is the default purge; {"keepBundles": true} spares the
+	// backup bucket.
+	var opts gitops.PurgeOptions
+	if r.ContentLength != 0 {
+		if err := decode(r, &opts); err != nil {
+			s.fail(w, r, http.StatusBadRequest, `body must be {} or {"keepBundles": true}`)
+			return
+		}
+	}
+	res, err := s.cfg.Repo.RequestTenantPurge(r.Context(), tenant, time.Now(), opts, c.meta)
 	if errors.Is(err, gitops.ErrTenantProtected) {
 		s.fail(w, r, http.StatusForbidden, err.Error())
 		return

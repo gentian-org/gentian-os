@@ -32,6 +32,22 @@ type TenantAdmin struct {
 	RequireMFA *bool `json:"requireMFA,omitempty"`
 }
 
+// TenantDeletion is what a purge (deletionPolicy: Delete) leaves behind.
+type TenantDeletion struct {
+	// KeepBundles keeps the tenant's backup bucket and the bundles in it
+	// when everything else is deleted: the offboarding case, where the
+	// tenant was handed a copy and a provider keeps one under contract.
+	// Off by default -- a purge that leaves the backups behind has not
+	// purged.
+	// +optional
+	KeepBundles bool `json:"keepBundles,omitempty"`
+}
+
+// KeepsBundles reports whether a Delete spares the backup bucket.
+func (t *Tenant) KeepsBundles() bool {
+	return t.Spec.Deletion != nil && t.Spec.Deletion.KeepBundles
+}
+
 // AdminRequiresMFA reports whether the administrator must enrol a second
 // factor; true unless the tenant says otherwise.
 func (t *Tenant) AdminRequiresMFA() bool {
@@ -96,6 +112,10 @@ type TenantSpec struct {
 	// +optional
 	// +kubebuilder:default=Retain
 	DeletionPolicy DeletionPolicy `json:"deletionPolicy,omitempty"`
+
+	// Deletion refines what a Delete leaves behind.
+	// +optional
+	Deletion *TenantDeletion `json:"deletion,omitempty"`
 
 	// Apps lists the applications to install for this tenant.
 	// +optional

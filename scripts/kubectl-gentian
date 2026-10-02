@@ -16,7 +16,7 @@
 #   kubectl gentian tenants list
 #   kubectl gentian tenants create <name> [--display-name <text>] [--no-mfa]
 #   kubectl gentian tenants activate-admin <name> [--recovery-email <address>]
-#   kubectl gentian tenants retire <name> [--purge] [--yes]
+#   kubectl gentian tenants retire <name> [--purge [--keep-bundles]] [--yes]
 #
 #   kubectl gentian apps list --tenant <tenant>
 #   kubectl gentian apps install <app> --tenant <tenant>
@@ -336,21 +336,28 @@ cmd_tenants_activate_admin() {
 # default); --purge deletes it. Either asks for the name typed out, as the
 # console does, unless --yes says the caller already has.
 cmd_tenants_retire() {
-    local name="" purge="" yes="" typed=""
+    local name="" purge="" keep="" yes="" typed=""
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --purge) purge=1; shift ;;
+            --keep-bundles) keep=1; shift ;;
             --yes) yes=1; shift ;;
             -*) die "unknown flag $1" ;;
             *) name="$1"; shift ;;
         esac
     done
-    [[ -n "${name}" ]] || die "usage: kubectl gentian tenants retire <name> [--purge] [--yes]"
+    [[ -n "${name}" ]] || die "usage: kubectl gentian tenants retire <name> [--purge [--keep-bundles]] [--yes]"
+    [[ -z "${keep}" || -n "${purge}" ]] || die "--keep-bundles goes with --purge; retire keeps everything"
     if [[ -z "${yes}" ]]; then
         [[ -t 0 ]] || die "not a terminal: confirm with --yes"
         if [[ -n "${purge}" ]]; then
             echo "Purging ${name} deletes its realm and every account in it, its databases,"
             echo "files, mail and secrets. This cannot be undone."
+            if [[ -n "${keep}" ]]; then
+                echo "Its backup bucket and the bundles in it are kept."
+            else
+                echo "Its backup bucket goes too (--keep-bundles keeps it)."
+            fi
         else
             echo "Retiring ${name} takes it off the cluster and keeps its data."
         fi
@@ -359,7 +366,9 @@ cmd_tenants_retire() {
     fi
     _discover
     if [[ -n "${purge}" ]]; then
-        _call POST "/v1/clusters/${_CLUSTER}/tenants/${name}/actions/purge" >/dev/null
+        local body="{}"
+        [[ -z "${keep}" ]] || body='{"keepBundles":true}'
+        _call POST "/v1/clusters/${_CLUSTER}/tenants/${name}/actions/purge" "${body}" >/dev/null
         echo "Purge of ${name} requested: its data is set to be deleted, and the tenant"
         echo "is removed once the cluster has taken that in. 'tenants list' shows it as purging until then."
         return 0

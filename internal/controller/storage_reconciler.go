@@ -107,8 +107,21 @@ func (r *TenantReconciler) deleteStorage(ctx context.Context, tenant *gentianov1
 	if err != nil {
 		return err
 	}
+	// The backup bucket goes with the rest. It is not an app's, so it is
+	// never in the inventory a profile can reach, and it is named here as
+	// its own unit: a purge that leaves the backups behind has not purged.
+	// keepBundles is the one exception, for a tenant handed a copy whose
+	// provider keeps one under contract.
+	if !tenant.KeepsBundles() {
+		s3Apps = append(s3Apps, backupBucketUnit)
+	}
 	return r.ensureDeleteJobs(ctx, s3Namespace, tenant, s3Apps, s3BucketDeleteJobName, makeS3BucketDeleteJob)
 }
+
+// backupBucketUnit is the pseudo-app name the backup bucket's delete Job
+// carries. backup.BackupBucket and backup.S3Bucket agree on the bucket this
+// names, which is what lets one Job constructor serve both.
+const backupBucketUnit = "gentian-backup"
 
 // makeS3BucketJob builds a kernel-namespace Job that creates the per-app bucket
 // and, when accessKey/secretKey are supplied (Seeder enabled), a scoped MinIO
@@ -244,11 +257,22 @@ fi
 echo "bucket %[1]s ready"`, bucket)
 }
 
+// minioDeleteScript removes the bucket and the user and policy that were made
+// for it. The user is found through the policy, whose statement names the
+// bucket: the key pair itself was seeded and is not known to a delete Job.
 func minioDeleteScript(bucket string) string {
 	return fmt.Sprintf(`set -eu
 mc alias set gentian "${MINIO_ENDPOINT}" "${MINIO_ACCESS_KEY}" "${MINIO_SECRET_KEY}"
-mc rb --force "gentian/%s" 2>/dev/null || echo "bucket %s already gone"
-echo "bucket %s removed"`, bucket, bucket, bucket)
+mc rb --force "gentian/%[1]s" 2>/dev/null || echo "bucket %[1]s already gone"
+for policy in $(mc admin policy ls gentian 2>/dev/null); do
+  case "${policy}" in *-policy) ;; *) continue ;; esac
+  if mc admin policy info gentian "${policy}" 2>/dev/null | grep -q 'arn:aws:s3:::%[1]s"'; then
+    mc admin user rm gentian "${policy%%-policy}" 2>/dev/null || true
+    mc admin policy rm gentian "${policy}" 2>/dev/null || true
+    echo "user ${policy%%-policy} and its policy removed"
+  fi
+done
+echo "bucket %[1]s removed"`, bucket)
 }
 
 func s3BucketName(tenant *gentianov1alpha1.Tenant, appName string) string {
