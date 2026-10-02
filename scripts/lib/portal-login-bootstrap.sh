@@ -970,9 +970,14 @@ run_keycloak_portal_bootstrap_job() {
             --from-literal=smtp_from="${KC_SMTP_FROM}"
         )
     else
-        warn "SMTP credentials incomplete — Keycloak invite/reset emails will not send" \
-             "until the claim's mail block is set (serviceMode system, or host/port" \
-             "for an external relay) and ./install.sh --force --only D-03 is re-run."
+        # Not a warning: this only says the installer holds no SMTP settings
+        # of its own, which is the normal case. The relay credential lives in
+        # OpenBao and reaches Keycloak through keycloak-smtp-credentials, and
+        # configure_keycloak_realm_smtp -- the next thing D-03 does -- reads
+        # that and configures the realm. Warning here printed "will not send"
+        # on a cluster whose realm the same run then configured, and that
+        # later step is the one that warns when SMTP really is incomplete.
+        info "Realm SMTP is configured after the bootstrap, from keycloak-smtp-credentials."
         bootstrap_secret_args+=(
             --from-literal=smtp_configure=false
             --from-literal=mail_service_mode="$(gentian_mail_service_mode)"
