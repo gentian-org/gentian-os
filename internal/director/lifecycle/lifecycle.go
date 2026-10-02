@@ -43,6 +43,9 @@ type Client struct {
 	base  string
 	token string
 	http  *http.Client
+	// stream has no timeout: it carries bundle downloads, which take as long
+	// as the bundle is big and are bounded by the caller's context instead.
+	stream *http.Client
 }
 
 // New returns a client for the operator's API at base.
@@ -52,9 +55,10 @@ type Client struct {
 // proof: any pod that could reach the Service could act as anybody.
 func New(base, token string) *Client {
 	return &Client{
-		base:  strings.TrimRight(base, "/"),
-		token: token,
-		http:  &http.Client{Timeout: 30 * time.Second},
+		base:   strings.TrimRight(base, "/"),
+		token:  token,
+		http:   &http.Client{Timeout: 30 * time.Second},
+		stream: &http.Client{Transport: &http.Transport{ResponseHeaderTimeout: 30 * time.Second}},
 	}
 }
 
@@ -90,6 +94,23 @@ func (c *Client) Get(ctx context.Context, path string, query url.Values) (int, [
 		return 0, nil, fmt.Errorf("app-lifecycle API: %w", err)
 	}
 	return resp.StatusCode, body, nil
+}
+
+// Stream relays one read whose body is not decoded and may be large -- a
+// bundle download. The caller owns the response and closes its body; the
+// client used has no overall timeout, because the transfer takes as long as
+// the bundle is big.
+func (c *Client) Stream(ctx context.Context, path string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+path, nil)
+	if err != nil {
+		return nil, err
+	}
+	c.authorize(req)
+	resp, err := c.stream.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("app-lifecycle API: %w", err)
+	}
+	return resp, nil
 }
 
 // Plan is one plan as the operator presents it for a tenant.

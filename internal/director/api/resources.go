@@ -19,10 +19,12 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gentian-org/gentian-os/internal/director/authz"
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
@@ -255,6 +257,27 @@ func (s *Server) tenantBackups(w http.ResponseWriter, r *http.Request, _ call) {
 
 func (s *Server) tenantBackup(w http.ResponseWriter, r *http.Request, _ call) {
 	s.relayed(w, r, backupsPath(r, "/backups/"+url.PathEscape(r.PathValue("name"))))
+}
+
+// tenantBundleDownload relays the operator's stream of one bundle. The
+// director's write deadline is lifted for it: the transfer takes as long as
+// the bundle is big, and the request's context ends it if the reader goes.
+func (s *Server) tenantBundleDownload(w http.ResponseWriter, r *http.Request, _ call) {
+	resp, err := s.cfg.Lifecycle.Stream(r.Context(), backupsPath(r, "/backups/"+url.PathEscape(r.PathValue("name"))+"/download"))
+	if err != nil {
+		s.cfg.Log.ErrorContext(r.Context(), "app-lifecycle API unreachable", "request_id", reqID(r.Context()), "error", err.Error())
+		s.fail(w, r, http.StatusBadGateway, "the operator's API did not answer")
+		return
+	}
+	defer func() { _ = resp.Body.Close() }()
+	for _, h := range []string{"Content-Type", "Content-Disposition", "Content-Length"} {
+		if v := resp.Header.Get(h); v != "" {
+			w.Header().Set(h, v)
+		}
+	}
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
+	w.WriteHeader(resp.StatusCode)
+	_, _ = io.Copy(w, resp.Body)
 }
 
 func (s *Server) tenantBackupPolicy(w http.ResponseWriter, r *http.Request, _ call) {

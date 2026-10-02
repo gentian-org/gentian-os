@@ -38,6 +38,9 @@ func (h *HTTPServer) registerBackupRoutes(mux router) {
 	// Reads of state.
 	mux.HandleFunc("GET /v1/tenants/{tenant}/backups", h.handleBackups)
 	mux.HandleFunc("GET /v1/tenants/{tenant}/backups/{name}", h.handleBackup)
+	// The bundle itself, as one file. Not JSON: a tar of the artefacts, for
+	// the person who wants their data in their hands.
+	mux.HandleFunc("GET /v1/tenants/{tenant}/backups/{name}/download", h.handleBundleDownload)
 	mux.HandleFunc("GET /v1/tenants/{tenant}/backup-policy", h.handleTenantBackupPolicy)
 	mux.HandleFunc("GET /v1/tenants/{tenant}/backup-schedules", h.handleBackupSchedules)
 	mux.HandleFunc("GET /v1/backup-policy", h.handleClusterBackupPolicy)

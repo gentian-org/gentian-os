@@ -103,6 +103,9 @@ type Repository interface {
 // plans the tenant may move to. See internal/director/lifecycle.
 type Lifecycle interface {
 	Get(ctx context.Context, path string, query url.Values) (int, []byte, error)
+	// Stream is Get for a body that is passed through byte for byte and may
+	// be large: a bundle download. The caller closes the response body.
+	Stream(ctx context.Context, path string) (*http.Response, error)
 	Plans(ctx context.Context, tenant string, selfService bool) ([]lifecycle.Plan, error)
 	// Do asks the cluster to do something once, as the person named. Only
 	// the action routes call it.
@@ -563,6 +566,10 @@ func (s *Server) routes() {
 		// Changing a policy is a commit, and is not here yet.
 		s.guarded("GET /v1/tenants/{t}/backups", "can_view", tenantObject, s.tenantBackups)
 		s.guarded("GET /v1/tenants/{t}/backups/{name}", "can_view", tenantObject, s.tenantBackup)
+		// The bundle as one file, through the director and never a signed
+		// URL: a link that works without a session is a session nobody can
+		// revoke (sovereignty-concept.md §4.2).
+		s.guarded("GET /v1/tenants/{t}/backups/{name}/download", "can_view", tenantObject, s.tenantBundleDownload)
 		s.guarded("GET /v1/tenants/{t}/backup-policy", "can_view", tenantObject, s.tenantBackupPolicy)
 		s.guarded("GET /v1/tenants/{t}/backup-schedules", "can_view", tenantObject, s.tenantBackupSchedules)
 		if s.cfg.Cluster != "" {
