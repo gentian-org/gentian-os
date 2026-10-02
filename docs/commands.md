@@ -262,10 +262,18 @@ kubectl get secret keycloak-admin -n platform-kernel \
   -o jsonpath='{.data.password}' | base64 -d && echo
 ```
 
-ArgoCD admin:
+ArgoCD has no local admin: D-03 sets `admin.enabled: "false"` and deletes
+`argocd-initial-admin-secret`. Sign in through Keycloak as a member of
+`gentian:platform:admin`. Break glass, when Keycloak itself is down, is
+kubectl in the gitops namespace: set a new password, switch the account on,
+and reach the server by port-forward (the edge needs Keycloak too):
 
 ```bash
-kubectl get secret argocd-initial-admin-secret -n argocd -o jsonpath='{.data.password}' | base64 -d && echo
+kubectl -n kernel-gitops patch secret argocd-secret -p \
+  "{\"stringData\":{\"admin.password\":\"$(argocd account bcrypt --password '<new>')\",\"admin.passwordMtime\":\"$(date -u +%FT%TZ)\"}}"
+kubectl -n kernel-gitops patch configmap argocd-cm --type merge -p '{"data":{"admin.enabled":"true"}}'
+kubectl -n kernel-gitops port-forward svc/argocd-server 8080:443
+# afterwards: ./install.sh --force --only D-03 switches it off again
 ```
 
 ## 8. Key URLs

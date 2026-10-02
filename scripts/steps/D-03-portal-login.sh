@@ -3,7 +3,7 @@
 # phase: applications
 # requires: D-02-dns-wait
 # provides: the kernel realm with its clients and the administrator user, Argo CD and Headlamp signing in against it, the platform tenant Ready and its desktop serving console.<kernel>
-# mutates: Keycloak realm, clients, groups and users; Secrets in the edge and gitops namespaces; the argocd-cm, argocd-rbac-cm and argocd-tls-certs-cm ConfigMaps; the bootstrap Applications (Headlamp's OIDC on); the gentian-portal Application
+# mutates: Keycloak realm, clients, groups and users; Secrets in the edge and gitops namespaces; the argocd-cm, argocd-rbac-cm and argocd-tls-certs-cm ConfigMaps (Argo CD's local admin off); the argocd-initial-admin-secret (deleted); the bootstrap Applications (Headlamp's OIDC on); the gentian-portal Application
 
 # _v5_render is B-01's; a step file is a library of verbs and sourcing another
 # one is how they are shared.
@@ -100,6 +100,11 @@ check() {
     # step is what puts it there. A kubeconfig still carrying the chart's
     # placeholder means the step has not finished its job, whatever else is
     # Ready -- so say so here rather than let a re-run skip it.
+    # Argo CD's local admin is off and its generated password gone: the
+    # kernel's UIs are signed in to through the realm, with its MFA, and an
+    # install from before this rule re-runs the step to get there.
+    [[ "$(kubectl get configmap argocd-cm -n "${GITOPS_NAMESPACE}" -o jsonpath='{.data.admin\.enabled}' 2>/dev/null)" == "false" ]] || return "${CHECK_MISSING}"
+    ! kubectl get secret argocd-initial-admin-secret -n "${GITOPS_NAMESPACE}" >/dev/null 2>&1 || return "${CHECK_MISSING}"
     local kubeconfig
     kubeconfig="$(kubectl get secret headlamp-kubeconfig -n "${OBSERVABILITY_NAMESPACE}" \
         -o jsonpath='{.data.config}' 2>/dev/null | base64 -d 2>/dev/null || true)"

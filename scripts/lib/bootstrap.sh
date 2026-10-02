@@ -895,7 +895,7 @@ resync_credential_consumers() {
 # Print Crossplane-aware installation summary
 # =============================================================================
 print_summary_cp() {
-    local xr_name xr_ready mr_count infra_pg_ready infra_mdb_ready infra_redis_ready infra_minio_ready argocd_url argocd_pw
+    local xr_name xr_ready mr_count infra_pg_ready infra_mdb_ready infra_redis_ready infra_minio_ready argocd_url
 
     # Around a dozen cluster queries, and on a remote API server they add up to
     # the better part of a minute. Announce it: the last thing printed before
@@ -967,11 +967,6 @@ print_summary_cp() {
 
     # Resolve these BEFORE the banner to avoid warnings mid-output.
     argocd_url=$(resolve_argocd_url 2>/dev/null)
-    # _argocd_ns, not the literal: the gitops namespace is kernel-gitops, and
-    # reading the secret from "argocd" printed an empty password on every
-    # install -- the one line somebody needs to get in.
-    argocd_pw=$(kubectl get secret argocd-initial-admin-secret -n "$(_argocd_ns)" \
-        -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null || true)
 
     echo ""
     echo -e "${CYAN}╔══════════════════════════════════════════════════════════╗${NC}"
@@ -1025,8 +1020,9 @@ print_summary_cp() {
     echo ""
     echo -e "${GREEN}  ArgoCD:${NC}"
     echo -e "${GREEN}    URL  : ${argocd_url}${NC}"
-    echo -e "${GREEN}    User : admin${NC}"
-    echo -e "${GREEN}    Pass : ${argocd_pw}${NC}"
+    # No password: Argo CD's local admin is off (D-03), and it is signed in
+    # to through the kernel realm like every other kernel UI.
+    echo -e "${GREEN}    Sign in with Keycloak, as a member of gentian:platform:admin${NC}"
     # Only while it exists. E-03 deletes it, so naming it afterwards sends the
     # operator to a path that is gone — and on a finished install the answer to
     # "where are the OpenBao tokens" is the recovery kit, not a file in /tmp.

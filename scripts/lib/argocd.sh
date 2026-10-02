@@ -186,7 +186,16 @@ configure_argocd_oidc() {
             --patch "{\"data\":{\"id.${kernel_domain}\":$(jq -R -s '.' <<<"${ca_cert}")}}"
     fi
 
-    # 2. Patch argocd-cm with OIDC settings and external URL
+    # 2. Patch argocd-cm with OIDC settings and external URL, and switch the
+    # local admin account off.
+    #
+    # Argo CD ships an "admin" with a generated password, which the installer
+    # used to print in its summary. That account is everything Keycloak is
+    # not: no MFA, no activation link, no record of who used it, and a
+    # password sitting in terminal scrollback. Once Argo CD signs in against
+    # the realm, a platform administrator has role:admin through the group
+    # below, and anyone with kubectl in the gitops namespace can turn the
+    # account back on -- so nothing is lost by turning it off.
     local oidc_config
     oidc_config=$(cat <<EOF
 name: Keycloak
@@ -200,9 +209,14 @@ EOF
 {
   \"data\": {
     \"url\": \"https://argocd.${kernel_domain}\",
+    \"admin.enabled\": \"false\",
     \"oidc.config\": $(jq -R -s '.' <<<"${oidc_config}")
   }
 }"
+    # The generated password goes with the account. Argo CD keeps only its
+    # hash in argocd-secret; this Secret holds it in the clear and exists for
+    # the first sign-in, which is Keycloak's now.
+    kubectl delete secret argocd-initial-admin-secret -n "${ns}" --ignore-not-found >/dev/null
 
     # 3. Patch argocd-rbac-cm to map group to admin role
     #
