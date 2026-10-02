@@ -370,6 +370,9 @@ func run(log *slog.Logger) error {
 		return err
 	}
 
+	// A purge a previous run asked for and did not see through.
+	handler.ResumePurges(context.Background())
+
 	srv := &http.Server{
 		Addr:              envOr("DIRECTOR_LISTEN", ":8080"),
 		Handler:           handler,

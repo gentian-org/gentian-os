@@ -37,6 +37,8 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/gentian-org/gentian-os/internal/director/authn"
 	"github.com/gentian-org/gentian-os/internal/director/authz"
@@ -67,6 +69,8 @@ type Repository interface {
 	TenantDetails(ctx context.Context) ([]gitops.Tenant, error)
 	CreateTenant(ctx context.Context, req gitops.NewTenant, meta gitops.Meta) (gitops.Result, error)
 	RetireTenant(ctx context.Context, tenant string, meta gitops.Meta) (gitops.Result, error)
+	RequestTenantPurge(ctx context.Context, tenant string, now time.Time, meta gitops.Meta) (gitops.Result, error)
+	PendingPurges(ctx context.Context) ([]string, error)
 	Tenants(ctx context.Context) ([]string, error)
 	TenantRealm(ctx context.Context, tenant string) (string, error)
 	TenantLoginDomain(ctx context.Context, tenant string) (string, error)
@@ -230,6 +234,9 @@ type StoreConfig struct {
 type Server struct {
 	cfg Config
 	mux *http.ServeMux
+	// purging holds the tenants whose purge is being finished, so a second
+	// request or a restart's resume does not start a second watcher.
+	purging sync.Map
 }
 
 // New returns a Server with every route registered.
@@ -463,6 +470,7 @@ func (s *Server) routes() {
 		s.guarded("GET /v1/clusters/{c}/tenants", "can_audit", s.clusterObject, s.listTenants)
 		s.guarded("POST /v1/clusters/{c}/tenants", "can_configure", s.clusterObject, s.createTenant)
 		s.guarded("DELETE /v1/clusters/{c}/tenants/{t}", "can_configure", s.clusterObject, s.retireTenant)
+		s.guarded("POST /v1/clusters/{c}/tenants/{t}/actions/purge", "can_configure", s.clusterObject, s.purgeTenant)
 		// Who the caller is at cluster scope: which of the cluster's verbs
 		// they hold. Identified, not guarded: a person with no cluster
 		// relation at all is answered with every verb false, because "you

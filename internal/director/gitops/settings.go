@@ -284,18 +284,36 @@ func (g *GitOps) applyClaim(ctx context.Context, message string, meta Meta, fn e
 // there at all, so it is inserted under its parent, creating the parents it
 // needs. Everything else in the file is untouched, byte for byte.
 func setClaimValue(text, path, value string) (string, bool, error) {
+	newText, changed, err := setKeyPath(text, "spec", strings.Split(path, "."), value)
+	if errors.Is(err, errNoRoot) {
+		return text, false, fmt.Errorf("the claim has no spec block")
+	}
+	if errors.Is(err, errNoPath) {
+		return text, false, fmt.Errorf("%w: %s", ErrUnknownSetting, path)
+	}
+	return newText, changed, err
+}
+
+var (
+	errNoRoot = errors.New("no such top-level block")
+	errNoPath = errors.New("path not reached")
+)
+
+// setKeyPath is setClaimValue under any top-level block, with the keys given
+// as a list so one of them may itself contain a dot -- an annotation key
+// such as gentianos.io/purge-requested.
+func setKeyPath(text, root string, keys []string, value string) (string, bool, error) {
 	lines := strings.Split(text, "\n")
-	keys := strings.Split(path, ".")
 
 	specAt := -1
 	for i, l := range lines {
-		if strings.TrimRight(l, " ") == "spec:" && indentOf(l) == 0 {
+		if strings.TrimRight(l, " ") == root+":" && indentOf(l) == 0 {
 			specAt = i
 			break
 		}
 	}
 	if specAt < 0 {
-		return text, false, fmt.Errorf("the claim has no spec block")
+		return text, false, errNoRoot
 	}
 
 	// Walk down, one key at a time, inside the extent of the parent found so far.
@@ -333,7 +351,7 @@ func setClaimValue(text, path, value string) (string, bool, error) {
 		start, end = at+1, blockEnd(lines, at+1, indent)
 		indent += 2
 	}
-	return text, false, fmt.Errorf("%w: %s", ErrUnknownSetting, path)
+	return text, false, errNoPath
 }
 
 // findKeyLine finds `<indent><key>:` between start and end.

@@ -24,6 +24,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"sigs.k8s.io/yaml"
 )
@@ -62,7 +63,15 @@ type Tenant struct {
 	Apps []string `json:"apps"`
 	// Protected is true for a tenant the director refuses to retire.
 	Protected bool `json:"protected"`
+	// Purging is true once a purge was asked for: the manifest says
+	// deletionPolicy: Delete and carries PurgeAnnotation, and the director
+	// removes it as soon as the cluster has taken that in.
+	Purging bool `json:"purging,omitempty"`
 }
+
+// PurgeAnnotation marks a tenant whose purge was asked for and not finished.
+// Its value is when.
+const PurgeAnnotation = "gentianos.io/purge-requested"
 
 // platformTenant is the one tenant that cannot be retired here.
 //
@@ -171,6 +180,9 @@ func (g *GitOps) TenantDetails(ctx context.Context) ([]Tenant, error) {
 		if err == nil {
 			if b, readErr := os.ReadFile(file); readErr == nil {
 				var doc struct {
+					Metadata struct {
+						Annotations map[string]string `json:"annotations"`
+					} `json:"metadata"`
 					Spec struct {
 						DisplayName string `json:"displayName"`
 						Isolation   struct {
@@ -183,6 +195,7 @@ func (g *GitOps) TenantDetails(ctx context.Context) ([]Tenant, error) {
 				}
 				if yamlErr := yaml.Unmarshal(b, &doc); yamlErr == nil {
 					t.DisplayName = doc.Spec.DisplayName
+					t.Purging = doc.Metadata.Annotations[PurgeAnnotation] != ""
 					t.Realm = doc.Spec.Isolation.KeycloakRealm
 					for _, a := range doc.Spec.Apps {
 						if a.Profile != "" {
@@ -307,6 +320,66 @@ func (g *GitOps) RetireTenant(ctx context.Context, tenant string, meta Meta) (Re
 		return Result{}, err
 	}
 	return g.landed(ctx, "retired")
+}
+
+// RequestTenantPurge is the first half of purging a tenant: its manifest
+// says deletionPolicy: Delete, and carries PurgeAnnotation so the second half
+// can be found again after a restart.
+//
+// Two commits, not one, because Argo CD applies only what git says at the
+// moment it syncs. A manifest switched to Delete and removed before that sync
+// is pruned as the cluster last saw it -- Retain -- and the data the purge was
+// for stays. So the removal waits until the live Tenant carries Delete; the
+// caller watches for that and then calls RetireTenant.
+func (g *GitOps) RequestTenantPurge(ctx context.Context, tenant string, now time.Time, meta Meta) (Result, error) {
+	if !ValidName(tenant) {
+		return Result{}, fmt.Errorf("%w: tenant %q", ErrInvalidName, tenant)
+	}
+	if tenant == platformTenant {
+		return Result{}, fmt.Errorf("%w: %q carries the kernel realm every administrator signs in against", ErrTenantProtected, tenant)
+	}
+	return g.apply(ctx, tenant, fmt.Sprintf("Purge tenant %s: delete its data when it is retired", tenant), meta,
+		func(text string) (string, string, bool, error) {
+			out, policyChanged, err := setKeyPath(text, "spec", []string{"deletionPolicy"}, "Delete")
+			if err != nil {
+				return "", "", false, err
+			}
+			marked := tenantPurgeRequested(out)
+			if !marked {
+				out, _, err = setKeyPath(out, "metadata", []string{"annotations", PurgeAnnotation}, now.UTC().Format(time.RFC3339))
+				if err != nil {
+					return "", "", false, err
+				}
+			}
+			if !policyChanged && marked {
+				return text, "purge_pending", false, nil
+			}
+			return out, "purge_requested", true, nil
+		})
+}
+
+// PendingPurges are the tenants whose purge was asked for and not finished.
+func (g *GitOps) PendingPurges(ctx context.Context) ([]string, error) {
+	tenants, err := g.TenantDetails(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, t := range tenants {
+		if t.Purging && !t.Protected {
+			out = append(out, t.Name)
+		}
+	}
+	return out, nil
+}
+
+func tenantPurgeRequested(text string) bool {
+	var doc struct {
+		Metadata struct {
+			Annotations map[string]string `json:"annotations"`
+		} `json:"metadata"`
+	}
+	return yaml.Unmarshal([]byte(text), &doc) == nil && doc.Metadata.Annotations[PurgeAnnotation] != ""
 }
 
 // tenantManifest is the file a new tenant starts as.

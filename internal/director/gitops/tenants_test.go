@@ -21,6 +21,9 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
+
+	"sigs.k8s.io/yaml"
 
 	dt "github.com/gentian-org/gentian-os/internal/director/directortest"
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
@@ -175,5 +178,68 @@ func TestRetiringSomethingThatIsNotThereSaysSo(t *testing.T) {
 	g := gitops.NewGitOps(dt.Clone(t, remote), remote, dt.Cluster, director)
 	if _, err := g.RetireTenant(context.Background(), "nobody", tenantMeta()); !errors.Is(err, gitops.ErrTenantNotFound) {
 		t.Fatalf("retire nobody = %v, want ErrTenantNotFound", err)
+	}
+}
+
+// A purge is asked for in one commit and finished in another. The first says
+// Delete and marks the manifest, keeping every comment; asking again changes
+// nothing; and the mark is what finds it again after a restart.
+func TestAPurgeIsRequestedBeforeTheTenantIsRemoved(t *testing.T) {
+	ctx := context.Background()
+	remote := dt.Remote(t)
+	g := gitops.NewGitOps(dt.Clone(t, remote), remote, dt.Cluster, director)
+	if _, err := g.CreateTenant(ctx, gitops.NewTenant{Name: "acme", DisplayName: "Acme Ltd"}, tenantMeta()); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
+	res, err := g.RequestTenantPurge(ctx, "acme", now, tenantMeta())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Status != "purge_requested" || !res.Changed {
+		t.Fatalf("result = %+v, want a purge_requested commit", res)
+	}
+
+	text := dt.RemoteFile(t, remote, dt.TenantPath("acme"))
+	var doc struct {
+		Metadata struct {
+			Annotations map[string]string `json:"annotations"`
+		} `json:"metadata"`
+		Spec struct {
+			DeletionPolicy string `json:"deletionPolicy"`
+			DisplayName    string `json:"displayName"`
+		} `json:"spec"`
+	}
+	if err := yaml.Unmarshal([]byte(text), &doc); err != nil {
+		t.Fatalf("the manifest no longer parses: %v\n%s", err, text)
+	}
+	if doc.Spec.DeletionPolicy != "Delete" {
+		t.Fatalf("deletionPolicy = %q, want Delete", doc.Spec.DeletionPolicy)
+	}
+	if doc.Metadata.Annotations[gitops.PurgeAnnotation] != "2026-10-02T12:00:00Z" {
+		t.Fatalf("annotations = %v, want the purge mark", doc.Metadata.Annotations)
+	}
+	if doc.Metadata.Annotations["argocd.argoproj.io/sync-wave"] != "2" || doc.Spec.DisplayName != "Acme Ltd" {
+		t.Fatalf("the edit disturbed the rest of the manifest:\n%s", text)
+	}
+	if !strings.Contains(text, "# Tenant acme, brought on through the director.") {
+		t.Fatal("the manifest's comments were lost")
+	}
+
+	again, err := g.RequestTenantPurge(ctx, "acme", now.Add(time.Hour), tenantMeta())
+	if err != nil || again.Changed || again.Status != "purge_pending" {
+		t.Fatalf("second request = %+v, %v; want purge_pending and no commit", again, err)
+	}
+	pending, err := g.PendingPurges(ctx)
+	if err != nil || len(pending) != 1 || pending[0] != "acme" {
+		t.Fatalf("pending = %v, %v; want [acme]", pending, err)
+	}
+}
+
+func TestThePlatformTenantCannotBePurged(t *testing.T) {
+	remote := dt.Remote(t, "demo")
+	g := gitops.NewGitOps(dt.Clone(t, remote), remote, dt.Cluster, director)
+	if _, err := g.RequestTenantPurge(context.Background(), "platform", time.Now(), tenantMeta()); !errors.Is(err, gitops.ErrTenantProtected) {
+		t.Fatalf("purge platform = %v, want ErrTenantProtected", err)
 	}
 }
