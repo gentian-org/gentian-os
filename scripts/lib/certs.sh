@@ -854,8 +854,12 @@ install_kernel_wildcard() {
 kernel_wildcard_current() {
     local ns want ready have
     ns="$(gentian_cert_manager_namespace)"
+    # `|| true` inside: the substitution runs in a subshell that inherits the
+    # ERR trap, so a Certificate that is gone -- every purge after the edge
+    # namespace went -- printed the installer's abort banner from in there,
+    # though the answer is the ordinary "nothing to keep".
     read -r want ready < <(kubectl get certificate wildcard-kernel -n "${ns}" \
-        -o jsonpath='{.spec.issuerRef.name} {.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null)
+        -o jsonpath='{.spec.issuerRef.name} {.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || true)
     [[ -n "${want}" && "${ready}" == "True" ]] || return 1
     have="$(kubectl get secret wildcard-kernel-tls -n "${ns}" \
         -o jsonpath='{.metadata.annotations.cert-manager\.io/issuer-name}' 2>/dev/null)"
