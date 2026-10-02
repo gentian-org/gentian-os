@@ -31,26 +31,12 @@ _pl_edge_ns()          { _pl_ns EDGE_NAMESPACE edge; }
 _pl_control_ns()       { _pl_ns GENTIAN_SYSTEM_NAMESPACE control; }
 _pl_observability_ns() { _pl_ns OBSERVABILITY_NAMESPACE observability; }
 
-# The derivation label stays "administrator_password" although the account is
-# now admin@<kernel>: it is an opaque string that decides the derived value,
-# and renaming it would silently change the password on every cluster.
-_platform_admin_derive_password() {
-    if [[ "${SECRET_MODE:-derived}" == "random" ]]; then
-        local existing_pw
-        existing_pw=$(bao kv get -mount=secret -field=admin_password identity/portal-admin 2>/dev/null || true)
-        if [[ -n "${existing_pw}" ]]; then
-            echo "${existing_pw}"
-        else
-            local new_pw
-            new_pw=$(openssl rand -hex 24)
-            bao kv patch -mount=secret identity/portal-admin admin_password="${new_pw}" >/dev/null 2>&1 || \
-            bao kv put -mount=secret identity/portal-admin admin_password="${new_pw}" >/dev/null 2>&1
-            echo "${new_pw}"
-        fi
-    else
-        echo -n "portal-bootstrap:administrator_password" | openssl dgst -sha256 -hmac "${MASTER_PASSWORD}${DERIVATION_SALT:-}" | awk '{print $2}'
-    fi
-}
+# The platform administrator has no derived password any more. The account is
+# created without one, and its holder sets one through a single-use, expiring
+# link -- mailed to a recovery address or shown once at the handover (see
+# issue_platform_admin_activation) -- the way every member and every tenant
+# administrator is let in. A password recomputable from the master password is
+# one more person than the holder who can sign in as them.
 
 # The key the Keycloak event listener signs its statements with, and the public
 # half the director believes them by.
@@ -894,7 +880,7 @@ run_keycloak_portal_bootstrap_job() {
     local email="admin@${kernel_domain}"
     # The account this replaces, removed below once the new one exists.
     local legacy_username="administrator"
-    local password job_name="keycloak-portal-bootstrap"
+    local job_name="keycloak-portal-bootstrap"
     # Where Keycloak's admin credential is, which is where this Job has to run:
     # a Secret is readable only in its own namespace, and copying an admin
     # password into another one to save a namespace is not a trade worth making.
@@ -904,10 +890,9 @@ run_keycloak_portal_bootstrap_job() {
     # claim binds it to cluster#admin and every console derives from that.
     local platform_admin_group="gentian:platform:admin"
 
-    password=$(_platform_admin_derive_password)
     export PORTAL_LOGIN_USERNAME="${username}"
-    export PORTAL_LOGIN_EMAIL="${email}"
-    export PORTAL_LOGIN_PASSWORD="${password}"
+    local require_mfa
+    require_mfa="$(platform_admin_requires_mfa)"
 
     info "Bootstrapping the kernel realm, its clients and the administrator via in-cluster Job..."
 
@@ -949,7 +934,7 @@ run_keycloak_portal_bootstrap_job() {
         --from-literal=kernel_realm="${kernel_realm}"
         --from-literal=username="${username}"
         --from-literal=email="${email}"
-        --from-literal=password="${password}"
+        --from-literal=require_mfa="${require_mfa}"
         --from-literal=platform_admin_group="${platform_admin_group}"
         --from-literal=legacy_username="${legacy_username}"
         --from-literal=argocd_client_secret="${argocd_secret}"
@@ -1198,11 +1183,17 @@ spec:
               USER_ID=\$(curl -sf -H "\${AUTH}" \\
                 "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/users?username=\${PORTAL_USERNAME}&exact=true" \\
                 | jq -r '.[0].id // empty')
-              USER_BODY=\$(jq -n --arg u "\${PORTAL_USERNAME}" --arg e "\${PORTAL_EMAIL}" '{
-                username: \$u, email: \$e, firstName: "Platform", lastName: "Administrator",
-                enabled: true, emailVerified: true
-              }')
+              # No password: its holder sets one through an activation link
+              # issued at the handover. Created with what activating takes as
+              # required actions; an existing account's password, email (its
+              # recovery address) and actions are never overwritten here.
+              ACTIONS='["UPDATE_PASSWORD"]'
+              [ "\${REQUIRE_MFA:-true}" = "true" ] && ACTIONS='["UPDATE_PASSWORD","CONFIGURE_TOTP"]'
               if [ -z "\${USER_ID}" ]; then
+                USER_BODY=\$(jq -n --arg u "\${PORTAL_USERNAME}" --argjson a "\${ACTIONS}" '{
+                  username: \$u, firstName: "Platform", lastName: "Administrator",
+                  enabled: true, emailVerified: false, requiredActions: \$a
+                }')
                 curl -sf -X POST -H "\${AUTH}" -H "Content-Type: application/json" \\
                   "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/users" -d "\${USER_BODY}"
                 USER_ID=\$(curl -sf -H "\${AUTH}" \\
@@ -1210,13 +1201,18 @@ spec:
                   | jq -r '.[0].id')
                 echo "Created user \${PORTAL_USERNAME}"
               else
+                # The second-factor requirement as declared; nothing else.
+                CUR=\$(curl -sf -H "\${AUTH}" "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/users/\${USER_ID}")
+                HAS_OTP=\$(curl -sf -H "\${AUTH}" "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/users/\${USER_ID}/credentials" \\
+                  | jq '[.[] | select(.type=="otp")] | length > 0')
+                UPD=\$(printf '%s' "\${CUR}" | jq --arg mfa "\${REQUIRE_MFA:-true}" --argjson hasotp "\${HAS_OTP}" '
+                  .enabled = true
+                  | .requiredActions = ((.requiredActions // []) - ["CONFIGURE_TOTP"])
+                  | (if \$mfa == "true" and (\$hasotp | not) then .requiredActions += ["CONFIGURE_TOTP"] else . end)')
                 curl -sf -X PUT -H "\${AUTH}" -H "Content-Type: application/json" \\
-                  "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/users/\${USER_ID}" -d "\${USER_BODY}"
-                echo "Updated user \${PORTAL_USERNAME}"
+                  "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/users/\${USER_ID}" -d "\${UPD}"
+                echo "Updated user \${PORTAL_USERNAME} (second factor required: \${REQUIRE_MFA:-true})"
               fi
-              CRED=\$(jq -n --arg p "\${PORTAL_PASSWORD}" '{type:"password",value:\$p,temporary:false}')
-              curl -sf -X PUT -H "\${AUTH}" -H "Content-Type: application/json" \\
-                "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/users/\${USER_ID}/reset-password" -d "\${CRED}"
 
               ADMIN_GROUP="\${PLATFORM_ADMIN_GROUP}"
               GROUP_LIST=\$(curl -sf -H "\${AUTH}" \\
@@ -1584,11 +1580,11 @@ ${smtp_shell}
                 secretKeyRef:
                   name: portal-bootstrap-credentials
                   key: email
-            - name: PORTAL_PASSWORD
+            - name: REQUIRE_MFA
               valueFrom:
                 secretKeyRef:
                   name: portal-bootstrap-credentials
-                  key: password
+                  key: require_mfa
             - name: PLATFORM_ADMIN_GROUP
               valueFrom:
                 secretKeyRef:
@@ -1686,12 +1682,8 @@ EOF
     gentian_job_logs "${ns}" "${job_name}" Succeeded 20
     success "Kernel realm ${kernel_realm}: clients, group and platform admin ${username} are ready."
     info "OIDC issuer: https://id.${kernel_domain}/auth/realms/${kernel_realm}"
-    if [[ "${username}" == "${email}" ]]; then
-        info "  Username: ${username}"
-    else
-        info "  Username: ${username}  (or ${email})"
-    fi
-    info "  Password: ${password}"
+    info "  Username: ${username}"
+    info "  No password: the handover issues the activation link that sets one."
 }
 
 install_portal_login() {
@@ -1722,96 +1714,117 @@ install_portal_login() {
 
     success "The kernel realm can be signed in to."
     info "  https://console.${KERNEL_DOMAIN}/  (once the platform desktop is Ready)"
-    info "  user: admin@${KERNEL_DOMAIN}"
-    info "  password: $(_platform_admin_derive_password)"
+    info "  user: admin@${KERNEL_DOMAIN} — activated through the link the handover issues"
+}
+
+# platform_admin_requires_mfa — whether the platform administrator must enrol
+# a second factor: the platform tenant's spec.admin.requireMFA, true unless it
+# says false. The same setting, in the same place, as every tenant's.
+platform_admin_requires_mfa() {
+    local file="${GENTIAN_DEPLOYMENTS_PATH:-}/clusters/${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-}/tenants/platform/tenant.yaml"
+    local v=""
+    [[ -f "${file}" ]] && v="$(yq eval '.spec.admin.requireMFA' "${file}" 2>/dev/null || true)"
+    [[ "${v}" == "false" ]] && echo false || echo true
+}
+
+# issue_platform_admin_activation — hand the platform administrator account
+# to its holder, once, at the handover.
+#
+# An account that already has a password is left alone: it has been
+# activated, and its holder signs in with what they chose. Otherwise a
+# single-use, expiring link is issued -- set a password, and enrol a second
+# factor unless the platform tenant opts out -- and mailed to a recovery
+# address when there is one (CLUSTER_ADMIN_RECOVERY_EMAIL, or asked for here),
+# or shown here, once, when there is not, or when the mail cannot go yet
+# (a relay credential is supplied after this sign-in on an external-mail
+# cluster). The link comes straight from Keycloak to this terminal over a
+# Service address or port-forward; it is never written to a pod's log.
+#
+# Prints what to do; returns 0 when the account is usable or a link was handed
+# over, 1 when nothing could be issued.
+issue_platform_admin_activation() {
+    local kernel_domain="${KERNEL_DOMAIN:?}" realm="${KERNEL_REALM:-kernel}"
+    local username="admin@${kernel_domain}" ns
+    ns="$(_pl_identity_ns)"
+    local kc_user kc_pass base token uid creds has_pw
+    kc_user="$(kubectl get secret keycloak-admin -n "${ns}" -o jsonpath='{.data.username}' 2>/dev/null | base64 -d 2>/dev/null || true)"
+    kc_pass="$(kubectl get secret keycloak-admin -n "${ns}" -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null || true)"
+    local svc="${GENTIAN_IDP_KEYCLOAK_RELEASE:-gentian-idp-keycloak}-keycloakx-http"
+    if [[ -z "${kc_user}" || -z "${kc_pass}" ]] || ! base="$(gentian_service_addr "${svc}" "${ns}" 8080 http)"; then
+        warn "  Keycloak cannot be reached from here to issue the activation link."
+        return 1
+    fi
+    base="${base}/auth"
+    token="$(curl -sS --max-time 15 -d client_id=admin-cli -d grant_type=password \
+        --data-urlencode "username=${kc_user}" --data-urlencode "password=${kc_pass}" \
+        "${base}/realms/master/protocol/openid-connect/token" 2>/dev/null | jq -r '.access_token // empty')"
+    [[ -n "${token}" ]] || { warn "  Keycloak refused the installer's admin credential."; return 1; }
+    local auth="Authorization: Bearer ${token}"
+    uid="$(curl -sS --max-time 15 -H "${auth}" \
+        "${base}/admin/realms/${realm}/users?username=${username}&exact=true" | jq -r '.[0].id // empty')"
+    [[ -n "${uid}" ]] || { warn "  ${username} does not exist in realm ${realm}."; return 1; }
+    creds="$(curl -sS --max-time 15 -H "${auth}" "${base}/admin/realms/${realm}/users/${uid}/credentials")"
+    has_pw="$(printf '%s' "${creds}" | jq '[.[] | select(.type=="password")] | length > 0' 2>/dev/null || echo false)"
+    if [[ "${has_pw}" == "true" ]]; then
+        info "  ${username} is activated: sign in with the password its holder chose."
+        info "  Lost it? A new link: kubectl gentian tenants activate-admin platform"
+        return 0
+    fi
+
+    local actions='["UPDATE_PASSWORD"]'
+    [[ "$(platform_admin_requires_mfa)" == "true" ]] && actions='["UPDATE_PASSWORD","CONFIGURE_TOTP"]'
+    local email="${CLUSTER_ADMIN_RECOVERY_EMAIL:-}"
+    if [[ -z "${email}" && -t 0 && "${GENTIAN_NONINTERACTIVE:-0}" != "1" ]]; then
+        printf '  Recovery email for %s (Enter to show the link here instead): ' "${username}"
+        read -r email || email=""
+    fi
+    # Where the person lands afterwards: the zone client's own root, read off
+    # the client the way the director's invitations read it. A redirect the
+    # client does not list is refused, and its list is the OIDC callbacks.
+    local client="gentian-edge-${realm}" redirect
+    redirect="$(curl -sS --max-time 15 -H "${auth}" "${base}/admin/realms/${realm}/clients?clientId=${client}" \
+        | jq -r '.[0].rootUrl // .[0].baseUrl // empty' 2>/dev/null)"
+    [[ -n "${redirect}" ]] && redirect="${redirect%/}/"
+    if [[ -n "${email}" ]]; then
+        local cur upd
+        cur="$(curl -sS --max-time 15 -H "${auth}" "${base}/admin/realms/${realm}/users/${uid}")"
+        upd="$(printf '%s' "${cur}" | jq --arg e "${email}" '.email = $e | .attributes["gentian.inviteEmail"] = [$e]')"
+        if curl -sf --max-time 15 -X PUT -H "${auth}" -H "Content-Type: application/json" \
+                "${base}/admin/realms/${realm}/users/${uid}" -d "${upd}" >/dev/null &&
+           curl -sf --max-time 30 -X PUT -H "${auth}" -H "Content-Type: application/json" \
+                "${base}/admin/realms/${realm}/users/${uid}/execute-actions-email?client_id=${client}${redirect:+&redirect_uri=$(jq -rn --arg r "${redirect}" '$r|@uri')}" \
+                -d "${actions}" >/dev/null; then
+            success "  Activation link mailed to ${email}: it sets ${username}'s password$( [[ "${actions}" == *TOTP* ]] && echo ' and second factor')."
+            return 0
+        fi
+        warn "  The activation mail could not be sent (is the realm's mail configured yet?)."
+        warn "  ${email} is kept as the recovery address; showing the link here instead."
+    fi
+    local answer link expires
+    answer="$(curl -sS --max-time 15 -X POST -H "${auth}" -H "Content-Type: application/json" \
+        "${base}/realms/${realm}/gentian-activation/users/${uid}/link" \
+        -d "$(jq -n --argjson a "${actions}" --arg c "${client}" --arg r "${redirect}" '{actions:$a, clientId:$c} + (if $r != "" then {redirectUri:$r} else {} end)')")"
+    link="$(printf '%s' "${answer}" | jq -r '.link // empty' 2>/dev/null)"
+    expires="$(printf '%s' "${answer}" | jq -r '.expiresAt // empty' 2>/dev/null)"
+    if [[ -z "${link}" ]]; then
+        warn "  Keycloak issued no activation link: ${answer:-no answer}"
+        return 1
+    fi
+    echo ""
+    echo -e "${GREEN}  Activate ${username} — open this once, it works one time:${NC}"
+    echo -e "${GREEN}    ${link}${NC}"
+    [[ -n "${expires}" ]] && info "  Valid until $(date -d "@${expires}" 2>/dev/null || date -r "${expires}" 2>/dev/null || echo "${expires}")."
+    info "  It sets the password$( [[ "${actions}" == *TOTP* ]] && echo ' and a second factor'); nobody else ever knows either."
+    return 0
 }
 
 print_portal_login_summary() {
     local kernel_domain="${KERNEL_DOMAIN:-}"
     [[ -n "${kernel_domain}" ]] || return 0
-    local password
-    password=$(_platform_admin_derive_password 2>/dev/null || echo "")
-    [[ -n "${password}" ]] || password="(set MASTER_PASSWORD in install.env)"
-
-    # Derived, not observed — so say so only when the inputs are the cluster's.
-    #
-    # This banner prints whatever this shell derives, and an HMAC always
-    # produces a plausible-looking hash, so a run whose MASTER_PASSWORD or
-    # DERIVATION_SALT differ from the cluster's printed a 64-character password
-    # that had never been valid, under the heading of the credential the
-    # operator is meant to sign in with. The one guard here tested for an empty
-    # string, which the derivation cannot return.
-    #
-    # The cluster holds both inputs in the Secret it derives from, so the claim
-    # is checkable: re-derive with what the cluster has and compare. A mismatch
-    # is reported rather than corrected, because which side is right depends on
-    # what the operator meant — and printing the cluster's password here would
-    # hand out a credential to a shell that could not derive it.
-    local cluster_salt cluster_master cluster_password=""
-    cluster_salt="$(gentian_cluster_derivation_salt 2>/dev/null || true)"
-    cluster_master="$(kubectl get secret gentian-os-master-password \
-        -n "${CROSSPLANE_NAMESPACE:-crossplane-system}" \
-        -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null || true)"
-    if [[ -n "${cluster_master}" && "${SECRET_MODE:-derived}" != "random" ]]; then
-        cluster_password="$(echo -n "portal-bootstrap:administrator_password" |
-            openssl dgst -sha256 -hmac "${cluster_master}${cluster_salt}" | awk '{print $2}')"
-    fi
-    if [[ -n "${cluster_password}" && "${cluster_password}" != "${password}" ]]; then
-        echo ""
-        warn "The derivation inputs in this shell are NOT the ones this cluster"
-        warn "  was built with, so the password below is not the one that works."
-        warn "  MASTER_PASSWORD and DERIVATION_SALT are both stored in"
-        warn "  ${CROSSPLANE_NAMESPACE:-crossplane-system}/gentian-os-master-password."
-        warn "  Recover them, then re-run — see GETTING-STARTED.md,"
-        warn "  'The portal password does not work'."
-        password="(this shell cannot derive it — see the warning above)"
-    fi
-    # Derived correctly is still not the same as "this is the password".
-    #
-    # The check above proves this shell agrees with the cluster's Secret. It says
-    # nothing about Keycloak, which holds whatever the last D-06 run wrote — so a
-    # cluster whose master password changed after that run prints a value that
-    # agrees with every stored input and is refused at the login page. That is
-    # the shape the operator hit: no warning, a plausible password, no way to
-    # tell it apart from a working one without typing it.
-    #
-    # So ask Keycloak. The password grant on the realm's own admin-cli -- the
-    # public client every realm ships with direct grants on -- is the endpoint
-    # that answers "is this the password": invalid_grant is the password, and
-    # nothing else of this cluster's is in the question.
-    local verify_realm="${KERNEL_REALM:-kernel}"
-    local verify_base="https://id.${kernel_domain}/auth/realms/${verify_realm}"
-    if [[ "${password}" != "("* ]]; then
-        local grant
-        grant="$(curl -sS --max-time 15 \
-            -d "client_id=admin-cli" \
-            -d "username=admin@${kernel_domain}" \
-            -d "password=${password}" \
-            -d "grant_type=password" \
-            "${verify_base}/protocol/openid-connect/token" 2>/dev/null || true)"
-        case "${grant}" in
-            *access_token*)
-                : ;;   # It works. Nothing to say that the banner does not.
-            *invalid_grant*)
-                echo ""
-                warn "Keycloak does not accept this password."
-                warn "  Every stored input agrees, so the derivation is right and the value"
-                warn "  Keycloak holds is older — it was set by the last D-03 run, with a"
-                warn "  master password that has since changed."
-                warn "  Re-assert it:  ./install.sh --only D-03 --force"
-                ;;
-            *)
-                # Unreachable, mid-rollout, or an answer this does not know.
-                # Not a verdict on the password, so it must not read as one.
-                echo ""
-                info "  (could not reach Keycloak to check the password below)"
-                ;;
-        esac
-    fi
     echo ""
     echo -e "${GREEN}  Platform console (cluster admin):${NC}"
     echo -e "${GREEN}    URL      : https://console.${kernel_domain}/${NC}"
     echo -e "${GREEN}    User     : admin@${kernel_domain}${NC}"
-    echo -e "${GREEN}    Password : ${password}${NC}"
+    echo -e "${GREEN}    Password : set by its holder through the activation link — never stored or printed${NC}"
     echo -e "${GREEN}    OIDC     : https://id.${kernel_domain}/auth/realms/${KERNEL_REALM:-kernel}${NC}"
 }

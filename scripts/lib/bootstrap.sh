@@ -1954,6 +1954,11 @@ metadata:
     argocd.argoproj.io/sync-wave: "2"
 spec:
   displayName: Platform
+  # The cluster administrator (admin@<kernel>) has no password until its
+  # holder sets one through a single-use link the handover issues. Whether
+  # activating it also enrols a second factor:
+  admin:
+    requireMFA: ${CLUSTER_ADMIN_REQUIRE_MFA:-true}
   isolation:
     mode: namespace
     keycloakRealm: ${KERNEL_REALM:-kernel}

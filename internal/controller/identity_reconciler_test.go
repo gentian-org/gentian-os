@@ -514,8 +514,12 @@ func TestIdentity_CreatesAdminJobAfterRealm(t *testing.T) {
 	if _, ok := envNames["TENANT_ADMIN_USERNAME"]; !ok {
 		t.Error("expected TENANT_ADMIN_USERNAME env var in admin Job")
 	}
-	if _, ok := envNames["TENANT_ADMIN_PASSWORD"]; !ok {
-		t.Error("expected TENANT_ADMIN_PASSWORD env var in admin Job")
+	// No password reaches the Job: the account is activated by link.
+	if _, ok := envNames["TENANT_ADMIN_PASSWORD"]; ok {
+		t.Error("the admin Job must carry no password: the account is activated by link")
+	}
+	if envNames["TENANT_ADMIN_REQUIRE_MFA"] != "true" {
+		t.Errorf("a second factor is required by default, got %q", envNames["TENANT_ADMIN_REQUIRE_MFA"])
 	}
 
 	markJobComplete(t, "keycloak-admin-admintest", layout.Namespace(layout.Authentication))

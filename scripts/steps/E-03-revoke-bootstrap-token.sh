@@ -393,36 +393,21 @@ _wait_for_sign_in() {
     warn "  2. SIGN IN as the cluster administrator"
     echo ""
 
-    # The credentials, here, rather than a pointer to them.
+    # What to sign in with, here, rather than a pointer to it -- and not a
+    # password. The account has none until its holder sets one through a
+    # single-use, expiring link, the same practice as every member and tenant
+    # administrator: mailed to a recovery address when there is one, shown
+    # here once when there is not. An account already activated is left alone.
     #
-    # This said "credentials are in the summary above" — and the summary is
-    # printed AFTER the steps, so at this moment there is no summary above.
-    # D-03 printed them, several hundred lines and many minutes earlier. An
-    # instruction to sign in that does not say what to sign in with sends the
-    # operator scrolling, which is the opposite of what a step that has stopped
-    # to wait for them should do.
-    #
-    # print_portal_login_summary is where this already lives and derives the
-    # password the same way the account was created with. Its library is not in
-    # load.sh's set, so source it the way print_summary_cp does.
-    #
-    # Its output is captured rather than printed directly, because it returns
-    # silently when KERNEL_DOMAIN is unset or the password cannot be derived —
-    # reasonable for a summary that has other things to say, useless for a
-    # prompt whose entire purpose is to tell the operator what to sign in with.
-    # A step that has stopped to wait must never go quiet.
-    local creds=""
+    # Its library is not in load.sh's set, so source it the way
+    # print_summary_cp does.
+    warn "  ${url}"
+    warn "  User: admin@${KERNEL_DOMAIN:-<kernel-domain>}"
     if [[ -f "${SCRIPT_DIR}/scripts/lib/portal-login-bootstrap.sh" ]]; then
         # shellcheck source=scripts/lib/portal-login-bootstrap.sh
         source "${SCRIPT_DIR}/scripts/lib/portal-login-bootstrap.sh"
-        creds="$(print_portal_login_summary 2>/dev/null || true)"
-    fi
-    if [[ -n "${creds}" ]]; then
-        printf '%s\n' "${creds}"
-    else
-        warn "  ${url}"
-        warn "  User: admin@${KERNEL_DOMAIN:-<kernel-domain>}"
-        warn "  Password: derived — print it with ./install.sh --verify-only"
+        issue_platform_admin_activation ||
+            warn "  No activation link could be issued; re-run ./install.sh to try again."
     fi
     echo ""
 

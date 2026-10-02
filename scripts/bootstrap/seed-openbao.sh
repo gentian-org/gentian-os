@@ -419,7 +419,10 @@ fi
 # --- LLM serving (LiteLLM / vLLM credentials) ---
 KERNEL_REALM="${KERNEL_REALM:-kernel}"
 LITELLM_UI_USERNAME="admin@${KERNEL_DOMAIN}"
-LITELLM_UI_PASSWORD=$(derive_password "portal-bootstrap" "administrator_password")
+# LiteLLM's own fallback login, beside its Keycloak SSO. Its own derivation:
+# it was the platform administrator's derived password, which no longer
+# exists -- that account is activated by link and its password is its holder's.
+LITELLM_UI_PASSWORD=$(derive_password "llm" "ui_password")
 VLLM_API_KEY=$(derive_password "llm" "vllm_api_key")
 # sk- prefixed, because LiteLLM requires it of a master key and refuses
 # anything else outright: "LiteLLM Virtual Key expected. Received=a364****5827,

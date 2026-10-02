@@ -1501,6 +1501,10 @@ prompt_cluster_settings() {
         prompt_claim_value DNS_PROVIDER "certificates.dnsProvider" cloudflare \
             "cloudflare route53 clouddns azuredns rfc2136 hetzner infomaniak"
     fi
+    # Written to the platform tenant, not the claim: the same spec.admin every
+    # tenant's administrator is handed over by.
+    prompt_claim_value CLUSTER_ADMIN_REQUIRE_MFA \
+        "cluster administrator must set up a second factor when activating" true "true false"
     prompt_claim_value BACKUP_ESCROW_IDENTITY \
         "backup.escrowIdentity (also keep the backup key in OpenBao)" true "true false"
     prompt_claim_value LLM_SUPPORT "llm.enabled (this cluster serves models)" false "true false"
