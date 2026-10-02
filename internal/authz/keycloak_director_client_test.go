@@ -209,7 +209,7 @@ func TestEnsureDirectorRealmClient_CreatesAConfidentialServiceAccount(t *testing
 	t.Parallel()
 	f := newFakeRealm()
 	srv := f.server(t)
-	c := NewKeycloakAdminClient(srv.URL, "admin", "pw")
+	c := testAdminClient(srv, "admin", "pw")
 
 	secret, err := c.EnsureDirectorRealmClient(context.Background(), "demo")
 	if err != nil {
@@ -248,7 +248,7 @@ func TestEnsureDirectorRealmClient_TakesOnlyItsOwnRoles(t *testing.T) {
 	t.Parallel()
 	f := newFakeRealm()
 	srv := f.server(t)
-	c := NewKeycloakAdminClient(srv.URL, "admin", "pw")
+	c := testAdminClient(srv, "admin", "pw")
 
 	if _, err := c.EnsureDirectorRealmClient(context.Background(), "demo"); err != nil {
 		t.Fatal(err)
@@ -280,7 +280,7 @@ func TestEnsureDirectorRealmClient_IsIdempotent(t *testing.T) {
 	t.Parallel()
 	f := newFakeRealm()
 	srv := f.server(t)
-	c := NewKeycloakAdminClient(srv.URL, "admin", "pw")
+	c := testAdminClient(srv, "admin", "pw")
 
 	if _, err := c.EnsureDirectorRealmClient(context.Background(), "demo"); err != nil {
 		t.Fatal(err)
@@ -319,7 +319,7 @@ func TestEnsureDirectorRealmClient_TokensCarryTheGrantedRoles(t *testing.T) {
 	t.Parallel()
 	f := newFakeRealm()
 	srv := f.server(t)
-	c := NewKeycloakAdminClient(srv.URL, "admin", "pw")
+	c := testAdminClient(srv, "admin", "pw")
 
 	if _, err := c.EnsureDirectorRealmClient(context.Background(), "demo"); err != nil {
 		t.Fatal(err)
@@ -352,7 +352,7 @@ func TestEnsureDirectorRealmClient_RepairsAClientThatWasChanged(t *testing.T) {
 		PublicClient: true, ServiceAccountsEnabled: false, StandardFlowEnabled: true,
 	}
 	srv := f.server(t)
-	c := NewKeycloakAdminClient(srv.URL, "admin", "pw")
+	c := testAdminClient(srv, "admin", "pw")
 
 	if _, err := c.EnsureDirectorRealmClient(context.Background(), "demo"); err != nil {
 		t.Fatal(err)
@@ -376,7 +376,7 @@ func TestEnsureDirectorRealmClient_SaysWhichRealmHasNoManagementClient(t *testin
 	f := newFakeRealm()
 	f.noManagement = true
 	srv := f.server(t)
-	c := NewKeycloakAdminClient(srv.URL, "admin", "pw")
+	c := testAdminClient(srv, "admin", "pw")
 
 	_, err := c.EnsureDirectorRealmClient(context.Background(), "demo")
 	if err == nil || !strings.Contains(err.Error(), "demo") {
@@ -388,7 +388,7 @@ func TestEnsureDirectorRealmClient_RefusesARealmNameThatIsAPath(t *testing.T) {
 	t.Parallel()
 	f := newFakeRealm()
 	srv := f.server(t)
-	c := NewKeycloakAdminClient(srv.URL, "admin", "pw")
+	c := testAdminClient(srv, "admin", "pw")
 
 	if _, err := c.EnsureDirectorRealmClient(context.Background(), "../master"); err == nil {
 		t.Fatal("expected a refusal")
@@ -404,7 +404,7 @@ func TestDeleteDirectorRealmClient(t *testing.T) {
 	t.Parallel()
 	f := newFakeRealm()
 	srv := f.server(t)
-	c := NewKeycloakAdminClient(srv.URL, "admin", "pw")
+	c := testAdminClient(srv, "admin", "pw")
 
 	if _, err := c.EnsureDirectorRealmClient(context.Background(), "demo"); err != nil {
 		t.Fatal(err)

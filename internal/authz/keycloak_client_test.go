@@ -24,6 +24,19 @@ import (
 	"testing"
 )
 
+// testAdminClient talks to srv through srv's own transport.
+//
+// The client's default is http.DefaultTransport, shared by every test in the
+// package, and httptest.Server.Close calls CloseIdleConnections on it: one
+// parallel test finishing broke another's request in flight with
+// "connection broken: http: CloseIdleConnections called".
+func testAdminClient(srv *httptest.Server, username, password string) *KeycloakAdminClient {
+	c := NewKeycloakAdminClient(srv.URL, username, password)
+	c.httpClient = srv.Client()
+	c.httpClient.Timeout = defaultHTTPTimeout
+	return c
+}
+
 func TestKeycloakAdminClient_UpdateRealmBrowserSecurityHeaders(t *testing.T) {
 	t.Parallel()
 
@@ -43,7 +56,7 @@ func TestKeycloakAdminClient_UpdateRealmBrowserSecurityHeaders(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := NewKeycloakAdminClient(srv.URL, "admin", "secret")
+	client := testAdminClient(srv, "admin", "secret")
 	if err := client.UpdateRealmBrowserSecurityHeaders(context.Background(), "demo", []string{"en", "de"}); err != nil {
 		t.Fatalf("UpdateRealmBrowserSecurityHeaders: %v", err)
 	}
@@ -91,7 +104,7 @@ func TestEnsureGroup_MergesAttributesInsteadOfReplacingThem(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := NewKeycloakAdminClient(srv.URL, "admin", "secret")
+	client := testAdminClient(srv, "admin", "secret")
 	id, err := client.EnsureGroup(context.Background(), "demo",
 		"gentian:tenant:demo:app:odoo-crm-ce",
 		map[string][]string{"gentianOdooModules": {"crm"}})
