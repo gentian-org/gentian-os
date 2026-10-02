@@ -88,7 +88,50 @@ apply() {
     done
 }
 
+# The managed resources a provider still holds, swept before its ProviderConfig.
+#
+# A ProviderConfig in use carries the in-use finalizer and refuses deletion
+# while any managed resource names it, so `kubectl delete` of the configs hung
+# for ever on the first purge that found one. They outlive the steps that made
+# them: the operator creates a Release per Component, and by the time this
+# step runs the Gentian kinds that owned them are gone, so nothing upstream
+# deletes them. Worse, provider-helm reinstalls a Release whose namespace the
+# purge already removed, recreating that namespace.
+#
+# So: ask each provider to delete what it manages while it still runs, give
+# it a bounded wait, and strip the finalizers of whatever is left -- this is a
+# purge, and the namespaces those releases installed into go with it anyway.
+_b05_sweep_managed() {
+    local kinds="releases.helm.crossplane.io objects.kubernetes.crossplane.io" kind left deadline ns
+    for kind in ${kinds}; do
+        kubectl get "${kind}" -o name 2>/dev/null | xargs_r kubectl delete --wait=false >/dev/null 2>&1 || true
+    done
+    deadline=$((SECONDS + 90))
+    while (( SECONDS < deadline )); do
+        left=""
+        for kind in ${kinds}; do
+            left+="$(kubectl get "${kind}" -o name 2>/dev/null || true)"
+        done
+        [[ -n "${left}" ]] || return 0
+        sleep 5
+    done
+    for kind in ${kinds}; do
+        while IFS= read -r obj; do
+            [[ -n "${obj}" ]] || continue
+            warn "  ${obj} was not released by its provider; removing its finalizer."
+            # A Release's target namespace, so one the provider recreated
+            # does not outlive the purge.
+            ns="$(kubectl get "${obj}" -o jsonpath='{.spec.forProvider.namespace}' 2>/dev/null || true)"
+            kubectl patch "${obj}" --type=merge -p '{"metadata":{"finalizers":null}}' >/dev/null 2>&1 || true
+            [[ -z "${ns}" ]] || kubectl delete namespace "${ns}" --ignore-not-found --wait=false >/dev/null 2>&1 || true
+        done < <(kubectl get "${kind}" -o name 2>/dev/null || true)
+    done
+}
+
 destroy() {
-    kubectl delete -f "${SCRIPT_DIR}/crossplane/providers/provider-configs.yaml" --ignore-not-found >/dev/null 2>&1 || true
-    kubectl delete -f "${SCRIPT_DIR}/crossplane/providers/providers.yaml" --ignore-not-found >/dev/null 2>&1 || true
+    _b05_sweep_managed
+    # Bounded, so a usage nobody can clear is a warning and not a hung purge.
+    kubectl delete -f "${SCRIPT_DIR}/crossplane/providers/provider-configs.yaml" --ignore-not-found --timeout=120s >/dev/null 2>&1 \
+        || warn "  Some ProviderConfigs did not delete within 2 minutes; the purge continues."
+    kubectl delete -f "${SCRIPT_DIR}/crossplane/providers/providers.yaml" --ignore-not-found --timeout=180s >/dev/null 2>&1 || true
 }
