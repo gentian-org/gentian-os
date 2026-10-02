@@ -1219,6 +1219,14 @@ func (s *Server) repoError(w http.ResponseWriter, r *http.Request, err error) {
 			"this cluster has no credential to write to its deployments repository: "+
 				"the change was prepared and could not be pushed. Supply the token "+
 				"(GENTIAN_DEPLOYMENTS_GIT_TOKEN) and apply the deployments Repository claim.")
+	case errors.Is(err, gitops.ErrNoSigningKey):
+		// 503 for the same reason: the request was fine, and the key is
+		// something the vault and External Secrets owe this process.
+		s.cfg.Log.ErrorContext(r.Context(), "no key to sign with",
+			"request_id", reqID(r.Context()), "error", err.Error())
+		s.fail(w, r, http.StatusServiceUnavailable,
+			"this director has no signing key yet, and Argo CD syncs only signed commits: "+
+				"nothing was pushed. Check the ExternalSecret gentian-director-signing.")
 	case errors.Is(err, gitops.ErrPushContended):
 		w.Header().Set("Retry-After", "2")
 		s.fail(w, r, http.StatusConflict, "repository is contended; retry")

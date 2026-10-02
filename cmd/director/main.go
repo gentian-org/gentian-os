@@ -147,29 +147,22 @@ func run(log *slog.Logger) error {
 	// deployments repository only for commits carrying one of the keys the
 	// cluster was told to trust.
 	//
-	// Warned rather than fatal when the key is absent. A cluster whose
-	// deployments checkout predates signing has no keys, so its AppProject
-	// carries no policy either, and a director that refused to start would
-	// take the console down over a constraint nothing is enforcing. What it
-	// must not do is sign with anything other than the key it was given --
-	// there is no fallback and none is generated.
+	// Warned rather than fatal when the key is absent. External Secrets may
+	// project it after this pod started, so it is read again before each
+	// commit; until then a repository that names signing keys gets no commit
+	// at all, because one unsigned head stops Argo CD syncing all of it. What
+	// the director must not do is sign with anything other than the key it
+	// was given -- there is no fallback and none is generated.
 	if keyPath := os.Getenv("DIRECTOR_SIGNING_KEY_FILE"); keyPath != "" {
-		key, err := os.ReadFile(keyPath)
-		switch {
-		case err != nil:
-			log.Error("the signing key could not be read; commits will be unsigned and Argo CD will refuse them",
+		home := envOr("DIRECTOR_GNUPGHOME", "/tmp/gentian-director-gnupg")
+		signCtx, cancelSign := context.WithTimeout(context.Background(), time.Minute)
+		err := repo.SignFrom(signCtx, keyPath, home)
+		cancelSign()
+		if err != nil {
+			log.Warn("no signing key yet; read again before each commit",
 				"path", keyPath, "error", err)
-		default:
-			home := envOr("DIRECTOR_GNUPGHOME", "/tmp/gentian-director-gnupg")
-			signCtx, cancelSign := context.WithTimeout(context.Background(), time.Minute)
-			err = repo.EnableSigning(signCtx, string(key), home)
-			cancelSign()
-			if err != nil {
-				log.Error("signing could not be enabled; commits will be unsigned and Argo CD will refuse them",
-					"error", err)
-			} else {
-				log.Info("commits are signed", "key", repo.SigningKey())
-			}
+		} else {
+			log.Info("commits are signed", "key", repo.SigningKey())
 		}
 	} else {
 		log.Warn("no signing key: commits are unsigned (AD-2)",

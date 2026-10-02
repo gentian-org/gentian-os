@@ -61,6 +61,9 @@ type GitOps struct {
 	signArgs []string
 	// signingKey is the fingerprint those flags name, for reporting.
 	signingKey string
+	// keyFile and keyHome are where the key is read from and imported to,
+	// set by SignFrom. A named keyFile means every commit is signed.
+	keyFile, keyHome string
 }
 
 // Result is the outcome of a write.
@@ -473,6 +476,10 @@ func (g *GitOps) commitPaths(ctx context.Context, rels []string, message string,
 	defer diffCancel()
 	if err := diff.Run(); err == nil {
 		return nil
+	}
+
+	if err := g.loadSigningKey(ctx); err != nil {
+		return err
 	}
 
 	full := message

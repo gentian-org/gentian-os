@@ -61,6 +61,33 @@ spec:
         property: {{ .Values.director.openfgaTokenSecretRef.property }}
 ---
 {{- end }}
+{{- if .Values.director.signingKeySecret }}
+# AD-2: the director's private signing key, which B-10 writes to the vault.
+# Without this projection the Deployment's optional mount stays empty, the
+# director commits unsigned, and Argo CD refuses every change it makes to the
+# deployments repository -- a tenant created in the console never syncs.
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: {{ .Values.director.signingKeySecret | quote }}
+  labels:
+    {{- include "gentian-os.labels" . | nindent 4 }}
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    kind: ClusterSecretStore
+    name: openbao
+  target:
+    name: {{ .Values.director.signingKeySecret | quote }}
+    creationPolicy: Owner
+    deletionPolicy: Retain
+  data:
+    - secretKey: private.asc
+      remoteRef:
+        key: gentian-os/kernel/signing/director
+        property: private
+---
+{{- end }}
 apiVersion: v1
 kind: Service
 metadata:

@@ -18,6 +18,7 @@ package gitops
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -107,6 +108,58 @@ func (g *GitOps) EnableSigning(ctx context.Context, armouredKey, home string) er
 	}
 	g.signingKey = fpr
 	return nil
+}
+
+// ErrNoSigningKey is a commit refused because this director was told to sign
+// and has no key to sign with.
+//
+// Refused rather than pushed unsigned. Argo CD verifies the head of the
+// deployments repository, so one unsigned commit there stops the cluster
+// syncing anything from it -- every tenant, not only the one being changed --
+// until somebody signs another commit on top.
+var ErrNoSigningKey = errors.New("no signing key to sign the commit with")
+
+// SignFrom names the file the private key is read from and loads it if it is
+// there.
+//
+// The key arrives through External Secrets, which may project it after this
+// process started; the Deployment mounts it optionally for that reason. So a
+// key that is absent now is read again before each commit, and while it is
+// absent a repository that requires signatures gets no commit at all.
+func (g *GitOps) SignFrom(ctx context.Context, keyFile, home string) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.keyFile, g.keyHome = keyFile, home
+	return g.loadSigningKey(ctx)
+}
+
+// loadSigningKey enables signing from keyFile unless it already is. Called
+// with mu held.
+//
+// A missing key refuses the commit only when the repository names signing
+// keys for this cluster -- the same clusters/<id>/kernel/signing/keys.env the
+// AppProject's policy is rendered from. A repository that names none has no
+// policy to fail, and refusing there would stop every write for a constraint
+// nothing enforces.
+func (g *GitOps) loadSigningKey(ctx context.Context) error {
+	if len(g.signArgs) > 0 || g.keyFile == "" {
+		return nil
+	}
+	key, err := os.ReadFile(g.keyFile)
+	if err == nil {
+		err = g.EnableSigning(ctx, string(key), g.keyHome)
+	}
+	if err != nil && g.repositoryRequiresSigning() {
+		return fmt.Errorf("%w: %v", ErrNoSigningKey, err)
+	}
+	return nil
+}
+
+// repositoryRequiresSigning reports whether the checkout names this cluster's
+// signing keys.
+func (g *GitOps) repositoryRequiresSigning() bool {
+	_, err := os.Stat(filepath.Join(g.path, "clusters", g.cluster, "kernel", "signing", "keys.env"))
+	return err == nil
 }
 
 // SigningKey is the fingerprint commits are signed with, or empty.
