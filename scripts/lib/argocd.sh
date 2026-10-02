@@ -427,6 +427,20 @@ request_argo_sync_if_stalled() {
     # ours to replace.
     [[ "$(jq -r '.operation // "" | type' <<<"${json}")" == "string" ]] || return 0
 
+    # An ExternalSecret that failed while its store was not ready yet is not
+    # retried by External Secrets until its refresh interval -- an hour -- so
+    # a new sync would only meet the same failure. Nudge the Application's
+    # unready ExternalSecrets first; a cold install met this on every run.
+    local es_ns es_name
+    while read -r es_ns es_name; do
+        [[ -n "${es_name}" ]] || continue
+        [[ "$(kubectl get externalsecret "${es_name}" -n "${es_ns}" \
+            -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null)" == "True" ]] && continue
+        info "  ${app}: refreshing ExternalSecret ${es_ns}/${es_name}, which failed earlier."
+        kubectl annotate externalsecret "${es_name}" -n "${es_ns}" \
+            force-sync="$(date +%s)" --overwrite >/dev/null 2>&1 || true
+    done < <(jq -r '.status.resources[]? | select(.kind=="ExternalSecret") | "\(.namespace) \(.name)"' <<<"${json}")
+
     info "${app}: its last sync failed and automated retries are exhausted; asking for another."
     kubectl patch application "${app}" -n "${ns}" --type merge \
         -p '{"operation":{"initiatedBy":{"username":"gentian-installer"},"sync":{"syncStrategy":{"hook":{}}}}}' \
