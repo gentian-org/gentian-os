@@ -845,3 +845,61 @@ person's token, or with a statement it signed.
       install paths are retired with WP-5; the cluster keeps the director's
       endpoint and, per tenant, only the installed profiles.
 
+
+## WP-15 Sovereignty — the bundle, import, purge, the Operations Console (`os`, `ui`, `corp`)
+
+From [sovereignty-concept.md](sovereignty-concept.md), which is normative for
+all of it. The free half is Gentian OS's (export, download, import, purge,
+offboard, the bundle format); the convenience half is the Operations Console's.
+
+**M1 and M2a, landed 2026-10-02**
+
+- [x] Purge drops Postgres databases and roles, MinIO users and policies,
+      and the backup bucket; `spec.deletion.keepBundles` spares the bucket,
+      from the director's purge action, the console dialog and the CLI.
+- [x] Purge is two commits: `deletionPolicy: Delete` first, removal once the
+      live Tenant carries it; a restart resumes from the manifest's annotation.
+- [x] Download: `GET …/backups/{name}/download` streams the bundle as one
+      `.gentian` file through the director; the Export tab links it.
+- [x] Import: upload, inspect (age, in process), declare from the manifest
+      (Retain, whatever the bundle said), wait for the tenant and its apps,
+      restore, follow; `kubectl gentian tenants import`, the Tenants tab card.
+- [x] The Admin Console's Backup tab became Export; the schedule, policy and
+      destination screens moved to the Operations Console (gentian-corp
+      `services/operations-console`), which the Export tab links or promotes.
+- [x] `install.sh --disable-api-extensions`; step 0 scaffolds the store and
+      the Gentian catalogue source and materialises `GENTIAN_DEFAULT_PROFILES`
+      into `clusters/<id>/catalogue/`.
+- [x] gentian-corp publishes the Operations Console chart and builds the
+      flat catalogue source.
+
+**M2b — open**
+
+- [ ] **Inventory parity** (§2, §9.3): purge units for OpenFGA tuples, the
+      kernel realm's broker, client and tenant admin, the LiteLLM team and
+      keys, Redis keys, Maildirs; capture units for mail and OpenBao data
+      secrets. One inventory, iterated by capture and purge alike.
+- [ ] **Deletion record** signed by the director (`records.deletion`), and
+      the **offboard** flow: export to the tenant's key, hand over, purge.
+- [ ] **Schema 2** (§1.1): per-app layout, profile digests in the manifest,
+      credentials (`omitCredentials` in the export form), the SCIM
+      projection, single-file container as a first-class form; schema 1 stays
+      readable.
+- [ ] **Import materialises** the profiles the manifest names before it
+      waits for the apps, so an import onto a fresh cluster does not stall on
+      entries nobody installed there.
+- [ ] **The `operations` service** (§5.2): `TenantExportSchedule`,
+      `BackupPolicy` and their controllers leave gentian-os for a Corp
+      component with the `apiExtensions` privilege kind, approved by the
+      security officer; `operations-console` requires it. The Cluster claim's
+      default entries carry the grant from the scaffold.
+- [ ] **Where the Gentian catalogue source is served**, and the Corp
+      profile's chart version written at build time (the publish job produces
+      `0.1.0-main.<sha>`, the profile says `0.1.0`).
+- [ ] **Canonical forms** (§6): `spec.backup.canonical` on the profile, hooks
+      in the first profiles (Nextcloud files, contacts, calendar; mail).
+- [ ] **Scheduled backups as a content-addressed repository** under Object
+      Lock, with PITR for databases, a monthly off-site bundle, verification
+      and drills (§5.3) — Operations Console work, on the OS's capture units.
+- [ ] **Self-service restore** and **recovery on a click** in the Operations
+      Console; **ingest and egress** converters (§6).
