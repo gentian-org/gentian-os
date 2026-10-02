@@ -1,5 +1,6 @@
 # Baseline Kyverno policies for Gentian OS Stage 0 MAC.
-# Platform namespaces are excluded; tenant workloads are validated at admission.
+# Kernel namespaces (gentianos.io/tier: kernel) are excluded; tenant and
+# system workloads are validated at admission and in the background scan.
 ---
 apiVersion: kyverno.io/v1
 kind: ClusterPolicy
@@ -21,21 +22,20 @@ spec:
           - Pod
     exclude:
       any:
+      # The kernel's own namespaces, by the label the admission webhook
+      # skips them by (gentianos.io/tier: kernel). A list of names here went
+      # stale with the namespace layout: admission let kernel pods through
+      # while the background scan, which reads only this exclude, reported
+      # every one of them as a violation.
+      - resources:
+          namespaceSelector:
+            matchLabels:
+              gentianos.io/tier: kernel
       - resources:
           namespaces:
           - kube-system
           - kube-public
           - kube-node-lease
-          - kyverno
-          - cert-manager
-          - cnpg-system
-          - crossplane-system
-          - argocd
-          - openbao
-          - stakater-system
-          - envoy-gateway-system
-          - platform-kernel
-          - gentian-system
           - gpu-operator-resources
     validate:
       message: Privileged containers are not allowed in tenant workloads.
@@ -71,19 +71,20 @@ spec:
           - Pod
     exclude:
       any:
+      # The kernel's own namespaces, by the label the admission webhook
+      # skips them by (gentianos.io/tier: kernel). A list of names here went
+      # stale with the namespace layout: admission let kernel pods through
+      # while the background scan, which reads only this exclude, reported
+      # every one of them as a violation.
+      - resources:
+          namespaceSelector:
+            matchLabels:
+              gentianos.io/tier: kernel
       - resources:
           namespaces:
           - kube-system
-          - kyverno
-          - cert-manager
-          - cnpg-system
-          - crossplane-system
-          - argocd
-          - openbao
-          - stakater-system
-          - envoy-gateway-system
-          - platform-kernel
-          - gentian-system
+          - kube-public
+          - kube-node-lease
           - gpu-operator-resources
     validate:
       message: Host PID, IPC, and network namespaces are not allowed.
@@ -113,19 +114,20 @@ spec:
           - Pod
     exclude:
       any:
+      # The kernel's own namespaces, by the label the admission webhook
+      # skips them by (gentianos.io/tier: kernel). A list of names here went
+      # stale with the namespace layout: admission let kernel pods through
+      # while the background scan, which reads only this exclude, reported
+      # every one of them as a violation.
+      - resources:
+          namespaceSelector:
+            matchLabels:
+              gentianos.io/tier: kernel
       - resources:
           namespaces:
           - kube-system
-          - kyverno
-          - cert-manager
-          - cnpg-system
-          - crossplane-system
-          - argocd
-          - openbao
-          - stakater-system
-          - envoy-gateway-system
-          - platform-kernel
-          - gentian-system
+          - kube-public
+          - kube-node-lease
           - gpu-operator-resources
       - resources:
           selector:
@@ -168,19 +170,20 @@ spec:
           - Pod
     exclude:
       any:
+      # The kernel's own namespaces, by the label the admission webhook
+      # skips them by (gentianos.io/tier: kernel). A list of names here went
+      # stale with the namespace layout: admission let kernel pods through
+      # while the background scan, which reads only this exclude, reported
+      # every one of them as a violation.
+      - resources:
+          namespaceSelector:
+            matchLabels:
+              gentianos.io/tier: kernel
       - resources:
           namespaces:
           - kube-system
-          - kyverno
-          - cert-manager
-          - cnpg-system
-          - crossplane-system
-          - argocd
-          - openbao
-          - stakater-system
-          - envoy-gateway-system
-          - platform-kernel
-          - gentian-system
+          - kube-public
+          - kube-node-lease
           - gpu-operator-resources
       - resources:
           selector:
@@ -220,19 +223,20 @@ spec:
           - Pod
     exclude:
       any:
+      # The kernel's own namespaces, by the label the admission webhook
+      # skips them by (gentianos.io/tier: kernel). A list of names here went
+      # stale with the namespace layout: admission let kernel pods through
+      # while the background scan, which reads only this exclude, reported
+      # every one of them as a violation.
+      - resources:
+          namespaceSelector:
+            matchLabels:
+              gentianos.io/tier: kernel
       - resources:
           namespaces:
           - kube-system
-          - kyverno
-          - cert-manager
-          - cnpg-system
-          - crossplane-system
-          - argocd
-          - openbao
-          - stakater-system
-          - envoy-gateway-system
-          - platform-kernel
-          - gentian-system
+          - kube-public
+          - kube-node-lease
           - gpu-operator-resources
       - resources:
           selector:
@@ -292,19 +296,20 @@ spec:
           - Pod
     exclude:
       any:
+      # The kernel's own namespaces, by the label the admission webhook
+      # skips them by (gentianos.io/tier: kernel). A list of names here went
+      # stale with the namespace layout: admission let kernel pods through
+      # while the background scan, which reads only this exclude, reported
+      # every one of them as a violation.
+      - resources:
+          namespaceSelector:
+            matchLabels:
+              gentianos.io/tier: kernel
       - resources:
           namespaces:
           - kube-system
-          - kyverno
-          - cert-manager
-          - cnpg-system
-          - crossplane-system
-          - argocd
-          - openbao
-          - stakater-system
-          - envoy-gateway-system
-          - platform-kernel
-          - gentian-system
+          - kube-public
+          - kube-node-lease
           - gpu-operator-resources
       - resources:
           selector:
@@ -351,19 +356,20 @@ spec:
           - Pod
     exclude:
       any:
+      # The kernel's own namespaces, by the label the admission webhook
+      # skips them by (gentianos.io/tier: kernel). A list of names here went
+      # stale with the namespace layout: admission let kernel pods through
+      # while the background scan, which reads only this exclude, reported
+      # every one of them as a violation.
+      - resources:
+          namespaceSelector:
+            matchLabels:
+              gentianos.io/tier: kernel
       - resources:
           namespaces:
           - kube-system
-          - kyverno
-          - cert-manager
-          - cnpg-system
-          - crossplane-system
-          - argocd
-          - openbao
-          - stakater-system
-          - envoy-gateway-system
-          - platform-kernel
-          - gentian-system
+          - kube-public
+          - kube-node-lease
           - gpu-operator-resources
       - resources:
           selector:
