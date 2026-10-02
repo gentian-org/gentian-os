@@ -119,12 +119,43 @@ apply() {
         GENTIAN_OS_GIT_USERNAME GENTIAN_OS_GIT_TOKEN
 }
 
+# The Applications, removed while their controller still runs.
+#
+# Argo CD's manifest holds the CRDs and the controller in one file, so
+# deleting it takes the controller away while Applications still carry
+# finalizers only that controller clears -- resources-finalizer and the
+# pre/post-delete hooks. The Application CRD then waits on them for ever, and
+# so did the purge. So: delete the ApplicationSets and Applications first,
+# give the controller a bounded wait to run their finalizers, and strip what
+# it did not get to. The steps before this one have removed what those
+# Applications deployed, so there is nothing left for a finalizer to prune.
+_a06_release_applications() {
+    local ns="$1" kind left deadline
+    for kind in applicationsets.argoproj.io applications.argoproj.io; do
+        kubectl get "${kind}" -n "${ns}" -o name 2>/dev/null \
+            | xargs_r kubectl delete -n "${ns}" --wait=false >/dev/null 2>&1 || true
+    done
+    deadline=$((SECONDS + 90))
+    while (( SECONDS < deadline )); do
+        left="$(kubectl get applications.argoproj.io,applicationsets.argoproj.io -n "${ns}" -o name 2>/dev/null || true)"
+        [[ -n "${left}" ]] || return 0
+        sleep 5
+    done
+    while IFS= read -r obj; do
+        [[ -n "${obj}" ]] || continue
+        warn "  ${obj} kept its finalizers; removing them."
+        kubectl patch "${obj}" -n "${ns}" --type=merge -p '{"metadata":{"finalizers":null}}' >/dev/null 2>&1 || true
+    done < <(kubectl get applications.argoproj.io,applicationsets.argoproj.io -n "${ns}" -o name 2>/dev/null || true)
+}
+
 destroy() {
     local ns; ns="$(_argocd_ns)"
+    _a06_release_applications "${ns}"
     kubectl delete secret argocd-repo-creds-bootstrap-gentian-os -n "${ns}" \
         --ignore-not-found >/dev/null 2>&1 || true
     helm uninstall argocd-image-updater -n "${ns}" >/dev/null 2>&1 || true
     curl -fsSL "https://raw.githubusercontent.com/argoproj/argo-cd/$(gentian_pin argocd manifest)/manifests/install.yaml" 2>/dev/null \
         | sed "s/^\(\s*\)namespace: argocd$/\1namespace: ${ns}/" \
-        | kubectl delete -n "${ns}" -f - --ignore-not-found >/dev/null 2>&1 || true
+        | kubectl delete -n "${ns}" -f - --ignore-not-found --timeout=180s >/dev/null 2>&1 \
+        || warn "  Argo CD's manifest did not delete within 3 minutes; the purge continues."
 }
