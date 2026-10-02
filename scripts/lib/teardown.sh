@@ -28,7 +28,10 @@ _clear_ns_finalizers() {
     # Then try a fixed list of custom resource types we know may linger.
     for rt in \
         externalsecrets.external-secrets.io \
+        pushsecrets.external-secrets.io \
         clusterexternalsecrets.external-secrets.io \
+        applications.argoproj.io \
+        applicationsets.argoproj.io \
         secretstores.external-secrets.io \
         terraforms.infra.contrib.fluxcd.io \
         releases.helm.crossplane.io \
@@ -41,7 +44,7 @@ _clear_ns_finalizers() {
         issuers.cert-manager.io; do
         kubectl get "${rt}" -n "${ns}" -o name 2>/dev/null \
             | xargs_r -I%% kubectl patch %% -n "${ns}" \
-                --type=json -p='[{"op":"remove","path":"/metadata/finalizers"}]' \
+                --type=merge -p='{"metadata":{"finalizers":null}}' \
                 2>/dev/null || true
     done
 }

@@ -27,9 +27,13 @@ apply() {
 }
 
 destroy() {
-    # Last in reverse order, so everything inside has already gone.
+    # Last in reverse order, so everything inside has already gone -- except
+    # what still carries a finalizer whose controller an earlier step removed.
+    # _delete_namespace waits, then strips those, so a namespace left
+    # Terminating cannot block the next install's first write into it.
     local ns
     for ns in $(ns_kernel_all); do
-        kubectl delete namespace "${ns}" --ignore-not-found --wait=false >/dev/null 2>&1 || true
+        kubectl get namespace "${ns}" >/dev/null 2>&1 || continue
+        _delete_namespace "${ns}"
     done
 }
