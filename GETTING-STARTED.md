@@ -281,9 +281,14 @@ The install pauses here and waits for you. Three things finish it:
    root and printed the path. Put it where your break-glass material already
    lives — a password manager, a sealed vault, offline media. Without it this
    cluster cannot be rebuilt as itself.
-2. **Sign in to the console** as the administrator, at
-   `https://console.<kernel-domain>/`. The installer prints the URL, the
-   username — `admin@<kernel-domain>` — and the password while it waits.
+2. **Activate the administrator account and sign in.** `admin@<kernel-domain>`
+   has no password: you set one through a single-use, expiring activation link,
+   which also enrols a second factor unless step 0 switched that off. The
+   installer mails the link to a recovery address — `CLUSTER_ADMIN_RECOVERY_EMAIL`
+   in `install.env`, or the one it asks you for — or, without one, prints it
+   here once. Open it, set the password, then sign in at
+   `https://console.<kernel-domain>/`. Nobody else, the installer included,
+   ever knows the password.
 3. **Supply the runtime credentials.** Once signed in, open the **Credentials**
    tab and fill in what the cluster is still missing — SMTP relay, any extra app
    repository and its pull secret.
@@ -336,85 +341,53 @@ kubectl get application,applicationset -n kernel-gitops
 
 ## 7. Create your first tenant
 
-The commands below use the `gentian` CLI. Install it once, on whichever machine
-you administer clusters from:
+Tenants are created through the director — in the admin console, or with the
+`gentian` CLI, which is a command-line client of the same director. Either way
+the director checks that you may, commits the tenant to the deployments
+repository as you, and records it.
+
+**In the console:** **Tenants** → *Bring a tenant on*. Give it a name (any name
+but `default`, which is reserved for the cluster-wide backup policy), a display
+name, and optionally the administrator's recovery email; leave *second factor*
+on unless you have a reason not to. After it is committed the screen waits for
+the tenant to be provisioned and then hands the administrator account over:
+the activation link is mailed to the recovery address, or shown once if you
+gave none. **Activate administrator** on any tenant issues a new link later —
+which is also how an administrator who lost access gets back in.
+
+**With the CLI:** install it once, on whichever machine you administer clusters
+from, and sign in:
 
 ```bash
-make install-plugin      # kubectl-gentian + gtnctl into ~/.local/bin
+make install-plugin          # kubectl-gentian + gtnctl into ~/.local/bin
+kubectl gentian login        # a code to confirm in the browser, as admin@<kernel-domain>
 ```
 
-The installer does not do this for you, and `--uninstall` does not remove it:
-one CLI serves every cluster you manage. Remove it with `make uninstall-plugin`.
-Neither needs `sudo` — both write to `~/.local/bin`.
-
-Re-run `make install-plugin` after pulling. The CLI is a copy, not a link, so it
-does not follow the checkout, and `./install.sh --status` warns when the copy on
-your PATH is not the one in your tree. To see which copy answers:
+It talks to the director of the current kubectl context, so it needs no
+configuration of its own. Re-run `make install-plugin` after pulling — the CLI
+is a copy, not a link — and `gtnctl version` shows which copy answers.
 
 ```bash
-gtnctl version           # version, fingerprint, and any other copy on PATH
-```
-
-Scaffold the definition:
-
-```bash
-./install.sh --prepare-tenant acme
-```
-
-Any name but `default`. A tenant's own `BackupPolicy` has to be named after the
-tenant, and `default` is reserved for the cluster-wide one — so a tenant called
-`default` could never have a backup policy of its own.
-
-A tenant is authored, then deployed. Two directories, and the difference
-matters:
-
-- `definitions/tenants/<name>/tenant.yaml` — what the tenant is *meant to be*.
-  Yours to edit.
-- `tenants/<name>/` — what Argo CD syncs. Written by the deploy command, and
-  written again by the director every time an app is installed from the store.
-
-It asks for a display name, then writes
-`clusters/<cluster-id>/definitions/tenants/acme/tenant.yaml`. Nothing is
-deployed, committed or applied.
-
-To install apps for the tenant, log in as tenant admin and open the app store,
-or see what this cluster offers:
-
-```bash
-kubectl gentian apps list
-```
-
-You can name apps in the definition, but it is recommended to **add apps with
-the tenant admin through the app store**:
-
-```yaml
-  apps:
-  - profile: nextcloud-base-ce
-    addons:
-    - nextcloud-calendar-ce
-```
-
-Quotas and mail are not in the definition. They come from this cluster's shared
-`definitions/components/tenant-defaults` component, so every tenant is sized the
-same way — override in the definition only what this tenant needs differently.
-
-Then deploy it:
-
-```bash
-kubectl gentian tenants deploy acme
-```
-
-That copies the definition into `clusters/<cluster-id>/tenants/acme/`, creates
-the defaults component if this is the cluster's first tenant, commits and
-pushes. Argo CD creates the Tenant:
-
-```bash
+kubectl gentian tenants create acme --display-name "ACME AG"   # --no-mfa to skip the second factor
+kubectl gentian tenants activate-admin acme --recovery-email owner@acme.example
 kubectl get tenant acme -w
 ```
 
-To remove one, `kubectl gentian tenants undeploy acme` — not `kubectl delete`.
-The directory is what the cluster reconciles towards, so deleting the object
-just brings it back.
+`activate-admin` waits for the tenant to be provisioned, then mails the link,
+or prints it once when you give no `--recovery-email`.
+
+Apps are installed by the tenant's administrator from the App Store, or from
+here:
+
+```bash
+kubectl gentian apps install nextcloud-base-ce --tenant acme
+kubectl gentian apps list --tenant acme
+```
+
+To remove a tenant, `kubectl gentian tenants retire acme` (or **Retire** in the
+console) — not `kubectl delete`: git is what the cluster reconciles towards, so
+deleting the object just brings it back. Its data follows the tenant's
+`deletionPolicy`, which is `Retain` unless edited.
 
 ---
 
@@ -576,42 +549,27 @@ kubectl get configmap gentian-handover -n kernel-control -o yaml
 Open the admin console and select the Credentials tab, which performs the same
 token exchange as the login.
 
-### The console password
+### The administrator has no password
 
-It is derived from the master password, so it is not lost with the terminal
-that printed it:
+Neither the cluster administrator nor any tenant administrator is given one.
+Each account is created without a password and handed to its holder through a
+single-use, expiring link that sets one (and enrols a second factor, unless
+switched off) — the same way every member is invited. The installer and the
+director never know it, so there is nothing to print, derive or recover.
+
+Lost access, an expired link, or a link nobody received:
 
 ```bash
-./install.sh --verify-only
+kubectl gentian tenants activate-admin platform     # the cluster administrator
+kubectl gentian tenants activate-admin acme         # a tenant administrator
 ```
 
-### The console password does not work
-
-The password in the install summary is *derived*, not read back from Keycloak.
-If `admin@<kernel domain>` is refused, ask the cluster what its inputs are and
-derive from those:
+or **Tenants → Activate administrator** in the console. Each call issues a new
+link; earlier ones still expire on their own. If no administrator can sign in
+at all, the CLI cannot either. Then, from the install host:
 
 ```bash
-kubectl get secret gentian-os-master-password -n kernel-provisioning \
-  -o jsonpath='{.data.password}' | base64 -d > /tmp/mp
-kubectl get secret gentian-os-master-password -n kernel-provisioning \
-  -o jsonpath='{.data.salt}' | base64 -d > /tmp/salt
-printf 'portal-bootstrap:administrator_password' |
-  openssl dgst -sha256 -hmac "$(cat /tmp/mp)$(cat /tmp/salt)" | awk '{print $2}'
-shred -u /tmp/mp /tmp/salt
-```
-
-That is the password Keycloak was given, as long as nothing has re-run the
-realm bootstrap with different inputs since. On a cluster whose `secretMode`
-is `random` this does not apply — the password is stored, not derived, at
-`identity/portal-admin` in OpenBao.
-
-To make the cluster take a new password instead, re-run the login step with
-the inputs exported, which rewrites the credential in Keycloak:
-
-```bash
-export MASTER_PASSWORD=... DERIVATION_SALT=...
-./install.sh --force --only D-03
+./install.sh --activate-admin    # a new link for admin@<kernel-domain>, from the installer's own credential
 ```
 
 ### A commit to the deployments repository is not synced

@@ -25,6 +25,7 @@
 #   kubectl gentian resources plans --tenant <tenant>
 #   kubectl gentian resources show --tenant <tenant>
 #   kubectl gentian resources set --tenant <tenant> --plan <plan>
+#   kubectl gentian resources report --tenant <tenant> --from <time> --to <time>
 #
 #   kubectl gentian version
 #
@@ -409,12 +410,30 @@ cmd_resources() {
             _call PUT "/v1/tenants/${t}/resources" "$(jq -n --arg p "${plan}" --argjson f "${force}" '{plan:$p, force:$f}')" >/dev/null
             echo "Plan ${plan} chosen for ${t}: committed."
             ;;
-        *) die "usage: kubectl gentian resources plans|show|set --tenant <tenant>" ;;
+        report)
+            t="$(_tenant_flag "$@")"
+            local from="" to=""
+            while [[ $# -gt 0 ]]; do
+                case "$1" in
+                    --from) from="${2:?}"; shift 2 ;;
+                    --to) to="${2:?}"; shift 2 ;;
+                    *) shift ;;
+                esac
+            done
+            [[ -n "${from}" && -n "${to}" ]] || die "--from and --to are required (RFC 3339)"
+            _call GET "/v1/tenants/${t}/resources/report?from=$(jq -rn --arg v "${from}" '$v|@uri')&to=$(jq -rn --arg v "${to}" '$v|@uri')" |
+                jq -r 'if .incomplete then "Nothing is known about the plan in force when this window opened; the first interval starts later.\n" else "" end,
+                       (["PLAN","DAYS","FROM","TO","SKU"] | @tsv),
+                       ((.intervals // [])[] | [.plan, ((.seconds / 86400) * 100 | round / 100 | tostring), .from[0:19], .to[0:19], (.productSku // "")] | @tsv)' |
+                column -t -s $'\t'
+            ;;
+        *) die "usage: kubectl gentian resources plans|show|set|report --tenant <tenant>" ;;
     esac
 }
 
+# usage — the header comment above, which is the reference.
 usage() {
-    sed -n '2,32p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+    awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "${BASH_SOURCE[0]}"
 }
 
 main() {

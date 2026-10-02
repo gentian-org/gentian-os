@@ -11,8 +11,12 @@ For tenant-admin app lifecycle commands, see:
 
 ## CLI entry points
 
-`install.sh` installs the Gentian CLI as a kubectl plugin (`kubectl-gentian` in
-`/usr/local/bin`). A shorthand symlink `gtnctl` points at the same binary:
+The Gentian CLI is a kubectl plugin (`kubectl-gentian`), installed with
+`make install-plugin` into `~/.local/bin`, with a shorthand symlink `gtnctl`.
+It is a client of the director, like the admin console: sign in once with
+`kubectl gentian login` (a code confirmed in the browser), and every command
+asks the director as you, which checks, commits and records it. It reaches the
+director of the current kubectl context, so it needs no configuration.
 
 ```bash
 gtnctl tenants list    # same as kubectl gentian tenants list
@@ -41,83 +45,38 @@ kubectl get tenants
 
 ## 3. Provision a Tenant
 
-> **Deploying or undeploying a tenant briefly disrupts the shared kernel.**
-> Tenant provisioning is not confined to the tenant's own namespace. It rewrites
-> the shared portal's Keycloak BFF client (a `keycloak-portal-bff-<tenant>` Job
-> in `platform-kernel`) and adds two listeners to the kernel Gateway, forcing an
-> Envoy configuration reload across every host the gateway serves.
->
-> Expect transient `404 Not Found` responses from `portal.<kernel-domain>` while
-> that happens — Envoy answering before the new configuration is live, not the
-> portal crashing (its pods do not restart). Undeploy does the same in reverse.
-> Treat `tenants deploy` / `tenants undeploy` as a maintenance-window operation
-> on a cluster with live users, and re-check the portal once the tenant reports
-> `Ready` before concluding anything is broken.
+> **Bringing a tenant on briefly disrupts the shared kernel.** Provisioning adds
+> listeners to the kernel Gateway, which reloads Envoy across every host it
+> serves; expect transient `404`s on kernel hosts while it happens. Treat
+> creating and retiring tenants as maintenance-window operations on a cluster
+> with live users.
 
-Each cluster maintains tenant **definitions** under
-`clusters/<cluster>/definitions/tenants/<tenant>/`. Fresh installs leave
-`clusters/<cluster>/tenants/` empty until a definition is deployed. There's
-no `<stage>` segment in either path — a cluster has exactly one stage for
-its whole lifetime, so `clusters/<cluster>/...` already scopes everything
-under it to that one stage (see
-[deployment.md](deployment.md) §1).
-
-| Path | State |
-|------|--------|
-| `definitions/tenants/<tenant>/` | Defined only (`ACTIVE=no` in list) |
-| `tenants/<tenant>/` | Deployed to GitOps (`ACTIVE=yes`) |
-
-List all tenant definitions and deployment status:
+A tenant is created through the director — the admin console's **Tenants**
+tab, or the CLI:
 
 ```bash
+kubectl gentian tenants create demo --display-name "Demo AG"   # --no-mfa: no second factor for its admin
 kubectl gentian tenants list
+kubectl get tenant demo -w
 ```
 
-`ACTIVE=yes` when the definition is activated under `tenants/` (Argo sync path).
-`ACTIVE=no` when defined only under `definitions/`. `LIVE=yes` when the Tenant CR
-exists on the cluster.
+The director commits `clusters/<cluster>/tenants/demo/` as you; Argo CD syncs
+it and the operator provisions the realm, namespaces, database and desktop.
 
-Deploy a tenant definition:
+Its administrator, `admin@<tenant domain>`, has **no password**. Hand the
+account over with a single-use, expiring activation link — mailed to a recovery
+address, or printed once without one:
 
 ```bash
-kubectl gentian tenants deploy demo
+kubectl gentian tenants activate-admin demo --recovery-email owner@demo.example
+kubectl gentian tenants activate-admin demo                       # prints the link
 ```
 
-If not yet under `tenants/`, deploy copies the definition from `definitions/` first.
+It waits out provisioning, so it can run straight after `create`. Running it
+again issues a new link, which is also how a locked-out administrator gets back
+in. The recovery address is kept on the account in Keycloak, never in git.
 
-Deploy is transactional:
-
-- waits until the Tenant reaches `status.phase=Ready`
-- retrieves the initial tenant-admin credentials from OpenBao or the `keycloak-admin-<tenant>` Job
-- only then prints login credentials
-- if provisioning or credential retrieval fails, it rolls back the GitOps deploy and prints `failed to provision tenant, rolling back`
-- rollback reverts the GitOps change, triggers ArgoCD prune, deletes the Tenant CR, and waits for operator finalizers (same cleanup path as `tenants undeploy`)
-
-After successful deploy, the CLI prints tenant-admin login guidance, including:
-
-- readiness check command
-- command to read initial credentials from `keycloak-admin-<tenant>` Job logs
-- OpenBao fallback command for the tenant-admin password
-- realm admin console URL
-
-Render and apply the active tenant set manually (optional):
-
-```bash
-kubectl apply -k gentian-deployments/clusters/<cluster>/tenants/demo
-```
-
-There's no `--env`/`--stage` flag to target another stage — `GENTIAN_DEPLOYMENTS_CLUSTER_ID`
-already selects a cluster that's pinned to exactly one stage. To promote a
-tenant to a different stage, promote it to a *different cluster*'s
-`definitions/` tree instead (see [deployment.md](deployment.md) §6.3).
-
-The deploy command writes/updates tenant manifests under
-`gentian-deployments/clusters/<cluster>/tenants/<tenant>/`, commits/pushes,
-and ArgoCD ApplicationSet discovers the directory automatically.
-
-Equivalent Git change: add/remove the tenant's directory under `tenants/`.
-
-Check tenant reconciliation:
+Check reconciliation:
 
 ```bash
 kubectl get tenant demo -o yaml
@@ -126,66 +85,16 @@ kubectl describe tenant demo
 
 ## 4. Uninstall a Tenant
 
-Undeploy a tenant instance:
-
 ```bash
-kubectl gentian tenants undeploy demo
+kubectl gentian tenants retire demo
 ```
 
-For destructive cleanup that removes all orchestrator-owned artifacts (Keycloak
-realm, databases, storage, mail secrets, and labeled kernel Jobs), use:
-
-```bash
-kubectl gentian tenants undeploy demo --purge
-# or
-kubectl gentian tenants undeploy demo -f
-```
-
-The purge flag sets `deletionPolicy=Delete` on the live Tenant CR, waits until
-that policy is stable (re-patching if ArgoCD selfHeal reverts it), deletes the
-Tenant CR, removes the instance from Git, and immediately syncs the tenants
-ArgoCD Application so selfHeal cannot recreate the CR from a stale revision.
-It then waits for controller Delete cleanup (Keycloak realm delete, databases,
-storage, mail secrets, and labeled kernel Jobs).
-If the Tenant CR reappears without a `deletionTimestamp`, the plugin re-syncs
-ArgoCD and re-issues delete until cleanup completes. After the Tenant CR is
-gone it also deletes any remaining kernel artifacts labeled
-`gentianos.io/tenant=<name>`.
-If a prior undeploy ran Retain cleanup only, purge waits for any in-flight
-`keycloak-realm-delete-*` Job before removing labeled kernel artifacts.
-
-The undeploy command removes the instance from
-`gentian-deployments/clusters/<cluster>/tenants/<tenant>/<env>/`, commits/pushes,
-and deletes the live Tenant CR.
-
-Equivalent Git edit:
-
-```yaml
-resources: []
-```
-
-Apply the desired state manually (optional):
-
-```bash
-kubectl apply -k gentian-deployments/clusters/<cluster>/tenants/demo/dev
-```
-
-If you want immediate local convergence before ArgoCD sync, delete the live
-Tenant CR after removing the instance from Git:
-
-```bash
-kubectl delete tenant demo --ignore-not-found
-```
-
-This undeploys runtime resources but keeps the tenant definition and instance
-spec in Git so you can re-deploy later by re-adding the instance entry.
-
-Confirm ArgoCD prunes the Tenant CR:
-
-```bash
-kubectl describe application -n argocd gentian-os
-kubectl get tenant demo
-```
+or **Retire** in the console. The director removes the tenant's directory from
+git; Argo CD prunes the Tenant and the operator tears it down. Whether its data
+goes with it is the manifest's `deletionPolicy` — `Retain` unless edited — not
+the command. Not `kubectl delete tenant`: git is what the cluster reconciles
+towards, so deleting the object just brings it back. The platform tenant cannot
+be retired.
 
 ## 5. Tenant App Store
 
@@ -204,9 +113,9 @@ dialog the desktop draws. See [design/store-contract.md](design/store-contract.m
 ### CLI (fallback)
 
 ```bash
-kubectl gentian apps list
-kubectl gentian apps install demo-app --tenant gtn-demo
-kubectl gentian apps uninstall demo-app --tenant gtn-demo
+kubectl gentian apps list --tenant demo
+kubectl gentian apps install xwiki-ce --tenant demo
+kubectl gentian apps uninstall xwiki-ce --tenant demo
 ```
 
 Guides:
@@ -222,37 +131,15 @@ kubectl gentian --help
 
 ## 6. Install and Uninstall Apps
 
-Apps are installed by adding an entry to the tenant manifest in
-`gentian-deployments` and waiting for Crossplane + the operator to reconcile.
-
-List catalogue profiles (cluster-scoped `AppProfile` CRs):
-
-```bash
-kubectl gentian apps list
-# shorthand:
-gtnctl apps list
-```
-
-Install an app on a tenant (commits/pushes GitOps, syncs Argo CD, waits for Ready):
+Apps are installed by the director adding them to the tenant's manifest in
+git, as the person who asked; the operator reconciles them. The tenant's
+administrator usually does this from the App Store; the CLI does the same:
 
 ```bash
-kubectl gentian apps install demo-app --tenant demo
-# shorthand:
-gtnctl apps install xwiki --tenant demo
-```
-
-Uninstall (removes the app from Git; retains databases and OpenBao secrets by default):
-
-```bash
-kubectl gentian apps uninstall demo-app --tenant demo
-```
-
-Purge persistent state (Postgres/MariaDB, S3 bucket, Redis keys, OpenBao paths):
-
-```bash
-kubectl gentian apps uninstall element --tenant demo --purge
-# or
-gtnctl apps uninstall xwiki --tenant demo -f
+kubectl gentian apps list --tenant demo
+kubectl gentian apps install xwiki-ce --tenant demo
+kubectl gentian apps uninstall xwiki-ce --tenant demo            # keeps its data
+kubectl gentian apps uninstall xwiki-ce --tenant demo --purge    # removes it with its data
 ```
 
 Inspect app reconciliation:
@@ -284,7 +171,6 @@ token.
 List the catalogue, or what one tenant may pick:
 
 ```bash
-kubectl gentian resources plans
 kubectl gentian resources plans --tenant corp
 ```
 
@@ -295,19 +181,16 @@ does not have room for.
 Show a tenant's ceiling and what is committed under it:
 
 ```bash
-kubectl gentian resources show corp
+kubectl gentian resources show --tenant corp
 ```
 
 Move a tenant to a plan — through the director, as yourself:
 
 ```bash
-curl -X PUT -H "Authorization: Bearer $TOKEN" -d '{"plan":"nodes-2"}' \
-  https://<director>/v1/tenants/corp/resources
+kubectl gentian resources set --tenant corp --plan nodes-2      # --force: see below
 ```
 
-`kubectl gentian resources set` prints this and exits: a plan change has to
-carry who chose it and which decision allowed it, and a command committing
-with whatever git credential the workstation holds carries neither. The
+A plan change carries who chose it and which decision allowed it. The
 director commits `clusters/<cluster>/tenants/corp/resource-plan.yaml` as the
 caller; ArgoCD applies it on the next sync, the operator reconciles the
 `tenant-quota` ResourceQuota and records the change in the tenant's usage
@@ -327,7 +210,7 @@ that cost.
 What a window resolves to for invoicing:
 
 ```bash
-kubectl gentian resources report corp \
+kubectl gentian resources report --tenant corp \
   --from 2026-01-01T00:00:00Z --to 2026-02-01T00:00:00Z
 ```
 
@@ -356,53 +239,21 @@ bash scripts/steps/A-11-metrics-server.sh   # via the installer driver
 helm upgrade gentian-os ... --set usage.metricsServer.enabled=true
 ```
 
-## 7. Retrieve Admin Credentials
+## 7. Administrator Accounts
 
-Portal and identity credentials can be read from Kubernetes Secrets or the
-`kubectl gentian` plugin.
+No administrator is given a password. The cluster administrator
+(`admin@<kernel-domain>`) and every tenant administrator are created without
+one and handed over through a single-use, expiring link that sets it — and
+enrols a second factor unless that was switched off — mailed to a recovery
+address or shown once to whoever issued it. There is nothing to retrieve.
 
-Gentian portal login (derived from `MASTER_PASSWORD` during install):
-
-```bash
-# Printed at end of install.sh (portal-login-bootstrap helpers)
-kubectl get secret keycloak-admin -n platform-kernel -o yaml
-```
-
-Tenant admin. `tenants deploy` prints it once; this is how to get it back
-afterwards:
+A new link, for a lost password or a link that expired:
 
 ```bash
-gtnctl tenants credentials <tenant>
+kubectl gentian tenants activate-admin <tenant> [--recovery-email <address>]
+kubectl gentian tenants activate-admin platform      # the cluster administrator
+./install.sh --activate-admin                        # break glass: nobody can sign in
 ```
-
-It reads OpenBao through the operator, so it needs no `bao` CLI, no
-port-forward and no OpenBao login of your own. The password goes to stdout
-alone and everything else to stderr, so it pipes:
-
-```bash
-gtnctl tenants credentials <tenant> | wl-copy
-```
-
-Two things that look like they should work and do not. The provisioning Job
-prints the same values, but finished Jobs are removed after
-`ProvisioningJobTTLSeconds` — 600s — so ten minutes on it is gone:
-
-```bash
-kubectl logs -n platform-kernel job/keycloak-admin-<tenant> --tail=20
-# Error from server (NotFound): jobs.batch "keycloak-admin-<tenant>" not found
-```
-
-And reading OpenBao directly needs more than the path, because OpenBao is a
-ClusterIP service over TLS and the installer's token is revoked at handover:
-
-```bash
-kubectl -n openbao port-forward svc/openbao 8200:8200 &
-export BAO_ADDR=https://localhost:8200   # localhost is in the cert's SANs
-bao login -method=oidc                   # your Keycloak identity
-bao kv get -mount=secret -field=password gentian-os/tenants/<tenant>/admin
-```
-
-Worth knowing for other paths; not worth it for this one.
 
 Keycloak master-realm admin (Suze stack):
 
@@ -665,7 +516,7 @@ cleanup Job itself fails, the export is released anyway and the operator log
 names the bucket and prefix left behind.
 
 **Tearing a tenant down does not delete its bundles.** These resources live in
-the tenant's namespace, so an undeploy or a `--purge` removes them — and if
+the tenant's namespace, so retiring a tenant with `deletionPolicy: Delete` removes them — and if
 that removed the bundles too, "purge the tenant, then restore it" would destroy
 the only thing that could restore it. The operator recognises a teardown and
 keeps the objects, logging the bucket and prefix for each.

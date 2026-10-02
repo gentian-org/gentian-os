@@ -175,6 +175,9 @@ Running part of it. A step is named by its number or its full id, so
 Other options:
   --validate            validate config and step contracts, no cluster changes
   --verify-only         run post-install verification and print the summary
+  --activate-admin      issue a new activation link for the cluster administrator
+                        (admin@<kernel-domain>), mailed or shown once — for a lost
+                        password when nobody can sign in to ask the director
   --no-cluster-infra    skip cert-manager / CNPG / reloader on install
   --cluster-infra       with --purge, also remove them and their CRDs: CNPG,
                         Reloader, external-dns, cert-manager. They may serve
@@ -263,6 +266,7 @@ parse_driver_args() {
                 exit 1 ;;
             --no-config-files)   INSTALL_AUTO_LOAD_CONFIG="0" ;;
             --verify-only)       INSTALL_VERIFY_ONLY="1" ;;
+            --activate-admin)    GENTIAN_DIRECTION="activate-admin" ;;
             --validate|--check)  INSTALL_VALIDATE_ONLY="1" ;;
             -h|--help)           driver_usage; exit 0 ;;
             *)
@@ -494,6 +498,18 @@ main() {
     case "${GENTIAN_DIRECTION}" in
         prepare-tenant)
             prepare_tenant_run
+            ;;
+        activate-admin)
+            # Break glass for the cluster administrator: a new single-use
+            # activation link from the installer's own Keycloak credential,
+            # for when nobody can sign in to ask the director for one.
+            load_operator_config
+            load_deployments_cluster_settings
+            resolve_kernel_domain_from_claim
+            # shellcheck source=scripts/lib/portal-login-bootstrap.sh
+            source "${SCRIPT_DIR}/scripts/lib/portal-login-bootstrap.sh"
+            GENTIAN_ACTIVATE_FORCE=1 issue_platform_admin_activation
+            exit $?
             ;;
         export-kit)
             # Reads the cluster and OpenBao; changes neither.

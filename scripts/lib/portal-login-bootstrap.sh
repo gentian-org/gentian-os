@@ -1815,9 +1815,12 @@ issue_platform_admin_activation() {
     [[ -n "${uid}" ]] || { warn "  ${username} does not exist in realm ${realm}."; return 1; }
     creds="$(curl -sS --max-time 15 -H "${auth}" "${base}/admin/realms/${realm}/users/${uid}/credentials")"
     has_pw="$(printf '%s' "${creds}" | jq '[.[] | select(.type=="password")] | length > 0' 2>/dev/null || echo false)"
-    if [[ "${has_pw}" == "true" ]]; then
+    # Forced (./install.sh --activate-admin): a new link even for an account
+    # that has a password, which is how a holder who lost it gets back in.
+    if [[ "${has_pw}" == "true" && "${GENTIAN_ACTIVATE_FORCE:-0}" != "1" ]]; then
         info "  ${username} is activated: sign in with the password its holder chose."
-        info "  Lost it? A new link: kubectl gentian tenants activate-admin platform"
+        info "  Lost it? A new link: kubectl gentian tenants activate-admin platform,"
+        info "  or, when nobody can sign in, ./install.sh --activate-admin"
         return 0
     fi
 
