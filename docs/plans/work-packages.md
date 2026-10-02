@@ -542,12 +542,15 @@ Specified in [namespace-cleanup.md](namespace-cleanup.md).
 
 From [security-gap-closing.md](security-gap-closing.md).
 
-- [ ] **Backup split (decided 2026-09-22).** Local backup, tenant
-      export/restore and `BackupPolicy` stay here. Remote targets with key
-      escrow, retention across tenants, restore drills with proof, DR and
-      tenant migration become a GTC-authored component delivered as an
-      entitled catalogue entry; its source leaves this repository when the
-      backup code is touched in phase 2. Nothing here references it.
+- [ ] **Backup split (decided 2026-09-22, redrawn 2026-10-02).** The line is
+      at scheduling: one-click export, import, restore, purge and the bundle
+      format stay here; scheduled backups, remote targets with key escrow,
+      retention across tenants, restore drills, recovery on a click, DR and
+      the workspace converters are Gentian Corp's Operations Console,
+      delivered as a catalogue entry under its own license.
+      `TenantExportSchedule` and `BackupPolicy` leave this repository with
+      it. [sovereignty-concept.md](sovereignty-concept.md) §5 is normative.
+      Nothing here references it.
 - [ ] Wave 0: G4 random LiteLLM keys from OpenBao behind the gateway; G5
       Redis ACL key and channel prefixes via `valueMapping.cache`; G6
       MariaDB wildcard grant on the tenant prefix, no `GRANT OPTION`.
