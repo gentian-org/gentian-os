@@ -148,7 +148,18 @@ public class ActivationLinkResource implements RealmResourceProvider {
             if (master == null) {
                 return null;
             }
-            auth = new AppAuthManager.BearerTokenAuthenticator(session).setRealm(master).authenticate();
+            // The signature key is looked up in the realm of the session
+            // CONTEXT, not the one handed to the authenticator: this
+            // endpoint lives under /realms/<target>, so without the switch a
+            // master token was checked against master's issuer and the
+            // target's keys, failed, and every installer call answered 401.
+            // Keycloak's own AdminRoot switches the same way.
+            session.getContext().setRealm(master);
+            try {
+                auth = new AppAuthManager.BearerTokenAuthenticator(session).setRealm(master).authenticate();
+            } finally {
+                session.getContext().setRealm(target);
+            }
             tokenRealm = master;
         }
         if (auth == null) {
