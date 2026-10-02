@@ -659,6 +659,7 @@ produced, or a bucket prefix the cluster can reach.
 kubectl gentian tenants import acme-nightly.gentian --identity-file acme-key.txt
 kubectl gentian tenants import acme-nightly.gentian --passphrase          # prompts
 kubectl gentian tenants import acme-nightly.gentian --identity-file k.txt --name acme2
+kubectl gentian tenants import --bucket acme-gentian-backup --prefix nightly-20261001 --identity-file k.txt
 ```
 
 What happens: the file is uploaded to the cluster's own storage; the director

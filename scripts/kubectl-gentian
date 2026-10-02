@@ -18,6 +18,7 @@
 #   kubectl gentian tenants activate-admin <name> [--recovery-email <address>]
 #   kubectl gentian tenants retire <name> [--purge [--keep-bundles]] [--yes]
 #   kubectl gentian tenants import <file.gentian> [--identity-file <f> | --passphrase] [--name <n>]
+#   kubectl gentian tenants import --bucket <b> --prefix <p> [--endpoint <url>] (--identity-file <f> | --passphrase)
 #
 #   kubectl gentian apps list --tenant <tenant>
 #   kubectl gentian apps install <app> --tenant <tenant>
@@ -384,17 +385,24 @@ cmd_tenants_retire() {
 # from a prompt.
 cmd_tenants_import() {
     local file="" idfile="" ask_pw="" name="" identity="" passphrase="" dec body answer bundle st phase msg last=""
+    local bucket="" prefix="" endpoint=""
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --identity-file) idfile="${2:?}"; shift 2 ;;
             --passphrase) ask_pw=1; shift ;;
             --name) name="${2:?}"; shift 2 ;;
+            --bucket) bucket="${2:?}"; shift 2 ;;
+            --prefix) prefix="${2:?}"; shift 2 ;;
+            --endpoint) endpoint="${2:?}"; shift 2 ;;
             -*) die "unknown flag $1" ;;
             *) file="$1"; shift ;;
         esac
     done
-    [[ -n "${file}" ]] || die "usage: kubectl gentian tenants import <file.gentian> [--identity-file <f> | --passphrase] [--name <n>]"
-    [[ -f "${file}" ]] || die "no such file: ${file}"
+    if [[ -z "${file}" && -z "${bucket}" ]]; then
+        die "usage: kubectl gentian tenants import <file.gentian> | --bucket <b> --prefix <p> [--endpoint <url>]  (--identity-file <f> | --passphrase) [--name <n>]"
+    fi
+    [[ -z "${file}" || -f "${file}" ]] || die "no such file: ${file}"
+    [[ -z "${bucket}" || -n "${prefix}" ]] || die "--bucket needs --prefix"
     if [[ -n "${idfile}" ]]; then
         identity="$(grep -v '^#' "${idfile}")"
         dec="$(jq -n --arg i "${identity}" '{identity:$i}')"
@@ -406,9 +414,15 @@ cmd_tenants_import() {
         die "say how to open the bundle: --identity-file <f> or --passphrase"
     fi
     _discover
-    echo "Uploading $(du -h "${file}" | cut -f1) …" >&2
-    answer="$(_upload "/v1/clusters/${_CLUSTER}/bundles" "${file}")" || die "${answer#error: }"
-    bundle="$(printf '%s' "${answer}" | jq -c '.bundle')"
+    if [[ -n "${file}" ]]; then
+        echo "Uploading $(du -h "${file}" | cut -f1) …" >&2
+        answer="$(_upload "/v1/clusters/${_CLUSTER}/bundles" "${file}")" || die "${answer#error: }"
+        bundle="$(printf '%s' "${answer}" | jq -c '.bundle')"
+    else
+        # A bundle still in a bucket the cluster can reach: the platform's
+        # own when no endpoint is given, a destination's otherwise.
+        bundle="$(jq -n --arg b "${bucket}" --arg p "${prefix}" --arg e "${endpoint}" '{bucket:$b, prefix:$p} + (if $e == "" then {} else {endpoint:$e} end)')"
+    fi
     body="$(jq -n --argjson b "${bundle}" --argjson d "${dec}" --arg n "${name}" '{bundle:$b, decryption:$d} + (if $n == "" then {} else {name:$n} end)')"
     answer="$(_call POST "/v1/clusters/${_CLUSTER}/tenants/import" "${body}")" || exit 1
     name="$(printf '%s' "${answer}" | jq -r '.tenant')"

@@ -186,10 +186,18 @@ Git; the kit supplies only what Git cannot hold.
 kubectl gentian tenants import <tenant>-<export>.gentian --identity-file <key>
 ```
 
-A bundle that is still in a bucket rather than in your hands needs no
-download first: `scripts/recovery.sh fetch` (scenario 2) writes the
-`.gentian` file from the bucket, or the Operations Console's Recovery screen
-imports straight from the destination.
+A bundle that is still in a bucket the cluster can reach needs no file:
+
+```bash
+kubectl gentian tenants import --bucket <tenant>-gentian-backup --prefix <export> \
+  --identity-file <key>                      # the platform's own storage
+kubectl gentian tenants import --bucket bigbucket --prefix policy-20260904-0300 \
+  --endpoint https://sos-ch-dk-2.exo.io --identity-file <key>   # a destination
+```
+
+A destination's credentials are the policy's, already in the cluster once
+the kernel is back; the Operations Console's Recovery screen does the same
+from a list.
 
 ### Reading the bundles before the cluster exists
 
