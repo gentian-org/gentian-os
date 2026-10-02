@@ -17,6 +17,8 @@ limitations under the License.
 package controller
 
 import (
+	"os"
+	"os/exec"
 	"strings"
 	"testing"
 )
@@ -37,10 +39,31 @@ func TestBuildAdminScript_UsesSafeAuthHeaderExpansion(t *testing.T) {
 	if !strings.Contains(script, "curl -sf -H \"${AUTH_HEADER}\"") {
 		t.Fatalf("script must pass authorization via -H \"${AUTH_HEADER}\"")
 	}
-	if !strings.Contains(script, "INITIAL_TENANT_ADMIN realm=") {
-		t.Fatal("script must emit INITIAL_TENANT_ADMIN after password sync")
+	// No password: the platform neither sets, resets nor prints one. Its
+	// holder sets it through an activation link.
+	for _, forbidden := range []string{"reset-password", "TENANT_ADMIN_PASSWORD", "INITIAL_TENANT_ADMIN"} {
+		if strings.Contains(script, forbidden) {
+			t.Fatalf("the tenant-admin script must not handle a password: found %q", forbidden)
+		}
 	}
-	if strings.Contains(script, "password reset skipped") {
-		t.Fatal("script must always sync tenant admin password from OpenBao")
+	if !strings.Contains(script, `requiredActions\":[${ACTIONS}]`) || !strings.Contains(script, `"UPDATE_PASSWORD","CONFIGURE_TOTP"`) {
+		t.Fatal("the account must be created with its activation steps as required actions")
+	}
+}
+
+// The script is shell; a quoting slip in it is a Job that fails in the
+// cluster and nowhere else.
+func TestBuildAdminScript_IsValidShell(t *testing.T) {
+	t.Parallel()
+	f, err := os.CreateTemp(t.TempDir(), "admin-*.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString(buildAdminScript("gtn-demo")); err != nil {
+		t.Fatal(err)
+	}
+	_ = f.Close()
+	if out, err := exec.Command("sh", "-n", f.Name()).CombinedOutput(); err != nil {
+		t.Fatalf("sh -n: %v\n%s", err, out)
 	}
 }

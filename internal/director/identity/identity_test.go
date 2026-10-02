@@ -100,6 +100,16 @@ func (f *fakeKeycloak) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The activation-link endpoint the platform's Keycloak extension serves.
+	if strings.HasPrefix(r.URL.Path, "/realms/") && strings.Contains(r.URL.Path, "/gentian-activation/") {
+		f.mu.Lock()
+		f.calls = append(f.calls, recorded{method: r.Method, path: r.URL.Path, body: string(body)})
+		f.mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"link":"https://id.example/auth/realms/demo/login-actions/action-token?key=abc","expiresAt":1700000000}`))
+		return
+	}
+
 	rest := strings.TrimPrefix(r.URL.Path, "/admin/realms/")
 	realm, path, _ := strings.Cut(rest, "/")
 	if path != "" {
@@ -666,5 +676,55 @@ func TestOnlyACustomGroupIsRenamed(t *testing.T) {
 	puts := f.callsTo(http.MethodPut, "/groups/g2")
 	if len(puts) != 1 || !strings.Contains(puts[0].body, `"field-sales"`) {
 		t.Fatalf("renamed with: %+v", puts)
+	}
+}
+
+// With nowhere to mail it, the link comes back to show once -- and asks for a
+// second factor when one is required and not yet enrolled.
+func TestActivationWithoutAnAddressReturnsTheLink(t *testing.T) {
+	f, srv := newFake(t)
+	f.users["demo"] = []userRep{{ID: "abc123", Username: "admin@demo.k.example", Enabled: true}}
+	c := clientFor(t, srv, StaticSource{"demo": {Realm: "demo", ClientID: "a", ClientSecret: "s"}})
+	r, _ := c.Realm("demo")
+
+	a, err := c.ActivateAccount(context.Background(), r, "abc123", "", true, "gentian-edge-demo", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Mailed || a.Link == "" || a.ExpiresAt == 0 {
+		t.Fatalf("activation: %+v", a)
+	}
+	links := f.callsTo(http.MethodPost, "/gentian-activation/users/abc123/link")
+	if len(links) != 1 || !strings.Contains(links[0].body, "CONFIGURE_TOTP") || !strings.Contains(links[0].body, "UPDATE_PASSWORD") {
+		t.Fatalf("link asked with: %+v", links)
+	}
+	if len(f.callsTo(http.MethodPut, "/execute-actions-email")) != 0 {
+		t.Fatal("nothing should be mailed without an address")
+	}
+}
+
+// Given an address, it becomes the recovery address and the link is mailed
+// there; an enrolled second factor is not asked for again.
+func TestActivationWithAnAddressMailsIt(t *testing.T) {
+	f, srv := newFake(t)
+	f.users["demo"] = []userRep{{ID: "abc123", Username: "admin@demo.k.example", Enabled: true}}
+	f.creds["abc123"] = []map[string]string{{"id": "o1", "type": "otp"}}
+	c := clientFor(t, srv, StaticSource{"demo": {Realm: "demo", ClientID: "a", ClientSecret: "s"}})
+	r, _ := c.Realm("demo")
+
+	a, err := c.ActivateAccount(context.Background(), r, "abc123", "Owner@Example.org", true, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !a.Mailed || a.Email != "owner@example.org" || a.Link != "" {
+		t.Fatalf("activation: %+v", a)
+	}
+	puts := f.callsTo(http.MethodPut, "/users/abc123")
+	if len(puts) != 1 || !strings.Contains(puts[0].body, `"email":"owner@example.org"`) {
+		t.Fatalf("the address must become the recovery address: %+v", puts)
+	}
+	mails := f.callsTo(http.MethodPut, "/execute-actions-email")
+	if len(mails) != 1 || strings.Contains(mails[0].body, "CONFIGURE_TOTP") {
+		t.Fatalf("an enrolled factor is not asked for again: %+v", mails)
 	}
 }

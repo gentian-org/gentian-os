@@ -62,8 +62,22 @@ spec:
           metadata:
             type: object
           spec:
-            description: TenantSpec defines the desired state of a Tenant.
             properties:
+              admin:
+                description: |-
+                  Admin is how the tenant's administrator account is handed over. The
+                  account is created with no password: its holder sets one through a
+                  single-use, expiring link, mailed to a recovery address when the person
+                  activating it gives one and otherwise shown, once, to them. The address
+                  is not here: a person's address committed to git outlives the account.
+                properties:
+                  requireMFA:
+                    default: true
+                    description: |-
+                      RequireMFA makes enrolling a second factor part of activating the
+                      account. Defaults to true.
+                    type: boolean
+                type: object
               apps:
                 description: Apps lists the applications to install for this tenant.
                 items:

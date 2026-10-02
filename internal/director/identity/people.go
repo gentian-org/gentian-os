@@ -18,8 +18,10 @@ package identity
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"sort"
@@ -581,6 +583,147 @@ func (c *Client) DeleteGroup(ctx context.Context, r Realm, path string) error {
 		return fmt.Errorf("%w: %q", ErrNotCustom, groups[0].Path)
 	}
 	return c.call(ctx, r, http.MethodDelete, "/groups/"+url.PathEscape(groups[0].ID), nil, nil, nil)
+}
+
+// Activation is how an account was handed over: mailed to an address, or a
+// link to show the person who asked, once.
+type Activation struct {
+	Mailed bool   `json:"mailed"`
+	Email  string `json:"email,omitempty"`
+	Link   string `json:"link,omitempty"`
+	// ExpiresAt is the link's expiry, seconds since the epoch.
+	ExpiresAt int64 `json:"expiresAt,omitempty"`
+	// Actions are what the link asks the person to do.
+	Actions []string `json:"actions"`
+}
+
+// FindUser finds one person by exact username.
+func (c *Client) FindUser(ctx context.Context, r Realm, username string) (Person, error) {
+	var raw []userRep
+	q := url.Values{"username": {username}, "exact": {"true"}, "briefRepresentation": {"true"}}
+	if err := c.call(ctx, r, http.MethodGet, "/users", q, nil, &raw); err != nil {
+		return Person{}, err
+	}
+	for _, u := range raw {
+		if strings.EqualFold(u.Username, username) {
+			return u.person(), nil
+		}
+	}
+	return Person{}, fmt.Errorf("%w: user %q", ErrNotFound, username)
+}
+
+// ActivateAccount hands an account to its holder through a single-use,
+// expiring link: set a password, and enrol a second factor when one is
+// required and not yet enrolled.
+//
+// The platform's practice for every person it invites, now for administrators
+// too. Mailed when there is an address to mail -- the one given now, which
+// becomes the account's recovery address, or the one it already has -- and
+// otherwise returned, for whoever asked to show once. Either way nobody but
+// the holder ever knows the password. Issuing it again is how an
+// administrator who lost access gets it back: a new link, not a lookup.
+func (c *Client) ActivateAccount(ctx context.Context, r Realm, id, email string, requireMFA bool, clientID, redirectURI string) (Activation, error) {
+	if !plainID(id) {
+		return Activation{}, fmt.Errorf("%w: user %q", ErrNotFound, id)
+	}
+	var creds []struct {
+		Type string `json:"type"`
+	}
+	if err := c.call(ctx, r, http.MethodGet, "/users/"+url.PathEscape(id)+"/credentials", nil, nil, &creds); err != nil {
+		return Activation{}, err
+	}
+	hasOTP := false
+	for _, cr := range creds {
+		hasOTP = hasOTP || cr.Type == "otp"
+	}
+	actions := []string{"UPDATE_PASSWORD"}
+	if requireMFA && !hasOTP {
+		actions = append(actions, configureTOTP)
+	}
+
+	var cur map[string]any
+	if err := c.call(ctx, r, http.MethodGet, "/users/"+url.PathEscape(id), nil, nil, &cur); err != nil {
+		return Activation{}, err
+	}
+	if cur == nil {
+		return Activation{}, fmt.Errorf("%w: user %q", ErrNotFound, id)
+	}
+	email = strings.TrimSpace(strings.ToLower(email))
+	if email != "" {
+		if !looksLikeAddress(email) {
+			return Activation{}, fmt.Errorf("not an address: %q", email)
+		}
+		cur["email"] = email
+		attrs, _ := cur["attributes"].(map[string]any)
+		if attrs == nil {
+			attrs = map[string]any{}
+		}
+		attrs[inviteEmailAttribute] = []string{email}
+		cur["attributes"] = attrs
+	}
+	// The steps stay required whatever happens to the link, so a session
+	// opened some other way cannot skip them.
+	required := map[string]bool{}
+	if raw, ok := cur["requiredActions"].([]any); ok {
+		for _, a := range raw {
+			if s, ok := a.(string); ok {
+				required[s] = true
+			}
+		}
+	}
+	for _, a := range actions {
+		required[a] = true
+	}
+	list := make([]string, 0, len(required))
+	for a := range required {
+		list = append(list, a)
+	}
+	sort.Strings(list)
+	cur["requiredActions"] = list
+	if err := c.call(ctx, r, http.MethodPut, "/users/"+url.PathEscape(id), nil, cur, nil); err != nil {
+		return Activation{}, err
+	}
+
+	mailTo, _ := cur["email"].(string)
+	q := url.Values{}
+	if clientID != "" {
+		q.Set("client_id", clientID)
+	}
+	if redirectURI != "" {
+		q.Set("redirect_uri", redirectURI)
+	}
+	if mailTo != "" {
+		if err := c.call(ctx, r, http.MethodPut, "/users/"+url.PathEscape(id)+"/execute-actions-email", q, actions, nil); err != nil {
+			return Activation{}, err
+		}
+		return Activation{Mailed: true, Email: mailTo, Actions: actions}, nil
+	}
+
+	body := map[string]any{"actions": actions}
+	if clientID != "" {
+		body["clientId"] = clientID
+	}
+	if redirectURI != "" {
+		body["redirectUri"] = redirectURI
+	}
+	rel := "/realms/" + url.PathEscape(r.name) + "/gentian-activation/users/" + url.PathEscape(id) + "/link"
+	resp, err := c.doAt(ctx, r, http.MethodPost, rel, "/gentian-activation/users/{id}/link", nil, body)
+	if err != nil {
+		return Activation{}, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err := statusError(resp.StatusCode, http.MethodPost, "/gentian-activation/users/{id}/link", raw); err != nil {
+		return Activation{}, err
+	}
+	var out struct {
+		Link      string `json:"link"`
+		ExpiresAt int64  `json:"expiresAt"`
+	}
+	if err := json.Unmarshal(raw, &out); err != nil || out.Link == "" {
+		return Activation{}, fmt.Errorf("the realm answered no activation link")
+	}
+	return Activation{Link: out.Link, ExpiresAt: out.ExpiresAt, Actions: actions}, nil
 }
 
 // RenameGroup gives a custom group a new path. The platform's own groups keep

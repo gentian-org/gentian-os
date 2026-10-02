@@ -79,12 +79,6 @@ func (s *Seeder) gen(salt, info string, n int) string {
 	return hex.EncodeToString(buf)[:n]
 }
 
-// genTenantAdminPassword returns a password with mixed character classes.
-// Pure-hex derived passwords are rejected on PATCH even when CREATE succeeded on an earlier deploy.
-func (s *Seeder) genTenantAdminPassword(salt string) string {
-	return "Gt!" + s.gen(salt, "password", 24)
-}
-
 // seedAndRead writes data with PutOnce, then re-reads to honour any value
 // already present (manual overrides or values from a prior reconcile).
 func (s *Seeder) seedAndRead(ctx context.Context, path string, data map[string]string) (map[string]string, error) {
@@ -351,39 +345,6 @@ func (s *Seeder) SeedIMAP(ctx context.Context, tenant, app string, base IMAPCred
 
 // --- IMAP --------------------------------------------------------------------
 
-// TenantAdminCreds is the set of values written to …/admin.
-type TenantAdminCreds struct {
-	Username string
-	Password string
-}
-
-// SeedTenantAdmin derives the tenant admin password from the master and
-// persists it write-once under gentian-os/tenants/<tenant>/admin.
-//
-// The username is passed in rather than derived here. It is the tenant's admin
-// ADDRESS — Tenant.TenantAdminUsername — and this package cannot compute it: it
-// needs the cluster's domain and tenancy mode, which are the caller's. Deriving
-// a second form of the same identifier here is what left the login as
-// admin-<tenant> while the address had no tenant name in it at all.
-//
-// Write-once, so an existing tenant keeps the username it was provisioned with.
-// Operators can override it by writing a different value to OpenBao before the
-// first reconcile.
-func (s *Seeder) SeedTenantAdmin(ctx context.Context, tenant, username string) (TenantAdminCreds, error) {
-	salt := TenantAdminPath(tenant)
-	want := map[string]string{
-		"username": username,
-		"password": s.genTenantAdminPassword(salt),
-	}
-	got, err := s.seedAndRead(ctx, salt, want)
-	if err != nil {
-		return TenantAdminCreds{}, fmt.Errorf("seed tenant-admin(%s): %w", tenant, err)
-	}
-	return TenantAdminCreds{
-		Username: got["username"],
-		Password: got["password"],
-	}, nil
-}
 
 // --- Per-app internal secrets ------------------------------------------------
 

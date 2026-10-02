@@ -33,7 +33,6 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/catalogue"
-	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"github.com/gentian-org/gentian-os/internal/keycloak"
 )
 
@@ -197,11 +196,7 @@ func (r *TenantReconciler) buildIdentityProvisioningJobs(ctx context.Context, te
 	jobs = append(jobs, *makeGentianGroupsJob(tenant, realmName, groupsJSON))
 
 	if !adopted {
-		adminCreds, err := r.seedTenantAdminCreds(ctx, tenant)
-		if err != nil {
-			return nil, err
-		}
-		jobs = append(jobs, *makeAdminJob(tenant, realmName, r.tenantAdminEmail(tenant), adminCreds))
+		jobs = append(jobs, *makeAdminJob(tenant, realmName, r.tenantAdminUsername(tenant)))
 	}
 
 	for _, cfg := range oidcConfigs {
@@ -254,12 +249,11 @@ func (r *TenantReconciler) buildIdentityProvisioningJobs(ctx context.Context, te
 	return jobs, nil
 }
 
-func (r *TenantReconciler) seedTenantAdminCreds(ctx context.Context, tenant *gentianov1alpha1.Tenant) (secrets.TenantAdminCreds, error) {
-	username := tenant.TenantAdminUsername(r.KernelDomain, r.TenancyMode)
-	if r.Seeder != nil {
-		return r.Seeder.SeedTenantAdmin(ctx, tenant.Name, username)
-	}
-	return secrets.TenantAdminCreds{Username: username, Password: "placeholder"}, nil
+// tenantAdminUsername is the administrator's login. The account has no
+// password until its holder sets one through an activation link: nothing here
+// derives, stores or logs one.
+func (r *TenantReconciler) tenantAdminUsername(tenant *gentianov1alpha1.Tenant) string {
+	return tenant.TenantAdminUsername(r.KernelDomain, r.TenancyMode)
 }
 
 // seedOIDCSecrets writes issuer/client-id/client-secret to OpenBao for apps whose

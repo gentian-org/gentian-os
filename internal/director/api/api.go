@@ -70,6 +70,7 @@ type Repository interface {
 	Tenants(ctx context.Context) ([]string, error)
 	TenantRealm(ctx context.Context, tenant string) (string, error)
 	TenantLoginDomain(ctx context.Context, tenant string) (string, error)
+	TenantAdminRequiresMFA(ctx context.Context, tenant string) (bool, error)
 	SetResourcePlan(ctx context.Context, tenant string, plan gitops.Plan, meta gitops.Meta) (gitops.Result, error)
 	SetTenantBackupPolicy(ctx context.Context, tenant string, policy gitops.BackupPolicy, meta gitops.Meta) (gitops.Result, error)
 	ClearTenantBackupPolicy(ctx context.Context, tenant string, meta gitops.Meta) (gitops.Result, error)
@@ -214,6 +215,8 @@ type Identity interface {
 	CreateGroup(ctx context.Context, r identity.Realm, path string) (identity.Group, error)
 	DeleteGroup(ctx context.Context, r identity.Realm, path string) error
 	RenameGroup(ctx context.Context, r identity.Realm, path, newPath string) (identity.Group, error)
+	FindUser(ctx context.Context, r identity.Realm, username string) (identity.Person, error)
+	ActivateAccount(ctx context.Context, r identity.Realm, id, email string, requireMFA bool, clientID, redirectURI string) (identity.Activation, error)
 	GroupMembers(ctx context.Context, r identity.Realm, path string) ([]identity.Person, error)
 }
 
@@ -682,6 +685,10 @@ func (s *Server) routes() {
 		s.action("POST /v1/tenants/{t}/actions/create-group", "can_manage_users", tenantObject, s.createGroup)
 		s.action("POST /v1/tenants/{t}/actions/delete-group", "can_manage_users", tenantObject, s.deleteGroup)
 		s.action("POST /v1/tenants/{t}/actions/rename-group", "can_manage_users", tenantObject, s.renameGroup)
+
+		// Handing a tenant's administrator account to its holder: whoever may
+		// bring tenants on (can_configure on the cluster) issues the link.
+		s.action("POST /v1/clusters/{c}/tenants/{t}/actions/activate-admin", "can_configure", s.clusterObject, s.activateAdmin)
 	}
 }
 

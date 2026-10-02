@@ -202,6 +202,9 @@ func (g *GitOps) TenantDetails(ctx context.Context) ([]Tenant, error) {
 type NewTenant struct {
 	Name        string `json:"name"`
 	DisplayName string `json:"displayName"`
+	// RequireMFA makes the administrator enrol a second factor when they
+	// activate the account. Nil is the default, which is on.
+	RequireMFA *bool `json:"requireMFA,omitempty"`
 }
 
 // CreateTenant writes a tenant's manifest and commits it.
@@ -237,7 +240,8 @@ func (g *GitOps) CreateTenant(ctx context.Context, req NewTenant, meta Meta) (Re
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return Result{}, err
 	}
-	if err := os.WriteFile(file, []byte(tenantManifest(req.Name, display)), 0o644); err != nil {
+	requireMFA := req.RequireMFA == nil || *req.RequireMFA
+	if err := os.WriteFile(file, []byte(tenantManifest(req.Name, display, requireMFA)), 0o644); err != nil {
 		return Result{}, err
 	}
 	// The kustomization the bootstrap scaffolds for the platform tenant,
@@ -311,7 +315,7 @@ func (g *GitOps) RetireTenant(ctx context.Context, tenant string, meta Meta) (Re
 // into the repository. Whoever reads this file next is reading a commit in a
 // review, and a manifest that explains its own defaults is worth more there
 // than one that is merely valid.
-func tenantManifest(name, display string) string {
+func tenantManifest(name, display string, requireMFA bool) string {
 	return fmt.Sprintf(`# Tenant %s, brought on through the director.
 #
 # Argo CD syncs this file and the operator does the rest: the Keycloak realm,
@@ -326,6 +330,10 @@ metadata:
     argocd.argoproj.io/sync-wave: "2"
 spec:
   displayName: %s
+  # The administrator account has no password until its holder sets one,
+  # through a single-use link the director issues (activate-admin).
+  admin:
+    requireMFA: %t
   isolation:
     # A namespace per tenant and a realm of its own. The realm is what keeps
     # one tenant's administrators from seeing another's people at all, rather
@@ -348,5 +356,32 @@ spec:
     maxApps: 20
   # Apps are installed through the director, which appends to this list.
   apps: []
-`, name, name, display, name, name, name)
+`, name, name, display, requireMFA, name, name, name)
+}
+
+// TenantAdminRequiresMFA is whether the tenant's administrator must enrol a
+// second factor: the manifest's spec.admin.requireMFA, true when unset.
+func (g *GitOps) TenantAdminRequiresMFA(ctx context.Context, tenant string) (bool, error) {
+	if !ValidName(tenant) {
+		return true, fmt.Errorf("%w: tenant %q", ErrInvalidName, tenant)
+	}
+	file, err := g.TenantFile(ctx, tenant)
+	if err != nil {
+		return true, err
+	}
+	b, err := os.ReadFile(file)
+	if err != nil {
+		return true, err
+	}
+	var doc struct {
+		Spec struct {
+			Admin struct {
+				RequireMFA *bool `json:"requireMFA"`
+			} `json:"admin"`
+		} `json:"spec"`
+	}
+	if err := yaml.Unmarshal(b, &doc); err != nil {
+		return true, fmt.Errorf("read %s: %w", file, err)
+	}
+	return doc.Spec.Admin.RequireMFA == nil || *doc.Spec.Admin.RequireMFA, nil
 }

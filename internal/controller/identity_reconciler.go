@@ -33,7 +33,6 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/authz"
 	"github.com/gentian-org/gentian-os/internal/kernel"
-	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"github.com/gentian-org/gentian-os/internal/keycloak"
 	"github.com/gentian-org/gentian-os/internal/meta"
 )
@@ -407,18 +406,26 @@ func makeSAMLClientJob(tenant *gentianov1alpha1.Tenant, realmName, appName, enti
 	}
 }
 
-// makeAdminJob builds the tenant-admin provisioning Job. adminEmail is already
-// resolved by the caller through Tenant.AdminEmailOrDefault, so this and the
-// XTenant that carries the same address cannot disagree about it.
-func makeAdminJob(tenant *gentianov1alpha1.Tenant, realmName, adminEmail string, creds secrets.TenantAdminCreds) *batchv1.Job {
+// makeAdminJob builds the tenant-admin provisioning Job.
+//
+// The account is created with no password and with what activating it takes
+// as required actions: set a password, and enrol a second factor unless the
+// tenant opts out. Its holder does both through a single-use, expiring link
+// the director issues on request (activate-admin) -- mailed to a recovery
+// address when one is given then, otherwise shown once to whoever asked. The
+// platform never knows the password, the same as for every member it invites.
+func makeAdminJob(tenant *gentianov1alpha1.Tenant, realmName, username string) *batchv1.Job {
 	ttl := meta.ProvisioningJobTTLSeconds
 	deadline := meta.ProvisioningJobActiveDeadlineSeconds
+	requireMFA := "false"
+	if tenant.AdminRequiresMFA() {
+		requireMFA = "true"
+	}
 	container := keycloakContainer("provision-tenant-admin", buildAdminScript(realmName))
 	container.Env = append(container.Env,
 		corev1.EnvVar{Name: "TENANT_NAME", Value: tenant.Name},
-		corev1.EnvVar{Name: "TENANT_ADMIN_USERNAME", Value: creds.Username},
-		corev1.EnvVar{Name: "TENANT_ADMIN_PASSWORD", Value: creds.Password},
-		corev1.EnvVar{Name: "TENANT_ADMIN_EMAIL", Value: adminEmail},
+		corev1.EnvVar{Name: "TENANT_ADMIN_USERNAME", Value: username},
+		corev1.EnvVar{Name: "TENANT_ADMIN_REQUIRE_MFA", Value: requireMFA},
 		corev1.EnvVar{Name: "TENANT_ADMINS_GROUP", Value: gentianTenantAdminsGroup(tenant.Name)},
 	)
 	return &batchv1.Job{
@@ -729,58 +736,55 @@ fi`, realmName, entityID, entityID, realmName, realmName, entityID, acsURL, enti
 func buildAdminScript(realmName string) string {
 	// The script:
 	//   1. Authenticates to the master realm (cluster-admin creds from keycloakAdminSecret).
-	//   2. Creates the tenant admin user in the tenant realm if absent.
-	//   3. Always syncs the OpenBao-canonical password and clears stale requiredActions.
+	//   2. Creates the tenant admin if absent -- with NO password, and with
+	//      UPDATE_PASSWORD (and CONFIGURE_TOTP unless the tenant opts out) as
+	//      required actions, which its holder completes through an activation
+	//      link. An existing account's password is never touched: it is its
+	//      holder's, and re-running the Job must not reset it.
+	//   3. Keeps the second-factor requirement as the tenant declares it.
 	//   4. Grants the realm-management/realm-admin composite role so the user can
 	//      manage users/groups/clients/sessions within this realm only.
 	//
 	// All steps are idempotent: users/roles are checked for existence before
-	// POST so re-running the Job is safe.
+	// POST so re-running the Job is safe. Nothing secret is printed.
 	return keycloak.ShellJSONIDExtractor() + fmt.Sprintf(`set -eu
 `+keycloak.ShellAdminToken()+`
 AUTH_HEADER="Authorization: Bearer ${TOKEN}"
-CREATED=0
 
-# --- 1. Create tenant admin user if absent ---
+ACTIONS='"UPDATE_PASSWORD"'
+if [ "${TENANT_ADMIN_REQUIRE_MFA:-true}" = "true" ]; then
+  ACTIONS='"UPDATE_PASSWORD","CONFIGURE_TOTP"'
+fi
+
+# --- 1. Create tenant admin user if absent, without a password ---
 EXISTING=$(curl -sf -H "${AUTH_HEADER}" \
   "${KEYCLOAK_URL}/admin/realms/%s/users?username=${TENANT_ADMIN_USERNAME}&exact=true")
 if echo "${EXISTING}" | grep -q '"id"'; then
   UID=$(echo "${EXISTING}" | sed 's/.*"id":"\([^"]*\)".*/\1/')
   echo "tenant admin ${TENANT_ADMIN_USERNAME} already exists (id=${UID}) in realm %s"
 else
-	curl -sf -X POST -H "${AUTH_HEADER}" \
+  curl -sf -X POST -H "${AUTH_HEADER}" \
     -H "Content-Type: application/json" \
     "${KEYCLOAK_URL}/admin/realms/%s/users" \
-    -d "{\"username\":\"${TENANT_ADMIN_USERNAME}\",\"enabled\":true,\"requiredActions\":[\"UPDATE_PASSWORD\"]}"
-	EXISTING=$(curl -sf -H "${AUTH_HEADER}" \
+    -d "{\"username\":\"${TENANT_ADMIN_USERNAME}\",\"enabled\":true,\"emailVerified\":false,\"firstName\":\"Tenant\",\"lastName\":\"Administrator\",\"requiredActions\":[${ACTIONS}]}"
+  EXISTING=$(curl -sf -H "${AUTH_HEADER}" \
     "${KEYCLOAK_URL}/admin/realms/%s/users?username=${TENANT_ADMIN_USERNAME}&exact=true")
   UID=$(echo "${EXISTING}" | sed 's/.*"id":"\([^"]*\)".*/\1/')
-	CREATED=1
-  echo "tenant admin ${TENANT_ADMIN_USERNAME} created (id=${UID}) in realm %s"
+  echo "tenant admin ${TENANT_ADMIN_USERNAME} created without a password (id=${UID}) in realm %s"
 fi
 
-# --- 2. Sync OpenBao-canonical password (idempotent; required after Retain redeploy) ---
-HTTP=$(curl -s -o /tmp/kc-pw-body -w "%%{http_code}" -X PUT -H "${AUTH_HEADER}" \
-  -H "Content-Type: application/json" \
-  "${KEYCLOAK_URL}/admin/realms/%s/users/${UID}/reset-password" \
-  -d "{\"type\":\"password\",\"value\":\"${TENANT_ADMIN_PASSWORD}\",\"temporary\":false}")
-case "${HTTP}" in
-200|204)
-  echo "password synced from OpenBao (temporary=false)"
-  ;;
-*)
-  echo "Keycloak reset-password failed (HTTP ${HTTP})" >&2
-  cat /tmp/kc-pw-body >&2 2>/dev/null || true
-  exit 1
-  ;;
-esac
-curl -sf -X PUT -H "${AUTH_HEADER}" \
-  -H "Content-Type: application/json" \
-  "${KEYCLOAK_URL}/admin/realms/%s/users/${UID}" \
-  -d "{\"enabled\":true,\"email\":\"${TENANT_ADMIN_EMAIL}\",\"emailVerified\":true,\"firstName\":\"Tenant\",\"lastName\":\"Administrator\",\"requiredActions\":[]}"
-echo "tenant admin user enabled; requiredActions cleared; email=${TENANT_ADMIN_EMAIL}"
-echo "INITIAL_TENANT_ADMIN realm=%s username=${TENANT_ADMIN_USERNAME} password=${TENANT_ADMIN_PASSWORD}"
-echo "INITIAL_TENANT_ADMIN_RETRIEVE bao kv get -mount=secret -field=password gentian-os/tenants/${TENANT_NAME}/admin"
+# --- 2. The second-factor requirement, as declared ---
+USER_JSON=$(curl -sf -H "${AUTH_HEADER}" "${KEYCLOAK_URL}/admin/realms/%s/users/${UID}")
+CREDS=$(curl -sf -H "${AUTH_HEADER}" "${KEYCLOAK_URL}/admin/realms/%s/users/${UID}/credentials")
+HAS_OTP=$(echo "${CREDS}" | jq '[.[] | select(.type=="otp")] | length > 0')
+UPDATED=$(echo "${USER_JSON}" | jq \
+  --arg mfa "${TENANT_ADMIN_REQUIRE_MFA:-true}" \
+  --argjson hasotp "${HAS_OTP}" '
+  .requiredActions = ((.requiredActions // []) - ["CONFIGURE_TOTP"])
+  | (if $mfa == "true" and ($hasotp | not) then .requiredActions += ["CONFIGURE_TOTP"] else . end)')
+curl -sf -X PUT -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
+  "${KEYCLOAK_URL}/admin/realms/%s/users/${UID}" -d "${UPDATED}"
+echo "tenant admin: second factor required=${TENANT_ADMIN_REQUIRE_MFA:-true}"
 
 # --- 3. Grant realm-admin composite role via realm-management client ---
 MGMT_CLIENT_ID=$(curl -sf -H "${AUTH_HEADER}" \

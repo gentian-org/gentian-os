@@ -282,11 +282,18 @@ func (c *Client) token(ctx context.Context, r Realm) (string, error) {
 // scoped to the realm its credential was issued for by construction. It never
 // takes a full URL.
 func (c *Client) do(ctx context.Context, r Realm, method, path string, query url.Values, body any) (*http.Response, error) {
+	return c.doAt(ctx, r, method, "/admin/realms/"+url.PathEscape(r.name)+path, path, query, body)
+}
+
+// doAt is do against any path under the base, for an endpoint a realm serves
+// outside the admin API (the activation link). label is what errors name.
+func (c *Client) doAt(ctx context.Context, r Realm, method, rel, label string, query url.Values, body any) (*http.Response, error) {
+	path := label
 	tok, err := c.token(ctx, r)
 	if err != nil {
 		return nil, err
 	}
-	endpoint := c.base + "/admin/realms/" + url.PathEscape(r.name) + path
+	endpoint := c.base + rel
 	if len(query) > 0 {
 		endpoint += "?" + query.Encode()
 	}

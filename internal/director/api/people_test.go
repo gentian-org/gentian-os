@@ -516,6 +516,23 @@ func (f *fakeIdentity) RenameGroup(ctx context.Context, r identity.Realm, _, new
 	return identity.Group{ID: "g", Path: newPath, Name: newPath, Custom: true}, nil
 }
 
+func (f *fakeIdentity) FindUser(ctx context.Context, r identity.Realm, username string) (identity.Person, error) {
+	f.note(ctx, r)
+	return identity.Person{ID: "admin-id", Username: username}, nil
+}
+
+func (f *fakeIdentity) ActivateAccount(ctx context.Context, r identity.Realm, id, email string, requireMFA bool, _, _ string) (identity.Activation, error) {
+	f.note(ctx, r)
+	actions := []string{"UPDATE_PASSWORD"}
+	if requireMFA {
+		actions = append(actions, "CONFIGURE_TOTP")
+	}
+	if email != "" {
+		return identity.Activation{Mailed: true, Email: email, Actions: actions}, nil
+	}
+	return identity.Activation{Link: "https://id.example/link?key=" + id, ExpiresAt: 1, Actions: actions}, nil
+}
+
 func (f *fakeIdentity) GroupMembers(ctx context.Context, r identity.Realm, _ string) ([]identity.Person, error) {
 	f.note(ctx, r)
 	return nil, nil
@@ -621,5 +638,41 @@ func TestRenamingAGroupKeepsItInTheTenantsSubtree(t *testing.T) {
 	if status, _ := h.do(t, http.MethodPost, "/v1/tenants/demo/actions/rename-group", tok,
 		`{"group":"gentian:tenant:demo:sales","name":"admin"}`); status != http.StatusBadRequest {
 		t.Fatalf("renaming onto a platform name: %d, want 400", status)
+	}
+}
+
+// Whoever may bring tenants on hands the administrator account over: a link to
+// show when no address is given, a mail when one is. A tenant administrator
+// cannot issue it for their own account.
+func TestActivatingATenantAdministrator(t *testing.T) {
+	f := newFakeIdentity("demo")
+	h := startWithIdentity(t, f)
+	path := "/v1/clusters/" + dt.Cluster + "/tenants/demo/actions/activate-admin"
+	alice := h.token(t, "gentian", "alice")
+
+	status, body := h.do(t, http.MethodPost, path, alice, "")
+	if status != http.StatusOK {
+		t.Fatalf("activate: %d %v", status, body)
+	}
+	activation, _ := body["activation"].(map[string]any)
+	if activation["link"] == nil || activation["mailed"] == true {
+		t.Fatalf("without an address the link comes back: %v", body)
+	}
+	if u, _ := body["username"].(string); !strings.HasPrefix(u, "admin@demo.") {
+		t.Fatalf("username %q", u)
+	}
+	actions, _ := activation["actions"].([]any)
+	if len(actions) != 2 {
+		t.Fatalf("a second factor is required by default: %v", actions)
+	}
+
+	status, body = h.do(t, http.MethodPost, path, alice, `{"recoveryEmail":"owner@example.org"}`)
+	activation, _ = body["activation"].(map[string]any)
+	if status != http.StatusOK || activation["mailed"] != true || activation["link"] != nil {
+		t.Fatalf("with an address it is mailed: %d %v", status, body)
+	}
+
+	if status, _ := h.do(t, http.MethodPost, path, h.token(t, "tenant-demo", "tom"), ""); status != http.StatusForbidden {
+		t.Fatalf("a tenant administrator issuing it: %d, want 403", status)
 	}
 }

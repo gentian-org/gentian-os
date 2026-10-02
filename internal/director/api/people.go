@@ -496,6 +496,71 @@ func (s *Server) renameGroup(w http.ResponseWriter, r *http.Request, c call) {
 	s.json(w, http.StatusOK, group)
 }
 
+// activateAdmin hands a tenant's administrator account to its holder.
+//
+// The account has no password (the operator creates it without one). This
+// issues the single-use, expiring link that sets one -- and enrols a second
+// factor unless the tenant opts out -- mailed to the recovery address when
+// one is given now or the account already has one, and otherwise returned
+// for the caller to show once. Called again, it is how an administrator who
+// lost access is let back in: a new link, never a password anybody else saw.
+func (s *Server) activateAdmin(w http.ResponseWriter, r *http.Request, c call) {
+	tenant := r.PathValue("t")
+	var body struct {
+		RecoveryEmail string `json:"recoveryEmail"`
+	}
+	if r.ContentLength != 0 && !s.decode(w, r, &body) {
+		return
+	}
+	realmName, err := s.cfg.Repo.TenantRealm(r.Context(), tenant)
+	if err != nil {
+		s.repoError(w, r, err)
+		return
+	}
+	realm, err := s.cfg.Identity.Realm(realmName)
+	if err != nil {
+		s.fail(w, r, http.StatusServiceUnavailable,
+			"this director holds no credential for the realm "+realmName+" yet: the tenant is still being provisioned")
+		return
+	}
+	domain, err := s.cfg.Repo.TenantLoginDomain(r.Context(), tenant)
+	if err != nil || domain == "" {
+		s.fail(w, r, http.StatusServiceUnavailable, "this tenant's login domain cannot be read")
+		return
+	}
+	ctx := identityContext(r)
+	admin, err := s.cfg.Identity.FindUser(ctx, realm, "admin@"+domain)
+	if err != nil {
+		if errors.Is(err, identity.ErrNotFound) {
+			s.fail(w, r, http.StatusConflict, "the administrator account does not exist yet: the tenant is still being provisioned")
+			return
+		}
+		s.identityError(w, r, err)
+		return
+	}
+	requireMFA, _ := s.cfg.Repo.TenantAdminRequiresMFA(r.Context(), tenant)
+	client := s.inviteClientID(realm)
+	redirect := s.cfg.InviteRedirectURI
+	if redirect == "" {
+		redirect = s.cfg.Identity.ZoneLanding(ctx, realm, client)
+	}
+	activation, err := s.cfg.Identity.ActivateAccount(ctx, realm, admin.ID, body.RecoveryEmail, requireMFA, client, redirect)
+	if err != nil {
+		if isAddressError(err) {
+			s.fail(w, r, http.StatusBadRequest, "that is not an address")
+			return
+		}
+		s.identityError(w, r, err)
+		return
+	}
+	s.recordIdentityAction(r, c, "activate-admin", realm, admin.Username)
+	s.json(w, http.StatusOK, map[string]any{
+		"tenant":     tenant,
+		"username":   admin.Username,
+		"activation": activation,
+	})
+}
+
 // listGroupMembers answers who is in one group.
 func (s *Server) listGroupMembers(w http.ResponseWriter, r *http.Request, _ call) {
 	realm, ok := s.realmFor(w, r)

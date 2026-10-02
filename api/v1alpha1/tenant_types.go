@@ -23,12 +23,38 @@ import (
 )
 
 // TenantSpec defines the desired state of a Tenant.
+// TenantAdmin is the handover of a tenant's administrator account.
+type TenantAdmin struct {
+	// RequireMFA makes enrolling a second factor part of activating the
+	// account. Defaults to true.
+	// +optional
+	// +kubebuilder:default=true
+	RequireMFA *bool `json:"requireMFA,omitempty"`
+}
+
+// AdminRequiresMFA reports whether the administrator must enrol a second
+// factor; true unless the tenant says otherwise.
+func (t *Tenant) AdminRequiresMFA() bool {
+	if t.Spec.Admin == nil || t.Spec.Admin.RequireMFA == nil {
+		return true
+	}
+	return *t.Spec.Admin.RequireMFA
+}
+
 type TenantSpec struct {
 	// DisplayName is a human-readable name for this tenant/organisation.
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=256
 	DisplayName string `json:"displayName"`
+
+	// Admin is how the tenant's administrator account is handed over. The
+	// account is created with no password: its holder sets one through a
+	// single-use, expiring link, mailed to a recovery address when the person
+	// activating it gives one and otherwise shown, once, to them. The address
+	// is not here: a person's address committed to git outlives the account.
+	// +optional
+	Admin *TenantAdmin `json:"admin,omitempty"`
 
 	// Domain is the optional custom domain for this tenant's app zone (e.g.
 	// `acme.com`). When unset, the effective domain depends on cluster
