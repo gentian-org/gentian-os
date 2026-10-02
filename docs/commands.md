@@ -86,15 +86,21 @@ kubectl describe tenant demo
 ## 4. Uninstall a Tenant
 
 ```bash
-kubectl gentian tenants retire demo
+kubectl gentian tenants retire demo           # keeps its data
+kubectl gentian tenants retire demo --purge   # deletes its data
 ```
 
-or **Retire** in the console. The director removes the tenant's directory from
-git; Argo CD prunes the Tenant and the operator tears it down. Whether its data
-goes with it is the manifest's `deletionPolicy` — `Retain` unless edited — not
-the command. Not `kubectl delete tenant`: git is what the cluster reconciles
-towards, so deleting the object just brings it back. The platform tenant cannot
-be retired.
+or **Retire** in the console, which asks the same question. Both ask for the
+tenant's name typed out (`--yes` skips that in a script).
+
+Retire removes the tenant's directory from git; Argo CD prunes the Tenant and
+the operator tears it down under the manifest's `deletionPolicy`, `Retain`
+unless edited, so the realm, databases and files stay. Purge first commits
+`deletionPolicy: Delete` (and the `gentianos.io/purge-requested` annotation),
+waits until the live Tenant carries it, then removes the directory; the tenant
+is listed as purging until then. Not `kubectl delete tenant`: git is what the
+cluster reconciles towards, so deleting the object just brings it back. The
+platform tenant can be neither retired nor purged.
 
 ## 5. Tenant App Store
 

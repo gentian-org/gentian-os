@@ -16,7 +16,7 @@
 #   kubectl gentian tenants list
 #   kubectl gentian tenants create <name> [--display-name <text>] [--no-mfa]
 #   kubectl gentian tenants activate-admin <name> [--recovery-email <address>]
-#   kubectl gentian tenants retire <name>
+#   kubectl gentian tenants retire <name> [--purge] [--yes]
 #
 #   kubectl gentian apps list --tenant <tenant>
 #   kubectl gentian apps install <app> --tenant <tenant>
@@ -264,7 +264,7 @@ cmd_whoami() {
 cmd_tenants_list() {
     _discover
     _call GET "/v1/clusters/${_CLUSTER}/tenants" |
-        jq -r '(["TENANT","NAME","APPS"] | @tsv), (.tenants[] | [.name, (.displayName // .name), ((.apps // []) | length | tostring)] | @tsv)' |
+        jq -r '(["TENANT","NAME","APPS","STATE"] | @tsv), (.tenants[] | [.name, (.displayName // .name), ((.apps // []) | length | tostring), (if .purging then "purging" elif .protected then "protected" else "-" end)] | @tsv)' |
         column -t -s $'\t'
 }
 
@@ -332,10 +332,38 @@ cmd_tenants_activate_admin() {
     echo "Valid until $(date -d "@${expires}" 2>/dev/null || date -r "${expires}" 2>/dev/null || echo "${expires}")."
 }
 
+# Retire keeps the tenant's data (its manifest's deletionPolicy, Retain by
+# default); --purge deletes it. Either asks for the name typed out, as the
+# console does, unless --yes says the caller already has.
 cmd_tenants_retire() {
-    local name="${1:-}"
-    [[ -n "${name}" ]] || die "usage: kubectl gentian tenants retire <name>"
+    local name="" purge="" yes="" typed=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --purge) purge=1; shift ;;
+            --yes) yes=1; shift ;;
+            -*) die "unknown flag $1" ;;
+            *) name="$1"; shift ;;
+        esac
+    done
+    [[ -n "${name}" ]] || die "usage: kubectl gentian tenants retire <name> [--purge] [--yes]"
+    if [[ -z "${yes}" ]]; then
+        [[ -t 0 ]] || die "not a terminal: confirm with --yes"
+        if [[ -n "${purge}" ]]; then
+            echo "Purging ${name} deletes its realm and every account in it, its databases,"
+            echo "files, mail and secrets. This cannot be undone."
+        else
+            echo "Retiring ${name} takes it off the cluster and keeps its data."
+        fi
+        read -r -p "Type ${name} to confirm: " typed
+        [[ "${typed}" == "${name}" ]] || die "not confirmed; nothing was changed"
+    fi
     _discover
+    if [[ -n "${purge}" ]]; then
+        _call POST "/v1/clusters/${_CLUSTER}/tenants/${name}/actions/purge" >/dev/null
+        echo "Purge of ${name} requested: its data is set to be deleted, and the tenant"
+        echo "is removed once the cluster has taken that in. 'tenants list' shows it as purging until then."
+        return 0
+    fi
     _call DELETE "/v1/clusters/${_CLUSTER}/tenants/${name}" >/dev/null
     echo "Tenant ${name} retired: git no longer describes it. Its data follows its deletionPolicy."
 }

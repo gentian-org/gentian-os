@@ -386,8 +386,8 @@ kubectl gentian apps list --tenant acme
 
 To remove a tenant, `kubectl gentian tenants retire acme` (or **Retire** in the
 console) — not `kubectl delete`: git is what the cluster reconciles towards, so
-deleting the object just brings it back. Its data follows the tenant's
-`deletionPolicy`, which is `Retain` unless edited.
+deleting the object just brings it back. Retire keeps its data; add `--purge`
+(or choose **Purge** in the console) to delete it.
 
 ---
 
