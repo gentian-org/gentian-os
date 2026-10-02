@@ -17,6 +17,7 @@
 #   kubectl gentian tenants create <name> [--display-name <text>] [--no-mfa]
 #   kubectl gentian tenants activate-admin <name> [--recovery-email <address>]
 #   kubectl gentian tenants retire <name> [--purge [--keep-bundles]] [--yes]
+#   kubectl gentian tenants import <file.gentian> [--identity-file <f> | --passphrase] [--name <n>]
 #
 #   kubectl gentian apps list --tenant <tenant>
 #   kubectl gentian apps install <app> --tenant <tenant>
@@ -377,6 +378,79 @@ cmd_tenants_retire() {
     echo "Tenant ${name} retired: git no longer describes it. Its data follows its deletionPolicy."
 }
 
+# Import a bundle: upload it, have the director declare the tenant from its
+# manifest and restore into it, and follow the import to its end. The key
+# never travels as an argument: an identity comes from a file, a passphrase
+# from a prompt.
+cmd_tenants_import() {
+    local file="" idfile="" ask_pw="" name="" identity="" passphrase="" dec body answer bundle st phase msg last=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --identity-file) idfile="${2:?}"; shift 2 ;;
+            --passphrase) ask_pw=1; shift ;;
+            --name) name="${2:?}"; shift 2 ;;
+            -*) die "unknown flag $1" ;;
+            *) file="$1"; shift ;;
+        esac
+    done
+    [[ -n "${file}" ]] || die "usage: kubectl gentian tenants import <file.gentian> [--identity-file <f> | --passphrase] [--name <n>]"
+    [[ -f "${file}" ]] || die "no such file: ${file}"
+    if [[ -n "${idfile}" ]]; then
+        identity="$(grep -v '^#' "${idfile}")"
+        dec="$(jq -n --arg i "${identity}" '{identity:$i}')"
+    elif [[ -n "${ask_pw}" ]]; then
+        [[ -t 0 ]] || die "--passphrase needs a terminal"
+        read -r -s -p "Passphrase: " passphrase; echo
+        dec="$(jq -n --arg p "${passphrase}" '{passphrase:$p}')"
+    else
+        die "say how to open the bundle: --identity-file <f> or --passphrase"
+    fi
+    _discover
+    echo "Uploading $(du -h "${file}" | cut -f1) …" >&2
+    answer="$(_upload "/v1/clusters/${_CLUSTER}/bundles" "${file}")" || die "${answer#error: }"
+    bundle="$(printf '%s' "${answer}" | jq -c '.bundle')"
+    body="$(jq -n --argjson b "${bundle}" --argjson d "${dec}" --arg n "${name}" '{bundle:$b, decryption:$d} + (if $n == "" then {} else {name:$n} end)')"
+    answer="$(_call POST "/v1/clusters/${_CLUSTER}/tenants/import" "${body}")" || exit 1
+    name="$(printf '%s' "${answer}" | jq -r '.tenant')"
+    echo "Tenant ${name} declared ($(printf '%s' "${answer}" | jq -r '.commit' | cut -c1-8)); the operator provisions it, then the bundle is restored."
+    while :; do
+        st="$(_call GET "/v1/clusters/${_CLUSTER}/tenants/${name}/import")" || exit 1
+        phase="$(printf '%s' "${st}" | jq -r '.phase')"
+        msg="$(printf '%s' "${st}" | jq -r '.message // ""')"
+        if [[ "${phase}: ${msg}" != "${last}" ]]; then
+            echo "  ${phase}: ${msg}" >&2
+            last="${phase}: ${msg}"
+        fi
+        case "${phase}" in
+            ready)
+                echo "Tenant ${name} imported."
+                [[ "$(printf '%s' "${st}" | jq -r '.passwordResetRequired')" != "true" ]] ||
+                    echo "Members have no credentials yet: send them a password reset from the console, or activate the administrator with 'tenants activate-admin ${name}'."
+                return 0 ;;
+            failed) die "import failed: ${msg}" ;;
+        esac
+        sleep 15
+    done
+}
+
+# _upload <path> <file> — POST a file's bytes as the body.
+_upload() {
+    local path="$1" file="$2" token out status
+    need curl jq
+    token="$(_access_token)"
+    _connect
+    out="$(mktemp)"
+    status="$(curl -sS -o "${out}" -w '%{http_code}' -X POST \
+        -H "Authorization: Bearer ${token}" -H "Content-Type: application/x-tar" \
+        --data-binary "@${file}" "${_DIR_BASE}${path}")"
+    if [[ "${status}" -ge 300 ]]; then
+        echo "error: $(jq -r '.error // .detail // .' "${out}" 2>/dev/null || cat "${out}")"
+        rm -f "${out}"
+        return 1
+    fi
+    cat "${out}"; rm -f "${out}"
+}
+
 _tenant_flag() {
     local t=""
     while [[ $# -gt 0 ]]; do
@@ -492,7 +566,8 @@ main() {
                 create) cmd_tenants_create "$@" ;;
                 activate-admin) cmd_tenants_activate_admin "$@" ;;
                 retire) cmd_tenants_retire "$@" ;;
-                *) die "usage: kubectl gentian tenants list|create|activate-admin|retire" ;;
+                import) cmd_tenants_import "$@" ;;
+                *) die "usage: kubectl gentian tenants list|create|activate-admin|retire|import" ;;
             esac
             ;;
         app|apps) cmd_apps "$@" ;;

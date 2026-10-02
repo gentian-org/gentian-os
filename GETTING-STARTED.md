@@ -389,6 +389,20 @@ console) — not `kubectl delete`: git is what the cluster reconciles towards, s
 deleting the object just brings it back. Retire keeps its data; add `--purge`
 (or choose **Purge** in the console) to delete it.
 
+A tenant's data is the tenant's. **Export** in the console (or a scheduled
+backup through the Operations Console) produces one encrypted bundle, which
+**Download** hands over as a single `.gentian` file. The way back is one
+command, on this cluster or any other:
+
+```bash
+kubectl gentian tenants import acme-export-20261001.gentian --identity-file acme-backup-key.txt
+```
+
+It declares the tenant from the bundle's own manifest, waits for the operator
+to provision it, restores the data, and says when people can sign in again
+(members need a password reset until bundles carry credentials; activate the
+administrator with `tenants activate-admin`).
+
 ---
 
 ## Advanced install options

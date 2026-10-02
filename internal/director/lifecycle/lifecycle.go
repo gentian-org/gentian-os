@@ -113,6 +113,27 @@ func (c *Client) Stream(ctx context.Context, path string) (*http.Response, error
 	return resp, nil
 }
 
+// Upload relays one POST whose body is streamed through unread -- a bundle
+// upload -- and answers as Do does.
+func (c *Client) Upload(ctx context.Context, path, contentType string, body io.Reader) (int, []byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+path, body)
+	if err != nil {
+		return 0, nil, err
+	}
+	req.Header.Set("Content-Type", contentType)
+	c.authorize(req)
+	resp, err := c.stream.Do(req)
+	if err != nil {
+		return 0, nil, fmt.Errorf("app-lifecycle API: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	answer, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return 0, nil, fmt.Errorf("app-lifecycle API: %w", err)
+	}
+	return resp.StatusCode, answer, nil
+}
+
 // Plan is one plan as the operator presents it for a tenant.
 type Plan struct {
 	Name        string            `json:"name"`

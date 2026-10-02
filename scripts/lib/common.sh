@@ -445,6 +445,9 @@ INSTALL_CLUSTER_INFRA="${INSTALL_CLUSTER_INFRA:-1}"
 # Operations Console and the API-extension grant its service needs. 1 leaves
 # them out of the scaffold; the OS installs and runs the same either way.
 GENTIAN_DISABLE_API_EXTENSIONS="${GENTIAN_DISABLE_API_EXTENSIONS:-0}"
+# The profiles a vanilla installation materialises for every tenant: files
+# or https URLs, comma separated. Unset means the Operations Console from the
+# Gentian catalogue source; empty means none.
 # Operator-managed env files (config + secrets). These are optional, but when
 # present they are sourced automatically before prompting so installs can be
 # fully declarative and non-interactive.
@@ -506,6 +509,7 @@ INPUT_HIERARCHY_VARS=(
     GENTIAN_NONINTERACTIVE
     INSTALL_CLUSTER_INFRA
     GENTIAN_DISABLE_API_EXTENSIONS
+    GENTIAN_DEFAULT_PROFILES
     GENTIAN_MANAGED_CERT_MANAGER
     CF_API_TOKEN
     CF_ZONE_NAME
@@ -542,6 +546,7 @@ Options:
 Environment overrides:
   INSTALL_CLUSTER_INFRA=1|0
   GENTIAN_DISABLE_API_EXTENSIONS=1|0
+  GENTIAN_DEFAULT_PROFILES=<file-or-url>[,...]
   INSTALL_CONFIG_FILE=/path/to/install.env
   INSTALL_VALIDATE_ONLY=1
 EOF

@@ -25,6 +25,7 @@ import (
 
 	"sigs.k8s.io/yaml"
 
+	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	dt "github.com/gentian-org/gentian-os/internal/director/directortest"
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
 )
@@ -247,5 +248,60 @@ func TestThePlatformTenantCannotBePurged(t *testing.T) {
 	g := gitops.NewGitOps(dt.Clone(t, remote), remote, dt.Cluster, director)
 	if _, err := g.RequestTenantPurge(context.Background(), "platform", time.Now(), gitops.PurgeOptions{}, tenantMeta()); !errors.Is(err, gitops.ErrTenantProtected) {
 		t.Fatalf("purge platform = %v, want ErrTenantProtected", err)
+	}
+}
+
+// An import declares the tenant from the bundle's spec, as one commit, with
+// the apps the bundle recorded -- and never with the bundle's deletion
+// policy, so a tenant exported mid-purge does not arrive with its purge.
+func TestAnImportDeclaresTheTenantFromTheBundlesSpec(t *testing.T) {
+	ctx := context.Background()
+	remote := dt.Remote(t)
+	g := gitops.NewGitOps(dt.Clone(t, remote), remote, dt.Cluster, director)
+	spec := &gentianov1alpha1.TenantSpec{
+		DisplayName:    "Acme Ltd",
+		DeletionPolicy: gentianov1alpha1.DeletionPolicyDelete,
+		Deletion:       &gentianov1alpha1.TenantDeletion{KeepBundles: true},
+		Apps:           []gentianov1alpha1.TenantApp{{Profile: "nextcloud-base-ce"}},
+	}
+	res, err := g.DeclareTenant(ctx, "acme", spec, "export nightly of 2026-10-01", tenantMeta())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Status != "imported" || !res.Changed {
+		t.Fatalf("result = %+v", res)
+	}
+	text := dt.RemoteFile(t, remote, dt.TenantPath("acme"))
+	var doc struct {
+		Kind string `json:"kind"`
+		Spec struct {
+			DisplayName    string `json:"displayName"`
+			DeletionPolicy string `json:"deletionPolicy"`
+			Deletion       *struct {
+				KeepBundles bool `json:"keepBundles"`
+			} `json:"deletion"`
+			Apps []struct {
+				Profile string `json:"profile"`
+			} `json:"apps"`
+		} `json:"spec"`
+	}
+	if err := yaml.Unmarshal([]byte(text), &doc); err != nil {
+		t.Fatalf("manifest does not parse: %v\n%s", err, text)
+	}
+	if doc.Kind != "Tenant" || doc.Spec.DisplayName != "Acme Ltd" || len(doc.Spec.Apps) != 1 || doc.Spec.Apps[0].Profile != "nextcloud-base-ce" {
+		t.Fatalf("manifest does not carry the bundle's spec:\n%s", text)
+	}
+	if doc.Spec.DeletionPolicy != "Retain" || doc.Spec.Deletion != nil {
+		t.Fatalf("the bundle's purge travelled with it:\n%s", text)
+	}
+	if !strings.Contains(text, "imported from a bundle") {
+		t.Fatal("the manifest does not say where it came from")
+	}
+	if _, err := g.DeclareTenant(ctx, "acme", spec, "again", tenantMeta()); !errors.Is(err, gitops.ErrTenantExists) {
+		t.Fatalf("second import = %v, want ErrTenantExists", err)
+	}
+	tenants, err := g.TenantDetails(ctx)
+	if err != nil || len(tenants) != 1 || tenants[0].Apps[0] != "nextcloud-base-ce" {
+		t.Fatalf("tenants = %+v, %v", tenants, err)
 	}
 }

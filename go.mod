@@ -3,6 +3,7 @@ module github.com/gentian-org/gentian-os
 go 1.25.7
 
 require (
+	filippo.io/age v1.3.2
 	github.com/envoyproxy/go-control-plane/envoy v1.32.4
 	github.com/go-jose/go-jose/v4 v4.1.5
 	github.com/go-logr/logr v1.4.3
@@ -28,6 +29,7 @@ require (
 
 require (
 	cel.dev/expr v0.24.0 // indirect
+	filippo.io/hpke v0.4.0 // indirect
 	github.com/antlr4-go/antlr/v4 v4.13.0 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/blang/semver/v4 v4.0.0 // indirect

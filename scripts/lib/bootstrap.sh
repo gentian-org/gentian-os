@@ -1878,6 +1878,11 @@ EOF
     # reviewer and the cluster both read them from (AD-2).
     gentian_publish_signing_material "${kernel_dir}" || true
 
+    # The profiles every tenant gets without asking (sovereignty-concept.md
+    # §5.4): materialised into the same directory the director materialises an
+    # installed entry into, so the operator sees them like any other.
+    _scaffold_default_profiles "${cluster}" || true
+
     # Nothing is APPLIED: this still contacts no cluster.
     gentian_commit_cluster_deployment "${kernel_dir}" "${cluster}"
 
@@ -1971,7 +1976,57 @@ _claims_this_checkout_cannot_apply() {
 # ApplicationSet generated nothing, and D-03 waited for a Tenant that could
 # never arrive.
 _cluster_scaffold_paths() {
-    printf '%s\n' "clusters/$1/kernel" "clusters/$1/tenants/platform"
+    printf '%s\n' "clusters/$1/kernel" "clusters/$1/tenants/platform" "clusters/$1/catalogue"
+}
+
+# _scaffold_default_profiles <cluster> -- the Gentian Corp entries a vanilla
+# installation comes with, written as materialised profiles.
+#
+# GENTIAN_DEFAULT_PROFILES lists them: local files or https URLs, comma
+# separated, each a ComponentProfile document. The default is the Operations
+# Console from the Gentian catalogue source. One that cannot be fetched is a
+# warning and not a failed install: the OS needs none of them, and the Admin
+# Console promotes what is missing. --disable-api-extensions writes none.
+_scaffold_default_profiles() {
+    local cluster="$1" dir list item name tmp
+    dir="${GENTIAN_DEPLOYMENTS_PATH}/clusters/${cluster}/catalogue"
+    if [[ "${GENTIAN_DISABLE_API_EXTENSIONS:-0}" == "1" ]]; then
+        info "Default profiles skipped (--disable-api-extensions)."
+        return 0
+    fi
+    list="${GENTIAN_DEFAULT_PROFILES-${GENTIAN_STORE_CATALOGUE_URL:-https://store.gentian.org/catalogue}/profiles/operations-console.yaml}"
+    [[ -n "${list}" ]] || return 0
+    mkdir -p "${dir}"
+    tmp="$(mktemp)"
+    local IFS=','
+    for item in ${list}; do
+        item="${item## }"; item="${item%% }"
+        [[ -n "${item}" ]] || continue
+        if [[ "${item}" == http://* || "${item}" == https://* ]]; then
+            if ! curl -sfL --max-time 30 -o "${tmp}" "${item}"; then
+                warn "Default profile ${item} could not be fetched; skipped."
+                warn "  The Admin Console promotes it; install it from the App Store later."
+                continue
+            fi
+        elif [[ -f "${item}" ]]; then
+            cp "${item}" "${tmp}"
+        else
+            warn "Default profile ${item} is neither a file nor a URL; skipped."
+            continue
+        fi
+        name="$(sed -n 's/^  name: *//p' "${tmp}" | head -1 | tr -d "'\"")"
+        if [[ -z "${name}" ]] || ! grep -q '^kind: ComponentProfile$' "${tmp}"; then
+            warn "Default profile ${item} is not a ComponentProfile; skipped."
+            continue
+        fi
+        cp "${tmp}" "${dir}/${name}.yaml"
+        if [[ ! -f "${dir}/kustomization.yaml" ]]; then
+            printf 'apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n' > "${dir}/kustomization.yaml"
+        fi
+        grep -q "^- ${name}.yaml$" "${dir}/kustomization.yaml" || printf -- '- %s.yaml\n' "${name}" >> "${dir}/kustomization.yaml"
+        info "  default profile ${name} (from ${item})"
+    done
+    rm -f "${tmp}"
 }
 
 gentian_commit_cluster_deployment() {

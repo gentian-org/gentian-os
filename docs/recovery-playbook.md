@@ -180,13 +180,16 @@ Crossplane compositions, Argo CD applications, app charts — comes back from
 Git; the kit supplies only what Git cannot hold.
 
 ```bash
-# 2. Bring the tenants back as empty shells.
-kubectl gentian tenants deploy <tenant>
+# 2. Bring each tenant back from its newest bundle: the import declares the
+#    tenant from the bundle's manifest, waits for the shells, restores into
+#    them. One command per tenant.
+kubectl gentian tenants import <tenant>-<export>.gentian --identity-file <key>
 ```
 
-```bash
-# 3. Put each tenant's data back — scenario 2 below, once per tenant.
-```
+A bundle that is still in a bucket rather than in your hands needs no
+download first: `scripts/recovery.sh fetch` (scenario 2) writes the
+`.gentian` file from the bucket, or the Operations Console's Recovery screen
+imports straight from the destination.
 
 ### Reading the bundles before the cluster exists
 

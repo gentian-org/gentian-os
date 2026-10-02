@@ -113,6 +113,7 @@ func (h *HTTPServer) Start(ctx context.Context) error {
 	h.registerPlatformRoutes(guarded)
 	h.registerNotificationRoutes(guarded)
 	h.registerTenantRoutes(guarded)
+	h.registerImportRoutes(guarded)
 
 	srv := &http.Server{Addr: h.Addr, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 	errCh := make(chan error, 1)

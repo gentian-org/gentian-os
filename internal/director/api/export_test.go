@@ -24,3 +24,10 @@ func SetPurgePoll(d time.Duration) (restore func()) {
 	purgePoll = d
 	return func() { purgePoll = old }
 }
+
+// SetImportPoll shortens the import watcher's interval for a test.
+func SetImportPoll(d time.Duration) (restore func()) {
+	old := importPoll
+	importPoll = d
+	return func() { importPoll = old }
+}

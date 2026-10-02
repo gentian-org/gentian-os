@@ -482,15 +482,26 @@ Workspace APIs. The hooks are each app's own and ship with its profile.
 
 Gentian OS first, because it is the contract everything else is built on.
 
-**M1 — the structures, before the content.** Creating and deleting a tenant
-already follow §2–§4: purge iterates what capture iterates (starting with
-the stores that disagree today, §9.3), `keepBundles` reaches the operator and
-the screens, and the Operations Console exists as its own app with the backup
-screens moved out of the Admin Console, talking to the director's existing
-backup routes; the scheduling controllers move with it in M2. The Admin
-Console keeps export and gains the promotion. The installer learns the switch.
-Items 1, 3 (the console side), 7 and the install default below are M1; the
-rest follow.
+**M1 (landed 2026-10-02) — the structures, before the content.** Creating
+and deleting a tenant follow §2–§4: purge drops Postgres databases and
+roles, MinIO users and the backup bucket (the OpenFGA, kernel-realm, LiteLLM,
+Redis and mail units of §9.3 are still open); `keepBundles` reaches the
+operator, the console and the CLI; the Operations Console exists as its own
+app with the backup screens moved out of the Admin Console, talking to the
+director's existing backup routes; the Admin Console keeps export and gains
+the promotion; the installer learns the switch.
+
+**M2a (landed 2026-10-02) — the round trip.** Download (§4.2) and Import
+(§4.3) exist end to end: director routes, operator verbs, the console's
+Download link and Import card, `kubectl gentian tenants import`. Step 0
+materialises the default profiles into `clusters/<id>/catalogue/`
+(`GENTIAN_DEFAULT_PROFILES`, §5.4). The Corp side publishes its chart and
+builds its catalogue source.
+
+**M2b — still to do**, in this order: inventory parity for the remaining
+units; the scheduling controllers and the `operations` service with its
+`apiExtensions` grant; schema 2 (credentials, SCIM, secrets, mail, digests);
+the deletion record and the offboard flow; canonical forms.
 
 1. **Inventory parity** (P2 = P3 = P5): mail unit, OpenBao data secrets,
    Postgres roles, OpenFGA tuples, kernel-realm artefacts, LiteLLM, MinIO
@@ -547,17 +558,20 @@ contract and its code.
 
 ### 9.2 Not built
 
-Download, import, recovery as a flow, offboarding, deletion record, SCIM
-projection, credentials in the bundle, mail and secrets capture, canonical
-forms, converters, the Operations Console.
+Recovery as a one-click flow, offboarding, deletion record, SCIM projection,
+credentials in the bundle, mail and secrets capture, canonical forms,
+converters, the `operations` service and the controllers' move. Built since
+the first draft: download, import (upload, inspect, declare from the
+manifest, restore), the Operations Console as an app, `keepBundles`, the
+default-profile materialisation.
 
 ### 9.3 Where capture and purge disagree
 
 | Store | Captured | Purged |
 |---|---|---|
-| Postgres databases | ✓ | ✗ (only the CNPG `Database` CR; data and roles stay) |
+| Postgres databases | ✓ | ✓ (since M1: databases and roles dropped by a Job) |
 | MariaDB | ✓ | ✓ |
-| S3 buckets | ✓ | ✓ (users and policies stay) |
+| S3 buckets | ✓ | ✓ (since M1: users and policies go with the bucket) |
 | Volumes | ✓ | ✓ with the namespace |
 | Keycloak tenant realm | ✓ | ✓ |
 | Kernel realm: broker, client, tenant admin | — | ✗ |
@@ -567,4 +581,4 @@ forms, converters, the Operations Console.
 | Redis | — | ✗ (ACL user yes; keys no) |
 | LiteLLM team and keys | — | ✗ |
 | Director records | — | retention only |
-| Backup bucket | — | ✗ |
+| Backup bucket | — | ✓ (since M1, unless `keepBundles`) |

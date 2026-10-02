@@ -19,6 +19,7 @@ package api_test
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/url"
 	"os/exec"
@@ -60,6 +61,10 @@ func (l *liveTenants) Plans(context.Context, string, bool) ([]lifecycle.Plan, er
 
 func (l *liveTenants) Stream(context.Context, string) (*http.Response, error) {
 	return nil, errors.New("no streams here")
+}
+
+func (l *liveTenants) Upload(context.Context, string, string, io.Reader) (int, []byte, error) {
+	return http.StatusNotFound, nil, nil
 }
 
 func (l *liveTenants) Do(context.Context, string, string, any) (int, []byte, error) {

@@ -649,6 +649,39 @@ Keycloak's export carries no password hashes, so accounts come back without
 credentials. `status.passwordResetRequired` says so. Send members through a
 reset from **Admin Console → Members**.
 
+## 12a. Tenant Import
+
+Create plus Restore, from a bundle, on this cluster or another one
+(sovereignty-concept.md §4.3). The bundle is the `.gentian` file **Download**
+produced, or a bucket prefix the cluster can reach.
+
+```bash
+kubectl gentian tenants import acme-nightly.gentian --identity-file acme-key.txt
+kubectl gentian tenants import acme-nightly.gentian --passphrase          # prompts
+kubectl gentian tenants import acme-nightly.gentian --identity-file k.txt --name acme2
+```
+
+What happens: the file is uploaded to the cluster's own storage; the director
+opens the manifest with the key, refuses a name the cluster already has,
+commits the tenant from the manifest's spec (deletionPolicy Retain, whatever
+the bundle said), waits until the operator reports the tenant Ready with its
+apps up, and starts a `TenantRestore`. The command follows the import and
+prints each phase: `declared`, `provisioning`, `restoring`, `ready`.
+
+Directly against the director:
+
+```
+POST /v1/clusters/{c}/bundles                 body: the .gentian bytes -> {bundle}
+POST /v1/clusters/{c}/bundles/inspect         {bundle, decryption} -> manifest
+POST /v1/clusters/{c}/tenants/import          {bundle, decryption, name?} -> 202 status
+GET  /v1/clusters/{c}/tenants/{t}/import      the status
+```
+
+`decryption` is `{"passphrase": "..."}` or `{"identity": "AGE-SECRET-KEY-1..."}`.
+The key is written into a Secret the restore owns and goes with it. Members
+come back without credentials (schema 1 bundles carry none); the status says
+`passwordResetRequired`.
+
 ## 13. Backup Policy
 
 Where bundles go, how often, and how long they are kept. One cluster default,

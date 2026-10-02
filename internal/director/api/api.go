@@ -30,6 +30,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
 	"io/fs"
 	"log/slog"
 	"net/http"
@@ -40,6 +41,7 @@ import (
 	"sync"
 	"time"
 
+	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/director/authn"
 	"github.com/gentian-org/gentian-os/internal/director/authz"
 	"github.com/gentian-org/gentian-os/internal/director/catalogue"
@@ -70,6 +72,7 @@ type Repository interface {
 	CreateTenant(ctx context.Context, req gitops.NewTenant, meta gitops.Meta) (gitops.Result, error)
 	RetireTenant(ctx context.Context, tenant string, meta gitops.Meta) (gitops.Result, error)
 	RequestTenantPurge(ctx context.Context, tenant string, now time.Time, opts gitops.PurgeOptions, meta gitops.Meta) (gitops.Result, error)
+	DeclareTenant(ctx context.Context, name string, spec *gentianov1alpha1.TenantSpec, origin string, meta gitops.Meta) (gitops.Result, error)
 	PendingPurges(ctx context.Context) ([]string, error)
 	Tenants(ctx context.Context) ([]string, error)
 	TenantRealm(ctx context.Context, tenant string) (string, error)
@@ -106,6 +109,8 @@ type Lifecycle interface {
 	// Stream is Get for a body that is passed through byte for byte and may
 	// be large: a bundle download. The caller closes the response body.
 	Stream(ctx context.Context, path string) (*http.Response, error)
+	// Upload is Do for a body streamed through unread: a bundle upload.
+	Upload(ctx context.Context, path, contentType string, body io.Reader) (int, []byte, error)
 	Plans(ctx context.Context, tenant string, selfService bool) ([]lifecycle.Plan, error)
 	// Do asks the cluster to do something once, as the person named. Only
 	// the action routes call it.
@@ -240,6 +245,8 @@ type Server struct {
 	// purging holds the tenants whose purge is being finished, so a second
 	// request or a restart's resume does not start a second watcher.
 	purging sync.Map
+	// imports holds each import's progress by tenant, for the status route.
+	imports sync.Map
 }
 
 // New returns a Server with every route registered.
@@ -474,6 +481,13 @@ func (s *Server) routes() {
 		s.guarded("POST /v1/clusters/{c}/tenants", "can_configure", s.clusterObject, s.createTenant)
 		s.guarded("DELETE /v1/clusters/{c}/tenants/{t}", "can_configure", s.clusterObject, s.retireTenant)
 		s.guarded("POST /v1/clusters/{c}/tenants/{t}/actions/purge", "can_configure", s.clusterObject, s.purgeTenant)
+		if s.cfg.Lifecycle != nil {
+			// Import: a bundle in, a tenant out (sovereignty-concept.md §4.3).
+			s.guarded("POST /v1/clusters/{c}/bundles", "can_configure", s.clusterObject, s.uploadBundle)
+			s.guarded("POST /v1/clusters/{c}/bundles/inspect", "can_configure", s.clusterObject, s.inspectBundle)
+			s.guarded("POST /v1/clusters/{c}/tenants/import", "can_configure", s.clusterObject, s.importTenant)
+			s.guarded("GET /v1/clusters/{c}/tenants/{t}/import", "can_configure", s.clusterObject, s.importStatus)
+		}
 		// Who the caller is at cluster scope: which of the cluster's verbs
 		// they hold. Identified, not guarded: a person with no cluster
 		// relation at all is answered with every verb false, because "you
