@@ -421,6 +421,19 @@ request_argo_sync_if_stalled() {
     json="$(kubectl get application "${app}" -n "${ns}" -o json 2>/dev/null)" || return 0
     phase="$(jq -r '.status.operationState.phase // ""' <<<"${json}")"
     sync="$(jq -r '.status.sync.status // ""' <<<"${json}")"
+
+    # An operation still Running, but pinned to a revision Argo CD refuses:
+    # it retries that revision with backoff and never looks at the commit that
+    # replaced it -- an unsigned head followed by a signed one (AD-2) left the
+    # claims Application retrying the unsigned commit indefinitely. Stop it
+    # and refresh; automated sync starts again on the current head.
+    if [[ "${phase}" == "Running" ]] && \
+       jq -e '(.status.operationState.message // "") | test("GIT/GPG|Failed verifying revision")' <<<"${json}" >/dev/null 2>&1; then
+        info "${app}: its sync is pinned to a revision Argo CD refuses; stopping it and refreshing."
+        kubectl patch application "${app}" -n "${ns}" --type merge -p '{"operation":null}' >/dev/null 2>&1 || true
+        kubectl annotate application "${app}" -n "${ns}" argocd.argoproj.io/refresh=hard --overwrite >/dev/null 2>&1 || true
+        return 0
+    fi
     [[ "${phase}" == "Failed" || "${phase}" == "Error" ]] || return 0
     [[ "${sync}" != "Synced" ]] || return 0
     # An operation still in flight has its own phase; only a finished one is
