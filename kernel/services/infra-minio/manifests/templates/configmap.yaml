@@ -17,8 +17,15 @@ data:
 {{- if .Values.storageClass }}
       storageClass: {{ .Values.storageClass }}
 {{- end }}
+{{- /* A private-registry pull secret only when this cluster names one. The
+     images here are public, and naming a Secret nobody created made every
+     pod report FailedToRetrieveImagePullSecret while pulling fine. */}}
+{{- with .Values.imagePullSecrets }}
       imagePullSecrets:
-        - registry-credentials
+{{- range . }}
+        - {{ . }}
+{{- end }}
+{{- end }}
 ---
 apiVersion: v1
 kind: ConfigMap

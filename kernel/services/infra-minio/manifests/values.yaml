@@ -13,3 +13,5 @@ storageClass: ""
 # policy and a network policy can differ per engine without separating a
 # stateful service after the fact (namespace-cleanup.md §2.2).
 namespace: ""
+# Pull secrets for a private registry, by name; none for the public images.
+imagePullSecrets: []
