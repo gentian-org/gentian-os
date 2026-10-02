@@ -1885,6 +1885,7 @@ EOF
 
     # Nothing is APPLIED: this still contacts no cluster.
     gentian_commit_cluster_deployment "${kernel_dir}" "${cluster}"
+    gentian_sign_unsigned_head "${kernel_dir}" "${cluster}" || true
 
     echo ""
     info "clusters/${cluster}/kernel is what this cluster becomes. To change a"
@@ -2115,6 +2116,54 @@ and AD-2 names that case." 2>&1; then
         return 1
     fi
     success "Committed and pushed clusters/${cluster} (signed, break-glass)."
+}
+
+# gentian_sign_unsigned_head -- a break-glass commit on top of a head Argo CD
+# would refuse.
+#
+# Argo CD verifies the newest commit of the deployments repository (AD-2,
+# gpg mode head), so one unsigned commit there stops the cluster syncing all
+# of it. A director that had no key yet made exactly that, and a purge does
+# not touch the repository: the next install then came up blind, with every
+# tenant ApplicationSet refusing the repository. When the head is not signed
+# by a key this cluster trusts, an empty commit signed with the break-glass
+# key puts a trusted one on top -- the case AD-2 names, recorded as such.
+gentian_sign_unsigned_head() {
+    local kernel_dir="$1" cluster="$2" ids head_key head_sig branch sign_args
+    [[ -f "${kernel_dir}/signing/keys.env" ]] || return 0
+    command -v git >/dev/null 2>&1 || return 0
+    git -C "${GENTIAN_DEPLOYMENTS_PATH}" fetch -q origin 2>/dev/null || return 0
+    branch="$(git -C "${GENTIAN_DEPLOYMENTS_PATH}" branch --show-current 2>/dev/null || true)"
+    branch="${branch:-${GENTIAN_DEPLOYMENTS_BRANCH:-main}}"
+    git -C "${GENTIAN_DEPLOYMENTS_PATH}" merge -q --ff-only "origin/${branch}" 2>/dev/null || true
+    ids="$(gentian_signing_keys_from_deployment "${kernel_dir}" 2>/dev/null || true)"
+    sign_args="$(gentian_git_sign_args break-glass 2>/dev/null)" || return 0
+    local -a SIGN
+    read -r -a SIGN <<< "${sign_args}"
+    head_sig="$(git -C "${GENTIAN_DEPLOYMENTS_PATH}" "${SIGN[@]}" log -1 --format='%G?' "origin/${branch}" 2>/dev/null || true)"
+    head_key="$(git -C "${GENTIAN_DEPLOYMENTS_PATH}" "${SIGN[@]}" log -1 --format='%GK' "origin/${branch}" 2>/dev/null || true)"
+    if [[ "${head_sig}" == "G" || "${head_sig}" == "U" ]] && [[ -n "${head_key}" ]] && grep -qi "${head_key}" <<< "${ids}"; then
+        return 0
+    fi
+    warn "The newest commit of the deployments repository is not signed by a key"
+    warn "  this cluster trusts, so Argo CD would refuse the whole repository."
+    warn "  Adding an empty commit signed with the break-glass key on top."
+    git -C "${GENTIAN_DEPLOYMENTS_PATH}" \
+        -c "user.name=${GENTIAN_COMMITTER_NAME:-Gentian installer}" \
+        -c "user.email=${GENTIAN_COMMITTER_EMAIL:-installer@${KERNEL_DOMAIN:-cluster.invalid}}" \
+        "${SIGN[@]}" commit -q --allow-empty -m "chore(${cluster}): sign the head of the deployments repository
+
+The newest commit was not signed by a key this cluster trusts, so Argo CD
+refused the repository (AD-2). This empty commit, signed with the
+break-glass key, puts a trusted head on top; nothing else changes." 2>&1 || {
+        error "The break-glass commit failed; Argo CD will keep refusing the repository."
+        return 1
+    }
+    git -C "${GENTIAN_DEPLOYMENTS_PATH}" push -q origin "HEAD:${branch}" 2>&1 || {
+        error "Committed, but the push failed:  git -C ${GENTIAN_DEPLOYMENTS_PATH} push origin HEAD:${branch}"
+        return 1
+    }
+    success "Signed the head of the deployments repository (break-glass)."
 }
 
 _warn_uncommitted_cluster_deployment() {
