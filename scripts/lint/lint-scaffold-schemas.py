@@ -48,7 +48,10 @@ CRD_DIR = ROOT / "charts" / "gentian-os" / "crds"
 
 # The generators. Each writes manifests a human is then expected to apply.
 GENERATORS = [
-    ROOT / "scripts" / "kubectl-gentian",
+    # Step 0's scaffold: Tenant/platform and the tenant definitions. The CLI
+    # scaffolds nothing any more -- it asks the director, whose manifests are
+    # Go and held to the CRDs by its own tests.
+    ROOT / "scripts" / "lib" / "bootstrap.sh",
 ]
 
 GREEN, YELLOW, RED, DIM, RESET = "\033[0;32m", "\033[1;33m", "\033[0;31m", "\033[2m", "\033[0m"
@@ -109,17 +112,34 @@ def extract_manifest_groups(text):
     manifest and parsing it as YAML would be reading something that does not
     exist yet.
     """
-    matches = list(re.finditer(r"<<-?'([A-Za-z_][A-Za-z0-9_]*)'\n(.*?)\n\1\n", text, re.S))
+    matches = list(re.finditer(r"<<-?('?)([A-Za-z_][A-Za-z0-9_]*)\1\n(.*?)\n\2\n", text, re.S))
     groups, current, previous = [], [], None
     for match in matches:
         if previous is not None and not _ADJACENT.match(text[previous.end():match.start()]):
             groups.append("\n".join(current))
             current = []
-        current.append(match.group(2))
+        body = match.group(3)
+        if not match.group(1):
+            body = _instantiate(body)
+        current.append(body)
         previous = match
     if current:
         groups.append("\n".join(current))
     return groups
+
+
+def _instantiate(body):
+    """An unquoted heredoc's body with its expansions filled in.
+
+    Step 0 scaffolds with unquoted heredocs, because the values are the
+    cluster's. Field NAMES are what this lint checks, and those are literal;
+    each ${VAR:-default} becomes its default and any other expansion a
+    placeholder, which is enough to parse the YAML around them.
+    """
+    body = re.sub(r"\$\{[A-Za-z_][A-Za-z0-9_]*:-([^}]*)\}", r"\1", body)
+    body = re.sub(r"\$\{[^}]*\}", "x", body)
+    body = re.sub(r"\$\([^)]*\)", "x", body)
+    return re.sub(r"\$[A-Za-z_][A-Za-z0-9_]*", "x", body)
 
 
 def split_documents(blob):

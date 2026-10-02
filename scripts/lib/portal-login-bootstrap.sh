@@ -1397,6 +1397,56 @@ spec:
                 echo "headlamp default scope: groups"
               fi
 
+              # The CLI. kubectl gentian is a client of the director, as the
+              # console is: a person signs in with the device flow (a code shown
+              # in the terminal, confirmed in a browser) and every command
+              # carries their own token, which the director checks like any
+              # other. Public, because a CLI on a workstation cannot keep a
+              # secret; device grant only, so it cannot be used to collect a
+              # password; the director's audience and the groups claim, so the
+              # token is one the director accepts and decides on.
+              CLI_CLIENT_ID=\$(curl -sf -H "\${AUTH}" \\
+                "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients?clientId=gentian-cli" \\
+                | jq -r '.[0].id // empty')
+              CLI_BODY=\$(jq -n '{
+                clientId: "gentian-cli",
+                name: "Gentian CLI",
+                enabled: true,
+                publicClient: true,
+                standardFlowEnabled: false,
+                implicitFlowEnabled: false,
+                directAccessGrantsEnabled: false,
+                serviceAccountsEnabled: false,
+                protocol: "openid-connect",
+                attributes: {"oauth2.device.authorization.grant.enabled": "true"}
+              }')
+              if [ -n "\${CLI_CLIENT_ID}" ]; then
+                curl -sf -X PUT -H "\${AUTH}" -H "Content-Type: application/json" \\
+                  "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients/\${CLI_CLIENT_ID}" -d "\${CLI_BODY}"
+                echo "Updated client gentian-cli"
+              else
+                curl -sf -X POST -H "\${AUTH}" -H "Content-Type: application/json" \\
+                  "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients" -d "\${CLI_BODY}"
+                CLI_CLIENT_ID=\$(curl -sf -H "\${AUTH}" \\
+                  "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients?clientId=gentian-cli" \\
+                  | jq -r '.[0].id')
+                echo "Created client gentian-cli"
+              fi
+              if [ -n "\${CLI_CLIENT_ID}" ]; then
+                if ! curl -sf -H "\${AUTH}" \\
+                    "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients/\${CLI_CLIENT_ID}/protocol-mappers/models" \\
+                    | jq -e '.[] | select(.name=="director-audience")' >/dev/null 2>&1; then
+                  curl -sf -X POST -H "\${AUTH}" -H "Content-Type: application/json" \\
+                    "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients/\${CLI_CLIENT_ID}/protocol-mappers/models" \\
+                    -d '{"name":"director-audience","protocol":"openid-connect","protocolMapper":"oidc-audience-mapper","config":{"included.client.audience":"gentian-director","id.token.claim":"false","access.token.claim":"true","introspection.token.claim":"true"}}' >/dev/null
+                fi
+                if [ -n "\${GROUPS_SCOPE_ID}" ] && [ "\${GROUPS_SCOPE_ID}" != "null" ]; then
+                  curl -sf -X PUT -H "\${AUTH}" \\
+                    "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients/\${CLI_CLIENT_ID}/default-client-scopes/\${GROUPS_SCOPE_ID}" >/dev/null 2>&1 || true
+                fi
+                echo "gentian-cli: device grant, director audience, groups"
+              fi
+
 ${refresh_shell}
               if [ "\${LLM_SUPPORT}" = "true" ]; then
                 # Best-effort, deliberately. Everything in here serves an optional LLM

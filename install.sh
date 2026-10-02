@@ -21,7 +21,6 @@
 # One driver, three directions. Update is not a separate program: converging a
 # running cluster IS the update, so it is the same forward pass.
 #
-#   ./install.sh --prepare-tenant NAME  write one tenant's definition, change nothing
 #   ./install.sh                    install or converge
 #   ./install.sh --update           same thing, named for what you meant
 #   ./install.sh --uninstall        reverse order, destroy() each step
@@ -46,12 +45,9 @@
 # operator does not edit and push these files by hand, so there is nothing
 # to review between writing them and installing from them.
 #
-# A tenant is the same shape one level down, and stops in the same place:
-# --prepare-tenant writes its DEFINITION, you choose its apps, and
-# `kubectl gentian tenants deploy <name>` is what turns a definition into
-# something Argo CD syncs. The installer never applies a Tenant, and never
-# writes the deployed copy — the operator writes into that one too, as apps
-# are installed from the store.
+# Tenants are not the installer's: they are created through the director --
+# the admin console, or `kubectl gentian tenants create`, its command-line
+# client -- which commits them as the person who asked.
 #
 # Read before you run:
 #
@@ -177,9 +173,6 @@ Running part of it. A step is named by its number or its full id, so
                         is asking the wrong question
 
 Other options:
-  --prepare-tenant NAME write clusters/<id>/definitions/NAME the same way,
-                        then stop. Deploy it with `kubectl gentian tenants
-                        deploy NAME`. Needs the cluster's files to exist already
   --validate            validate config and step contracts, no cluster changes
   --verify-only         run post-install verification and print the summary
   --no-cluster-infra    skip cert-manager / CNPG / reloader on install
@@ -422,18 +415,22 @@ ensure_cluster_deployment() {
 }
 
 # =============================================================================
-# prepare_tenant_run — write one tenant's directory and stop.
+# prepare_tenant_run — retired: tenants are created through the director.
 #
-# Reads less than step 0: a tenant needs the cluster's identity and its
-# domain, and nothing else. No credentials, no cluster contact.
+# This wrote a tenant's definition into the deployments checkout and left
+# `kubectl gentian tenants deploy` to commit it: two ways round every check the
+# director makes, each committing with whatever git credential this host held.
+# A tenant is now created where every other change is -- the admin console's
+# Tenants tab, or `kubectl gentian tenants create`, a client of the director --
+# and the director commits it as the person who asked.
 # =============================================================================
 prepare_tenant_run() {
-    load_operator_config
-    load_deployments_cluster_settings
-    resolve_kernel_domain_from_claim
-    prompt_kernel_domain
-    prompt_tenant_identity
-    scaffold_tenant_deployment
+    error "--prepare-tenant is retired: tenants are created through the director."
+    error "  Admin console → Tenants, or:"
+    error "    kubectl gentian login"
+    error "    kubectl gentian tenants create ${GENTIAN_TENANT_NAME:-<name>}"
+    error "    kubectl gentian tenants activate-admin ${GENTIAN_TENANT_NAME:-<name>} [--recovery-email <address>]"
+    return 1
 }
 
 # _ensure_bao — install the OpenBao CLI to ~/.local/bin when absent.

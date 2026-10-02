@@ -1005,15 +1005,16 @@ print_summary_cp() {
         print_portal_login_summary
     fi
     echo ""
-    # The CLI, because tenants are created with it and the installer does not
-    # install it. Named here rather than left to the docs: this is the screen an
-    # operator has in front of them when they go looking for what to do next.
-    echo -e "${GREEN}  Manage tenants and apps with the gentian CLI:${NC}"
-    if command -v kubectl-gentian >/dev/null 2>&1; then
-        echo -e "${GREEN}    gtnctl tenants deploy <name>     (installed; 'gtnctl version' to check it)${NC}"
-    else
-        echo -e "${GREEN}    make -C ${SCRIPT_DIR} install-plugin   then: gtnctl tenants deploy <name>${NC}"
+    # Where tenants come from next. Named here rather than left to the docs:
+    # this is the screen an operator has in front of them when they go
+    # looking for what to do next. Both are clients of the director.
+    echo -e "${GREEN}  Create tenants in the admin console (Tenants), or with the CLI:${NC}"
+    if ! command -v kubectl-gentian >/dev/null 2>&1; then
+        echo -e "${GREEN}    make -C ${SCRIPT_DIR} install-plugin${NC}"
     fi
+    echo -e "${GREEN}    kubectl gentian login${NC}"
+    echo -e "${GREEN}    kubectl gentian tenants create <name>${NC}"
+    echo -e "${GREEN}    kubectl gentian tenants activate-admin <name> [--recovery-email <address>]${NC}"
     echo ""
     echo -e "${GREEN}  Inspect authz stack:${NC}"
     echo -e "${GREEN}    kubectl get xsuze,suze -n ${CROSSPLANE_NAMESPACE:-crossplane-system}${NC}"
@@ -1147,150 +1148,6 @@ print_handover_summary() {
     fi
     echo ""
 }
-
-
-# =============================================================================
-# scaffold_tenant_deployment — write one tenant's DEFINITION and stop.
-#
-# The counterpart to scaffold_cluster_deployment, and it stops in the same
-# place: it writes the document a human is meant to edit, and nothing that
-# deploys it.
-#
-# A cluster has two directories per tenant and they are not the same thing:
-#
-#   definitions/tenants/<name>/tenant.yaml
-#                                    authored. What the tenant is meant to be.
-#   tenants/<name>/                  deployed. What Argo CD syncs, and what the
-#                                    operator writes into as apps are installed
-#                                    from the store.
-#
-# They diverge on purpose, so the second is not this script's to create.
-# `kubectl gentian tenants deploy <name>` copies the definition across and adds
-# the kustomization, and it is also what creates the shared defaults component
-# — see ensure_tenant_defaults_component in scripts/kubectl-gentian. This
-# function wrote both and gave the component different quotas from the ones
-# that command uses, so whichever ran first decided the cluster's tenant sizing.
-# =============================================================================
-scaffold_tenant_deployment() {
-    if [[ ! -d "${GENTIAN_DEPLOYMENTS_PATH}/.git" ]]; then
-        error "${GENTIAN_DEPLOYMENTS_PATH} is not a git checkout of gentian-deployments."
-        error "  Clone it there first, or point GENTIAN_DEPLOYMENTS_PATH at an existing checkout."
-        return 1
-    fi
-
-    local cluster="${GENTIAN_DEPLOYMENTS_CLUSTER_ID:?GENTIAN_DEPLOYMENTS_CLUSTER_ID must be set}"
-    local name="${GENTIAN_TENANT_NAME:?GENTIAN_TENANT_NAME must be set}"
-    local domain="${KERNEL_DOMAIN:?KERNEL_DOMAIN must be resolved before scaffolding a tenant}"
-    local cluster_dir="${GENTIAN_DEPLOYMENTS_PATH}/clusters/${cluster}"
-    local definition_dir="${cluster_dir}/definitions/tenants/${name}"
-
-    if [[ ! -d "${cluster_dir}/kernel" ]]; then
-        error "Cluster ${cluster} has no kernel/ directory in ${GENTIAN_DEPLOYMENTS_PATH}."
-        error "  A tenant belongs to a cluster that exists. Install it first:"
-        error "    ./install.sh"
-        return 1
-    fi
-
-    banner "Scaffolding tenant ${name} for cluster ${cluster}"
-
-    if [[ -f "${definition_dir}/tenant.yaml" ]]; then
-        warn "clusters/${cluster}/definitions/tenants/${name}/tenant.yaml already exists; leaving it alone."
-        _print_tenant_next_steps "${name}" "${cluster}"
-        return 0
-    fi
-
-    mkdir -p "${definition_dir}"
-    {
-        printf 'apiVersion: gentianos.io/v1alpha1\n'
-        printf 'kind: Tenant\n'
-        printf 'metadata:\n'
-        printf '  name: %s\n' "${name}"
-        printf 'spec:\n'
-        printf '  displayName: %s\n' "${GENTIAN_TENANT_DISPLAY_NAME:-${name}}"
-        printf '\n'
-        printf '  # No adminEmail here. The administrator address is derived:\n'
-        printf '  #   admin@%s.%s\n' "${name}" "${domain}"
-        printf '  # and it is the Keycloak username too — one identifier, not\n'
-        printf '  # two that can disagree. Setting it would point the account at\n'
-        printf '  # an address the tenant does not control; this account is\n'
-        printf '  # recovered by the cluster administrator, not by mail.\n'
-        printf '\n'
-        printf '  # Where this tenant is served. Left unset it is %s.%s,\n' "${name}" "${domain}"
-        printf '  # which is what a multi-tenant cluster wants. Set it to serve the\n'
-        printf '  # tenant on a domain they own instead.\n'
-        if [[ -n "${GENTIAN_TENANT_DOMAIN:-}" ]]; then
-            printf '  domain: %s\n' "${GENTIAN_TENANT_DOMAIN}"
-        else
-            printf '  # domain: %s.example.org\n' "${name}"
-        fi
-        printf '\n'
-        printf '  # Prefixes keep one tenant out of another tenant name-space in the\n'
-        printf '  # shared data stores. Changing them after provisioning strands what\n'
-        printf '  # was created under the old ones.\n'
-        printf '  isolation:\n'
-        printf '    keycloakRealm: %s\n' "${name}"
-        printf '    databasePrefix: %s_\n' "${name//-/_}"
-        printf '    s3Prefix: %s-\n' "${name}"
-        printf '\n'
-        printf '  # Retain keeps the data when the Tenant is deleted; Delete removes it.\n'
-        printf '  deletionPolicy: %s\n' "${GENTIAN_TENANT_DELETION_POLICY:-Retain}"
-        printf '\n'
-        printf '  # Quotas and mail come from this cluster'"'"'s shared tenant-defaults\n'
-        printf '  # component, which the deploy command creates. Override here only\n'
-        printf '  # what this tenant needs differently from the rest.\n'
-        printf '\n'
-        printf '  # Apps are installed by profile name from the catalogue.\n'
-        printf '  #   kubectl gentian apps list      what this cluster offers\n'
-        printf '  #\n'
-        printf '  # A profile that is not in the catalogue is refused at admission,\n'
-        printf '  # naming the profile — so a typo here fails on deploy, not later.\n'
-        printf '  # Everything else is installed from the App Store, which is a tile\n'
-        printf '  # on the administrator'"'"'s desktop and not an entry here: the store\n'
-        printf '  # runs outside the cluster, and the tile is there whenever the\n'
-        printf '  # Cluster claim names one (catalogue.storeUrl).\n'
-        printf '  apps:\n'
-        printf '  # Subscriptions runs no pods in the tenant: it is a link on the\n'
-        printf '  # administrator'"'"'s desktop to billing and entitlements. On by\n'
-        printf '  # default, opt-out — delete this entry for a tenant that should not\n'
-        printf '  # see it.\n'
-        printf '  - profile: gentian-subscriptions-me\n'
-        # The claim decides, read from the same file the tenant composition and
-        # B-07 read it from. The composition used to inject this app itself,
-        # which hid it from the tenant operator — see tenant-default.yaml.
-        if [[ "$(yq_get '.spec.llm.enabled' "${cluster_dir}/kernel/claims/cluster.yaml" 2>/dev/null || true)" == "true" ]]; then
-            printf '  # AI Chat, listed because this cluster serves LLM\n'
-            printf '  # (spec.llm.enabled on the Cluster claim). Delete the entry for a\n'
-            printf '  # tenant that should not see it.\n'
-            printf '  - profile: open-webui\n'
-        fi
-        printf '  # Everything else this tenant needs goes beside them, for example:\n'
-        printf '  # - profile: nextcloud-base-ce\n'
-        printf '  #   addons:\n'
-        printf '  #   - nextcloud-calendar-ce\n'
-    } >"${definition_dir}/tenant.yaml"
-
-    success "Wrote clusters/${cluster}/definitions/tenants/${name}/tenant.yaml"
-    _print_tenant_next_steps "${name}" "${cluster}"
-}
-
-_print_tenant_next_steps() {
-    local name="$1" cluster="$2"
-    local def="clusters/${cluster}/definitions/tenants/${name}/tenant.yaml"
-    echo ""
-    info "This is the definition only. Nothing is deployed and nothing is committed."
-    info "  1. Choose its apps:"
-    info "       \$EDITOR ${GENTIAN_DEPLOYMENTS_PATH}/${def}"
-    info "  2. Deploy it:"
-    info "       kubectl gentian tenants deploy ${name}"
-    info "     which copies the definition into clusters/${cluster}/tenants/${name}/,"
-    info "     commits and pushes it, and lets Argo CD create the Tenant."
-    info "  3. Watch it arrive:  kubectl get tenant ${name} -w"
-    echo ""
-    info "If the deploy reports the tenant was refused because handover is not"
-    info "finished, sign in and open Admin Console → Credentials first — see"
-    info "GETTING-STARTED.md, 'Hand the cluster over'."
-}
-
 
 # =============================================================================
 # scaffold_cluster_deployment — write this cluster's kernel/ directory in

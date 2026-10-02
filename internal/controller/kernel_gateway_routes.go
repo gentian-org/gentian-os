@@ -237,6 +237,12 @@ func kernelHTTPRouteSpecs(
 			sectionName: perimeterIDListenerName,
 			rules: []gatewayv1.HTTPRouteRule{
 				kernelBackendRulePrefixNS(kcService, identityNamespace, kcPort, "/auth/realms/master/"),
+				// The activation-link endpoint the platform's Keycloak extension
+				// adds to every realm. Only the director and the installer call
+				// it, both from inside the cluster; it refuses a caller without
+				// manage-users anyway, and the perimeter refuses it as well.
+				kernelBackendRuleNS(kcService, identityNamespace, kcPort,
+					pathMatch(gatewayv1.PathMatchRegularExpression, `/auth/realms/[^/]+/gentian-activation(/.*)?`)),
 			},
 			securityPolicy: map[string]interface{}{
 				"authorization": map[string]interface{}{"defaultAction": "Deny"},
