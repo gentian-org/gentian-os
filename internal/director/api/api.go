@@ -213,6 +213,7 @@ type Identity interface {
 	RemoveTOTP(ctx context.Context, r identity.Realm, id string) error
 	CreateGroup(ctx context.Context, r identity.Realm, path string) (identity.Group, error)
 	DeleteGroup(ctx context.Context, r identity.Realm, path string) error
+	RenameGroup(ctx context.Context, r identity.Realm, path, newPath string) (identity.Group, error)
 	GroupMembers(ctx context.Context, r identity.Realm, path string) ([]identity.Person, error)
 }
 
@@ -680,6 +681,7 @@ func (s *Server) routes() {
 		s.action("POST /v1/tenants/{t}/actions/remove-totp", "can_manage_users", tenantObject, s.removeTOTP)
 		s.action("POST /v1/tenants/{t}/actions/create-group", "can_manage_users", tenantObject, s.createGroup)
 		s.action("POST /v1/tenants/{t}/actions/delete-group", "can_manage_users", tenantObject, s.deleteGroup)
+		s.action("POST /v1/tenants/{t}/actions/rename-group", "can_manage_users", tenantObject, s.renameGroup)
 	}
 }
 

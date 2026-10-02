@@ -508,6 +508,14 @@ func (f *fakeIdentity) DeleteGroup(ctx context.Context, r identity.Realm, path s
 	return nil
 }
 
+func (f *fakeIdentity) RenameGroup(ctx context.Context, r identity.Realm, _, newPath string) (identity.Group, error) {
+	f.note(ctx, r)
+	f.mu.Lock()
+	f.lastGroup = newPath
+	f.mu.Unlock()
+	return identity.Group{ID: "g", Path: newPath, Name: newPath, Custom: true}, nil
+}
+
 func (f *fakeIdentity) GroupMembers(ctx context.Context, r identity.Realm, _ string) ([]identity.Person, error) {
 	f.note(ctx, r)
 	return nil, nil
@@ -591,5 +599,27 @@ func TestRemovingYourselfIsRefused(t *testing.T) {
 	defer f.mu.Unlock()
 	if len(f.removed) != 1 || f.removed[0] != "u1" {
 		t.Fatalf("removed %v", f.removed)
+	}
+}
+
+func TestRenamingAGroupKeepsItInTheTenantsSubtree(t *testing.T) {
+	f := newFakeIdentity("demo")
+	h := startWithIdentity(t, f)
+	tok := h.token(t, "tenant-demo", "tom")
+
+	status, body := h.do(t, http.MethodPost, "/v1/tenants/demo/actions/rename-group", tok,
+		`{"group":"gentian:tenant:demo:sales","name":"Field-Sales"}`)
+	if status != http.StatusOK {
+		t.Fatalf("rename: %d %v", status, body)
+	}
+	f.mu.Lock()
+	got := f.lastGroup
+	f.mu.Unlock()
+	if got != "gentian:tenant:demo:field-sales" {
+		t.Fatalf("renamed to %q", got)
+	}
+	if status, _ := h.do(t, http.MethodPost, "/v1/tenants/demo/actions/rename-group", tok,
+		`{"group":"gentian:tenant:demo:sales","name":"admin"}`); status != http.StatusBadRequest {
+		t.Fatalf("renaming onto a platform name: %d, want 400", status)
 	}
 }

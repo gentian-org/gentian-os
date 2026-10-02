@@ -424,6 +424,9 @@ func (c *Client) UpdatePerson(ctx context.Context, r Realm, id string, u PersonU
 	if err := c.call(ctx, r, http.MethodGet, "/users/"+url.PathEscape(id), nil, nil, &cur); err != nil {
 		return Person{}, err
 	}
+	if cur == nil {
+		return Person{}, fmt.Errorf("%w: user %q", ErrNotFound, id)
+	}
 	if u.FirstName != nil {
 		cur["firstName"] = strings.TrimSpace(*u.FirstName)
 	}
@@ -518,6 +521,9 @@ func (c *Client) setRequiredAction(ctx context.Context, r Realm, id, action stri
 	if err := c.call(ctx, r, http.MethodGet, "/users/"+url.PathEscape(id), nil, nil, &cur); err != nil {
 		return err
 	}
+	if cur == nil {
+		return fmt.Errorf("%w: user %q", ErrNotFound, id)
+	}
 	var actions []string
 	if raw, ok := cur["requiredActions"].([]any); ok {
 		for _, a := range raw {
@@ -575,6 +581,37 @@ func (c *Client) DeleteGroup(ctx context.Context, r Realm, path string) error {
 		return fmt.Errorf("%w: %q", ErrNotCustom, groups[0].Path)
 	}
 	return c.call(ctx, r, http.MethodDelete, "/groups/"+url.PathEscape(groups[0].ID), nil, nil, nil)
+}
+
+// RenameGroup gives a custom group a new path. The platform's own groups keep
+// their names: other things find them by name.
+func (c *Client) RenameGroup(ctx context.Context, r Realm, path, newPath string) (Group, error) {
+	newPath = strings.TrimPrefix(newPath, "/")
+	if newPath == "" || strings.Contains(newPath, "/") {
+		return Group{}, fmt.Errorf("%w: group %q", ErrNotFound, newPath)
+	}
+	if !r.permits(newPath) {
+		return Group{}, fmt.Errorf("%w: %q", ErrOutOfScope, newPath)
+	}
+	groups, err := c.resolveGroups(ctx, r, []string{path})
+	if err != nil {
+		return Group{}, err
+	}
+	if !groups[0].Custom {
+		return Group{}, fmt.Errorf("%w: %q", ErrNotCustom, groups[0].Path)
+	}
+	var cur map[string]any
+	if err := c.call(ctx, r, http.MethodGet, "/groups/"+url.PathEscape(groups[0].ID), nil, nil, &cur); err != nil {
+		return Group{}, err
+	}
+	if cur == nil {
+		cur = map[string]any{}
+	}
+	cur["name"] = newPath
+	if err := c.call(ctx, r, http.MethodPut, "/groups/"+url.PathEscape(groups[0].ID), nil, cur, nil); err != nil {
+		return Group{}, err
+	}
+	return Group{ID: groups[0].ID, Path: newPath, Name: newPath, Custom: true}, nil
 }
 
 // GroupMembers lists the people in one group.

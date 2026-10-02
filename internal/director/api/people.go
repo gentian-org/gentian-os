@@ -462,6 +462,40 @@ func (s *Server) deleteGroup(w http.ResponseWriter, r *http.Request, c call) {
 	s.json(w, http.StatusOK, map[string]any{"group": body.Group, "deleted": true})
 }
 
+// renameGroup gives a custom group a new label within the tenant's subtree.
+func (s *Server) renameGroup(w http.ResponseWriter, r *http.Request, c call) {
+	realm, ok := s.realmFor(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		Group string `json:"group"`
+		Name  string `json:"name"`
+	}
+	if !s.decode(w, r, &body) {
+		return
+	}
+	label := strings.ToLower(strings.TrimSpace(body.Name))
+	if !groupLabel.MatchString(label) || reservedGroupLabels[label] {
+		s.fail(w, r, http.StatusBadRequest, "a group name is lower-case letters, digits and dashes, and not one the platform uses")
+		return
+	}
+	group, err := s.cfg.Identity.RenameGroup(identityContext(r), realm, body.Group, tenantGroupPrefix(r.PathValue("t"))+label)
+	if err != nil {
+		switch {
+		case errors.Is(err, identity.ErrNotCustom):
+			s.fail(w, r, http.StatusBadRequest, "this group is the platform's, and keeps its name")
+		case errors.Is(err, identity.ErrConflict):
+			s.fail(w, r, http.StatusConflict, "a group with that name already exists")
+		default:
+			s.identityError(w, r, err)
+		}
+		return
+	}
+	s.recordIdentityAction(r, c, "rename-group", realm, group.Path)
+	s.json(w, http.StatusOK, group)
+}
+
 // listGroupMembers answers who is in one group.
 func (s *Server) listGroupMembers(w http.ResponseWriter, r *http.Request, _ call) {
 	realm, ok := s.realmFor(w, r)

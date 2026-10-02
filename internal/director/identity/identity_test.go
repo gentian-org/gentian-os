@@ -648,3 +648,23 @@ func TestCustomGroupsAreMadeInScopeAndOnlyTheyAreDeleted(t *testing.T) {
 		t.Fatalf("a created group is marked custom: %+v", posts)
 	}
 }
+
+func TestOnlyACustomGroupIsRenamed(t *testing.T) {
+	f, srv := newFake(t)
+	f.groups["demo"] = []groupRep{
+		{ID: "g1", Path: "/admin"},
+		{ID: "g2", Path: "/sales", Attributes: map[string][]string{CustomGroupAttribute: {"true"}}},
+	}
+	c := clientFor(t, srv, StaticSource{"demo": {Realm: "demo", ClientID: "a", ClientSecret: "s"}})
+	r, _ := c.Realm("demo")
+	if _, err := c.RenameGroup(context.Background(), r, "admin", "admins-2"); !errors.Is(err, ErrNotCustom) {
+		t.Fatalf("a platform group must keep its name: %v", err)
+	}
+	if _, err := c.RenameGroup(context.Background(), r, "sales", "field-sales"); err != nil {
+		t.Fatal(err)
+	}
+	puts := f.callsTo(http.MethodPut, "/groups/g2")
+	if len(puts) != 1 || !strings.Contains(puts[0].body, `"field-sales"`) {
+		t.Fatalf("renamed with: %+v", puts)
+	}
+}
