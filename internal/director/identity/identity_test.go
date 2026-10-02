@@ -728,3 +728,26 @@ func TestActivationWithAnAddressMailsIt(t *testing.T) {
 		t.Fatalf("an enrolled factor is not asked for again: %+v", mails)
 	}
 }
+
+// A realm that cannot mail yet -- an external relay whose credential arrives
+// through the console, after this very sign-in -- still hands the account
+// over: the link is shown instead, the address stays the recovery address,
+// and the answer says why it was not mailed.
+func TestActivationFallsBackToTheLinkWhenTheMailFails(t *testing.T) {
+	f, srv := newFake(t)
+	f.users["demo"] = []userRep{{ID: "abc123", Username: "admin@demo.k.example", Enabled: true}}
+	f.status["PUT /users/abc123/execute-actions-email"] = http.StatusInternalServerError
+	c := clientFor(t, srv, StaticSource{"demo": {Realm: "demo", ClientID: "a", ClientSecret: "s"}})
+	r, _ := c.Realm("demo")
+
+	a, err := c.ActivateAccount(context.Background(), r, "abc123", "owner@example.org", true, "gentian-edge-demo", "")
+	if err != nil {
+		t.Fatalf("a mail that cannot go must not refuse the activation: %v", err)
+	}
+	if a.Mailed || a.Link == "" || a.Email != "owner@example.org" || a.MailError == "" {
+		t.Fatalf("activation: %+v", a)
+	}
+	if puts := f.callsTo(http.MethodPut, "/users/abc123"); len(puts) != 1 || !strings.Contains(puts[0].body, `"email":"owner@example.org"`) {
+		t.Fatalf("the address must still become the recovery address: %+v", puts)
+	}
+}

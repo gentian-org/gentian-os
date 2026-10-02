@@ -595,6 +595,8 @@ type Activation struct {
 	ExpiresAt int64 `json:"expiresAt,omitempty"`
 	// Actions are what the link asks the person to do.
 	Actions []string `json:"actions"`
+	// MailError says why a link meant for Email is shown instead of mailed.
+	MailError string `json:"mailError,omitempty"`
 }
 
 // FindUser finds one person by exact username.
@@ -692,11 +694,18 @@ func (c *Client) ActivateAccount(ctx context.Context, r Realm, id, email string,
 	if redirectURI != "" {
 		q.Set("redirect_uri", redirectURI)
 	}
+	// Mailed when the realm can send mail; shown otherwise. With an external
+	// relay the credential arrives through the console, so a fresh cluster --
+	// a tunnel one always -- has no mail server yet, and refusing the
+	// activation over that would leave the administrator with no way in. The
+	// address stays on the account for later resets either way.
+	mailError := ""
 	if mailTo != "" {
-		if err := c.call(ctx, r, http.MethodPut, "/users/"+url.PathEscape(id)+"/execute-actions-email", q, actions, nil); err != nil {
-			return Activation{}, err
+		err := c.call(ctx, r, http.MethodPut, "/users/"+url.PathEscape(id)+"/execute-actions-email", q, actions, nil)
+		if err == nil {
+			return Activation{Mailed: true, Email: mailTo, Actions: actions}, nil
 		}
-		return Activation{Mailed: true, Email: mailTo, Actions: actions}, nil
+		mailError = "the realm could not send mail (is the SMTP relay configured?); the link is shown instead"
 	}
 
 	body := map[string]any{"actions": actions}
@@ -723,7 +732,7 @@ func (c *Client) ActivateAccount(ctx context.Context, r Realm, id, email string,
 	if err := json.Unmarshal(raw, &out); err != nil || out.Link == "" {
 		return Activation{}, fmt.Errorf("the realm answered no activation link")
 	}
-	return Activation{Link: out.Link, ExpiresAt: out.ExpiresAt, Actions: actions}, nil
+	return Activation{Link: out.Link, ExpiresAt: out.ExpiresAt, Actions: actions, Email: mailTo, MailError: mailError}, nil
 }
 
 // RenameGroup gives a custom group a new path. The platform's own groups keep

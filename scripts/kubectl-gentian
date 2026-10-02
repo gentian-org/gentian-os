@@ -327,6 +327,9 @@ cmd_tenants_activate_admin() {
         echo "Activation link for ${user} mailed to ${to}."
         return 0
     fi
+    local why
+    why="$(printf '%s' "${answer}" | jq -r '.activation.mailError // empty')"
+    [[ -z "${why}" ]] || echo "Not mailed: ${why}. $(printf '%s' "${answer}" | jq -r '.activation.email') is kept as the recovery address." >&2
     link="$(printf '%s' "${answer}" | jq -r '.activation.link')"
     expires="$(printf '%s' "${answer}" | jq -r '.activation.expiresAt')"
     echo "Activate ${user} — open this once; it works one time:"

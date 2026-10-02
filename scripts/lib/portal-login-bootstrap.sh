@@ -1826,8 +1826,21 @@ issue_platform_admin_activation() {
 
     local actions='["UPDATE_PASSWORD"]'
     [[ "$(platform_admin_requires_mfa)" == "true" ]] && actions='["UPDATE_PASSWORD","CONFIGURE_TOTP"]'
-    local email="${CLUSTER_ADMIN_RECOVERY_EMAIL:-}"
-    if [[ -z "${email}" && -t 0 && "${GENTIAN_NONINTERACTIVE:-0}" != "1" ]]; then
+    local email="${CLUSTER_ADMIN_RECOVERY_EMAIL:-}" can_mail=false
+    # Whether this realm can send mail now. With an external relay the
+    # credential arrives through the console, after this sign-in -- so a
+    # tunnel cluster, or any cluster whose relay is not supplied yet, cannot
+    # mail the link, and asking for an address to mail it to only sets up a
+    # failure. Ask only when there is a mail server to send through.
+    if curl -sS --max-time 15 -H "${auth}" "${base}/admin/realms/${realm}" 2>/dev/null \
+        | jq -e '(.smtpServer.host // "") != "" and (.smtpServer.from // "") != ""' >/dev/null 2>&1; then
+        can_mail=true
+    fi
+    if [[ "${can_mail}" != "true" ]]; then
+        info "  The realm has no mail server yet (the relay is supplied after this"
+        info "  sign-in), so the link is shown here rather than mailed."
+    fi
+    if [[ "${can_mail}" == "true" && -z "${email}" && -t 0 && "${GENTIAN_NONINTERACTIVE:-0}" != "1" ]]; then
         printf '  Recovery email for %s (Enter to show the link here instead): ' "${username}"
         read -r email || email=""
     fi
@@ -1838,6 +1851,17 @@ issue_platform_admin_activation() {
     redirect="$(curl -sS --max-time 15 -H "${auth}" "${base}/admin/realms/${realm}/clients?clientId=${client}" \
         | jq -r '.[0].rootUrl // .[0].baseUrl // empty' 2>/dev/null)"
     [[ -n "${redirect}" ]] && redirect="${redirect%/}/"
+    if [[ -n "${email}" && "${can_mail}" != "true" ]]; then
+        # Given ahead of time (CLUSTER_ADMIN_RECOVERY_EMAIL): kept as the
+        # recovery address for later resets, not mailed to now.
+        local cur0 upd0
+        cur0="$(curl -sS --max-time 15 -H "${auth}" "${base}/admin/realms/${realm}/users/${uid}")"
+        upd0="$(printf '%s' "${cur0}" | jq --arg e "${email}" '.email = $e | .attributes["gentian.inviteEmail"] = [$e]')"
+        curl -sf --max-time 15 -X PUT -H "${auth}" -H "Content-Type: application/json" \
+            "${base}/admin/realms/${realm}/users/${uid}" -d "${upd0}" >/dev/null &&
+            info "  ${email} is kept as the recovery address for later resets."
+        email=""
+    fi
     if [[ -n "${email}" ]]; then
         local cur upd
         cur="$(curl -sS --max-time 15 -H "${auth}" "${base}/admin/realms/${realm}/users/${uid}")"
@@ -1854,13 +1878,15 @@ issue_platform_admin_activation() {
         warn "  ${email} is kept as the recovery address; showing the link here instead."
     fi
     local answer link expires
-    answer="$(curl -sS --max-time 15 -X POST -H "${auth}" -H "Content-Type: application/json" \
+    answer="$(curl -sS --max-time 15 -w '\n%{http_code}' -X POST -H "${auth}" -H "Content-Type: application/json" \
         "${base}/realms/${realm}/gentian-activation/users/${uid}/link" \
         -d "$(jq -n --argjson a "${actions}" --arg c "${client}" --arg r "${redirect}" '{actions:$a, clientId:$c} + (if $r != "" then {redirectUri:$r} else {} end)')")"
+    local status="${answer##*$'\n'}"
+    answer="${answer%$'\n'*}"
     link="$(printf '%s' "${answer}" | jq -r '.link // empty' 2>/dev/null)"
     expires="$(printf '%s' "${answer}" | jq -r '.expiresAt // empty' 2>/dev/null)"
     if [[ -z "${link}" ]]; then
-        warn "  Keycloak issued no activation link: ${answer:-no answer}"
+        warn "  Keycloak issued no activation link: HTTP ${status} ${answer:-(empty answer)}"
         return 1
     fi
     echo ""
