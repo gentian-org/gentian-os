@@ -162,8 +162,10 @@ cmd_logout() {
     if [[ -f "${_TOKEN_FILE}" ]]; then
         local refresh
         refresh="$(jq -r '.refresh_token // empty' "${_TOKEN_FILE}")"
-        [[ -n "${refresh}" ]] && curl -sS --max-time 10 -o /dev/null -d client_id=gentian-cli \
-            --data-urlencode "refresh_token=${refresh}" "${_ISSUER}/protocol/openid-connect/logout" || true
+        if [[ -n "${refresh}" ]]; then
+            curl -sS --max-time 10 -o /dev/null -d client_id=gentian-cli \
+                --data-urlencode "refresh_token=${refresh}" "${_ISSUER}/protocol/openid-connect/logout" || true
+        fi
         rm -f "${_TOKEN_FILE}"
     fi
     echo "Signed out."
@@ -219,7 +221,9 @@ _connect() {
 }
 
 _disconnect() {
-    [[ -n "${_PF_PID}" ]] && kill "${_PF_PID}" 2>/dev/null || true
+    if [[ -n "${_PF_PID}" ]]; then
+        kill "${_PF_PID}" 2>/dev/null || true
+    fi
 }
 
 # _call <method> <path> [json-body] — the director's answer on stdout; a
