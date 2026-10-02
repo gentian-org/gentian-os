@@ -241,12 +241,25 @@ init_openbao() {
     done
     echo ""
 
-    local BAO_HTTP
-    if ! BAO_HTTP=$(gentian_service_addr openbao "${OPENBAO_NAMESPACE:-openbao}" 8200 https); then
-        error "Could not reach the openbao Service on :8200."
-        error "  Neither the ClusterIP nor a kubectl port-forward responded."
-        exit 1
-    fi
+    # The Service exists the moment the chart is applied; the pod behind it
+    # does not answer until it can start. On a fresh cluster it waits for the
+    # transit token B-02 writes a moment earlier and for its volume to bind,
+    # which on network storage is minutes, not seconds. Probing as soon as the
+    # Service existed failed every cold install. So: retry the address for up
+    # to five minutes, and say why it is waiting.
+    local BAO_HTTP="" waited=0 phase
+    info "Waiting for openbao-0 to answer (up to 5 min)..."
+    until BAO_HTTP=$(gentian_service_addr openbao "${OPENBAO_NAMESPACE:-openbao}" 8200 https 2>/dev/null); do
+        if (( waited >= 300 )); then
+            phase="$(kubectl get pod openbao-0 -n "${OPENBAO_NAMESPACE:-openbao}" -o jsonpath='{.status.phase}' 2>/dev/null || true)"
+            error "Could not reach the openbao Service on :8200 within 5 minutes (openbao-0: ${phase:-absent})."
+            error "  Neither the ClusterIP nor a kubectl port-forward responded."
+            error "  kubectl describe pod openbao-0 -n ${OPENBAO_NAMESPACE:-openbao}   says why."
+            exit 1
+        fi
+        echo -n "."; sleep 10; waited=$((waited + 10))
+    done
+    echo ""
     export VAULT_SKIP_VERIFY=true
 
     local init_status
