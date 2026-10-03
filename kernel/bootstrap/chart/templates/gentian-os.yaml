@@ -50,6 +50,18 @@ spec:
     - .spec.data[].remoteRef.nullBytePolicy
     - .spec.target.deletionPolicy
     - .metadata.finalizers
+  # The director's token for the operator's app-lifecycle API. The chart keeps
+  # an existing value through `lookup`, which Argo CD's `helm template` never
+  # answers, so every sync minted a new token and overwrote the Secret. Pods
+  # read it once, at start: a director and an operator started around
+  # different syncs held different tokens, and every call between them -- each
+  # backup read, plan and app state -- answered 401. With
+  # RespectIgnoreDifferences below, the value written at install is kept.
+  - group: ""
+    kind: Secret
+    name: gentian-os-lifecycle-token
+    jsonPointers:
+    - /data
   sources:
   - repoURL: {{ .Values.osRepo | default "https://github.com/gentian-org/gentian-os" }}
     targetRevision: {{ .Values.gentianOsBranch }}
@@ -150,4 +162,7 @@ spec:
       selfHeal: true
     syncOptions:
     - ServerSideApply=true
+    # Apply ignoreDifferences on sync too, not only on comparison: otherwise
+    # the lifecycle token above is still rewritten every time.
+    - RespectIgnoreDifferences=true
 {{- end }}
