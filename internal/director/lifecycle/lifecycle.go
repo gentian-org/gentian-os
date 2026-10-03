@@ -93,7 +93,8 @@ func (c *Client) Get(ctx context.Context, path string, query url.Values) (int, [
 	if err != nil {
 		return 0, nil, fmt.Errorf("app-lifecycle API: %w", err)
 	}
-	return resp.StatusCode, body, nil
+	status, body := refusedByOperator(resp.StatusCode, body)
+	return status, body, nil
 }
 
 // Stream relays one read whose body is not decoded and may be large -- a
@@ -109,6 +110,15 @@ func (c *Client) Stream(ctx context.Context, path string) (*http.Response, error
 	resp, err := c.stream.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("app-lifecycle API: %w", err)
+	}
+	if resp.StatusCode == http.StatusUnauthorized {
+		_ = resp.Body.Close()
+		status, body := refusedByOperator(resp.StatusCode, nil)
+		resp.StatusCode = status
+		resp.Header.Set("Content-Type", "application/json")
+		resp.Header.Del("Content-Disposition")
+		resp.Header.Del("Content-Length")
+		resp.Body = io.NopCloser(bytes.NewReader(body))
 	}
 	return resp, nil
 }
@@ -131,7 +141,23 @@ func (c *Client) Upload(ctx context.Context, path, contentType string, body io.R
 	if err != nil {
 		return 0, nil, fmt.Errorf("app-lifecycle API: %w", err)
 	}
-	return resp.StatusCode, answer, nil
+	status, answer := refusedByOperator(resp.StatusCode, answer)
+	return status, answer, nil
+}
+
+// refusedByOperator rewrites the operator refusing the DIRECTOR's token.
+//
+// The app-lifecycle API answers 401 only to a wrong shared token: a fault
+// between two platform services. Passed through unchanged it reached the
+// browser as a 401, which every console reads as "your session expired" and
+// answers by signing in again -- so a token mismatch made the Operations
+// Console reload several times a second rather than say what was wrong. It
+// leaves here as 502 Bad Gateway, which is what it is.
+func refusedByOperator(status int, body []byte) (int, []byte) {
+	if status != http.StatusUnauthorized {
+		return status, body
+	}
+	return http.StatusBadGateway, []byte(`{"detail":"the operator refused the director's token for its app-lifecycle API; the two hold different tokens -- restart both after checking the gentian-os-lifecycle-token Secret"}`)
 }
 
 // Plan is one plan as the operator presents it for a tenant.
@@ -222,5 +248,6 @@ func (c *Client) Do(ctx context.Context, path, actor string, body any) (int, []b
 	if err != nil {
 		return 0, nil, fmt.Errorf("app-lifecycle API: %w", err)
 	}
-	return resp.StatusCode, answer, nil
+	status, answer := refusedByOperator(resp.StatusCode, answer)
+	return status, answer, nil
 }
