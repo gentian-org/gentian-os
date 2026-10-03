@@ -18,6 +18,7 @@ package authz
 
 import (
 	"context"
+	"html"
 	"net/http"
 	"strings"
 
@@ -30,25 +31,49 @@ import (
 
 // deniedPage is what a browser gets instead of the word "Forbidden": the
 // refusal, and the one link that can change it. Inline and tiny, because this
-// service serves no assets and must answer without reaching anything.
-const deniedPage = `<!doctype html><html lang="en"><head><meta charset="utf-8">` +
-	`<meta name="viewport" content="width=device-width,initial-scale=1">` +
-	`<title>Not available to you</title><style>` +
-	`body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;background:#f4f1ea;color:#14152e;` +
-	`display:flex;min-height:100vh;align-items:center;justify-content:center;margin:0}` +
-	`main{max-width:32rem;padding:2rem}h1{font-size:1.25rem;margin:0 0 .5rem}` +
-	`p{margin:0 0 1rem;color:#45486b;line-height:1.5}` +
-	`a{display:inline-block;background:#262696;color:#fff;text-decoration:none;` +
-	`padding:.55rem 1rem;border-radius:.5rem}</style></head><body><main>` +
-	`<h1>This is not available to you</h1>` +
-	`<p>Your session does not carry the access this page needs. If you have ` +
-	`just been given it, or you are signed in as someone else, sign out and ` +
-	`sign in again.</p><a href="` + SignOutPath + `">Sign out</a></main></body></html>`
+// service serves no assets and must answer without reaching anything. Its
+// colours are the cluster's brand when brandingBase names where that is
+// published (the browser fetches it, not this service), and the platform's
+// own otherwise.
+func deniedPage(brandingBase string) string {
+	brand := ""
+	if strings.HasPrefix(brandingBase, "https://") {
+		brand = `<link rel="stylesheet" href="` + html.EscapeString(brandingBase+"brand.css") + `">`
+	}
+	return `<!doctype html><html lang="en"><head><meta charset="utf-8">` +
+		`<meta name="viewport" content="width=device-width,initial-scale=1">` +
+		`<title>Not available to you</title>` + brand + `<style>` +
+		`body{font-family:var(--brand-font-family-sans,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif);` +
+		`background:var(--brand-color-paper-0,#f4f1ea);color:var(--brand-color-ink-1,#14152e);` +
+		`display:flex;min-height:100vh;align-items:center;justify-content:center;margin:0}` +
+		`main{max-width:32rem;padding:2rem}h1{font-size:1.25rem;margin:0 0 .5rem}` +
+		`p{margin:0 0 1rem;color:var(--brand-color-ink-3,#45486b);line-height:1.5}` +
+		`a{display:inline-block;background:var(--brand-color-brand-500,#262696);color:#fff;text-decoration:none;` +
+		`padding:.55rem 1rem;border-radius:var(--brand-radius-1,.5rem)}</style></head><body><main>` +
+		`<h1>This is not available to you</h1>` +
+		`<p>Your session does not carry the access this page needs. If you have ` +
+		`just been given it, or you are signed in as someone else, sign out and ` +
+		`sign in again.</p><a href="` + SignOutPath + `">Sign out</a></main></body></html>`
+}
+
+// BrandingBase is where the cluster's brand is published, from the issuer
+// base this service already verifies against: https://id.<kernel>/auth
+// becomes https://id.<kernel>/branding/.
+func BrandingBase(issuerBase string) string {
+	base := strings.TrimSuffix(strings.TrimSuffix(issuerBase, "/"), "/auth")
+	if !strings.HasPrefix(base, "https://") {
+		return ""
+	}
+	return base + "/branding/"
+}
 
 // Server is the Envoy ext_authz gRPC service over a Decider.
 type Server struct {
 	authv3.UnimplementedAuthorizationServer
 	Decider *Decider
+	// BrandingBase is where the denied page loads the cluster's brand
+	// from; empty keeps the platform's own colours.
+	BrandingBase string
 }
 
 // Check answers Envoy.
@@ -102,7 +127,7 @@ func (s *Server) Check(ctx context.Context, req *authv3.CheckRequest) (*authv3.C
 		// names it. It grants nothing: signing out is available to anyone
 		// holding a session, refused or not.
 		if dec.Browser {
-			denied.Body = deniedPage
+			denied.Body = deniedPage(s.BrandingBase)
 			denied.Headers = []*corev3.HeaderValueOption{{
 				Header:       &corev3.HeaderValue{Key: "content-type", Value: "text/html; charset=utf-8"},
 				AppendAction: corev3.HeaderValueOption_OVERWRITE_IF_EXISTS_OR_ADD,

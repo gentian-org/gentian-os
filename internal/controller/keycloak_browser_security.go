@@ -20,6 +20,8 @@ import (
 	"context"
 	"fmt"
 
+	"sigs.k8s.io/controller-runtime/pkg/log"
+
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/authz"
 	"github.com/gentian-org/gentian-os/internal/locales"
@@ -36,6 +38,18 @@ func (r *TenantReconciler) ensureRealmBrowserSecurityHeaders(ctx context.Context
 	kc := authz.NewKeycloakAdminClient(kcURL, kcUser, kcPass)
 	if err := kc.UpdateRealmBrowserSecurityHeaders(ctx, realm, locales); err != nil {
 		return fmt.Errorf("update realm %s browser security headers: %w", realm, err)
+	}
+	return nil
+}
+
+// ensureKernelRealmMailSender names the kernel realm's mail after the brand.
+func (r *TenantReconciler) ensureKernelRealmMailSender(ctx context.Context, realm string) error {
+	kcURL, kcUser, kcPass, err := loadKeycloakAdmin(ctx, r.Client)
+	if err != nil {
+		return fmt.Errorf("load keycloak-admin for the mail sender: %w", err)
+	}
+	if err := authz.NewKeycloakAdminClient(kcURL, kcUser, kcPass).UpdateRealmMailSender(ctx, realm, brandName(ctx, r.Client)); err != nil {
+		return fmt.Errorf("update realm %s mail sender: %w", realm, err)
 	}
 	return nil
 }
@@ -78,6 +92,14 @@ func (r *TenantReconciler) ensureKeycloakBrowserSecurityHeaders(ctx context.Cont
 	}
 	if err := r.ensureRealmBrowserSecurityHeaders(ctx, kernelRealm, r.kernelRealmLocales(ctx, kernelRealm)); err != nil {
 		return err
+	}
+	// The kernel realm's mail goes out under the cluster's brand. A tenant
+	// realm's is its Composition's; the kernel realm was given "Gentian" once
+	// at install, and this is the only thing that keeps it up to date. A name
+	// is not worth holding a tenant back for, so a failure is logged and the
+	// next pass tries again.
+	if err := r.ensureKernelRealmMailSender(ctx, kernelRealm); err != nil {
+		log.FromContext(ctx).Error(err, "kernel realm mail sender not updated")
 	}
 	// Not the tenant realm. tenant-default composes a Realm that declares the
 	// same browser security headers, and the same twelve-hour session and token

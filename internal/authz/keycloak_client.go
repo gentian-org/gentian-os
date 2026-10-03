@@ -256,6 +256,36 @@ func (c *KeycloakAdminClient) UpdateRealmBrowserSecurityHeaders(ctx context.Cont
 	return err
 }
 
+// UpdateRealmMailSender sets the name a realm's mail says it is from, and
+// nothing else about its mail.
+//
+// The realm's mail settings are read back and written whole with only that
+// name changed: the password comes back masked, and Keycloak keeps the stored
+// one for a masked value, so the credential is never handled here. A realm
+// with no mail configured is left alone -- there is no sender to name.
+func (c *KeycloakAdminClient) UpdateRealmMailSender(ctx context.Context, realm, name string) error {
+	if realm == "" || name == "" {
+		return nil
+	}
+	token, err := c.adminToken(ctx)
+	if err != nil {
+		return err
+	}
+	var current struct {
+		SMTPServer map[string]any `json:"smtpServer"`
+	}
+	if err := c.getAdminJSON(ctx, token, "/admin/realms/"+url.PathEscape(realm), &current); err != nil {
+		return err
+	}
+	if len(current.SMTPServer) == 0 || current.SMTPServer["fromDisplayName"] == name {
+		return nil
+	}
+	current.SMTPServer["fromDisplayName"] = name
+	_, err = c.doAdminExpect(ctx, token, http.MethodPut, "/admin/realms/"+url.PathEscape(realm),
+		map[string]any{"smtpServer": current.SMTPServer}, http.StatusNoContent, http.StatusOK)
+	return err
+}
+
 func (c *KeycloakAdminClient) ListRealmUsers(ctx context.Context, realm string) ([]KeycloakUser, error) {
 	token, err := c.adminToken(ctx)
 	if err != nil {

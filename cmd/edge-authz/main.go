@@ -143,7 +143,7 @@ func run(log *slog.Logger) error {
 		return err
 	}
 	srv := grpc.NewServer()
-	authv3.RegisterAuthorizationServer(srv, &edge.Server{Decider: decider})
+	authv3.RegisterAuthorizationServer(srv, &edge.Server{Decider: decider, BrandingBase: edge.BrandingBase(issuerBase)})
 	healthpb.RegisterHealthServer(srv, health.NewServer())
 
 	httpSrv := &http.Server{Addr: envOr("EDGE_AUTHZ_HEALTH", ":8081"), ReadHeaderTimeout: 5 * time.Second}

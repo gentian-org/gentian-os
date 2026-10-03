@@ -131,3 +131,49 @@ func TestEnsureGroup_MergesAttributesInsteadOfReplacingThem(t *testing.T) {
 		}
 	}
 }
+
+// The sender name changes and nothing else does: the masked password goes back
+// as it came, which Keycloak reads as "keep the stored one"; a realm without
+// mail, or already named, is not written at all.
+func TestKeycloakAdminClient_UpdateRealmMailSender(t *testing.T) {
+	t.Parallel()
+	realm := `{"smtpServer":{"host":"smtp.example","from":"noreply@k.example","fromDisplayName":"Gentian","password":"**********"}}`
+	var puts []map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/realms/master/protocol/openid-connect/token":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"access_token":"tok","expires_in":300}`))
+		case r.URL.Path == "/admin/realms/kernel" && r.Method == http.MethodGet:
+			_, _ = w.Write([]byte(realm))
+		case r.URL.Path == "/admin/realms/kernel" && r.Method == http.MethodPut:
+			var body map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			puts = append(puts, body)
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+	client := testAdminClient(srv, "admin", "secret")
+
+	if err := client.UpdateRealmMailSender(context.Background(), "kernel", "Acme Cloud"); err != nil {
+		t.Fatal(err)
+	}
+	if len(puts) != 1 {
+		t.Fatalf("puts = %d", len(puts))
+	}
+	smtp := puts[0]["smtpServer"].(map[string]any)
+	if smtp["fromDisplayName"] != "Acme Cloud" || smtp["password"] != "**********" || smtp["host"] != "smtp.example" || len(puts[0]) != 1 {
+		t.Fatalf("put = %v", puts[0])
+	}
+
+	if err := client.UpdateRealmMailSender(context.Background(), "kernel", "Gentian"); err != nil || len(puts) != 1 {
+		t.Fatalf("an unchanged name was written: %v, puts=%d", err, len(puts))
+	}
+	realm = `{"smtpServer":{}}`
+	if err := client.UpdateRealmMailSender(context.Background(), "kernel", "Acme Cloud"); err != nil || len(puts) != 1 {
+		t.Fatalf("a realm without mail was written: %v, puts=%d", err, len(puts))
+	}
+}
