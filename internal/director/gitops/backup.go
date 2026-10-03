@@ -393,6 +393,12 @@ func ensureResourceListed(text, file string) (string, bool) {
 		}
 	}
 	for i, line := range lines {
+		// `resources: []` is the empty list step 0 scaffolds; the first entry
+		// makes it a block list rather than adding a second resources key.
+		if strings.TrimSpace(line) == "resources: []" {
+			lines[i] = "resources:"
+			line = lines[i]
+		}
 		if strings.TrimSpace(line) != "resources:" {
 			continue
 		}

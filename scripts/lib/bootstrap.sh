@@ -853,6 +853,26 @@ resync_credential_consumers() {
         done
     fi
 
+    # The Secrets the not-ready issuers name, waited for before the nudge.
+    # The re-sync above stops at the first quiet poll, which can come before
+    # External Secrets has written the Secret -- the store having only just
+    # become Ready. A nudge then re-latches the issuer on the same absence,
+    # and cert-manager does not watch a solver's Secret, so nothing retries:
+    # the DNS-01 issuer stayed failed after a finished install.
+    local cm_ns secret deadline
+    cm_ns="$(gentian_cert_manager_namespace 2>/dev/null || echo "${CERT_MANAGER_NAMESPACE:-cert-manager}")"
+    deadline=$(( SECONDS + 90 ))
+    while read -r secret; do
+        [[ -n "${secret}" ]] || continue
+        until kubectl get secret "${secret}" -n "${cm_ns}" >/dev/null 2>&1; do
+            (( SECONDS < deadline )) || break
+            sleep 3
+        done
+    done <<< "$(kubectl get clusterissuers.cert-manager.io -o json 2>/dev/null | jq -r '
+        .items[]
+        | select([(.status.conditions // [])[] | select(.type == "Ready" and .status == "True")] | length == 0)
+        | [.spec.acme.solvers[]? | .. | objects | to_entries[] | select(.key | test("SecretRef$")) | .value.name // empty] | .[]' 2>/dev/null | sort -u || true)"
+
     count=0
     while read -r name; do
         [[ -n "${name}" ]] || continue
@@ -1991,6 +2011,13 @@ _cluster_scaffold_paths() {
 _scaffold_default_profiles() {
     local cluster="$1" dir list item name tmp
     dir="${GENTIAN_DEPLOYMENTS_PATH}/clusters/${cluster}/catalogue"
+    # The directory and its kustomization exist whatever goes in them: the
+    # gentian-catalogue Application syncs this path from the first install,
+    # and a path that does not exist is a sync error, not an empty catalogue.
+    mkdir -p "${dir}"
+    if [[ ! -f "${dir}/kustomization.yaml" ]]; then
+        printf 'apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources: []\n' > "${dir}/kustomization.yaml"
+    fi
     if [[ "${GENTIAN_DISABLE_API_EXTENSIONS:-0}" == "1" ]]; then
         info "Default profiles skipped (--disable-api-extensions)."
         return 0
@@ -2021,9 +2048,9 @@ _scaffold_default_profiles() {
             continue
         fi
         cp "${tmp}" "${dir}/${name}.yaml"
-        if [[ ! -f "${dir}/kustomization.yaml" ]]; then
-            printf 'apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n' > "${dir}/kustomization.yaml"
-        fi
+        # An empty list is written as `resources: []`; the first entry turns
+        # it into a block list.
+        sed_inplace 's/^resources: \[\]$/resources:/' "${dir}/kustomization.yaml"
         grep -q "^- ${name}.yaml$" "${dir}/kustomization.yaml" || printf -- '- %s.yaml\n' "${name}" >> "${dir}/kustomization.yaml"
         info "  default profile ${name} (from ${item})"
     done

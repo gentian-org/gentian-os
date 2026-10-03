@@ -1,0 +1,62 @@
+---
+# The cluster's materialised catalogue, from the deployments repository.
+#
+# AD-3: a profile arrives when a tenant installs it, at a content digest,
+# through the director, which commits it to clusters/<cluster>/catalogue/.
+# Step 0 writes the default profiles there too (sovereignty-concept.md §5.4).
+# Nothing synced that directory: every materialised entry stayed a file in
+# git, and the first default profile -- the Operations Console -- never
+# became a ComponentProfile. This is the Application that reads it.
+#
+# Wave 11, beside the claims: after the operator's CRDs, before the tenants
+# whose defaultForTenants components need the profiles.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: gentian-catalogue
+  namespace: ns.gitops.placeholder
+  annotations:
+    argocd.argoproj.io/sync-wave: "11"
+spec:
+  # A profile in use by a tenant's Component must not vanish because this
+  # ApplicationSet was deleted.
+  syncPolicy:
+    preserveResourcesOnDeletion: true
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+  - list:
+      elements:
+      - env: dev
+  template:
+    metadata:
+      name: 'gentian-catalogue-{{.env}}'
+      annotations:
+        argocd.argoproj.io/sync-wave: "11"
+    spec:
+      project: gentian
+      source:
+        repoURL: deployments.repo.placeholder
+        targetRevision: deployments.revision.placeholder
+        # A kustomization: the director lists each entry it materialises in
+        # it, and step 0 always writes one, so the path exists from the
+        # first install even with nothing in it.
+        path: clusters/deployments.cluster.placeholder/catalogue
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: ns.provisioning.placeholder
+      syncPolicy:
+        automated:
+          # No prune: a profile leaves the cluster through the catalogue's
+          # own retirement, not because a file moved -- a Component of a
+          # tenant may still name it.
+          prune: false
+          selfHeal: true
+        retry:
+          limit: 10
+          backoff:
+            duration: 15s
+            factor: 2
+            maxDuration: 2m
+        syncOptions:
+        - ServerSideApply=true
