@@ -25,6 +25,7 @@ import (
 	"testing"
 	"time"
 
+	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/yaml"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
@@ -420,5 +421,43 @@ func TestACustomDomainIsOneCommitAndRefusedWhereItCannotBe(t *testing.T) {
 	}
 	if got, _ := g.TenantLoginDomain(ctx, "acme"); got != "acme."+dt.KernelDomain {
 		t.Fatalf("login domain after unbinding = %q", got)
+	}
+}
+
+// The brand is one commit of a Branding among the cluster's declarations,
+// read back as written; one the pages could not show is refused before git.
+func TestTheBrandIsCommittedAndABrokenOneIsRefused(t *testing.T) {
+	remote := dt.Remote(t)
+	g := gitops.NewGitOps(dt.Clone(t, remote), remote, dt.Cluster, director)
+	ctx := context.Background()
+
+	if _, found, err := g.ClusterBranding(ctx); err != nil || found {
+		t.Fatalf("before: found=%v err=%v", found, err)
+	}
+	spec := gentianov1alpha1.BrandingSpec{
+		Identity: gentianov1alpha1.BrandIdentity{Name: "Acme Cloud"},
+		Tokens:   &runtime.RawExtension{Raw: []byte(`{"color":{"$type":"color","brand":{"500":{"$value":"#c0392b"}}}}`)},
+	}
+	if res, err := g.SetClusterBranding(ctx, spec, tenantMeta()); err != nil || !res.Changed {
+		t.Fatalf("set: %+v %v", res, err)
+	}
+	doc := dt.RemoteFile(t, remote, "clusters/"+dt.Cluster+"/kernel/claims/"+gitops.BrandingFile)
+	for _, want := range []string{"kind: Branding", "name: default", "name: Acme Cloud", "#c0392b"} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("branding.yaml lacks %q:\n%s", want, doc)
+		}
+	}
+	if strings.Contains(doc, "status") || strings.Contains(doc, "creationTimestamp") {
+		t.Errorf("branding.yaml carries cluster state:\n%s", doc)
+	}
+	got, found, err := g.ClusterBranding(ctx)
+	if err != nil || !found || got.Identity.Name != "Acme Cloud" {
+		t.Fatalf("read back: %+v %v %v", got, found, err)
+	}
+
+	broken := spec
+	broken.Tokens = &runtime.RawExtension{Raw: []byte(`{"color":{"$type":"color","brand":{"500":{"$value":"red; }"}}}}`)}
+	if _, err := g.SetClusterBranding(ctx, broken, tenantMeta()); !errors.Is(err, gitops.ErrInvalidBranding) {
+		t.Fatalf("broken: err = %v", err)
 	}
 }

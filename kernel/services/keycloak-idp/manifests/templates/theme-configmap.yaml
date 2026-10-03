@@ -32,22 +32,28 @@ data:
      * Keycloak from its own origin and cannot reach the desktop's assets.
      */
 
+    /* The cluster's brand: --brand-* custom properties, rendered by the operator
+     * from the Branding (W3C design tokens) and served beside the sign-in router.
+     * Every --gtn-* below reads its token and keeps the platform's own value when
+     * the token is absent, or when the file is. */
+    @import url("/branding/brand.css");
+
     :root {
-      --gtn-ink-0: #07081a;
-      --gtn-ink-1: #14152e;
-      --gtn-ink-3: #45486b;
-      --gtn-ink-4: #74779a;
-      --gtn-paper-0: #f4f1ea;
-      --gtn-paper-1: #ece8df;
-      --gtn-paper-2: #ded9cc;
-      --gtn-paper-3: #ffffff;
-      --gtn-500: #262696;
-      --gtn-600: #1b1a82;
-      --gtn-700: #131370;
+      --gtn-ink-0: var(--brand-color-ink-0, #07081a);
+      --gtn-ink-1: var(--brand-color-ink-1, #14152e);
+      --gtn-ink-3: var(--brand-color-ink-3, #45486b);
+      --gtn-ink-4: var(--brand-color-ink-4, #74779a);
+      --gtn-paper-0: var(--brand-color-paper-0, #f4f1ea);
+      --gtn-paper-1: var(--brand-color-paper-1, #ece8df);
+      --gtn-paper-2: var(--brand-color-paper-2, #ded9cc);
+      --gtn-paper-3: var(--brand-color-paper-3, #ffffff);
+      --gtn-500: var(--brand-color-brand-500, #262696);
+      --gtn-600: var(--brand-color-brand-600, #1b1a82);
+      --gtn-700: var(--brand-color-brand-700, #131370);
       --gtn-border: rgba(20, 21, 46, 0.1);
       --gtn-border-strong: rgba(20, 21, 46, 0.22);
-      --gtn-font: "Hanken Grotesk", -apple-system, BlinkMacSystemFont, "Segoe UI",
-        Roboto, "Helvetica Neue", Arial, sans-serif;
+      --gtn-font: var(--brand-font-family-sans, "Hanken Grotesk", -apple-system, BlinkMacSystemFont, "Segoe UI",
+        Roboto, "Helvetica Neue", Arial, sans-serif);
 
       /* Surfaces */
       --pf-v5-global--BackgroundColor--100: var(--gtn-paper-3);
@@ -119,22 +125,28 @@ data:
      * Keycloak from its own origin and cannot reach the desktop's assets.
      */
 
+    /* The cluster's brand: --brand-* custom properties, rendered by the operator
+     * from the Branding (W3C design tokens) and served beside the sign-in router.
+     * Every --gtn-* below reads its token and keeps the platform's own value when
+     * the token is absent, or when the file is. */
+    @import url("/branding/brand.css");
+
     :root {
-      --gtn-ink-0: #07081a;
-      --gtn-ink-1: #14152e;
-      --gtn-ink-3: #45486b;
-      --gtn-ink-4: #74779a;
-      --gtn-paper-0: #f4f1ea;
-      --gtn-paper-1: #ece8df;
-      --gtn-paper-2: #ded9cc;
-      --gtn-paper-3: #ffffff;
-      --gtn-500: #262696;
-      --gtn-600: #1b1a82;
-      --gtn-700: #131370;
+      --gtn-ink-0: var(--brand-color-ink-0, #07081a);
+      --gtn-ink-1: var(--brand-color-ink-1, #14152e);
+      --gtn-ink-3: var(--brand-color-ink-3, #45486b);
+      --gtn-ink-4: var(--brand-color-ink-4, #74779a);
+      --gtn-paper-0: var(--brand-color-paper-0, #f4f1ea);
+      --gtn-paper-1: var(--brand-color-paper-1, #ece8df);
+      --gtn-paper-2: var(--brand-color-paper-2, #ded9cc);
+      --gtn-paper-3: var(--brand-color-paper-3, #ffffff);
+      --gtn-500: var(--brand-color-brand-500, #262696);
+      --gtn-600: var(--brand-color-brand-600, #1b1a82);
+      --gtn-700: var(--brand-color-brand-700, #131370);
       --gtn-border: rgba(20, 21, 46, 0.1);
       --gtn-border-strong: rgba(20, 21, 46, 0.22);
-      --gtn-font: "Hanken Grotesk", -apple-system, BlinkMacSystemFont, "Segoe UI",
-        Roboto, "Helvetica Neue", Arial, sans-serif;
+      --gtn-font: var(--brand-font-family-sans, "Hanken Grotesk", -apple-system, BlinkMacSystemFont, "Segoe UI",
+        Roboto, "Helvetica Neue", Arial, sans-serif);
 
       /* Surfaces */
       --pf-v5-global--BackgroundColor--100: var(--gtn-paper-3);
@@ -313,26 +325,32 @@ data:
      *     theme into a derived Keycloak image where binary assets belong.
      */
 
+    /* The cluster's brand: --brand-* custom properties, rendered by the operator
+     * from the Branding (W3C design tokens) and served beside the sign-in router.
+     * Every --gtn-* below reads its token and keeps the platform's own value when
+     * the token is absent, or when the file is. */
+    @import url("/branding/brand.css");
+
     :root {
-      --gtn-paper-0: #F4F1EA;
-      --gtn-paper-3: #FFFFFF;
+      --gtn-paper-0: var(--brand-color-paper-0, #F4F1EA);
+      --gtn-paper-3: var(--brand-color-paper-3, #FFFFFF);
       --gtn-border: rgba(20, 21, 46, 0.10);
-      --gtn-ink-1: #14152E;
-      --gtn-ink-2: #232547;
-      --gtn-400: #4A4AB3;
-      --gtn-500: #262696;
-      --gtn-600: #1B1A82;
-      --gtn-700: #131370;
-      --gtn-50: #ECECF7;
-      --gtn-r1: 6px;
-      --gtn-r2: 10px;
+      --gtn-ink-1: var(--brand-color-ink-1, #14152E);
+      --gtn-ink-2: var(--brand-color-ink-2, #232547);
+      --gtn-400: var(--brand-color-brand-400, #4A4AB3);
+      --gtn-500: var(--brand-color-brand-500, #262696);
+      --gtn-600: var(--brand-color-brand-600, #1B1A82);
+      --gtn-700: var(--brand-color-brand-700, #131370);
+      --gtn-50: var(--brand-color-brand-50, #ECECF7);
+      --gtn-r1: var(--brand-radius-1, 6px);
+      --gtn-r2: var(--brand-radius-2, 10px);
       --gtn-shadow-3: 0 12px 28px -8px rgba(20, 21, 46, 0.14);
       --gtn-focus-ring: 0 0 0 3px rgba(74, 74, 179, 0.30);
-      --gtn-font-sans: "Hanken Grotesk", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --gtn-font-sans: var(--brand-font-family-sans, "Hanken Grotesk", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
       --gtn-dur-2: 200ms;
       --gtn-ease-out: cubic-bezier(0.22, 1, 0.36, 1);
-      --gtn-madder: #9B2D2D;
-      --gtn-madder-bg: #F2D9D9;
+      --gtn-madder: var(--brand-color-status-danger, #9B2D2D);
+      --gtn-madder-bg: var(--brand-color-status-danger-bg, #F2D9D9);
     }
 
     html, body { height: 100%; margin: 0; }
@@ -746,6 +764,46 @@ data:
        login page; the portal's form had neither. */
     .gentian-hidden, #kc-registration, #kc-registration-container,
     #kc-social-providers, #kc-info { display: none !important; }
+  login__resources__js__brand.js: |-
+    /* The cluster's name and logo on the sign-in card.
+     *
+     * The colours arrive by stylesheet (the @import of /branding/brand.css); the
+     * name and the logo are content, so they are read from /branding/brand.json,
+     * which the operator renders from the Branding. Without it the card keeps the
+     * platform's own.
+     */
+    (function () {
+      var BASE = "/branding/";
+      function apply(brand) {
+        if (!brand || typeof brand.name !== "string" || !brand.name) return;
+        var titles = document.querySelectorAll(".gentian-login__title");
+        for (var i = 0; i < titles.length; i++) titles[i].textContent = brand.name;
+        var logos = document.querySelectorAll(".gentian-login__logo");
+        var icon = null;
+        (brand.icons || []).forEach(function (ic) {
+          if (!icon && ic && typeof ic.src === "string" && (!ic.purpose || ic.purpose.split(" ").indexOf("any") >= 0)) icon = ic;
+        });
+        for (var j = 0; j < logos.length; j++) {
+          logos[j].setAttribute("aria-label", brand.name);
+          if (icon) {
+            var url = new URL(icon.src, location.origin + BASE).href;
+            if (/^https:\/\//.test(url)) logos[j].style.backgroundImage = 'url("' + url.replace(/"/g, "") + '")';
+          }
+        }
+        document.title = document.title.replace(/Gentian|Keycloak/g, brand.name);
+      }
+      function load() {
+        fetch(BASE + "brand.json", { cache: "no-cache", credentials: "omit" })
+          .then(function (r) { return r.ok ? r.json() : null; })
+          .then(apply)
+          .catch(function () {});
+      }
+      if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", load);
+      } else {
+        load();
+      }
+    })();
   login__resources__js__login-hint.js: |-
     /* The address the sign-in router was given, filled in for the person.
      *
@@ -790,8 +848,9 @@ data:
     import=common/keycloak
 
     styles=css/gentian-login.css
-    # Fills the username from the sign-in router's hint; see the file.
-    scripts=js/login-hint.js
+    # login-hint fills the username from the sign-in router's hint; brand sets
+    # the card's name and logo from the cluster's brand. See the files.
+    scripts=js/login-hint.js js/brand.js
 
     # keycloak.v2's template.ftl renders <body class="${properties.kcBodyClass!}">,
     # which is what the stylesheet centres the card against.

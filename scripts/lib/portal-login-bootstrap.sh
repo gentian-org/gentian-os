@@ -515,11 +515,12 @@ _keycloak_smtp_configure_shell() {
                   --arg pass "${SMTP_PASSWORD}" \
                   --arg ssl "${SMTP_SSL}" \
                   --arg starttls "${SMTP_STARTTLS}" \
+                  --arg fromName "${SMTP_FROM_NAME:-Gentian}" \
                   '{
                     host: $host,
                     port: $port,
                     from: $from,
-                    fromDisplayName: "Gentian",
+                    fromDisplayName: $fromName,
                     auth: "true",
                     user: $user,
                     password: $pass,

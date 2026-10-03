@@ -36,7 +36,7 @@ const keycloakSMTPCredentialsSecret = "keycloak-smtp-credentials"
 
 // Bumped whenever buildTenantSMTPConfigureScript changes in a way that must
 // reach realms already configured; replaceOutdatedTenantSMTPJob acts on it.
-const tenantSMTPVersion = "3"
+const tenantSMTPVersion = "4"
 
 func tenantSMTPJobName(tenantName string) string {
 	return fmt.Sprintf("keycloak-tenant-smtp-%s", tenantName)
@@ -115,11 +115,12 @@ SMTP_JSON=$(jq -n \
   --arg ssl "${SMTP_SSL}" \
   --arg starttls "${SMTP_STARTTLS}" \
   --arg auth "${SMTP_AUTH}" \
+  --arg fromName "${SMTP_FROM_NAME:-Gentian}" \
   '{
     host: $host,
     port: $port,
     from: $from,
-    fromDisplayName: "Gentian",
+    fromDisplayName: $fromName,
     auth: $auth,
     ssl: $ssl,
     starttls: $starttls
@@ -135,13 +136,16 @@ echo "tenant realm SMTP configured for ${REALM} (${SMTP_HOST}:${SMTP_PORT})"
 `, realmExpr, keycloak.ShellWaitForRealm(realmExpr))
 }
 
-func makeTenantSMTPJob(tenantName, realmName, kernelMailHost string) *batchv1.Job {
+// makeTenantSMTPJob configures a tenant realm's mail. fromName is who its
+// mail says it is from: the cluster's brand.
+func makeTenantSMTPJob(tenantName, realmName, kernelMailHost, fromName string) *batchv1.Job {
 	ttl := meta.ProvisioningJobTTLSeconds
 	deadline := meta.ProvisioningJobActiveDeadlineSeconds
 	// Older installs predate the mail_service_mode key in the SMTP secret.
 	optionalKey := true
 	c := keycloakContainer("tenant-smtp", buildTenantSMTPConfigureScript(fmt.Sprintf("%q", realmName)))
 	c.Env = append(c.Env,
+		corev1.EnvVar{Name: "SMTP_FROM_NAME", Value: fromName},
 		corev1.EnvVar{
 			Name: "SMTP_CONFIGURE",
 			ValueFrom: &corev1.EnvVarSource{

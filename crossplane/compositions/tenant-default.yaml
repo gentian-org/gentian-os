@@ -68,6 +68,21 @@ spec:
                   - key: gentianos.io/tenant
                     type: FromCompositeFieldPath
                     valueFromFieldPath: metadata.name
+            # The cluster's brand, published by the operator from the
+            # Branding: the name a realm's mail is sent under and its sign-in
+            # options are labelled with. minMatch 0: until it is published the
+            # platform's own name stands.
+            - kind: ConfigMap
+              into: branding
+              apiVersion: v1
+              type: Selector
+              selector:
+                maxMatch: 1
+                minMatch: 0
+                matchLabels:
+                  - key: gentianos.io/config-type
+                    type: Value
+                    value: branding
 
     # ── Step 2: Render composed resources (tenant shell owner) ────────────────
     - step: render-tenant-resources
@@ -91,6 +106,17 @@ spec:
             {{- $ccList   := dig "clusterConfig" list $extraRes }}
             {{- $cc       := ternary (index $ccList 0) dict (gt (len $ccList) 0) }}
             {{- $ccData   := dig "data" dict $cc }}
+            {{- /* What the cluster calls itself (brand.json, rendered by the
+                 operator from the Branding); the platform's own name until
+                 that is published. */}}
+            {{- $brandName := "Gentian" }}
+            {{- $brList    := dig "branding" list $extraRes }}
+            {{- if gt (len $brList) 0 }}
+            {{- $brJSON    := dig "data" "brand.json" "" (index $brList 0) }}
+            {{- if $brJSON }}
+            {{- $brandName = default "Gentian" (dig "name" "" (fromYaml $brJSON)) }}
+            {{- end }}
+            {{- end }}
             {{- /* The kernel realm and Keycloak's in-cluster URL, published by the
                  Cluster claim. Both empty means the cluster predates them, and the
                  broker resources below stay unrendered rather than half-configured
@@ -549,7 +575,7 @@ spec:
               managementPolicies: ["Observe", "Create", "Update", "Delete"]
               forProvider:
                 clientId: gentian-edge-{{ $zone }}
-                name: Gentian edge ({{ $zone }} zone)
+                name: {{ printf "%s edge (%s zone)" $brandName $zone | quote }}
                 realmId: {{ $realm }}
                 accessType: CONFIDENTIAL
                 enabled: true
@@ -725,7 +751,7 @@ spec:
               deletionPolicy: Orphan
               forProvider:
                 clientId: gentian-portal
-                name: Gentian Portal
+                name: {{ printf "%s Portal" $brandName | quote }}
                 realmId: {{ $realm }}
                 accessType: PUBLIC
                 enabled: true
@@ -859,7 +885,7 @@ spec:
               managementPolicies: ["Observe", "Create"]
               forProvider:
                 clientId: gentian-portal-bff
-                name: Gentian Portal BFF
+                name: {{ printf "%s Portal BFF" $brandName | quote }}
                 realmId: {{ $realm }}
                 accessType: CONFIDENTIAL
                 enabled: true
@@ -1881,7 +1907,7 @@ spec:
                   - host: {{ printf "mail.%s" $kd | quote }}
                     port: "587"
                     from: {{ printf "noreply@%s" $kd | quote }}
-                    fromDisplayName: "Gentian"
+                    fromDisplayName: {{ $brandName | quote }}
                     ssl: false
                     starttls: true
                     auth:
@@ -1996,7 +2022,7 @@ spec:
               forProvider:
                 realm: {{ $realm }}
                 alias: kernel
-                displayName: Gentian SSO
+                displayName: {{ printf "%s SSO" $brandName | quote }}
                 providerId: oidc
                 enabled: true
                 trustEmail: true

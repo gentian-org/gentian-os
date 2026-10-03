@@ -231,6 +231,9 @@ func kernelHTTPRouteSpecs(
 				// on the same host so the address it hands on reaches that
 				// form and nothing else.
 				kernelBackendRulePrefixNS(signInService, identityNamespace, signInPort, signInPath, idFilters...),
+				// The cluster's brand, published by the operator and served
+				// by the same container: one place every page loads it from.
+				kernelBackendRulePrefixNS(signInService, identityNamespace, signInPort, brandingPath, idFilters...),
 			},
 			policy: keycloakProxyBackendTrafficPolicySpec(),
 		},
@@ -578,6 +581,7 @@ const (
 	signInService = "sign-in"
 	signInPort    = int32(8080)
 	signInPath    = "/sign-in"
+	brandingPath  = "/branding"
 )
 
 // signInRouterFor reports whether the kernel's apex lands on the sign-in

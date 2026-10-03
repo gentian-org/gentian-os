@@ -86,6 +86,12 @@ spec:
             - name: lookup
               mountPath: /app/site/sign-in/lookup
               readOnly: true
+            # The cluster's brand (brand.css, brand.json, brand.webmanifest
+            # and its icons), which the operator renders from the Branding
+            # and every page on the cluster loads from here.
+            - name: branding
+              mountPath: /app/site/branding
+              readOnly: true
       volumes:
         - name: config
           configMap:
@@ -93,6 +99,10 @@ spec:
         - name: lookup
           configMap:
             name: sign-in-lookup
+            optional: true
+        - name: branding
+          configMap:
+            name: branding
             optional: true
 ---
 apiVersion: v1

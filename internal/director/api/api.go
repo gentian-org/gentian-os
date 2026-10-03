@@ -78,6 +78,8 @@ type Repository interface {
 	TenantRealm(ctx context.Context, tenant string) (string, error)
 	TenantLoginDomain(ctx context.Context, tenant string) (string, error)
 	SetTenantDomain(ctx context.Context, tenant, domain string, meta gitops.Meta) (gitops.Result, error)
+	ClusterBranding(ctx context.Context) (*gentianov1alpha1.BrandingSpec, bool, error)
+	SetClusterBranding(ctx context.Context, spec gentianov1alpha1.BrandingSpec, meta gitops.Meta) (gitops.Result, error)
 	TenantAdminRequiresMFA(ctx context.Context, tenant string) (bool, error)
 	SetResourcePlan(ctx context.Context, tenant string, plan gitops.Plan, meta gitops.Meta) (gitops.Result, error)
 	SetTenantBackupPolicy(ctx context.Context, tenant string, policy gitops.BackupPolicy, meta gitops.Meta) (gitops.Result, error)
@@ -474,6 +476,11 @@ func (s *Server) routes() {
 		// author, and the operator acts on it from there.
 		s.guarded("GET /v1/clusters/{c}/settings", "can_audit", s.clusterObject, s.clusterSettings)
 		s.guarded("PATCH /v1/clusters/{c}/settings", "can_configure", s.clusterObject, s.setClusterSettings)
+		// The brand every page shows: read like a setting, written like one.
+		// The pages themselves read what the operator publishes from it,
+		// never this route.
+		s.guarded("GET /v1/clusters/{c}/branding", "can_audit", s.clusterObject, s.clusterBranding)
+		s.guarded("PUT /v1/clusters/{c}/branding", "can_configure", s.clusterObject, s.setClusterBranding)
 		// Bringing a tenant on is the errand the console exists for, and it
 		// is one commit. Listing is can_audit because seeing which customers
 		// a cluster carries is a read; creating and retiring are
@@ -1170,6 +1177,36 @@ func (s *Server) createTenant(w http.ResponseWriter, r *http.Request, c call) {
 	}
 	if errors.Is(err, gitops.ErrSingleTenancy) {
 		s.fail(w, r, http.StatusConflict, err.Error())
+		return
+	}
+	s.written(w, r, res, err)
+}
+
+// clusterBranding answers the cluster's brand; an empty one when it sets
+// none and the pages show the platform's own.
+func (s *Server) clusterBranding(w http.ResponseWriter, r *http.Request, _ call) {
+	spec, found, err := s.cfg.Repo.ClusterBranding(r.Context())
+	if err != nil {
+		s.repoError(w, r, err)
+		return
+	}
+	if !found {
+		spec = &gentianov1alpha1.BrandingSpec{}
+	}
+	s.json(w, http.StatusOK, map[string]any{"set": found, "branding": spec})
+}
+
+// setClusterBranding commits the cluster's brand, refused when the pages
+// could not show it.
+func (s *Server) setClusterBranding(w http.ResponseWriter, r *http.Request, c call) {
+	var spec gentianov1alpha1.BrandingSpec
+	if err := decode(r, &spec); err != nil {
+		s.fail(w, r, http.StatusBadRequest, "body must be a Branding spec: identity, tokens, hideVendorPromotions")
+		return
+	}
+	res, err := s.cfg.Repo.SetClusterBranding(r.Context(), spec, c.meta)
+	if errors.Is(err, gitops.ErrInvalidBranding) {
+		s.fail(w, r, http.StatusUnprocessableEntity, err.Error())
 		return
 	}
 	s.written(w, r, res, err)

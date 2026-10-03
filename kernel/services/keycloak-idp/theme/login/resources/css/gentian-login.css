@@ -14,26 +14,32 @@
  *     theme into a derived Keycloak image where binary assets belong.
  */
 
+/* The cluster's brand: --brand-* custom properties, rendered by the operator
+ * from the Branding (W3C design tokens) and served beside the sign-in router.
+ * Every --gtn-* below reads its token and keeps the platform's own value when
+ * the token is absent, or when the file is. */
+@import url("/branding/brand.css");
+
 :root {
-  --gtn-paper-0: #F4F1EA;
-  --gtn-paper-3: #FFFFFF;
+  --gtn-paper-0: var(--brand-color-paper-0, #F4F1EA);
+  --gtn-paper-3: var(--brand-color-paper-3, #FFFFFF);
   --gtn-border: rgba(20, 21, 46, 0.10);
-  --gtn-ink-1: #14152E;
-  --gtn-ink-2: #232547;
-  --gtn-400: #4A4AB3;
-  --gtn-500: #262696;
-  --gtn-600: #1B1A82;
-  --gtn-700: #131370;
-  --gtn-50: #ECECF7;
-  --gtn-r1: 6px;
-  --gtn-r2: 10px;
+  --gtn-ink-1: var(--brand-color-ink-1, #14152E);
+  --gtn-ink-2: var(--brand-color-ink-2, #232547);
+  --gtn-400: var(--brand-color-brand-400, #4A4AB3);
+  --gtn-500: var(--brand-color-brand-500, #262696);
+  --gtn-600: var(--brand-color-brand-600, #1B1A82);
+  --gtn-700: var(--brand-color-brand-700, #131370);
+  --gtn-50: var(--brand-color-brand-50, #ECECF7);
+  --gtn-r1: var(--brand-radius-1, 6px);
+  --gtn-r2: var(--brand-radius-2, 10px);
   --gtn-shadow-3: 0 12px 28px -8px rgba(20, 21, 46, 0.14);
   --gtn-focus-ring: 0 0 0 3px rgba(74, 74, 179, 0.30);
-  --gtn-font-sans: "Hanken Grotesk", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --gtn-font-sans: var(--brand-font-family-sans, "Hanken Grotesk", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
   --gtn-dur-2: 200ms;
   --gtn-ease-out: cubic-bezier(0.22, 1, 0.36, 1);
-  --gtn-madder: #9B2D2D;
-  --gtn-madder-bg: #F2D9D9;
+  --gtn-madder: var(--brand-color-status-danger, #9B2D2D);
+  --gtn-madder-bg: var(--brand-color-status-danger-bg, #F2D9D9);
 }
 
 html, body { height: 100%; margin: 0; }

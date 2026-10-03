@@ -322,7 +322,7 @@ spec:
     enabled: true
     fullScopeAllowed: false
     implicitFlowEnabled: false
-    name: Gentian edge (render-fixture zone)
+    name: Acme Cloud edge (render-fixture zone)
     realmId: render-fixture
     rootUrl: https://console.render-fixture.platform.example.test
     serviceAccountsEnabled: false
@@ -641,7 +641,7 @@ spec:
       name: render-fixture-broker-client
       namespace: kernel-authentication
     defaultScopes: openid profile email
-    displayName: Gentian SSO
+    displayName: Acme Cloud SSO
     enabled: true
     extraConfig:
       updateProfileFirstLoginMode: "on"
@@ -898,7 +898,7 @@ spec:
     enabled: true
     fullScopeAllowed: true
     implicitFlowEnabled: false
-    name: Gentian Portal BFF
+    name: Acme Cloud Portal BFF
     realmId: render-fixture
     serviceAccountsEnabled: false
     standardFlowEnabled: false
@@ -1004,7 +1004,7 @@ spec:
     enabled: true
     fullScopeAllowed: true
     implicitFlowEnabled: false
-    name: Gentian Portal
+    name: Acme Cloud Portal
     realmId: render-fixture
     rootUrl: https://portal.platform.example.test
     serviceAccountsEnabled: false
@@ -1124,7 +1124,7 @@ spec:
           namespace: kernel-edge
         username: noreply@render-fixture.platform.example.test
       from: noreply@platform.example.test
-      fromDisplayName: Gentian
+      fromDisplayName: Acme Cloud
       host: mail.platform.example.test
       port: "587"
       ssl: false

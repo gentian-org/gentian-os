@@ -242,7 +242,7 @@ func (r *TenantReconciler) buildIdentityProvisioningJobs(ctx context.Context, te
 			if r.KernelDomain != "" {
 				mailHost = "mail." + r.KernelDomain
 			}
-			jobs = append(jobs, *makeTenantSMTPJob(tenant.Name, realmName, mailHost))
+			jobs = append(jobs, *makeTenantSMTPJob(tenant.Name, realmName, mailHost, brandName(ctx, r.Client)))
 		}
 	}
 

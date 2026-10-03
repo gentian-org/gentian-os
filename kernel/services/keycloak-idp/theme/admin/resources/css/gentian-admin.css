@@ -14,22 +14,28 @@
  * Keycloak from its own origin and cannot reach the desktop's assets.
  */
 
+/* The cluster's brand: --brand-* custom properties, rendered by the operator
+ * from the Branding (W3C design tokens) and served beside the sign-in router.
+ * Every --gtn-* below reads its token and keeps the platform's own value when
+ * the token is absent, or when the file is. */
+@import url("/branding/brand.css");
+
 :root {
-  --gtn-ink-0: #07081a;
-  --gtn-ink-1: #14152e;
-  --gtn-ink-3: #45486b;
-  --gtn-ink-4: #74779a;
-  --gtn-paper-0: #f4f1ea;
-  --gtn-paper-1: #ece8df;
-  --gtn-paper-2: #ded9cc;
-  --gtn-paper-3: #ffffff;
-  --gtn-500: #262696;
-  --gtn-600: #1b1a82;
-  --gtn-700: #131370;
+  --gtn-ink-0: var(--brand-color-ink-0, #07081a);
+  --gtn-ink-1: var(--brand-color-ink-1, #14152e);
+  --gtn-ink-3: var(--brand-color-ink-3, #45486b);
+  --gtn-ink-4: var(--brand-color-ink-4, #74779a);
+  --gtn-paper-0: var(--brand-color-paper-0, #f4f1ea);
+  --gtn-paper-1: var(--brand-color-paper-1, #ece8df);
+  --gtn-paper-2: var(--brand-color-paper-2, #ded9cc);
+  --gtn-paper-3: var(--brand-color-paper-3, #ffffff);
+  --gtn-500: var(--brand-color-brand-500, #262696);
+  --gtn-600: var(--brand-color-brand-600, #1b1a82);
+  --gtn-700: var(--brand-color-brand-700, #131370);
   --gtn-border: rgba(20, 21, 46, 0.1);
   --gtn-border-strong: rgba(20, 21, 46, 0.22);
-  --gtn-font: "Hanken Grotesk", -apple-system, BlinkMacSystemFont, "Segoe UI",
-    Roboto, "Helvetica Neue", Arial, sans-serif;
+  --gtn-font: var(--brand-font-family-sans, "Hanken Grotesk", -apple-system, BlinkMacSystemFont, "Segoe UI",
+    Roboto, "Helvetica Neue", Arial, sans-serif);
 
   /* Surfaces */
   --pf-v5-global--BackgroundColor--100: var(--gtn-paper-3);
