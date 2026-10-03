@@ -33,6 +33,39 @@ _v5_delivered() {
     esac
 }
 
+# _v5_reached <stage> -- whether the cluster already has what a later step
+# turned on, as "true" or "false".
+#
+# B-01 renders the bootstrap Applications with the operator, the
+# ApplicationSets and Headlamp's OIDC off, because on a fresh cluster none of
+# them can work yet; D-01, C-02 and D-03 render the same set again with what
+# each has made possible. A step run on its own -- `--only B-01`, or C-02 --
+# rendered with the flags it sets and the rest at false, and the apply put
+# the earlier state back: Headlamp lost its OIDC and asked for a pasted token,
+# and the operator's Application kept its old spec. Each flag a render does not
+# set now defaults to the state already reached, so a re-run never goes back.
+_v5_reached() {
+    local gitops; gitops="$(ns_kernel gitops)"
+    case "$1" in
+        appsets)
+            kubectl get application gentian-appsets -n "${gitops}" >/dev/null 2>&1 && echo true || echo false ;;
+        operator)
+            kubectl get application gentian-os -n "${gitops}" >/dev/null 2>&1 && echo true || echo false ;;
+        headlamp-oidc)
+            # D-03 writes the real kubeconfig in place of the chart's
+            # placeholder once the realm and the headlamp client exist.
+            local kc
+            kc="$(kubectl get secret headlamp-kubeconfig -n "$(ns_kernel observability)" \
+                -o jsonpath='{.data.config}' 2>/dev/null | base64 -d 2>/dev/null || true)"
+            if [[ -n "${kc}" && "${kc}" != *"${HEADLAMP_KUBECONFIG_PLACEHOLDER:-PLACEHOLDER_REPLACED_BY_THE_INSTALLER}"* ]]; then
+                echo true
+            else
+                echo false
+            fi ;;
+        *) echo false ;;
+    esac
+}
+
 _v5_apps_healthy() { echo "reloader cnpg kyverno headlamp"; }
 _v5_apps_synced()  { echo "openbao openbao-transit"; }
 # Created here, waited for later. kernel-postgres's role passwords are
@@ -112,10 +145,10 @@ _v5_render() {
         --set-string "deployments.repo=${GENTIAN_DEPLOYMENTS_REPO:-}" \
         --set-string "deployments.revision=${GENTIAN_DEPLOYMENTS_BRANCH:-main}" \
         --set-string "deployments.cluster=${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-}" \
-        --set-string "appsets.enabled=${V5_APPSETS:-false}" \
-        --set-string "operator.enabled=${V5_OPERATOR:-false}" \
+        --set-string "appsets.enabled=${V5_APPSETS:-$(_v5_reached appsets)}" \
+        --set-string "operator.enabled=${V5_OPERATOR:-$(_v5_reached operator)}" \
         --set-string "operator.tag=${GENTIAN_OS_IMAGE_TAG:-}" \
-        --set-string "headlamp.oidc.enabled=${V5_HEADLAMP_OIDC:-false}" \
+        --set-string "headlamp.oidc.enabled=${V5_HEADLAMP_OIDC:-$(_v5_reached headlamp-oidc)}" \
         --set-string "kernelRealm=${KERNEL_REALM:-kernel}" \
         --set-string "desktop.chartBranch=${PORTAL_IMAGE_TAG:-develop}" \
         --set-string "desktop.chartVersion=$(_v5_keep_chart_version desktop "${DESKTOP_CHART_VERSION:-}")" \
