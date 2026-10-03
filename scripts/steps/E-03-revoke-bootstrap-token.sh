@@ -390,6 +390,27 @@ _wait_for_sign_in() {
     warn "     this cluster cannot be rebuilt as itself, and there is no way"
     warn "     back into OpenBao if its login path ever breaks."
     echo ""
+    # The console's own name has to be PUBLISHED before anyone is sent to it.
+    # Its record appears only once the platform desktop's routes exist and
+    # external-dns has run its next cycle, which can be after the activation
+    # link is ready -- and a browser that looks the name up in between gets a
+    # "does not exist" its resolver (and the router behind it) keeps for the
+    # zone's negative TTL, half an hour on Cloudflare. The link worked, the
+    # password was set, and the console said "Server Not Found" for 30 minutes.
+    local console_host="console.${KERNEL_DOMAIN:-}" waited=0
+    if [[ -n "${KERNEL_DOMAIN:-}" ]] && ! gentian_dns_resolves "${console_host}" "${KERNEL_DOMAIN}"; then
+        info "  Waiting for ${console_host} to be published in DNS before handing over (up to 10 min)..."
+        until gentian_dns_resolves "${console_host}" "${KERNEL_DOMAIN}"; do
+            if (( waited >= 600 )); then
+                warn "  ${console_host} is still not published; external-dns may not have run yet."
+                warn "    Look it up only once it is, or your resolver remembers that it is"
+                warn "    missing for up to 30 minutes:  dig +short ${console_host} @1.1.1.1"
+                break
+            fi
+            sleep 10; waited=$(( waited + 10 ))
+        done
+    fi
+
     warn "  2. SIGN IN as the cluster administrator"
     echo ""
 
