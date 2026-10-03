@@ -221,7 +221,7 @@ spec:
     name: keycloak
   writeConnectionSecretToRef:
     name: render-fixture-broker-client
-    namespace: platform-kernel
+    namespace: kernel-authentication
 ---
 apiVersion: kubernetes.crossplane.io/v1alpha2
 kind: Object
@@ -247,7 +247,7 @@ spec:
         labels:
           app.kubernetes.io/managed-by: crossplane
         name: render-fixture-broker-client-id
-        namespace: platform-kernel
+        namespace: kernel-authentication
       stringData:
         client_id: broker-render-fixture
   providerConfigRef:
@@ -635,11 +635,11 @@ spec:
     clientIdSecretRef:
       key: client_id
       name: render-fixture-broker-client-id
-      namespace: platform-kernel
+      namespace: kernel-authentication
     clientSecretSecretRef:
       key: attribute.client_secret
       name: render-fixture-broker-client
-      namespace: platform-kernel
+      namespace: kernel-authentication
     defaultScopes: openid profile email
     displayName: Gentian SSO
     enabled: true
@@ -648,16 +648,16 @@ spec:
     firstBrokerLoginFlowAlias: first-broker-login-gentian
     hideOnLoginPage: true
     issuer: https://id.platform.example.test/auth/realms/kernel
-    jwksUrl: http://gentian-idp-keycloak-keycloakx-http.platform-kernel.svc.cluster.local:8080/auth/realms/kernel/protocol/openid-connect/certs
+    jwksUrl: http://gentian-idp-keycloak-keycloakx-http.kernel-authentication.svc.cluster.local:8080/auth/realms/kernel/protocol/openid-connect/certs
     linkOnly: false
     logoutUrl: https://id.platform.example.test/auth/realms/kernel/protocol/openid-connect/logout
     providerId: oidc
     realm: render-fixture
     storeToken: true
     syncMode: IMPORT
-    tokenUrl: http://gentian-idp-keycloak-keycloakx-http.platform-kernel.svc.cluster.local:8080/auth/realms/kernel/protocol/openid-connect/token
+    tokenUrl: http://gentian-idp-keycloak-keycloakx-http.kernel-authentication.svc.cluster.local:8080/auth/realms/kernel/protocol/openid-connect/token
     trustEmail: true
-    userInfoUrl: http://gentian-idp-keycloak-keycloakx-http.platform-kernel.svc.cluster.local:8080/auth/realms/kernel/protocol/openid-connect/userinfo
+    userInfoUrl: http://gentian-idp-keycloak-keycloakx-http.kernel-authentication.svc.cluster.local:8080/auth/realms/kernel/protocol/openid-connect/userinfo
     validateSignature: true
   managementPolicies:
   - Observe
@@ -723,7 +723,7 @@ spec:
     name: keycloak
   writeConnectionSecretToRef:
     name: render-fixture-kernel-portal-broker-client
-    namespace: platform-kernel
+    namespace: kernel-authentication
 ---
 apiVersion: kubernetes.crossplane.io/v1alpha2
 kind: Object
@@ -749,7 +749,7 @@ spec:
         labels:
           app.kubernetes.io/managed-by: crossplane
         name: render-fixture-kernel-portal-broker-client-id
-        namespace: platform-kernel
+        namespace: kernel-authentication
       stringData:
         client_id: broker-kernel-portal
   providerConfigRef:
@@ -781,11 +781,11 @@ spec:
     clientIdSecretRef:
       key: client_id
       name: render-fixture-kernel-portal-broker-client-id
-      namespace: platform-kernel
+      namespace: kernel-authentication
     clientSecretSecretRef:
       key: attribute.client_secret
       name: render-fixture-kernel-portal-broker-client
-      namespace: platform-kernel
+      namespace: kernel-authentication
     defaultScopes: openid profile email groups
     displayName: render-fixture
     enabled: true
@@ -794,15 +794,15 @@ spec:
     firstBrokerLoginFlowAlias: first-broker-login-kernel-portal
     hideOnLoginPage: true
     issuer: https://id.platform.example.test/auth/realms/render-fixture
-    jwksUrl: http://gentian-idp-keycloak-keycloakx-http.platform-kernel.svc.cluster.local:8080/auth/realms/render-fixture/protocol/openid-connect/certs
+    jwksUrl: http://gentian-idp-keycloak-keycloakx-http.kernel-authentication.svc.cluster.local:8080/auth/realms/render-fixture/protocol/openid-connect/certs
     linkOnly: false
     providerId: oidc
     realm: kernel
     storeToken: false
     syncMode: IMPORT
-    tokenUrl: http://gentian-idp-keycloak-keycloakx-http.platform-kernel.svc.cluster.local:8080/auth/realms/render-fixture/protocol/openid-connect/token
+    tokenUrl: http://gentian-idp-keycloak-keycloakx-http.kernel-authentication.svc.cluster.local:8080/auth/realms/render-fixture/protocol/openid-connect/token
     trustEmail: false
-    userInfoUrl: http://gentian-idp-keycloak-keycloakx-http.platform-kernel.svc.cluster.local:8080/auth/realms/render-fixture/protocol/openid-connect/userinfo
+    userInfoUrl: http://gentian-idp-keycloak-keycloakx-http.kernel-authentication.svc.cluster.local:8080/auth/realms/render-fixture/protocol/openid-connect/userinfo
     validateSignature: true
   managementPolicies:
   - Observe
@@ -1121,7 +1121,7 @@ spec:
       - passwordSecretRef:
           key: smtp_password
           name: mail-submission-render-fixture
-          namespace: platform-kernel
+          namespace: kernel-edge
         username: noreply@render-fixture.platform.example.test
       from: noreply@platform.example.test
       fromDisplayName: Gentian

@@ -120,6 +120,7 @@ spec:
         certificates.trustAnchorSecret: ""
         identity.internalUrl: http://gentian-idp-keycloak-keycloakx-http.kernel-authentication.svc.cluster.local:8080/auth
         identity.kernelRealm: ""
+        identity.namespace: kernel-authentication
         kernel.controlNamespace: kernel-control
         kernel.gitopsNamespace: kernel-gitops
         llm.enabled: "false"

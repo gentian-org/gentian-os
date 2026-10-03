@@ -1098,6 +1098,10 @@ spec:
                     # the oidc block is absent on clusters that do not use the auth backend
                     # and a default parked there never materialises.
                     identity.kernelRealm: {{ dig "oidc" "realm" (dig "identity" "kernelRealm" "" $spec) $spec | quote }}
+                    # Where Keycloak runs. The tenant Composition publishes its
+                    # broker clients' secrets here for the IdPs that read them
+                    # back; derived from the layout like the edge namespace below.
+                    identity.namespace: {{ "kernel-authentication" | quote }}
                     llm.enabled: {{ default false (dig "llm" "enabled" false $spec) | quote }}
                     # Where the edge runs, which is the one kernel namespace a
                     # Composition has to name. The Gateway, its SecurityPolicies

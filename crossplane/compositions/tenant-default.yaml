@@ -97,6 +97,10 @@ spec:
                  — the same rule oidc.discoveryUrl follows. */}}
             {{- $kernelRealm := dig "identity.kernelRealm" "" $ccData }}
             {{- $kcInternal  := dig "identity.internalUrl" "" $ccData }}
+            {{- /* Where Keycloak runs, and so where the broker clients' secrets
+                 are published for the IdPs that read them back. Nothing outside
+                 this Composition reads them; the namespace only has to exist. */}}
+            {{- $identityNs  := default "kernel-authentication" (dig "identity.namespace" "" $ccData) }}
             {{- /* The realm this tenant's identity lives in: its own by default,
                  or one named on the claim. Naming the KERNEL realm is what
                  Tenant/platform does (AD-10): the realm every administrator
@@ -311,10 +315,8 @@ spec:
                  the edge's, so this is not a choice. Read from the cluster
                  config rather than written here: the operator answers the same
                  question from GENTIAN_NS_EDGE and the two have to agree, or the
-                 secret is written where nothing reads it. The default is the v4
-                 layout's answer, which is what a cluster whose ConfigMap
-                 predates the key has. */}}
-            {{- $edgeNs     := default "platform-kernel" (dig "network.edgeNamespace" "" $ccData) }}
+                 secret is written where nothing reads it. */}}
+            {{- $edgeNs     := default "kernel-edge" (dig "network.edgeNamespace" "" $ccData) }}
             {{- /* The zone's domain, which is EffectiveDomain in the operator.
                  A vanity domain wins, then single tenancy puts the one tenant
                  on the kernel domain itself, and otherwise the tenant is a
@@ -1136,7 +1138,7 @@ spec:
                 realmId: {{ $realm }}
               writeConnectionSecretToRef:
                 name: {{ $tenant }}-kernel-portal-broker-client
-                namespace: platform-kernel
+                namespace: {{ $identityNs }}
               providerConfigRef:
                 name: keycloak
             ---
@@ -1153,7 +1155,7 @@ spec:
                   kind: Secret
                   metadata:
                     name: {{ $tenant }}-kernel-portal-broker-client-id
-                    namespace: platform-kernel
+                    namespace: {{ $identityNs }}
                     labels:
                       app.kubernetes.io/managed-by: crossplane
                   stringData:
@@ -1220,11 +1222,11 @@ spec:
                   updateProfileFirstLoginMode: "on"
                 clientIdSecretRef:
                   name: {{ $tenant }}-kernel-portal-broker-client-id
-                  namespace: platform-kernel
+                  namespace: {{ $identityNs }}
                   key: client_id
                 clientSecretSecretRef:
                   name: {{ $tenant }}-kernel-portal-broker-client
-                  namespace: platform-kernel
+                  namespace: {{ $identityNs }}
                   key: attribute.client_secret
               providerConfigRef:
                 name: keycloak
@@ -1895,7 +1897,7 @@ spec:
                       - username: {{ printf "noreply@%s" $domain | quote }}
                         passwordSecretRef:
                           name: {{ printf "mail-submission-%s" $tenant | quote }}
-                          namespace: platform-kernel
+                          namespace: {{ $edgeNs }}
                           key: smtp_password
                 {{- end }}
               providerConfigRef:
@@ -1932,7 +1934,7 @@ spec:
                 realmId: {{ $kernelRealm }}
               writeConnectionSecretToRef:
                 name: {{ $tenant }}-broker-client
-                namespace: platform-kernel
+                namespace: {{ $identityNs }}
               providerConfigRef:
                 name: keycloak
             {{- /* ── kernel IdP in the tenant realm ──────────────────────────────
@@ -1974,7 +1976,7 @@ spec:
                   kind: Secret
                   metadata:
                     name: {{ $tenant }}-broker-client-id
-                    namespace: platform-kernel
+                    namespace: {{ $identityNs }}
                     labels:
                       app.kubernetes.io/managed-by: crossplane
                   stringData:
@@ -2040,11 +2042,11 @@ spec:
                   updateProfileFirstLoginMode: "on"
                 clientIdSecretRef:
                   name: {{ $tenant }}-broker-client-id
-                  namespace: platform-kernel
+                  namespace: {{ $identityNs }}
                   key: client_id
                 clientSecretSecretRef:
                   name: {{ $tenant }}-broker-client
-                  namespace: platform-kernel
+                  namespace: {{ $identityNs }}
                   key: attribute.client_secret
               providerConfigRef:
                 name: keycloak
