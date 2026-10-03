@@ -24,6 +24,9 @@ ignore: |
   kernel/manifests/flux-crds/
   crossplane/compositions/
   crossplane/tests/unit/render/**/composition.yaml
+  # What `crossplane render` printed, compared byte for byte; its line
+  # lengths are the in-cluster URLs', not anyone's style.
+  crossplane/tests/unit/render/**/expected.yaml
   # The appset-managed kernel services are Helm charts; everything under their
   # templates/ is Go-templated and unparseable by yamllint, exactly like
   # charts/gentian-os/templates/ above. The per-service dev/ and prod/ entries
