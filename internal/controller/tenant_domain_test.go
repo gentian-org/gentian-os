@@ -19,8 +19,10 @@ package controller
 import (
 	"context"
 	"testing"
+	"time"
 
 	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
@@ -64,5 +66,35 @@ func TestATenantDomainMovesItsTenant(t *testing.T) {
 	r.resolveTenantDomain(ctx, tenant)
 	if tenant.Status.Domain != "" || meta.FindStatusCondition(tenant.Status.Conditions, conditionDomainBound) != nil {
 		t.Fatalf("unbound: status.domain = %q, conditions = %v", tenant.Status.Domain, tenant.Status.Conditions)
+	}
+}
+
+// Two TenantDomains naming one domain: the one bound first keeps it, and the
+// other tenant stays where it was and says whose the domain is.
+func TestADomainTwoTenantsClaimStaysWithTheFirst(t *testing.T) {
+	ctx := context.Background()
+	s := componentDatabaseScheme(t)
+	first := &gentianov1alpha1.TenantDomain{Spec: gentianov1alpha1.TenantDomainSpec{Domain: "shared.example"}}
+	first.Name = "acme"
+	first.CreationTimestamp = metav1.NewTime(time.Unix(1000, 0))
+	second := &gentianov1alpha1.TenantDomain{Spec: gentianov1alpha1.TenantDomainSpec{Domain: "shared.example"}}
+	second.Name = "beta"
+	second.CreationTimestamp = metav1.NewTime(time.Unix(2000, 0))
+	c := fake.NewClientBuilder().WithScheme(s).WithObjects(first, second).Build()
+	r := &TenantReconciler{Client: c, KernelDomain: "k.example", TenancyMode: "multi"}
+
+	acme := acmeTenantFixture()
+	r.resolveTenantDomain(ctx, acme)
+	if acme.Status.Domain != "shared.example" {
+		t.Fatalf("the first claim lost: %q", acme.Status.Domain)
+	}
+	beta := &gentianov1alpha1.Tenant{}
+	beta.Name = "beta"
+	r.resolveTenantDomain(ctx, beta)
+	if beta.Status.Domain != "" {
+		t.Fatalf("the second claim won: %q", beta.Status.Domain)
+	}
+	if cond := meta.FindStatusCondition(beta.Status.Conditions, conditionDomainBound); cond == nil || cond.Reason != "DomainTaken" {
+		t.Fatalf("condition = %+v", cond)
 	}
 }

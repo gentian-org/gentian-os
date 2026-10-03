@@ -63,6 +63,38 @@ func (r *TenantReconciler) resolveTenantDomain(ctx context.Context, tenant *gent
 			fmt.Sprintf("%s is on the kernel domain %s; the tenant stays at its default domain", domain, kd))
 		return
 	}
+	// Two tenants on one domain would claim the same hosts. The director
+	// refuses the second; a TenantDomain applied by other means is refused
+	// here, and the one bound first keeps it.
+	if holder := r.domainHolder(ctx, binding); holder != "" {
+		tenant.Status.Domain = ""
+		r.setCondition(tenant, conditionDomainBound, metav1.ConditionFalse, "DomainTaken",
+			fmt.Sprintf("%s is tenant %s's; the tenant stays at its default domain", domain, holder))
+		return
+	}
 	tenant.Status.Domain = domain
 	r.setCondition(tenant, conditionDomainBound, metav1.ConditionTrue, "Bound", "The tenant is served at "+domain)
+}
+
+// domainHolder names another tenant whose TenantDomain claims the same domain
+// and came first -- the older binding, and by name between two of an age --
+// or "" when there is none.
+func (r *TenantReconciler) domainHolder(ctx context.Context, binding *gentianov1alpha1.TenantDomain) string {
+	all := &gentianov1alpha1.TenantDomainList{}
+	if err := r.List(ctx, all); err != nil {
+		return ""
+	}
+	domain := strings.ToLower(strings.TrimSpace(binding.Spec.Domain))
+	for i := range all.Items {
+		other := &all.Items[i]
+		if other.Name == binding.Name || strings.ToLower(strings.TrimSpace(other.Spec.Domain)) != domain {
+			continue
+		}
+		earlier := other.CreationTimestamp.Before(&binding.CreationTimestamp) ||
+			(other.CreationTimestamp.Equal(&binding.CreationTimestamp) && other.Name < binding.Name)
+		if earlier {
+			return other.Name
+		}
+	}
+	return ""
 }

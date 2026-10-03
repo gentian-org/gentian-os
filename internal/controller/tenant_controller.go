@@ -508,10 +508,21 @@ func (r *TenantReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			handler.EnqueueRequestsFromMapFunc(mapToTenant),
 			builder.WithPredicates(xTenantStatusChanged),
 		).
+		// Every tenant with a TenantDomain, not only the one named: a domain
+		// two tenants claim passes to the second when the first lets go.
 		Watches(
 			&gentianov1alpha1.TenantDomain{},
-			handler.EnqueueRequestsFromMapFunc(func(_ context.Context, obj client.Object) []reconcile.Request {
-				return []reconcile.Request{{NamespacedName: types.NamespacedName{Name: obj.GetName()}}}
+			handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, obj client.Object) []reconcile.Request {
+				requests := []reconcile.Request{{NamespacedName: types.NamespacedName{Name: obj.GetName()}}}
+				all := &gentianov1alpha1.TenantDomainList{}
+				if err := mgr.GetClient().List(ctx, all); err == nil {
+					for i := range all.Items {
+						if all.Items[i].Name != obj.GetName() {
+							requests = append(requests, reconcile.Request{NamespacedName: types.NamespacedName{Name: all.Items[i].Name}})
+						}
+					}
+				}
+				return requests
 			}),
 		)
 
