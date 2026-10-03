@@ -29,6 +29,8 @@ import (
 	"time"
 
 	"sigs.k8s.io/yaml"
+
+	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
 // The cluster's settings live in one file, the Cluster claim in git, and this
@@ -200,6 +202,25 @@ func (g *GitOps) SetClusterSettings(ctx context.Context, values map[string]strin
 			}
 		}
 		paths = append(paths, p)
+	}
+	// A cluster carrying tenants beside the platform cannot become a
+	// single-tenant one: its one tenant is the platform tenant, so every
+	// other would be refused by the operator and stranded, its data kept
+	// and nothing serving it.
+	if gentianov1alpha1.NormalizeTenancyMode(values["tenancyMode"]) == gentianov1alpha1.TenancyModeSingle && values["tenancyMode"] != "" {
+		names, err := g.Tenants(ctx)
+		if err != nil {
+			return Result{}, err
+		}
+		var others []string
+		for _, n := range names {
+			if n != platformTenant {
+				others = append(others, n)
+			}
+		}
+		if len(others) > 0 {
+			return Result{}, fmt.Errorf("%w: retire %s first", ErrSingleTenancy, strings.Join(others, ", "))
+		}
 	}
 	sort.Strings(paths)
 	message := fmt.Sprintf("feat(cluster): set %s (via %s)", strings.Join(paths, ", "), meta.actor())

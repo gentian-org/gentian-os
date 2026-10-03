@@ -461,3 +461,22 @@ func TestTheBrandIsCommittedAndABrokenOneIsRefused(t *testing.T) {
 		t.Fatalf("broken: err = %v", err)
 	}
 }
+
+// A cluster carrying tenants beside the platform is not switched to single
+// tenancy: every other tenant would be refused and stranded. Retired first,
+// it may be.
+func TestACarryingClusterIsNotMadeSingleTenant(t *testing.T) {
+	remote := dt.Remote(t, "platform", "acme")
+	g := gitops.NewGitOps(dt.Clone(t, remote), remote, dt.Cluster, director)
+	ctx := context.Background()
+
+	if _, err := g.SetClusterSettings(ctx, map[string]string{"tenancyMode": "single"}, tenantMeta()); !errors.Is(err, gitops.ErrSingleTenancy) || !strings.Contains(err.Error(), "acme") {
+		t.Fatalf("err = %v", err)
+	}
+	if _, err := g.RetireTenant(ctx, "acme", tenantMeta()); err != nil {
+		t.Fatal(err)
+	}
+	if res, err := g.SetClusterSettings(ctx, map[string]string{"tenancyMode": "single"}, tenantMeta()); err != nil || !res.Changed {
+		t.Fatalf("after retiring: %+v %v", res, err)
+	}
+}

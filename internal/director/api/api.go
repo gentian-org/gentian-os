@@ -1273,6 +1273,10 @@ func (s *Server) setClusterSettings(w http.ResponseWriter, r *http.Request, c ca
 		s.fail(w, r, http.StatusBadRequest, err.Error())
 		return
 	}
+	if errors.Is(err, gitops.ErrSingleTenancy) {
+		s.fail(w, r, http.StatusConflict, err.Error())
+		return
+	}
 	s.written(w, r, res, err)
 }
 
