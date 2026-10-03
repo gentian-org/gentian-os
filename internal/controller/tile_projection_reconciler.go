@@ -129,17 +129,17 @@ func kernelTileTable(kernelRealm string) []kernelTile {
 		{
 			route:       kernelRouteHeadlamp,
 			name:        "headlamp",
-			displayName: "Cluster",
+			displayName: "Headlamp",
 			description: "The cluster as Kubernetes sees it — nodes, workloads, events — with your own identity.",
-			icon:        "cluster",
+			icon:        "bulb",
 			anyOf:       []string{"can_configure", "can_operate_system", "can_audit"},
 		},
 		{
 			route:       kernelRouteArgoCD,
 			name:        "argocd",
-			displayName: "Deployments",
+			displayName: "ArgoCD",
 			description: "What git says the cluster should run, and whether it does.",
-			icon:        "sync",
+			icon:        "kube",
 			// The sign-in entry, not the front page. Argo CD's front page is a
 			// login form with a button that starts the realm's flow; the
 			// person following this tile has a session already, so the tile
@@ -156,9 +156,9 @@ func kernelTileTable(kernelRealm string) []kernelTile {
 			// of its own name.
 			route:       kernelRouteKeycloakAdmin,
 			name:        "keycloak",
-			displayName: "Identity",
+			displayName: "Keycloak",
 			description: "Realms, clients and the people in them.",
-			icon:        "identity",
+			icon:        "key",
 			// Keycloak is served under /auth, and its administration console
 			// is per realm: a link to /admin/ alone lands on the master
 			// realm's console, which a kernel-realm administrator may not

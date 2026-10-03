@@ -133,9 +133,9 @@ func TestTheKernelConsolesKeepTheirAddresses(t *testing.T) {
 		icon  string
 		anyOf string
 	}{
-		"headlamp": {"https://headlamp.k.example/", "cluster", "[can_configure can_operate_system can_audit]"},
-		"argocd":   {"https://argocd.k.example/auth/login", "sync", "[can_configure can_operate_system can_audit]"},
-		"keycloak": {"https://id.k.example/auth/admin/kernel/console/", "identity", "[can_configure]"},
+		"headlamp": {"https://headlamp.k.example/", "bulb", "[can_configure can_operate_system can_audit]"},
+		"argocd":   {"https://argocd.k.example/auth/login", "kube", "[can_configure can_operate_system can_audit]"},
+		"keycloak": {"https://id.k.example/auth/admin/kernel/console/", "key", "[can_configure]"},
 	}
 	for _, tile := range got {
 		w, ok := want[tile.Name]
