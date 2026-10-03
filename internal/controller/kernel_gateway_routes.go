@@ -125,7 +125,8 @@ func (r *GatewayPlatformReconciler) reconcileKernelHTTPRoutes(ctx context.Contex
 	}
 
 	specs := kernelHTTPRouteSpecs(r.KernelDomain, effectiveDomains, oidcSubs, tenantNames,
-		clusterLLMEnabled(ctx, r.Client), r.Cluster, r.kernelZoneReady(ctx), desktopPresent(ctx, r.Client))
+		clusterLLMEnabled(ctx, r.Client), r.Cluster, r.kernelZoneReady(ctx), desktopPresent(ctx, r.Client),
+		signInRouterFor(r.TenancyMode))
 	// The shim's table first: a route whose policy asks the shim before the
 	// shim knows the host is refused, which is the right direction, but a
 	// short one.
@@ -203,6 +204,7 @@ func kernelHTTPRouteSpecs(
 	cluster string,
 	kernelZoneReady bool,
 	desktop bool,
+	signInRouter bool,
 ) []kernelHTTPRouteSpec {
 	idHost := fmt.Sprintf("id.%s", kernelDomain)
 
@@ -225,6 +227,10 @@ func kernelHTTPRouteSpecs(
 			rules: []gatewayv1.HTTPRouteRule{
 				kernelBackendRulePrefixNS(kcService, identityNamespace, kcPort, "/auth/realms/", idFilters...),
 				kernelBackendRulePrefixNS(kcService, identityNamespace, kcPort, "/auth/resources/", idFilters...),
+				// The sign-in router: the page before the realm's own form,
+				// on the same host so the address it hands on reaches that
+				// form and nothing else.
+				kernelBackendRulePrefixNS(signInService, identityNamespace, signInPort, signInPath, idFilters...),
 			},
 			policy: keycloakProxyBackendTrafficPolicySpec(),
 		},
@@ -299,20 +305,28 @@ func kernelHTTPRouteSpecs(
 	// browser to the platform console with path and query kept: a session
 	// travels in cookies on the kernel domain, so nothing is lost on the way.
 	// Only once the kernel zone exists, because the console does not before.
+	//
+	// On a multi-tenant cluster those names belong to no one workspace, so
+	// they go to the sign-in router instead, which asks for an address and
+	// sends the browser to its workspace's console. A single-tenant cluster
+	// has one workspace, and its console is where everyone is going.
 	if kernelZoneReady && desktop {
-		console := consoleHost(kernelDomain)
+		landing := consoleRedirectRule(consoleHost(kernelDomain))
+		if signInRouter {
+			landing = signInRedirectRule(idHost)
+		}
 		specs = append(specs,
 			kernelHTTPRouteSpec{
 				name:        kernelRouteWWWRedirect,
 				host:        "www." + kernelDomain,
 				sectionName: wildcardListenerName,
-				rules:       []gatewayv1.HTTPRouteRule{consoleRedirectRule(console)},
+				rules:       []gatewayv1.HTTPRouteRule{landing},
 			},
 			kernelHTTPRouteSpec{
 				name:        kernelRouteKernelApex,
 				host:        kernelDomain,
 				sectionName: wildcardListenerName,
-				rules:       []gatewayv1.HTTPRouteRule{consoleRedirectRule(console)},
+				rules:       []gatewayv1.HTTPRouteRule{landing},
 			},
 		)
 	}
@@ -558,6 +572,48 @@ func kernelHTTPSRedirectRule() gatewayv1.HTTPRouteRule {
 // the request, which is why the portal used to be served on these names
 // rather than redirected. Nothing travels on them now -- the session is in
 // cookies on the zone's domain -- so an alias by redirect loses nothing.
+// The sign-in router, served beside the identity provider (keycloak-idp's
+// sign-in Deployment, gentian-ui apps/sign-in).
+const (
+	signInService = "sign-in"
+	signInPort    = int32(8080)
+	signInPath    = "/sign-in"
+)
+
+// signInRouterFor reports whether the kernel's apex lands on the sign-in
+// router: on a multi-tenant cluster, where the apex is nobody's workspace.
+func signInRouterFor(tenancyMode string) bool {
+	return gentianov1alpha1.NormalizeTenancyMode(tenancyMode) == gentianov1alpha1.TenancyModeMulti
+}
+
+// signInRedirectRule sends every path to the sign-in router's page. The
+// query is kept, which is how a link can carry a hint through.
+func signInRedirectRule(idHost string) gatewayv1.HTTPRouteRule {
+	scheme := "https"
+	status := 302
+	port := gatewayv1.PortNumber(443)
+	host := gatewayv1.PreciseHostname(idHost)
+	path := signInPath + "/"
+	return gatewayv1.HTTPRouteRule{
+		Matches: []gatewayv1.HTTPRouteMatch{pathPrefixMatch("/")},
+		Filters: []gatewayv1.HTTPRouteFilter{
+			{
+				Type: gatewayv1.HTTPRouteFilterRequestRedirect,
+				RequestRedirect: &gatewayv1.HTTPRequestRedirectFilter{
+					Scheme:   &scheme,
+					Hostname: &host,
+					Port:     &port,
+					Path: &gatewayv1.HTTPPathModifier{
+						Type:            gatewayv1.FullPathHTTPPathModifier,
+						ReplaceFullPath: &path,
+					},
+					StatusCode: &status,
+				},
+			},
+		},
+	}
+}
+
 func consoleRedirectRule(console string) gatewayv1.HTTPRouteRule {
 	scheme := "https"
 	status := 302

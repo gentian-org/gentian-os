@@ -478,7 +478,7 @@ func TestBuildAppBackendTrafficPolicyObject(t *testing.T) {
 
 func TestKernelHTTPRouteSpecs(t *testing.T) {
 	t.Parallel()
-	specs := kernelHTTPRouteSpecs("platform.example.test", []string{"demo.platform.example.test"}, nil, []string{"demo"}, false, "c1", true, true)
+	specs := kernelHTTPRouteSpecs("platform.example.test", []string{"demo.platform.example.test"}, nil, []string{"demo"}, false, "c1", true, true, false)
 	// One route per kernel host, plus one per tenant apex sending the browser
 	// to that tenant's console. Asserted by name rather than by count, so
 	// adding a route does not fail a test that has nothing to do with it.
@@ -600,7 +600,7 @@ func TestKernelHTTPRouteSpecs(t *testing.T) {
 func TestNoConsoleRedirectsWithoutADesktop(t *testing.T) {
 	t.Parallel()
 	specs := kernelHTTPRouteSpecs("platform.example.test",
-		[]string{"demo.platform.example.test"}, nil, []string{"demo"}, false, "c1", true, false)
+		[]string{"demo.platform.example.test"}, nil, []string{"demo"}, false, "c1", true, false, false)
 	for _, s := range specs {
 		switch s.name {
 		case kernelRouteWWWRedirect, kernelRouteKernelApex, "tenant-demo-apex":
@@ -608,7 +608,7 @@ func TestNoConsoleRedirectsWithoutADesktop(t *testing.T) {
 		}
 	}
 	specs = kernelHTTPRouteSpecs("platform.example.test",
-		[]string{"demo.platform.example.test"}, nil, []string{"demo"}, false, "c1", false, true)
+		[]string{"demo.platform.example.test"}, nil, []string{"demo"}, false, "c1", false, true, false)
 	for _, s := range specs {
 		switch s.name {
 		case kernelRouteWWWRedirect, kernelRouteKernelApex:
@@ -628,7 +628,7 @@ func TestNoConsoleRedirectsWithoutADesktop(t *testing.T) {
 }
 
 func TestKernelHTTPRouteSpecsLLMDisabledByDefault(t *testing.T) {
-	specs := kernelHTTPRouteSpecs("platform.example.test", []string{"demo.platform.example.test"}, nil, []string{"demo"}, false, "c1", true, true)
+	specs := kernelHTTPRouteSpecs("platform.example.test", []string{"demo.platform.example.test"}, nil, []string{"demo"}, false, "c1", true, true, false)
 	for _, spec := range specs {
 		if spec.name == kernelRouteLiteLLM {
 			t.Fatalf("kernel-llm route present with llm disabled")
@@ -637,7 +637,7 @@ func TestKernelHTTPRouteSpecsLLMDisabledByDefault(t *testing.T) {
 }
 
 func TestKernelHTTPRouteSpecsLLMEnabled(t *testing.T) {
-	specs := kernelHTTPRouteSpecs("platform.example.test", nil, nil, nil, true, "c1", true, true)
+	specs := kernelHTTPRouteSpecs("platform.example.test", nil, nil, nil, true, "c1", true, true, false)
 	// By name, not by count: adding a kernel route should not fail a test
 	// about the LLM one. The LLM route is still appended last, which is what
 	// the specs[len-1] lookup below relies on.
@@ -729,7 +729,7 @@ func TestKernelHTTPRouteSpecsAllBindToAListener(t *testing.T) {
 		nil,
 		[]string{"demo"},
 		true,
-		"c1", true, true)
+		"c1", true, true, false)
 	if len(specs) == 0 {
 		t.Fatal("no kernel route specs produced")
 	}
@@ -745,7 +745,7 @@ func TestKernelHTTPRouteSpecsAllBindToAListener(t *testing.T) {
 // the catch-all redirect must stay on :80. If it ever attached to a :443
 // listener it would redirect https traffic back to itself, forever.
 func TestKernelHTTPRedirectBindsOnlyToPort80(t *testing.T) {
-	specs := kernelHTTPRouteSpecs("platform.example.test", nil, nil, nil, false, "c1", true, true)
+	specs := kernelHTTPRouteSpecs("platform.example.test", nil, nil, nil, false, "c1", true, true, false)
 	var found bool
 	for _, s := range specs {
 		if s.name != kernelRouteHTTPRedirect {
@@ -801,7 +801,7 @@ func TestKernelConsolesMayBeFramedByTheDesktop(t *testing.T) {
 	observabilityNamespace = "kernel-observability"
 	t.Cleanup(func() { observabilityNamespace = saved })
 
-	specs := kernelHTTPRouteSpecs("platform.example.test", nil, nil, nil, false, "c1", true, true)
+	specs := kernelHTTPRouteSpecs("platform.example.test", nil, nil, nil, false, "c1", true, true, false)
 	for _, name := range []string{kernelRouteArgoCD, kernelRouteHeadlamp} {
 		var spec *kernelHTTPRouteSpec
 		for i := range specs {
@@ -835,7 +835,7 @@ func TestKernelConsolesMayBeFramedByTheDesktop(t *testing.T) {
 // an application that is not the admin console".
 func TestTheKeycloakConsoleKeepsItsOwnBearer(t *testing.T) {
 	t.Parallel()
-	specs := kernelHTTPRouteSpecs("platform.example.test", nil, nil, nil, false, "c1", true, true)
+	specs := kernelHTTPRouteSpecs("platform.example.test", nil, nil, nil, false, "c1", true, true, false)
 	for _, s := range specs {
 		if s.name != kernelRouteKeycloakAdmin {
 			continue
@@ -875,5 +875,41 @@ func TestASingleTenantClusterAddsNoTenantListener(t *testing.T) {
 		if string(l.Name) == tenantGatewayListenerName(gentianov1alpha1.SingleTenantName) {
 			t.Fatalf("the single tenant got a listener of its own: %+v", l)
 		}
+	}
+}
+
+// On a multi-tenant cluster the kernel's apex is nobody's workspace: it and
+// www land on the sign-in router beside the identity provider, which is a
+// path on the identity provider's public route. A single-tenant cluster's
+// apex goes to its one console.
+func TestTheApexLandsOnTheSignInRouterWhenThereAreManyWorkspaces(t *testing.T) {
+	t.Parallel()
+	landing := func(signIn bool) (host, path string, idHasSignIn bool) {
+		for _, spec := range kernelHTTPRouteSpecs("k.example", nil, nil, nil, false, "c1", true, true, signIn) {
+			switch spec.name {
+			case kernelRouteKernelApex:
+				f := spec.rules[0].Filters[0].RequestRedirect
+				host = string(*f.Hostname)
+				if f.Path != nil {
+					path = *f.Path.ReplaceFullPath
+				}
+			case kernelRouteKeycloakIDP:
+				for _, rule := range spec.rules {
+					if v := rule.Matches[0].Path.Value; v != nil && *v == signInPath {
+						idHasSignIn = string(rule.BackendRefs[0].Name) == signInService
+					}
+				}
+			}
+		}
+		return host, path, idHasSignIn
+	}
+	if host, path, routed := landing(true); host != "id.k.example" || path != "/sign-in/" || !routed {
+		t.Fatalf("multi: apex -> %s%s, sign-in routed on id: %v", host, path, routed)
+	}
+	if host, path, _ := landing(false); host != "console.k.example" || path != "" {
+		t.Fatalf("single: apex -> %s%s", host, path)
+	}
+	if !signInRouterFor("multi") || !signInRouterFor("") || signInRouterFor("single") {
+		t.Fatal("signInRouterFor does not follow the tenancy mode")
 	}
 }

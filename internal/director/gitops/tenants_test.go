@@ -100,7 +100,7 @@ func TestATenantIsListedWithWhatTheManifestSays(t *testing.T) {
 	if acme == nil {
 		t.Fatalf("acme is not listed: %+v", tenants)
 	}
-	if acme.DisplayName != "Acme Ltd" || acme.Realm != "acme" {
+	if acme.DisplayName != "Acme Ltd" || acme.Realm != "acme" || acme.LoginDomain != "acme."+dt.KernelDomain {
 		t.Fatalf("listing = %+v", *acme)
 	}
 	if acme.Protected {

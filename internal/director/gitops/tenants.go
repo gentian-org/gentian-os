@@ -81,6 +81,9 @@ type Tenant struct {
 	Realm string `json:"realm,omitempty"`
 	// Apps are the profile names installed into it.
 	Apps []string `json:"apps"`
+	// LoginDomain is the domain its people sign in under, and so where the
+	// sign-in router sends an address on it: see TenantLoginDomain.
+	LoginDomain string `json:"loginDomain,omitempty"`
 	// Protected is true for a tenant the director refuses to retire.
 	Protected bool `json:"protected"`
 	// Purging is true once a purge was asked for: the manifest says
@@ -261,6 +264,9 @@ func (g *GitOps) TenantDetails(ctx context.Context) ([]Tenant, error) {
 					}
 				}
 			}
+		}
+		if domain, err := g.TenantLoginDomain(ctx, name); err == nil {
+			t.LoginDomain = domain
 		}
 		out = append(out, t)
 	}
