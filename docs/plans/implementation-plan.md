@@ -28,7 +28,7 @@ cluster.
 
 | | Milestone | |
 |---|---|---|
-| **M1** | The platform administrator signs in and sees the cluster, and the installer leaves that cluster ready to be given a tenant | ◐ |
+| **M1** | The platform administrator signs in and sees the cluster, and the installer leaves that cluster ready to be given a tenant | ✅ 2026-10-03 |
 | **M2** | The first functional tenant | ☐ |
 | **M3** | The first user invited by a tenant administrator | ☐ |
 | **M4** | The first app a user can actually work in | ☐ |
@@ -57,7 +57,7 @@ steps yet; `work-packages.md` is where their content lives until they are.
 | S6 | Kernel UIs behind the kernel session | ✅ |
 | S7 | Retire the portal in `kernel-edge` | ✅ |
 | **S7A** | **What is wrong that a reinstall would only reproduce** | ◐ see below |
-| S8 | Purge and reinstall | ☐ |
+| S8 | Purge and reinstall | ✅ 2026-10-03, on beefy1 |
 
 ### S7A — before the purge
 

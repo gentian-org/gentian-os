@@ -95,7 +95,7 @@ and the union's exactly-one rule cannot, so it survives as the annotation
 | ✅ | S7A.17's durable record: the director's own database on `kernel-postgres` holds who was allowed to ask for each identity change, with a retention horizon it enforces. Optional — a cluster without it starts and warns |
 | ☐ | S7A.17's other half: the event listener recording Keycloak **admin** events, carrying the request id so the two records join. It projects group membership today and drops the rest |
 | ☐ | S7A.7 and S7A.11 — built, never exercised in a browser |
-| ☐ | S8 — purge and reinstall, which is what makes M1 reached rather than demonstrated |
+| ✅ | S8 — purge and reinstall, which is what makes M1 reached rather than demonstrated (2026-10-03, beefy1) |
 
 ## Backlog — wanted, not now, and not forgotten
 
