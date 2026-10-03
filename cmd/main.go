@@ -367,6 +367,15 @@ func main() {
 		os.Exit(1)
 	}
 
+	if err := (&controller.SignInLookupReconciler{
+		Client:       mgr.GetClient(),
+		KernelDomain: os.Getenv("KERNEL_DOMAIN"),
+		TenancyMode:  tenancyMode,
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "SignInLookup")
+		os.Exit(1)
+	}
+
 	if err := (&controller.IntegrationBindingReconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),

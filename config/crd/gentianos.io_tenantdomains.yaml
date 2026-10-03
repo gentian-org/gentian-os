@@ -27,12 +27,12 @@ spec:
     schema:
       openAPIV3Schema:
         description: |-
-          TenantDomain is an extension point: the tenant it is named after is served
-          at spec.domain. The OS reads it and has no way to write one -- no field on
-          the Tenant, no director route, no console form -- so a cluster has custom
-          domains exactly when an extension that writes TenantDomains is installed.
-          The operator copies the domain to the Tenant's status.domain, which is what
-          every consumer reads.
+          TenantDomain moves the tenant it is named after to spec.domain. It is not a
+          field on the Tenant: a custom domain is a separate decision with its own
+          author, written beside the tenant's manifest by the director (PUT
+          /v1/clusters/{c}/tenants/{t}/domain, can_configure) and shown in a console
+          that offers it. The operator copies the domain to the Tenant's
+          status.domain, which is what every consumer reads.
         properties:
           apiVersion:
             description: |-

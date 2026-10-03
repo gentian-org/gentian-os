@@ -45,13 +45,14 @@ eventListener:
 signIn:
   enabled: true
   # An immutable tag: the branch and commit it was built from.
-  image: ghcr.io/gentian-org/sign-in-web:develop-8b78f0f
+  image: ghcr.io/gentian-org/sign-in-web:develop-1d30ef6
   # config.json. Every key is optional; see apps/sign-in/README.md.
   config:
     # The name on the card. Whoever runs the cluster may put their own.
     productName: ""
     # An https:// or same-origin logo replacing the default.
     logoUrl: ""
-    # Where to ask about an address on a domain the page cannot place; for
-    # an extension that serves tenants under domains of their own.
-    lookup: ""
+    # Where the page looks up an address on a custom domain: the directory
+    # the operator fills from the tenants' TenantDomains (sign-in-lookup),
+    # one file per domain named by its SHA-256.
+    lookup: /sign-in/lookup/

@@ -77,6 +77,7 @@ type Repository interface {
 	Tenants(ctx context.Context) ([]string, error)
 	TenantRealm(ctx context.Context, tenant string) (string, error)
 	TenantLoginDomain(ctx context.Context, tenant string) (string, error)
+	SetTenantDomain(ctx context.Context, tenant, domain string, meta gitops.Meta) (gitops.Result, error)
 	TenantAdminRequiresMFA(ctx context.Context, tenant string) (bool, error)
 	SetResourcePlan(ctx context.Context, tenant string, plan gitops.Plan, meta gitops.Meta) (gitops.Result, error)
 	SetTenantBackupPolicy(ctx context.Context, tenant string, policy gitops.BackupPolicy, meta gitops.Meta) (gitops.Result, error)
@@ -481,6 +482,11 @@ func (s *Server) routes() {
 		s.guarded("POST /v1/clusters/{c}/tenants", "can_configure", s.clusterObject, s.createTenant)
 		s.guarded("DELETE /v1/clusters/{c}/tenants/{t}", "can_configure", s.clusterObject, s.retireTenant)
 		s.guarded("POST /v1/clusters/{c}/tenants/{t}/actions/purge", "can_configure", s.clusterObject, s.purgeTenant)
+		// Where a tenant is served: a custom domain instead of
+		// <tenant>.<kernel>, or none. can_configure, like creating the
+		// tenant: it moves the tenant's hosts, mail and logins.
+		s.guarded("PUT /v1/clusters/{c}/tenants/{t}/domain", "can_configure", s.clusterObject, s.setTenantDomain)
+		s.guarded("DELETE /v1/clusters/{c}/tenants/{t}/domain", "can_configure", s.clusterObject, s.clearTenantDomain)
 		if s.cfg.Lifecycle != nil {
 			// Import: a bundle in, a tenant out (sovereignty-concept.md §4.3).
 			s.guarded("POST /v1/clusters/{c}/bundles", "can_configure", s.clusterObject, s.uploadBundle)
@@ -1164,6 +1170,33 @@ func (s *Server) createTenant(w http.ResponseWriter, r *http.Request, c call) {
 	}
 	if errors.Is(err, gitops.ErrSingleTenancy) {
 		s.fail(w, r, http.StatusConflict, err.Error())
+		return
+	}
+	s.written(w, r, res, err)
+}
+
+// setTenantDomain binds a tenant to a custom domain: one commit of its
+// TenantDomain, which the operator acts on.
+func (s *Server) setTenantDomain(w http.ResponseWriter, r *http.Request, c call) {
+	var body struct {
+		Domain string `json:"domain"`
+	}
+	if err := decode(r, &body); err != nil || strings.TrimSpace(body.Domain) == "" {
+		s.fail(w, r, http.StatusBadRequest, `body must be {"domain": "<hostname>"}; DELETE removes one`)
+		return
+	}
+	s.writeTenantDomain(w, r, c, body.Domain)
+}
+
+// clearTenantDomain puts the tenant back on <tenant>.<kernel>.
+func (s *Server) clearTenantDomain(w http.ResponseWriter, r *http.Request, c call) {
+	s.writeTenantDomain(w, r, c, "")
+}
+
+func (s *Server) writeTenantDomain(w http.ResponseWriter, r *http.Request, c call, domain string) {
+	res, err := s.cfg.Repo.SetTenantDomain(r.Context(), r.PathValue("t"), domain, c.meta)
+	if errors.Is(err, gitops.ErrInvalidDomain) {
+		s.fail(w, r, http.StatusUnprocessableEntity, err.Error())
 		return
 	}
 	s.written(w, r, res, err)

@@ -84,6 +84,8 @@ type Tenant struct {
 	// LoginDomain is the domain its people sign in under, and so where the
 	// sign-in router sends an address on it: see TenantLoginDomain.
 	LoginDomain string `json:"loginDomain,omitempty"`
+	// CustomDomain is the domain a TenantDomain binds it to, if any.
+	CustomDomain string `json:"customDomain,omitempty"`
 	// Protected is true for a tenant the director refuses to retire.
 	Protected bool `json:"protected"`
 	// Purging is true once a purge was asked for: the manifest says
@@ -195,10 +197,9 @@ func (g *GitOps) TenantLoginDomain(ctx context.Context, tenant string) (string, 
 	return tenant + "." + kernel, nil
 }
 
-// TenantDomainFile is where an extension that gives tenants custom domains
-// commits a tenant's TenantDomain: beside its tenant.yaml, so Argo CD applies
-// it with the tenant and the director reads it from the same tree. The OS
-// itself never writes one.
+// TenantDomainFile is where a tenant's TenantDomain is committed: beside its
+// tenant.yaml, so Argo CD applies it with the tenant and the director reads it
+// from the same tree. SetTenantDomain writes it.
 const TenantDomainFile = "domain.yaml"
 
 // tenantCustomDomain is the domain the TenantDomain beside tenantFile binds,
@@ -267,6 +268,11 @@ func (g *GitOps) TenantDetails(ctx context.Context) ([]Tenant, error) {
 		}
 		if domain, err := g.TenantLoginDomain(ctx, name); err == nil {
 			t.LoginDomain = domain
+		}
+		if file != "" {
+			if custom, err := tenantCustomDomain(file); err == nil {
+				t.CustomDomain = custom
+			}
 		}
 		out = append(out, t)
 	}

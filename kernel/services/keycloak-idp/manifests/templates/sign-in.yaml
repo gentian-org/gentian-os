@@ -79,10 +79,21 @@ spec:
               mountPath: /app/site/sign-in/config.json
               subPath: config.json
               readOnly: true
+            # The tenants' custom domains, which the operator writes. A
+            # directory mount, not subPath, so a domain bound later appears
+            # without a restart; optional, so the page starts before the
+            # operator has written it.
+            - name: lookup
+              mountPath: /app/site/sign-in/lookup
+              readOnly: true
       volumes:
         - name: config
           configMap:
             name: sign-in-config
+        - name: lookup
+          configMap:
+            name: sign-in-lookup
+            optional: true
 ---
 apiVersion: v1
 kind: Service

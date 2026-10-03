@@ -374,3 +374,51 @@ func TestASingleTenantClusterTakesNoNewTenant(t *testing.T) {
 		t.Fatal("a refused tenant still reached git")
 	}
 }
+
+// A custom domain is one commit of the TenantDomain and its kustomization
+// entry, and removing it is one more. A name that is not a hostname, one on
+// the kernel domain and one another tenant holds are refused before git.
+func TestACustomDomainIsOneCommitAndRefusedWhereItCannotBe(t *testing.T) {
+	remote := dt.Remote(t, "acme", "beta")
+	g := gitops.NewGitOps(dt.Clone(t, remote), remote, dt.Cluster, director)
+	ctx := context.Background()
+	dir := "clusters/" + dt.Cluster + "/tenants/acme/"
+
+	res, err := g.SetTenantDomain(ctx, "acme", " Acme.Example ", tenantMeta())
+	if err != nil || !res.Changed {
+		t.Fatalf("bind: %+v, %v", res, err)
+	}
+	if doc := dt.RemoteFile(t, remote, dir+gitops.TenantDomainFile); !strings.Contains(doc, "kind: TenantDomain") || !strings.Contains(doc, "domain: acme.example") {
+		t.Fatalf("domain.yaml:\n%s", doc)
+	}
+	if k := dt.RemoteFile(t, remote, dir+"kustomization.yaml"); !strings.Contains(k, "- "+gitops.TenantDomainFile) {
+		t.Fatalf("kustomization does not list it:\n%s", k)
+	}
+	if got, _ := g.TenantLoginDomain(ctx, "acme"); got != "acme.example" {
+		t.Fatalf("login domain = %q", got)
+	}
+
+	before := dt.Git(t, "", "--git-dir", remote, "rev-parse", "main")
+	for _, bad := range []struct{ tenant, domain string }{
+		{"beta", "acme.example"},
+		{"beta", "beta." + dt.KernelDomain},
+		{"beta", "not a host"},
+	} {
+		if _, err := g.SetTenantDomain(ctx, bad.tenant, bad.domain, tenantMeta()); !errors.Is(err, gitops.ErrInvalidDomain) {
+			t.Errorf("%s -> %q: err = %v", bad.tenant, bad.domain, err)
+		}
+	}
+	if after := dt.Git(t, "", "--git-dir", remote, "rev-parse", "main"); after != before {
+		t.Fatal("a refused domain reached git")
+	}
+
+	if res, err := g.SetTenantDomain(ctx, "acme", "", tenantMeta()); err != nil || !res.Changed {
+		t.Fatalf("unbind: %+v, %v", res, err)
+	}
+	if k := dt.RemoteFile(t, remote, dir+"kustomization.yaml"); strings.Contains(k, gitops.TenantDomainFile) {
+		t.Fatalf("kustomization still lists it:\n%s", k)
+	}
+	if got, _ := g.TenantLoginDomain(ctx, "acme"); got != "acme."+dt.KernelDomain {
+		t.Fatalf("login domain after unbinding = %q", got)
+	}
+}
