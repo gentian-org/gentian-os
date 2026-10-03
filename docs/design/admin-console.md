@@ -90,11 +90,11 @@ platform operators, Argo CD, and the portal's own clients.
 
 ```mermaid
 flowchart TD
-    TenantHost["&lt;tenant&gt;.&lt;kernel&gt;/login<br>(bookmarkable, canonical)"]
-    Apex["&lt;kernel&gt;/login<br>(email prompt only)"]
+    TenantHost["console.&lt;tenant&gt;.&lt;kernel&gt;<br>(bookmarkable, canonical)"]
+    Apex["&lt;kernel&gt; → id.&lt;kernel&gt;/sign-in/<br>(email prompt only)"]
 
-    TenantHost -->|"email + password, one stage"| TenantRealm
-    Apex -->|"hands off to the tenant host,<br>carrying the email"| TenantHost
+    TenantHost -->|"edge → email + password, one stage"| TenantRealm
+    Apex -->|"sends the browser to the console,<br>the email in a realm-only cookie"| TenantHost
 
     subgraph TenantRealm ["tenant realm — Cookie → forms"]
         direction LR
@@ -113,11 +113,14 @@ silently — no broker hop, no second login screen.
 
 A realm is an isolated user store and a login page belongs to exactly one
 realm, so a single password form in front of users from several realms isn't
-possible — which is why the tenant host, not the apex, is what's meant to be
-bookmarked: it's the only entry point that knows the realm before rendering
+possible — which is why the tenant's console, not the apex, is what's meant to
+be bookmarked: it's the only entry point that knows the realm before rendering
 the form, so it can ask for both email and password in one stage. The apex
-only asks for an email, then hands the browser to that tenant's own host with
-the address attached so Keycloak can pre-fill it.
+lands on the sign-in router (gentian-ui `apps/sign-in`, served beside Keycloak),
+which only asks for an email and sends the browser to that tenant's console.
+The edge starts the code flow there and can carry no `login_hint`, so the router
+leaves the address in a ten-minute cookie scoped to `id.<kernel>/auth/realms/`,
+and the login theme fills the username from it.
 
 ### 3.2 Login identifiers
 
@@ -126,7 +129,7 @@ the address attached so Keycloak can pre-fill it.
 | **Primary login (`username` / `email`)** | Email address — global uniqueness across the cluster (`user@demo.platform.example.com`) |
 | **`inviteEmail`** | Optional secondary address for **invite**, **password reset**, and **account recovery** only |
 | **Tenant admin bootstrap** | Username and address are the same string, `admin@<tenant-domain>`, derived not configured; password from OpenBao `gentian-os/tenants/<tenant>/admin` |
-| **Platform admin bootstrap** | `administrator@<KERNEL_DOMAIN>`; password derived from install `MASTER_PASSWORD` |
+| **Platform admin bootstrap** | `admin@<KERNEL_DOMAIN>`, with no password until its holder sets one through a single-use activation link |
 
 ### 3.3 Group taxonomy
 

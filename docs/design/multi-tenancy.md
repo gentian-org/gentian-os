@@ -35,8 +35,8 @@ ext4 per user).
 
 Install-time **`TENANCY_MODE`** (`multi` default, set in
 `gentian-deployments/clusters/<cluster>/kernel/cluster-settings.env` and mirrored
-to operator Helm `tenancyMode`) selects the default app URL shape when
-`Tenant.spec.domain` is unset.
+to operator Helm `tenancyMode`) selects the app URL shape of a tenant without a
+custom domain.
 Both modes use the **same central IdP** at `id.<KERNEL_DOMAIN>/realms/<tenant>`.
 
 | Mode | Cluster profile | Default `effectiveDomain` | Example Jitsi URL |
@@ -44,17 +44,18 @@ Both modes use the **same central IdP** at `id.<KERNEL_DOMAIN>/realms/<tenant>`.
 | **`multi`** | Shared SaaS | `<tenant>.<KERNEL_DOMAIN>` | `https://meet.demo.platform.example.com` |
 | **`single`** | Dedicated / demanding customer | `<KERNEL_DOMAIN>` (flat) | `https://meet.platform.example.com` |
 
-**Single-tenancy rules:** exactly one `Tenant` CR named `default`, operator env `TENANCY_MODE=single`. Vanity `spec.domain` still overrides
-in either mode.
+**Single-tenancy rules:** the platform tenant (`Tenant/platform`, the kernel realm's) is the only tenant, operator env
+`TENANCY_MODE=single`; the webhook, the reconciler and the director refuse a second one. Its domain is the kernel domain,
+so it gets no listener, certificate, DNS records or apex route of its own: the kernel's serve every name under it.
 
 | Plane | Domain | Example hosts | Origin TLS (cert-manager) | DNS responsibility |
 |---|---|---|---|---|
 | **Kernel** | `KERNEL_DOMAIN` | `portal.platform.example.com`, `id.platform.example.com` | One DNS-01 wildcard `*.<kernel_domain>` at install | Cluster operator (kernel namespace only) |
-| **Tenant apps** | `effectiveDomain` | `meet.demo.platform.example.com` (multi) or `meet.platform.example.com` (single) | One DNS-01 wildcard `*.<effectiveDomain>` **per tenant** | Platform zone for default tenants; customer for vanity |
+| **Tenant apps** | `effectiveDomain` | `meet.demo.platform.example.com` (multi) or `meet.platform.example.com` (single) | One DNS-01 wildcard `*.<effectiveDomain>` **per tenant** (none on the kernel domain) | Platform zone; the customer's for a custom domain |
 
 **Effective domain** (same for edge routing, mail, OIDC redirect URIs to apps):
 
-- If `Tenant.spec.domain` is set → use it (customer vanity, e.g. `acme.com`).
+- If a `TenantDomain` binds a custom domain → use it (e.g. `acme.com`; see below).
 - Else if `TENANCY_MODE=single` → `<KERNEL_DOMAIN>` (flat URLs).
 - Else (`multi`) → `<tenant-name>.<KERNEL_DOMAIN>` (e.g. `demo.platform.example.com`).
 
@@ -81,7 +82,7 @@ The kernel wildcard (`*.<kernel_domain>`) is **never** replicated into tenant na
 - **Correct SANs:** `*.demo.platform.example.com` covers all app subdomains for that tenant.
 - **Rate limits:** One ACME certificate per tenant, not one per app host.
 - **CSP edge:** Multi-level names need their own edge cert when proxied (see below).
-- **Customer vanity:** Same code path when `spec.domain` is `acme.com` — only DNS delegation changes.
+- **Custom domains:** Same code path when a `TenantDomain` binds `acme.com` — only DNS delegation changes.
 
 ### Issuer configuration (portable across DNS providers)
 
@@ -97,7 +98,18 @@ Optional operator integration (Cloudflare today): proxied CNAME `*.<effectiveDom
 
 Origin and edge are separate: cert-manager in the tenant namespace is the portable contract; Cloudflare/ACM/Front Door adapters are deployment options.
 
-### Customer vanity domains (`spec.domain`)
+### Custom domains (`TenantDomain`)
+
+A custom domain is not a field on the Tenant. It is a cluster-scoped
+`TenantDomain` named after the tenant, committed beside its manifest
+(`clusters/<cluster>/tenants/<tenant>/domain.yaml`) by the director's
+`PUT /v1/clusters/{c}/tenants/{t}/domain` (`can_configure`). The operator copies
+the domain to the Tenant's `status.domain`, which `EffectiveDomain` reads, and
+reports `DomainBound`; a domain on or under the kernel domain is refused, as is
+one another tenant holds. The tenant's hosts, mail and logins move to it, and
+the sign-in router finds it through `sign-in-lookup`: one file per bound domain,
+named by its SHA-256, so a domain is found by whoever already knows it and the
+cluster's list of customers is not published.
 
 - **OIDC issuer** stays at `https://id.<kernel_domain>/realms/<tenant>` — app URL changes do not invalidate tokens.
 - **DNS:** Customer points `*.acme.com` (or per-host records) at the platform edge proxy/tunnel.
@@ -136,9 +148,10 @@ NetworkPolicies enforce three rules at the CNI level:
 
 **Suze** (Keycloak + OpenFGA) is the **single trust anchor** on new installs.
 Each tenant gets a dedicated Keycloak realm; apps authenticate users via OIDC
-against that realm. The shared portal at `portal.<KERNEL_DOMAIN>` uses the
-**kernel realm**, which brokers to the correct tenant realm by email / tenant
-resolution. App-to-app calls use **OIDC token exchange (RFC 8693)** — app A
+against that realm, and its people sign in there too: the edge in front of a
+tenant's console sends the browser to the tenant realm, and the sign-in router
+on the kernel domain sends an address to its tenant's console (see
+[iam.md](iam.md)). App-to-app calls use **OIDC token exchange (RFC 8693)** — app A
 presents its user-bound token and receives a scoped token usable against app B.
 The `IntegrationBinding` configures which exchanges are permitted; the binding's
 status surfaces credential validity and last rotation time.

@@ -24,9 +24,10 @@ user and group store for that organisation.
 | `<tenant>` | Authoritative user/group store for that tenant; per-app OIDC; **where tenant members authenticate** |
 
 - **Members and tenant admins** are stored, and sign in, in the **tenant realm** — each has its own `Cookie → forms` browser flow, so there's no brokering on the sign-in path.
-- The canonical, bookmarkable entry point is the tenant's own host, **`https://<tenant>.<KERNEL_DOMAIN>/login`**, which asks for email and password together. The apex (`https://<KERNEL_DOMAIN>/login`) asks for email only, then hands off to the tenant host with it attached.
+- The canonical, bookmarkable entry point is the tenant's console, **`https://console.<tenant>.<KERNEL_DOMAIN>/`**: the edge sends the browser to the tenant realm's form, which asks for email and password together.
+- On a multi-tenant cluster the apex and `www` land on the **sign-in router** at `https://id.<KERNEL_DOMAIN>/sign-in/`. It asks for the email only and sends the browser to the console of the workspace the address belongs to (`@<tenant>.<KERNEL_DOMAIN>`, `@<KERNEL_DOMAIN>`, or a tenant's custom domain); an address it cannot place is asked for the workspace's name. It asks the server nothing about accounts, and hands the address to the realm's form through a short-lived cookie only the realm pages on `id.<KERNEL_DOMAIN>` receive. A single-tenant cluster's apex goes to its one console.
 - **Tenant apps** use the same tenant realm for OIDC, so a session created at portal login is reused silently by every app launch — no broker hop, no second login screen.
-- **Platform admins** sign in at the apex/kernel realm directly; there is no tenant realm for them to be routed to.
+- **Platform admins** sign in in the kernel realm, at `console.<KERNEL_DOMAIN>`; there is no tenant realm for them to be routed to. On a single-tenant cluster the one tenant is the platform tenant, so its people are the kernel realm's.
 
 See [admin-console.md §3](admin-console.md#3-identity-topology-suze--keycloak-native) for diagrams and entry-point details.
 

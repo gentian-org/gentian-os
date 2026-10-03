@@ -69,12 +69,12 @@ whose hostname does not match the apex and which therefore holds no route for
 it — `404 route_not_found`, intermittently, depending on which connection
 happened to be open.
 
-That was survivable only while the apex carried nothing but a redirect. It no
-longer does: the apex serves the portal itself, so that a login hint on the
-tenant host is not discarded and the address bar stays on the tenant's name
-(`kernel_gateway_routes.go`). The apex is a critical path now, and it is kept
-reachable by keeping it out of the tenant certificate rather than by keeping it
-empty.
+The apex carries a redirect to the tenant's console (§5), and it is kept
+reachable by keeping it out of the tenant certificate. A tenant on the kernel
+domain itself -- the one tenant of a single-tenant cluster -- gets no listener
+or certificate of its own: `*.<kernelDomain>` beside the catch-all would be the
+more specific match for every kernel host and route them nowhere, so its routes
+attach to `https-wildcard` instead.
 
 The listener hostname also gates route attachment: a route attaches only where
 its hostnames intersect the listener's. `parentRefs.sectionName` narrows that
@@ -128,7 +128,8 @@ are represented as separate HTTPRoutes.
 
 The domain model is:
 
-- `effectiveDomain = Tenant.spec.domain` when set
+- `effectiveDomain = ` the custom domain a `TenantDomain` binds (copied to the
+  Tenant's `status.domain`), when there is one
 - otherwise:
   - `TENANCY_MODE=multi`: `<tenant>.<kernelDomain>`
   - `TENANCY_MODE=single`: `<kernelDomain>`
@@ -314,22 +315,21 @@ Keycloak OIDC broker policy:
 
 ## 5. Redirects and URL Control
 
-The **kernel** apex redirects with an HTTPRoute filter:
+The **kernel** apex and `www.<kernelDomain>` redirect with an HTTPRoute filter,
+once the kernel zone and the desktop exist:
 
-- Host: `<kernelDomain>`
-- Filter: HTTP redirect to `https://portal.<kernelDomain>/`
+- multi-tenant: to `https://id.<kernelDomain>/sign-in/`, the sign-in router,
+  which asks for an e-mail address and sends the browser to its workspace's
+  console. The apex is nobody's workspace on such a cluster.
+- single-tenant: to `https://console.<kernelDomain>/`, the one console.
 
-The **tenant** apex does not redirect — it serves the portal directly, on the
-same backends as `portal.<kernelDomain>`. A redirect filter replaces path and
-query wholesale, which discarded a login hint arriving on the tenant host, and
-it moved the address bar off the tenant's name. One portal deployment answers on
-both names; it is not copied per tenant, which would put the portal's Keycloak
-admin credentials inside every tenant's blast radius.
+The sign-in router and the cluster's brand (`/branding/`) are paths on the
+identity provider's public route, served by the `sign-in` Deployment beside
+Keycloak. Being on that host is the point: the router hands the address to the
+realm's form in a cookie scoped to `/auth/realms/`, which no other host sees.
 
-Worth knowing: tokens live in `sessionStorage`, which is per origin, so a user
-signed in on the tenant host holds a different session from the same user on
-`portal.<kernelDomain>`. Keycloak's SSO cookie makes crossing between them
-silent, but they are two sessions.
+A **tenant** apex redirects to `https://console.<effectiveDomain>/`, path and
+query kept; a tenant on the kernel domain has the kernel's apex instead.
 
 Application-specific redirects and rewrites are expressed with Gateway API route
 filters or Envoy extension policies where advanced behavior is needed.

@@ -285,7 +285,7 @@ CRs; tenant admins consume them by name.
 
 ### 4.2 `Tenant` (cluster-scoped) — the customer
 
-Declares **who** uses the platform: an optional vanity domain, an
+Declares **who** uses the platform: an
 isolation mode (namespace), resource quotas, mail mode, a deletion
 policy, and **`spec.apps`** — the list of catalogue profiles to install
 for this tenant (e.g. `element` — Jitsi is deployed as an Element sidecar). Creating a `Tenant`
@@ -382,9 +382,10 @@ Multiple tenants share one cluster:
   (`*.<kernel_domain>`) covers **kernel UIs only**; each tenant app zone
   gets its own wildcard (`*.<effectiveDomain>`) via DNS-01. Default
   effective domain depends on **`TENANCY_MODE`**: `multi` →
-  `<tenant>.<kernelDomain>`; `single` → `<kernelDomain>` (flat URLs, one
-  `Tenant` named `default`). Set `spec.domain` only for a customer vanity
-  domain (e.g. `acme.com`). See [design/multi-tenancy.md](design/multi-tenancy.md) §3.
+  `<tenant>.<kernelDomain>`; `single` → `<kernelDomain>` (flat URLs; the
+  platform tenant is the only one). A custom domain (e.g. `acme.com`) is a
+  `TenantDomain` beside the tenant, not a Tenant field. See
+  [design/multi-tenancy.md](design/multi-tenancy.md) §3.
 - **App-to-app calls** go through OIDC token exchange, with the
   `IntegrationBinding` defining which exchanges are permitted.
 - **Database isolation:** each app within each tenant gets its own
@@ -407,7 +408,8 @@ For each tenant with edge-routed apps, the **gentian-os controller** ensures:
    `{subDomain}.{effectiveDomain}` → `Service:{servicePort}`, all referencing
    that TLS secret on the tenant Gateway listener or Ingress TLS block.
 
-`effectiveDomain` is `Tenant.spec.domain` when set; otherwise it follows
+`effectiveDomain` is the custom domain a `TenantDomain` binds, when there is
+one; otherwise it follows
 `TENANCY_MODE` (`multi` → `<tenant>.<kernelDomain>`; `single` →
 `<kernelDomain>`). The issuer is configured cluster-wide via
 `TENANT_DNS01_CLUSTER_ISSUER` (Helm: `tenantDNS01ClusterIssuer`).
@@ -833,6 +835,7 @@ are in [design/multi-tenancy.md](design/multi-tenancy.md#roles).
 | Why a cloud OS at all | [design/cloud-os-rationale.md](design/cloud-os-rationale.md) |
 | Kernel functions, default install, OS analogy details | [design/kernel.md](design/kernel.md) |
 | Tenants, isolation, domains, network/identity security | [design/multi-tenancy.md](design/multi-tenancy.md) |
+| One brand on every page: tokens, identity, publishing | [design/branding.md](design/branding.md) |
 | AppProfile schema, IntegrationBindings, contracts, deployment flow | [design/app-catalogue.md](design/app-catalogue.md) |
 | Catalogue tiers, sidecars, admission and CI policy | [design/app-catalogue.md](design/app-catalogue.md) |
 | Commercial model & Odoo integration | [design/business-logic-plan.md](design/business-logic-plan.md) |
