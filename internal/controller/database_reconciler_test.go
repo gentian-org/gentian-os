@@ -97,7 +97,6 @@ func TestDB_NoPostgresApps(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "nodb"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "No DB Co",
-			Domain:      "nodb.example.com",
 		},
 	}
 	if err := testClient.Create(context.Background(), tenant); err != nil {
@@ -140,7 +139,6 @@ func TestDB_CrossplaneAppProvisionedByOperator(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "cpgdb"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Crossplane DB Co",
-			Domain:      "cpgdb.example.com",
 			Apps:        []gentianov1alpha1.TenantApp{{Profile: "element"}},
 		},
 	}
@@ -171,7 +169,6 @@ func TestDB_CreatesDatabaseCR(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "dbcreate"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "DB Create Co",
-			Domain:      "dbcreate.example.com",
 			Apps:        []gentianov1alpha1.TenantApp{{Profile: "pg-app1"}},
 		},
 	}
@@ -228,7 +225,6 @@ func TestDB_CreatesDatabaseCRAfterRoleJobCompletes(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "rolejob"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Role Job Co",
-			Domain:      "rolejob.example.com",
 			Apps:        []gentianov1alpha1.TenantApp{{Profile: "pg-app2"}},
 		},
 	}
@@ -286,7 +282,6 @@ func TestDB_SetsReadyWhenAllDone(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "dbready"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "DB Ready Co",
-			Domain:      "dbready.example.com",
 			Apps:        []gentianov1alpha1.TenantApp{{Profile: "pg-app3"}},
 		},
 	}
@@ -351,7 +346,6 @@ func TestDB_DeleteDeletePolicy_DeletesDatabaseCR(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "dbdelete"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName:    "Test Tenant",
-			Domain:         "dbdelete.example.com",
 			DeletionPolicy: gentianov1alpha1.DeletionPolicyDelete,
 			Apps:           []gentianov1alpha1.TenantApp{{Profile: "pg-app4"}},
 		},
@@ -409,7 +403,6 @@ func TestDB_DeleteDeletePolicy_DeletesOrphanedDatabaseCR(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "dborphan"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName:    "Test Tenant",
-			Domain:         "dborphan.example.com",
 			DeletionPolicy: gentianov1alpha1.DeletionPolicyDelete,
 			Apps:           []gentianov1alpha1.TenantApp{{Profile: "pg-app5"}},
 		},

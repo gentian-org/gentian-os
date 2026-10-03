@@ -20,7 +20,7 @@ import "strings"
 
 const (
 	// TenancyModeMulti is the default: many tenants on one cluster; app URLs use
-	// {sub}.{tenant}.{kernelDomain} unless spec.domain is set.
+	// {sub}.{tenant}.{kernelDomain} unless a TenantDomain binds a custom domain.
 	TenancyModeMulti = "multi"
 
 	// TenancyModeSingle is for dedicated single-tenant clusters: one Tenant CR

@@ -154,6 +154,7 @@ var xTenantGVK = schema.GroupVersionKind{
 // +kubebuilder:rbac:groups=gentianos.io,resources=tenants,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=gentianos.io,resources=tenants/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=gentianos.io,resources=tenants/finalizers,verbs=update
+// +kubebuilder:rbac:groups=gentianos.io,resources=tenantdomains,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=resourcequotas,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=limitranges,verbs=get;list;watch;create;update;patch;delete
@@ -237,8 +238,8 @@ type TenantReconciler struct {
 	Seeder *secrets.Seeder
 	// KernelDomain is the cluster-wide platform domain (e.g. `platform.example.com`)
 	// on which kernel UIs (Keycloak, Argo CD, portal) are served.
-	// Tenant app domains default from tenancy mode when Tenant.spec.domain is
-	// unset. Sourced from KERNEL_DOMAIN at startup.
+	// Tenant app domains derive from it by tenancy mode unless a
+	// TenantDomain binds a custom one. Sourced from KERNEL_DOMAIN at startup.
 	// See docs/design/multi-tenancy.md §3.
 	KernelDomain string
 	// TenancyMode controls default app URL shape: multi → {sub}.{tenant}.{kernel};
@@ -506,6 +507,12 @@ func (r *TenantReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			xTenantObj,
 			handler.EnqueueRequestsFromMapFunc(mapToTenant),
 			builder.WithPredicates(xTenantStatusChanged),
+		).
+		Watches(
+			&gentianov1alpha1.TenantDomain{},
+			handler.EnqueueRequestsFromMapFunc(func(_ context.Context, obj client.Object) []reconcile.Request {
+				return []reconcile.Request{{NamespacedName: types.NamespacedName{Name: obj.GetName()}}}
+			}),
 		)
 
 	if isGatewayRoutingMode(r.RoutingMode) {
@@ -574,6 +581,8 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		}
 		return ctrl.Result{}, nil
 	}
+
+	r.resolveTenantDomain(ctx, tenant)
 
 	return r.runTenantReconcileStages(ctx, &tenantReconcileState{
 		tenant: tenant,
@@ -1335,8 +1344,11 @@ func (r *TenantReconciler) buildXTenant(ctx context.Context, tenant *gentianov1a
 		"adminEmail":   r.tenantAdminEmail(tenant),
 		"kernelDomain": r.KernelDomain,
 	}
-	if tenant.Spec.Domain != "" {
-		spec["domain"] = tenant.Spec.Domain
+	// The domain the tenant is served at, decided here once: the custom
+	// domain a TenantDomain bound, or the tenancy mode's default. The
+	// Composition takes it as given rather than deriving it a second time.
+	if domain := tenant.EffectiveDomain(r.KernelDomain, r.TenancyMode); domain != "" {
+		spec["domain"] = domain
 	}
 	if tenant.Spec.DeletionPolicy != "" {
 		spec["deletionPolicy"] = string(tenant.Spec.DeletionPolicy)

@@ -98,11 +98,7 @@ func livePerimeterExposures(
 		if !now.Before(on.ExpiresAt.Time) {
 			continue
 		}
-		host := on.Host
-		if host == "" {
-			host = exposureHost(zone, comp, spec)
-		}
-		out = append(out, perimeterEnablement{spec: spec, on: on, host: host})
+		out = append(out, perimeterEnablement{spec: spec, on: on, host: exposureHost(zone, comp, spec)})
 	}
 	return out
 }

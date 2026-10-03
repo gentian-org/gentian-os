@@ -72,16 +72,6 @@ type TenantSpec struct {
 	// +optional
 	Admin *TenantAdmin `json:"admin,omitempty"`
 
-	// Domain is the optional custom domain for this tenant's app zone (e.g.
-	// `acme.com`). When unset, the effective domain depends on cluster
-	// tenancy mode: multi → `<tenant-name>.<KERNEL_DOMAIN>`; single →
-	// `<KERNEL_DOMAIN>` (flat URLs). See docs/design/multi-tenancy.md §3.
-	// In both cases the operator issues a per-tenant wildcard TLS certificate
-	// for *.<effectiveDomain> via DNS-01. See docs/design/multi-tenancy.md §3.
-	// +optional
-	// +kubebuilder:validation:Pattern=`^([a-z0-9]([a-z0-9\-\.]*[a-z0-9])?)?$`
-	Domain string `json:"domain,omitempty"`
-
 	// Isolation describes the workload isolation boundaries for this tenant.
 	// +optional
 	Isolation *TenantIsolation `json:"isolation,omitempty"`
@@ -195,13 +185,6 @@ type TenantExposure struct {
 	// +kubebuilder:validation:MaxLength=40
 	ExposureName string `json:"exposureName"`
 
-	// Host is the public hostname. Empty means the entry's default in the
-	// tenant's zone.
-	// +optional
-	// +kubebuilder:validation:Pattern=`^([a-z0-9]([-a-z0-9]*[a-z0-9])?\.)+[a-z]{2,}$`
-	// +kubebuilder:validation:MaxLength=253
-	Host string `json:"host,omitempty"`
-
 	// Owner is the subject that published it, set by the director from the
 	// caller's token.
 	// +kubebuilder:validation:MinLength=1
@@ -226,7 +209,6 @@ type TenantExposure struct {
 func (e *TenantExposure) Enablement() ExposureEnablement {
 	return ExposureEnablement{
 		ExposureName: e.ExposureName,
-		Host:         e.Host,
 		Owner:        e.Owner,
 		ExpiresAt:    e.ExpiresAt,
 		ReviewAt:     e.ReviewAt,
@@ -321,10 +303,6 @@ type TenantMail struct {
 	// +optional
 	// +kubebuilder:default=selfhosted
 	Mode MailMode `json:"mode,omitempty"`
-
-	// Domain is the mail domain. Defaults to spec.domain.
-	// +optional
-	Domain string `json:"domain,omitempty"`
 
 	// SmtpCredentialsSecret is the name of an existing Kubernetes Secret in the
 	// kernel namespace that contains SMTP relay credentials for external mail
@@ -606,6 +584,12 @@ type TenantStatus struct {
 	// tenant whose domain changes shows the new one here once reconciled.
 	// +optional
 	AdminEmail string `json:"adminEmail,omitempty"`
+
+	// Domain is the custom domain a TenantDomain binds this tenant to, copied
+	// here by the operator so every consumer of EffectiveDomain reads it from
+	// the tenant itself. Empty when no TenantDomain names this tenant.
+	// +optional
+	Domain string `json:"domain,omitempty"`
 	// ObservedGeneration is the last processed generation of the spec.
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
@@ -691,7 +675,7 @@ const TenantAdminLocalPart = "admin"
 // AdminEmailOrDefault is the tenant administrator's address — and its login.
 //
 // admin@<tenant-domain>: admin@corp.gtn.host in multi mode, admin@<kernelDomain>
-// in single, spec.domain when a tenant has a vanity one. The tenant's own
+// in single, the custom domain when a TenantDomain binds one. The tenant's own
 // domain is what makes `admin` unambiguous, so no tenant name appears in the
 // local part; it would name the tenant twice.
 //
@@ -728,16 +712,17 @@ func (t *Tenant) TenantAdminUsername(kernelDomain, tenancyMode string) string {
 }
 
 // EffectiveDomain returns the domain to use for ingress and mail routing
-// for this tenant. It returns spec.domain if set. When spec.domain is unset,
-// multi-tenancy mode uses "<tenant-name>.<kernelDomain>"; single-tenancy mode
-// uses "<kernelDomain>" (flat app hostnames). An empty kernelDomain combined
-// with an empty spec.domain returns the empty string — callers must treat that
-// as a configuration error and skip ingress provisioning.
+// for this tenant: the custom domain a TenantDomain bound it to (status.domain)
+// when there is one; otherwise "<tenant-name>.<kernelDomain>" in multi-tenancy
+// mode and "<kernelDomain>" in single-tenancy mode (flat app hostnames). An
+// empty kernelDomain without a custom domain returns the empty string —
+// callers must treat that as a configuration error and skip ingress
+// provisioning.
 //
 // See docs/design/multi-tenancy.md §3.
 func (t *Tenant) EffectiveDomain(kernelDomain, tenancyMode string) string {
-	if t.Spec.Domain != "" {
-		return t.Spec.Domain
+	if t.Status.Domain != "" {
+		return t.Status.Domain
 	}
 	if kernelDomain == "" {
 		return ""
@@ -746,14 +731,6 @@ func (t *Tenant) EffectiveDomain(kernelDomain, tenancyMode string) string {
 		return kernelDomain
 	}
 	return t.Name + "." + kernelDomain
-}
-
-// HasVanityDomain reports whether the tenant has an explicit custom app domain
-// configured (i.e. spec.domain is set). When false, EffectiveDomain() derives
-// the zone from tenancy mode and tenant name. TLS uses the same per-tenant
-// wildcard model in both cases; only the effective domain string differs.
-func (t *Tenant) HasVanityDomain() bool {
-	return t.Spec.Domain != ""
 }
 
 func init() {

@@ -62,7 +62,7 @@ func (r *TenantReconciler) ensureGateway(ctx context.Context, tenant *gentianov1
 	effectiveDomain := r.tenantEffectiveDomain(tenant)
 	if effectiveDomain == "" {
 		r.setCondition(tenant, conditionGatewayReady, metav1.ConditionFalse,
-			"NoDomain", "tenant.spec.domain is unset and operator KERNEL_DOMAIN is not configured")
+			"NoDomain", "the tenant has no custom domain and operator KERNEL_DOMAIN is not configured")
 		return ctrl.Result{}, fmt.Errorf("no effective domain available for tenant %s", tenant.Name)
 	}
 

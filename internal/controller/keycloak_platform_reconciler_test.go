@@ -40,7 +40,7 @@ func TestReconcileKeycloakIDPGatewayRoutePatchesHTTPRoute(t *testing.T) {
 
 	tenant := &gentianov1alpha1.Tenant{}
 	tenant.Name = "demo"
-	tenant.Spec.Domain = "demo.platform.example.test"
+	tenant.Status.Domain = "demo.platform.example.test"
 
 	route := &gatewayv1.HTTPRoute{
 		ObjectMeta: metav1.ObjectMeta{

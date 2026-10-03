@@ -317,17 +317,13 @@ spec:
                  question from GENTIAN_NS_EDGE and the two have to agree, or the
                  secret is written where nothing reads it. */}}
             {{- $edgeNs     := default "kernel-edge" (dig "network.edgeNamespace" "" $ccData) }}
-            {{- /* The zone's domain, which is EffectiveDomain in the operator.
-                 A vanity domain wins, then single tenancy puts the one tenant
-                 on the kernel domain itself, and otherwise the tenant is a
-                 subdomain of it. $domain above is the multi-tenant answer only,
-                 and every host in a redirect URI has to be the one the Gateway
-                 actually serves, so this is derived again rather than reused. */}}
-            {{- $tenancyMode := default "multi" (dig "tenancyMode" "" $ccData) }}
+            {{- /* The zone's domain. spec.domain is EffectiveDomain, set by the
+                 operator on every pass: a custom domain a TenantDomain binds,
+                 the kernel domain itself under single tenancy, otherwise a
+                 subdomain of it. The kernel realm's tenant is the kernel zone,
+                 whose hosts are on the kernel domain whatever its own is. */}}
             {{- $zoneDomain  := $domain }}
             {{- if $adoptsKernelRealm }}
-            {{- $zoneDomain = $kd }}
-            {{- else if and (eq $tenancyMode "single") (not (default "" $spec.domain)) }}
             {{- $zoneDomain = $kd }}
             {{- end }}
             {{- /* The hosts the zone serves, which is what the redirect URIs
@@ -597,7 +593,7 @@ spec:
                      rootUrl is which of those hosts to use, stated here
                      because this is where the zone's domain is known. The
                      director reads it back off the client rather than deriving
-                     it: the domain is a vanity name, or the kernel domain
+                     it: the domain is a custom one, or the kernel domain
                      under single tenancy, or the tenant's subdomain, and a
                      second derivation of that is a second answer that can
                      disagree with the hosts the Gateway actually serves. */}}

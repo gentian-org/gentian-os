@@ -180,7 +180,6 @@ func TestTenant_DeepCopy(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "gtn-demo"},
 		Spec: v1alpha1.TenantSpec{
 			DisplayName:    "Test Tenant",
-			Domain:         "gtn-demo.example.com",
 			DeletionPolicy: v1alpha1.DeletionPolicyRetain,
 			Isolation: &v1alpha1.TenantIsolation{
 				Mode:           v1alpha1.IsolationModeNamespace,
@@ -189,8 +188,7 @@ func TestTenant_DeepCopy(t *testing.T) {
 				S3Prefix:       "gtn-demo-",
 			},
 			Mail: &v1alpha1.TenantMail{
-				Mode:   v1alpha1.MailModeSelfhosted,
-				Domain: "gtn-demo.example.com",
+				Mode: v1alpha1.MailModeSelfhosted,
 			},
 			Quotas: &v1alpha1.TenantQuotas{
 				MaxApps: 20,
@@ -244,7 +242,6 @@ func TestTenant_DeletionPolicyValues(t *testing.T) {
 			tenant := &v1alpha1.Tenant{
 				Spec: v1alpha1.TenantSpec{
 					DisplayName:    "Test Tenant",
-					Domain:         "t.example.com",
 					DeletionPolicy: tc.policy,
 				},
 			}

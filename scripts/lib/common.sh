@@ -1189,7 +1189,7 @@ load_deployments_cluster_settings() {
 # =============================================================================
 # Prompt for the cluster's kernel domain (the single platform-wide domain on
 # which all kernel UIs — Keycloak, Gentian portal, and Argo CD — are served, and
-# which provides the tenant app zone fallback when Tenant.spec.domain is unset
+# which tenant app zones are derived from
 # (shape depends on TENANCY_MODE — see docs/design/multi-tenancy.md §3).
 #
 # Persisted via cluster-settings.env in gentian-deployments when set there;
@@ -1209,7 +1209,7 @@ prompt_kernel_domain() {
 
     echo ""
     info "Kernel domain (single platform-wide DNS suffix used for all kernel UIs"
-    info "and as the default base for tenant apps without a vanity domain):"
+    info "and as the base every tenant's apps are served under):"
     info "  examples: platform.example.com, apps.example.org"
 
     local v=""

@@ -621,7 +621,6 @@ func TestTenantReconciler_CreatesNamespace(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "acme"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "GTN Demo",
-			Domain:      "acme.example.com",
 		},
 	}
 	if err := testClient.Create(context.Background(), tenant); err != nil {
@@ -648,7 +647,6 @@ func TestTenantReconciler_SetsStatusReady(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "beta"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Beta Co",
-			Domain:      "beta.example.com",
 		},
 	}
 	if err := testClient.Create(context.Background(), tenant); err != nil {
@@ -691,7 +689,6 @@ func TestTenantReconciler_AppliesResourceQuota(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "gamma"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Gamma Inc",
-			Domain:      "gamma.example.com",
 			Quotas: &gentianov1alpha1.TenantQuotas{
 				Storage: &storage,
 				CPU:     &cpu,
@@ -723,7 +720,6 @@ func TestTenantReconciler_AppliesLimitRange(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "delta"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Delta Ltd",
-			Domain:      "delta.example.com",
 		},
 	}
 	if err := testClient.Create(context.Background(), tenant); err != nil {
@@ -754,7 +750,6 @@ func TestTenantReconciler_AppliesNetworkPolicy(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "epsilon"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Epsilon GmbH",
-			Domain:      "epsilon.example.com",
 		},
 	}
 	if err := testClient.Create(context.Background(), tenant); err != nil {
@@ -787,7 +782,6 @@ func TestTenantReconciler_ProfilesMissingBlocksProvisioning(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "missing-profile"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Missing Profile Co",
-			Domain:      "missing-profile.example.com",
 			Apps: []gentianov1alpha1.TenantApp{
 				{Profile: "does-not-exist"},
 			},
@@ -838,7 +832,6 @@ func TestTenantReconciler_CustomNamespace(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "zeta"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Zeta Corp",
-			Domain:      "zeta.example.com",
 			Isolation:   &gentianov1alpha1.TenantIsolation{Namespace: "zeta-custom"},
 		},
 	}
@@ -863,7 +856,6 @@ func TestTenantReconciler_DeleteRetainKeepsNamespace(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "retainer"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName:    "Retainer LLC",
-			Domain:         "retainer.example.com",
 			DeletionPolicy: gentianov1alpha1.DeletionPolicyRetain,
 		},
 	}
@@ -901,7 +893,6 @@ func TestTenantReconciler_DeleteDeleteRemovesNamespace(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "destroyer"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName:    "Destroyer Co",
-			Domain:         "destroyer.example.com",
 			DeletionPolicy: gentianov1alpha1.DeletionPolicyDelete,
 		},
 	}
@@ -952,7 +943,6 @@ func TestTenantReconciler_DataPlaneRedisAndPostgresJobs(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "combodp"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Combo DP Co",
-			Domain:      "combodp.example.com",
 			Apps: []gentianov1alpha1.TenantApp{
 				{Profile: "combo-pg"},
 				{Profile: "combo-redis"},

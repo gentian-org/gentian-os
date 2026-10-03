@@ -262,11 +262,7 @@ func (r *TenantReconciler) seedOIDCSecrets(ctx context.Context, tenant *gentiano
 	if r.Seeder == nil || cfg.clientID == "" {
 		return nil
 	}
-	issuerHost := tenant.Spec.Domain
-	if r.KernelDomain != "" {
-		issuerHost = r.KernelDomain
-	}
-	issuer := fmt.Sprintf("https://id.%s/auth/realms/%s", issuerHost, realmName)
+	issuer := fmt.Sprintf("https://id.%s/auth/realms/%s", r.KernelDomain, realmName)
 	if _, err := r.Seeder.SeedOIDC(ctx, tenant.Name, cfg.profileName, issuer, cfg.clientID); err != nil {
 		return fmt.Errorf("seed oidc for %s: %w", cfg.profileName, err)
 	}
@@ -277,11 +273,7 @@ func (r *TenantReconciler) buildOIDCClientProvisioningJob(ctx context.Context, t
 	if cfg.pack != nil {
 		clientSecret := ""
 		if r.Seeder != nil && !cfg.pack.PublicClient {
-			issuerHost := tenant.Spec.Domain
-			if r.KernelDomain != "" {
-				issuerHost = r.KernelDomain
-			}
-			issuer := fmt.Sprintf("https://id.%s/auth/realms/%s", issuerHost, realmName)
+			issuer := fmt.Sprintf("https://id.%s/auth/realms/%s", r.KernelDomain, realmName)
 			creds, seedErr := r.Seeder.SeedOIDC(ctx, tenant.Name, cfg.profileName, issuer, cfg.clientID)
 			if seedErr != nil {
 				return nil, fmt.Errorf("seed oidc pack for %s: %w", cfg.profileName, seedErr)
@@ -293,11 +285,7 @@ func (r *TenantReconciler) buildOIDCClientProvisioningJob(ctx context.Context, t
 
 	clientSecret := ""
 	if r.Seeder != nil {
-		issuerHost := tenant.Spec.Domain
-		if r.KernelDomain != "" {
-			issuerHost = r.KernelDomain
-		}
-		issuer := fmt.Sprintf("https://id.%s/auth/realms/%s", issuerHost, realmName)
+		issuer := fmt.Sprintf("https://id.%s/auth/realms/%s", r.KernelDomain, realmName)
 		creds, seedErr := r.Seeder.SeedOIDC(ctx, tenant.Name, cfg.profileName, issuer, cfg.clientID)
 		if seedErr != nil {
 			return nil, fmt.Errorf("seed oidc for %s: %w", cfg.profileName, seedErr)

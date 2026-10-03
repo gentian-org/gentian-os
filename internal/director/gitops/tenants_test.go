@@ -19,6 +19,8 @@ package gitops_test
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -303,5 +305,42 @@ func TestAnImportDeclaresTheTenantFromTheBundlesSpec(t *testing.T) {
 	tenants, err := g.TenantDetails(ctx)
 	if err != nil || len(tenants) != 1 || tenants[0].Apps[0] != "nextcloud-base-ce" {
 		t.Fatalf("tenants = %+v, %v", tenants, err)
+	}
+}
+
+// A tenant's login domain follows the TenantDomain an extension commits
+// beside its manifest, and only that: no file means <tenant>.<kernel>, and
+// one naming a host on the kernel domain is ignored, as the operator ignores
+// it.
+func TestATenantsLoginDomainFollowsItsTenantDomain(t *testing.T) {
+	remote := dt.Remote(t, "acme")
+	g := gitops.NewGitOps(dt.Clone(t, remote), remote, dt.Cluster, director)
+	ctx := context.Background()
+
+	if got, err := g.TenantLoginDomain(ctx, "acme"); err != nil || got != "acme."+dt.KernelDomain {
+		t.Fatalf("without a TenantDomain: %q, %v", got, err)
+	}
+
+	bind := func(domain string) {
+		t.Helper()
+		seed := dt.Clone(t, remote)
+		path := filepath.Join(seed, "clusters", dt.Cluster, "tenants", "acme", gitops.TenantDomainFile)
+		doc := "apiVersion: gentianos.io/v1alpha1\nkind: TenantDomain\nmetadata:\n  name: acme\nspec:\n  domain: " + domain + "\n"
+		if err := os.WriteFile(path, []byte(doc), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		dt.Git(t, seed, "add", "-A")
+		dt.Git(t, seed, "-c", "user.name=ext", "-c", "user.email=ext@example.com", "commit", "-m", "bind "+domain)
+		dt.Git(t, seed, "push", "origin", "HEAD:main")
+		g = gitops.NewGitOps(dt.Clone(t, remote), remote, dt.Cluster, director)
+	}
+
+	bind("acme.example")
+	if got, err := g.TenantLoginDomain(ctx, "acme"); err != nil || got != "acme.example" {
+		t.Fatalf("bound: %q, %v", got, err)
+	}
+	bind("x.acme." + dt.KernelDomain)
+	if got, err := g.TenantLoginDomain(ctx, "acme"); err != nil || got != "acme."+dt.KernelDomain {
+		t.Fatalf("on the kernel domain: %q, %v", got, err)
 	}
 }

@@ -56,7 +56,6 @@ func TestStorage_NoStorageApps(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "nostorage"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "No Storage Co",
-			Domain:      "nostorage.example.com",
 		},
 	}
 	if err := testClient.Create(context.Background(), tenant); err != nil {
@@ -96,7 +95,6 @@ func TestStorage_CreatesS3BucketJob(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "s3create"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "S3 Create Co",
-			Domain:      "s3create.example.com",
 			Apps:        []gentianov1alpha1.TenantApp{{Profile: "s3-app1"}},
 		},
 	}
@@ -164,7 +162,6 @@ func TestStorage_SetsReadyWhenAllJobsDone(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "storageready"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Storage Ready Co",
-			Domain:      "storageready.example.com",
 			Apps:        []gentianov1alpha1.TenantApp{{Profile: "s3-app2"}},
 		},
 	}
@@ -220,7 +217,6 @@ func TestStorage_DeleteDeletePolicy_CreatesDeleteJobs(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "storagedelete"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName:    "Test Tenant",
-			Domain:         "storagedelete.example.com",
 			DeletionPolicy: gentianov1alpha1.DeletionPolicyDelete,
 			Apps: []gentianov1alpha1.TenantApp{
 				{Profile: "s3-app3"},

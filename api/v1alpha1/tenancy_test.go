@@ -51,7 +51,7 @@ func TestEffectiveDomainTenancyModes(t *testing.T) {
 		t.Fatalf("single: got %q", got)
 	}
 
-	tenant.Spec.Domain = "acme.com"
+	tenant.Status.Domain = "acme.com"
 	if got := tenant.EffectiveDomain("platform.example.test", TenancyModeMulti); got != "acme.com" {
 		t.Fatalf("vanity overrides mode: got %q", got)
 	}
@@ -73,7 +73,7 @@ func TestAdminEmailOrDefault(t *testing.T) {
 
 	vanity := &Tenant{}
 	vanity.Name = "corp"
-	vanity.Spec.Domain = "acme.com"
+	vanity.Status.Domain = "acme.com"
 	if got := vanity.AdminEmailOrDefault("gtn.host", TenancyModeMulti); got != "admin@acme.com" {
 		t.Fatalf("vanity domain: got %q", got)
 	}
@@ -100,7 +100,7 @@ func TestTenantAdminUsernameIsTheAddress(t *testing.T) {
 	} {
 		tn := &Tenant{}
 		tn.Name = tc.name
-		tn.Spec.Domain = tc.domain
+		tn.Status.Domain = tc.domain
 		got := tn.TenantAdminUsername(tc.kernel, tc.mode)
 		want := tn.AdminEmailOrDefault(tc.kernel, tc.mode)
 		if got != want {

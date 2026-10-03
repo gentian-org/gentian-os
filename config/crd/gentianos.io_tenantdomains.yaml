@@ -1,0 +1,70 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.17.3
+  name: tenantdomains.gentianos.io
+spec:
+  group: gentianos.io
+  names:
+    kind: TenantDomain
+    listKind: TenantDomainList
+    plural: tenantdomains
+    shortNames:
+    - tdomain
+    singular: tenantdomain
+  scope: Cluster
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.domain
+      name: Domain
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          TenantDomain is an extension point: the tenant it is named after is served
+          at spec.domain. The OS reads it and has no way to write one -- no field on
+          the Tenant, no director route, no console form -- so a cluster has custom
+          domains exactly when an extension that writes TenantDomains is installed.
+          The operator copies the domain to the Tenant's status.domain, which is what
+          every consumer reads.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: TenantDomainSpec binds a tenant to a custom domain.
+            properties:
+              domain:
+                description: |-
+                  Domain is where the tenant is served instead of <tenant>.<kernelDomain>:
+                  its zone, its hosts, its mail and its people's logins all move to it.
+                maxLength: 253
+                pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?\.)+[a-z]{2,}$
+                type: string
+            required:
+            - domain
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources: {}

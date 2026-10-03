@@ -42,8 +42,10 @@ spec:
                 domain:
                   type: string
                   description: >
-                    Optional custom app zone (e.g. "acme.com"). When omitted the
-                    tenant is served under "<name>.<kernelDomain>".
+                    The domain the tenant is served at, set by the operator: a
+                    custom domain a TenantDomain binds, the kernel domain under
+                    single tenancy, otherwise "<name>.<kernelDomain>", which is
+                    also what an omitted value means.
                 adminEmail:
                   type: string
                   description: Contact address for platform notifications.
@@ -132,9 +134,6 @@ spec:
                       type: string
                       description: Mail delivery strategy. Defaults to "selfhosted".
                       default: selfhosted
-                    domain:
-                      type: string
-                      description: Mail domain. Defaults to spec.domain.
                     smtpCredentialsSecret:
                       type: string
                       description: >

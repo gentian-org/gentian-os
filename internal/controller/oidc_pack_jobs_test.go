@@ -72,7 +72,6 @@ func TestCollectOIDCAppConfigs_IncludesSidecarWithoutAppProfile(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "demo"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Test Tenant",
-			Domain:      "demo.platform.example.com",
 			Apps:        []gentianov1alpha1.TenantApp{{Profile: "catalogue-test-app"}},
 		},
 	}

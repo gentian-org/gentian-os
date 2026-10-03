@@ -130,14 +130,6 @@ type ExposureEnablement struct {
 	// +kubebuilder:validation:MaxLength=40
 	ExposureName string `json:"exposureName"`
 
-	// Host is the public hostname. Empty means the entry's default host in the
-	// tenant's zone. A vanity host is admitted only if the tenant's approved
-	// domains include it.
-	// +optional
-	// +kubebuilder:validation:Pattern=`^([a-z0-9]([-a-z0-9]*[a-z0-9])?\.)+[a-z]{2,}$`
-	// +kubebuilder:validation:MaxLength=253
-	Host string `json:"host,omitempty"`
-
 	// Owner is the Keycloak subject that enabled the surface, set by the
 	// director from the caller's token.
 	// +kubebuilder:validation:MinLength=1

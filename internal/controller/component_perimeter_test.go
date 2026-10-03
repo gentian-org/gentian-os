@@ -365,13 +365,13 @@ func TestThePerimeterDoesNotClaimTheTenantsWildcard(t *testing.T) {
 	}
 }
 
-// A vanity host is published at the name it names, not under the tenant's
-// domain.
-func TestAVanityHostIsPublishedAsGiven(t *testing.T) {
+// A tenant bound to a custom domain publishes under it: the entry's name
+// under the domain the TenantDomain gave it, not under the kernel's.
+func TestACustomDomainTenantPublishesUnderItsDomain(t *testing.T) {
 	tenant := acmeTenantFixture()
+	tenant.Status.Domain = "acme.example"
 	tenant.Spec.Exposures = []gentianov1alpha1.TenantExposure{{
 		Install: "nextcloud-base-ce", ExposureName: "shares", Owner: "u-tom",
-		Host:      "files.acme.example",
 		ExpiresAt: metav1.NewTime(time.Now().Add(24 * time.Hour)),
 	}}
 	gw := buildPerimeterGateway("k.example", "", []gentianov1alpha1.Tenant{*tenant})
@@ -381,8 +381,8 @@ func TestAVanityHostIsPublishedAsGiven(t *testing.T) {
 			hosts = append(hosts, string(*l.Hostname))
 		}
 	}
-	if !containsString(hosts, "files.acme.example") {
-		t.Fatalf("the vanity host has no listener; got %v", hosts)
+	if !containsString(hosts, "shares.acme.example") {
+		t.Fatalf("the custom domain's host has no listener; got %v", hosts)
 	}
 }
 

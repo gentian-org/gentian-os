@@ -125,14 +125,6 @@ spec:
                       maxLength: 40
                       pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
                       type: string
-                    host:
-                      description: |-
-                        Host is the public hostname. Empty means the entry's default host in the
-                        tenant's zone. A vanity host is admitted only if the tenant's approved
-                        domains include it.
-                      maxLength: 253
-                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?\.)+[a-z]{2,}$
-                      type: string
                     owner:
                       description: |-
                         Owner is the Keycloak subject that enabled the surface, set by the

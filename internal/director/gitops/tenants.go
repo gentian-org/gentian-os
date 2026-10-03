@@ -122,7 +122,7 @@ func (g *GitOps) TenantRealm(ctx context.Context, tenant string) (string, error)
 // TenantLoginDomain is the domain a tenant's people sign in under: the part
 // after the @ in a login the console composes from a local part.
 //
-// The tenant's own domain when its manifest names one. The kernel domain for
+// The custom domain when a TenantDomain beside its manifest binds one. The kernel domain for
 // a tenant that adopts another realm -- the platform tenant, whose people are
 // the kernel realm's administrators (admin@<kernel>, not
 // admin@platform.<kernel>) -- and under single tenancy, where the one tenant
@@ -141,7 +141,6 @@ func (g *GitOps) TenantLoginDomain(ctx context.Context, tenant string) (string, 
 	}
 	var doc struct {
 		Spec struct {
-			Domain    string `json:"domain"`
 			Isolation struct {
 				KeycloakRealm string `json:"keycloakRealm"`
 			} `json:"isolation"`
@@ -150,12 +149,18 @@ func (g *GitOps) TenantLoginDomain(ctx context.Context, tenant string) (string, 
 	if err := yaml.Unmarshal(b, &doc); err != nil {
 		return "", fmt.Errorf("read %s: %w", file, err)
 	}
-	if doc.Spec.Domain != "" {
-		return doc.Spec.Domain, nil
-	}
 	kernel, err := g.KernelDomain(ctx)
 	if err != nil {
 		return "", err
+	}
+	custom, err := tenantCustomDomain(file)
+	if err != nil {
+		return "", err
+	}
+	// The operator refuses a custom domain on the kernel domain and leaves
+	// the tenant where it was; so does this, or the two would disagree.
+	if custom != "" && custom != kernel && !strings.HasSuffix(custom, "."+kernel) {
+		return custom, nil
 	}
 	if realm := doc.Spec.Isolation.KeycloakRealm; realm != "" && realm != tenant {
 		return kernel, nil
@@ -165,6 +170,38 @@ func (g *GitOps) TenantLoginDomain(ctx context.Context, tenant string) (string, 
 		return kernel, nil
 	}
 	return tenant + "." + kernel, nil
+}
+
+// TenantDomainFile is where an extension that gives tenants custom domains
+// commits a tenant's TenantDomain: beside its tenant.yaml, so Argo CD applies
+// it with the tenant and the director reads it from the same tree. The OS
+// itself never writes one.
+const TenantDomainFile = "domain.yaml"
+
+// tenantCustomDomain is the domain the TenantDomain beside tenantFile binds,
+// or "" when there is none.
+func tenantCustomDomain(tenantFile string) (string, error) {
+	file := filepath.Join(filepath.Dir(tenantFile), TenantDomainFile)
+	b, err := os.ReadFile(file)
+	if errors.Is(err, os.ErrNotExist) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	var doc struct {
+		Kind string `json:"kind"`
+		Spec struct {
+			Domain string `json:"domain"`
+		} `json:"spec"`
+	}
+	if err := yaml.Unmarshal(b, &doc); err != nil {
+		return "", fmt.Errorf("read %s: %w", file, err)
+	}
+	if doc.Kind != "TenantDomain" {
+		return "", nil
+	}
+	return strings.ToLower(strings.TrimSpace(doc.Spec.Domain)), nil
 }
 
 // TenantDetails lists this cluster's tenants with what the manifests say.

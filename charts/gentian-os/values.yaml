@@ -11,7 +11,7 @@ stage: dev
 # Plumbed as KERNEL_DOMAIN. See docs/design/multi-tenancy.md §3.
 kernelDomain: ""
 
-# tenancyMode controls default tenant app URL shape when Tenant.spec.domain is unset:
+# tenancyMode controls tenant app URL shape (unless a TenantDomain binds a custom domain):
 #   multi  — {sub}.{tenant}.{kernelDomain} (default, shared cluster)
 #   single — {sub}.{kernelDomain} (dedicated single-tenant cluster; one Tenant named "default")
 # Plumbed as TENANCY_MODE.
@@ -49,8 +49,8 @@ dnsProvider: cloudflare
 
 # tenantDNS01ClusterIssuer is the cert-manager ClusterIssuer used for per-tenant
 # wildcard certificates (*.<effectiveDomain>). Must use a DNS-01 solver that can
-# write records in the zone containing effectiveDomain (platform zone for default
-# tenants, customer zone for vanity domains). Plumbed as TENANT_DNS01_CLUSTER_ISSUER.
+# write records in the zone containing effectiveDomain (the platform zone, or the
+# customer's zone for a tenant a TenantDomain binds). Plumbed as TENANT_DNS01_CLUSTER_ISSUER.
 #
 # Empty means the cluster's own issuer, derived from dnsProvider above. Set it
 # only when tenant zones are hosted somewhere the kernel zone is not.

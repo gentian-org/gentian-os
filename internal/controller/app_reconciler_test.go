@@ -64,7 +64,6 @@ func TestApps_NoApps(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "noapps"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "No Apps Co",
-			Domain:      "noapps.example.com",
 		},
 	}
 	if err := testClient.Create(context.Background(), tenant); err != nil {
@@ -111,7 +110,6 @@ func TestApps_CreatesAppClaim(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "single-app"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Single App Co",
-			Domain:      "single-app.example.com",
 			Apps:        []gentianov1alpha1.TenantApp{{Profile: "my-app"}},
 		},
 	}
@@ -148,8 +146,8 @@ func TestApps_CreatesAppClaim(t *testing.T) {
 		t.Errorf("expected spec.tenantNamespace tenant-single-app, got %q", tenantNS)
 	}
 	domain, _, _ := unstructured.NestedString(claim.Object, "spec", "domain")
-	if domain != "single-app.example.com" {
-		t.Errorf("expected spec.domain single-app.example.com, got %q", domain)
+	if domain != "single-app.platform.example.test" {
+		t.Errorf("expected spec.domain single-app.platform.example.test, got %q", domain)
 	}
 	policy, _, _ := unstructured.NestedString(claim.Object, "spec", "compositionUpdatePolicy")
 	if policy != "Automatic" {
@@ -184,7 +182,6 @@ func TestApps_MultipleApps(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "multi-app"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Multi App Co",
-			Domain:      "multi-app.example.com",
 			Apps:        tenantApps,
 		},
 	}
@@ -218,7 +215,6 @@ func TestApps_DeleteRemovesAppClaims(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "del-tenant"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName:    "Remove App Tenant",
-			Domain:         "del.example.com",
 			DeletionPolicy: gentianov1alpha1.DeletionPolicyDelete,
 			Apps:           []gentianov1alpha1.TenantApp{{Profile: "del-app"}},
 		},
@@ -272,7 +268,6 @@ func TestApps_RemoveAppCleansUpClaim(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "rm-app-tenant"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Skip NoApp Tenant",
-			Domain:      "rmapp.example.com",
 			Apps: []gentianov1alpha1.TenantApp{
 				{Profile: "rm-keep-app"},
 				{Profile: "rm-remove-app"},
@@ -346,7 +341,6 @@ func TestApps_OrphanCleanupSkipsCRsWithoutAppLabel(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "skip-noapp"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Orphan App Workload",
-			Domain:      "skipnoapp.example.com",
 			Apps:        []gentianov1alpha1.TenantApp{{Profile: "only-app"}},
 		},
 	}
@@ -428,7 +422,6 @@ func TestApps_CleanupOrphanedAppWorkload(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "orphan-app-wl"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Orphan App Workload 2",
-			Domain:      "orphanwl.example.com",
 			Apps:        []gentianov1alpha1.TenantApp{{Profile: "orphan-wl-app"}},
 		},
 	}
@@ -534,7 +527,6 @@ func TestApps_CleanupOrphanedAppWorkloadOwnerlessJobPod(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "orphan-app-wl2"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Test Tenant",
-			Domain:      "orphanwl2.example.com",
 			Apps:        []gentianov1alpha1.TenantApp{{Profile: "orphan-wl-app2"}},
 		},
 	}

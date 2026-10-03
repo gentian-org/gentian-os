@@ -242,9 +242,6 @@ func (r *TenantReconciler) resolveOIDCRedirectURIs(
 
 func substituteTenantDomainInURIs(tenant *gentianov1alpha1.Tenant, uris []string, kernelDomain, tenancyMode string) []string {
 	host := tenant.EffectiveDomain(kernelDomain, tenancyMode)
-	if host == "" {
-		host = tenant.Spec.Domain
-	}
 	out := make([]string, 0, len(uris))
 	for _, u := range uris {
 		out = append(out, strings.ReplaceAll(u, "${TENANT_DOMAIN}", host))
@@ -319,9 +316,6 @@ func (r *TenantReconciler) collectSAMLAppConfigs(ctx context.Context, tenant *ge
 			profile.Services().Identity.SAML != nil {
 			samlSpec := profile.Services().Identity.SAML
 			host := tenant.EffectiveDomain(r.KernelDomain, r.TenancyMode)
-			if host == "" {
-				host = tenant.Spec.Domain
-			}
 			acsURL := strings.ReplaceAll(samlSpec.ACSURL, "${TENANT_DOMAIN}", host)
 
 			configs = append(configs, samlAppConfig{

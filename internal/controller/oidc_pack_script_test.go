@@ -108,7 +108,7 @@ func TestBuildOIDCPackScript(t *testing.T) {
 
 func TestSubstituteTenantDomainInURIs(t *testing.T) {
 	tenant := &gentianov1alpha1.Tenant{}
-	tenant.Spec.Domain = "demo.platform.example.test"
+	tenant.Status.Domain = "demo.platform.example.test"
 	uris := substituteTenantDomainInURIs(tenant,
 		[]string{"https://app.${TENANT_DOMAIN}/*"}, "platform.example.test", gentianov1alpha1.TenancyModeMulti)
 	if len(uris) != 1 || uris[0] != "https://app.demo.platform.example.test/*" {

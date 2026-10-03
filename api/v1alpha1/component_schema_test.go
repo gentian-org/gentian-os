@@ -353,8 +353,6 @@ func TestComponentRules(t *testing.T) {
 		{"an exposure nobody owns", component("  class: app\n  exposures:\n  - {exposureName: share, expiresAt: \"2026-12-01T00:00:00Z\"}\n"), "", "owner"},
 		{"review after expiry", component(enabled("u-pat", "2026-12-01T00:00:00Z") + "    reviewAt: \"2027-01-01T00:00:00Z\"\n"), "", "reviewAt must not be later"},
 		{"a service on the perimeter", component("  class: service\n  exposures:\n  - {exposureName: share, owner: u, expiresAt: \"2026-12-01T00:00:00Z\"}\n"), "", "a service switches on no perimeter entry"},
-		{"a vanity host", component(enabled("u-pat", "2026-12-01T00:00:00Z") + "    host: www.example.org\n"), "", ""},
-		{"a host that is not one", component(enabled("u-pat", "2026-12-01T00:00:00Z") + "    host: \"*.example.org\"\n"), "", "host"},
 
 		{"renewed by its owner", component(enabled("u-pat", "2027-03-01T00:00:00Z")), component(enabled("u-pat", "2026-12-01T00:00:00Z")), ""},
 		{"taken over by someone else", component(enabled("u-mallory", "2027-03-01T00:00:00Z")), component(enabled("u-pat", "2026-12-01T00:00:00Z")), "owner is immutable"},

@@ -63,7 +63,6 @@ func deletingTenant() *gentianov1alpha1.Tenant {
 		},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName:    "Stale Cache Co",
-			Domain:         "stalecache.example.com",
 			DeletionPolicy: gentianov1alpha1.DeletionPolicyDelete,
 			Apps:           []gentianov1alpha1.TenantApp{{Profile: "stale-app"}},
 		},

@@ -332,17 +332,14 @@ func perimeterTenantListeners(kernelDomain, tenancyMode string, tenants []gentia
 	return out
 }
 
-// publishedHost is where one enablement answers: the vanity host it names, or
-// the entry's own name under the tenant's domain.
+// publishedHost is where one enablement answers: the entry's own name under
+// the tenant's domain.
 //
 // An expired enablement still gets a listener. A listener with no route
 // behind it serves nothing -- the proxy and the route are what the operator
 // takes down at expiry -- and keeping it means a renewal does not have to
 // wait for the Gateway to be reprogrammed before the link works again.
 func publishedHost(e *gentianov1alpha1.TenantExposure, domain string) string {
-	if e.Host != "" {
-		return e.Host
-	}
 	if e.ExposureName == "" {
 		return ""
 	}

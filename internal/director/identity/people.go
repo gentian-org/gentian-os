@@ -203,7 +203,7 @@ func (c *Client) Groups(ctx context.Context, r Realm) ([]Group, error) {
 
 // ZoneLanding is where the realm's own zone client says a person should land.
 //
-// Read off the client rather than derived. The zone's domain is a vanity name,
+// Read off the client rather than derived. The zone's domain is a custom one,
 // or the kernel domain under single tenancy, or the tenant's subdomain of it,
 // and the composition already resolved which -- a second derivation here would
 // be a second answer, and the one that disagreed would produce a redirect

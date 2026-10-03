@@ -46,7 +46,7 @@ spec:
                 domain:
                   type: string
                   description: >
-                    Effective tenant domain (vanity or derived from kernelDomain).
+                    Effective tenant domain (custom, or derived from kernelDomain).
                     Used for template substitution of ${TENANT_DOMAIN} in
                     AppProfile.spec.extraValues. Set by the operator.
                 config:

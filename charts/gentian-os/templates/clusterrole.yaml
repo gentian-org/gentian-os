@@ -273,6 +273,7 @@ rules:
     - componentprofiles
     - oidcpackcatalogs
     - resourceplans
+    - tenantdomains
     - xapps
     verbs:
     - get

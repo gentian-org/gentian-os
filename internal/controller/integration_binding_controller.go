@@ -69,9 +69,6 @@ func (r *IntegrationBindingReconciler) Reconcile(ctx context.Context, req ctrl.R
 			return ctrl.Result{}, fmt.Errorf("failed to get tenant: %w", err)
 		}
 
-		tenantDomain := tenant.Spec.Domain
-		_ = tenantDomain // Use if needed later
-
 		// For Nextcloud, we just set the endpoint based on the contract
 		endpoint := ""
 		user := fmt.Sprintf("gentian-contract-%s", ib.Spec.Contract) // A standard user

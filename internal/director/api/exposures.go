@@ -45,9 +45,6 @@ const maxExposure = 365 * 24 * time.Hour
 const defaultExposure = 90 * 24 * time.Hour
 
 type publishExposureRequest struct {
-	// Host is a vanity hostname. Empty means the entry's default in the
-	// tenant's own zone, which is the ordinary case and the safe one.
-	Host string `json:"host,omitempty"`
 	// ExpiresAt bounds it, RFC 3339. Empty means the default.
 	ExpiresAt string `json:"expiresAt,omitempty"`
 	// ReviewAt is when to ask again, before expiry.
@@ -125,7 +122,6 @@ func (s *Server) publishExposure(w http.ResponseWriter, r *http.Request, c call)
 	e := gitops.Exposure{
 		Install:      install,
 		ExposureName: exposure,
-		Host:         strings.TrimSpace(body.Host),
 		// From the token, never the body: an enablement that could name its
 		// own owner records nobody.
 		Owner:     c.meta.Subject,

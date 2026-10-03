@@ -57,9 +57,6 @@ type Exposure struct {
 	// ExposureName is the entry of that component's profile, whose surface is
 	// perimeter.
 	ExposureName string `json:"exposureName"`
-	// Host is the public hostname. Empty means the entry's default in the
-	// tenant's zone, which the operator resolves.
-	Host string `json:"host,omitempty"`
 	// Owner is the subject that enabled it, from the caller's token.
 	Owner string `json:"owner"`
 	// ExpiresAt is when it stops answering, RFC 3339. Always set.
@@ -216,9 +213,6 @@ func renderExposures(tenant string, exposures []Exposure) string {
 	for _, e := range sorted {
 		b.WriteString("    - install: " + e.Install + "\n")
 		b.WriteString("      exposureName: " + e.ExposureName + "\n")
-		if e.Host != "" {
-			b.WriteString("      host: " + e.Host + "\n")
-		}
 		b.WriteString("      owner: " + e.Owner + "\n")
 		b.WriteString("      expiresAt: " + e.ExpiresAt + "\n")
 		if e.ReviewAt != "" {
