@@ -859,3 +859,21 @@ func TestTheKeycloakConsoleKeepsItsOwnBearer(t *testing.T) {
 	}
 	t.Fatal("the admin console route is missing")
 }
+
+// On a single-tenant cluster the one tenant is on the kernel domain, which the
+// kernel's catch-all listener already serves. A *.<kernel> tenant listener
+// beside it would be the more specific match for argocd.<kernel> and every
+// other kernel host, and route them nowhere.
+func TestASingleTenantClusterAddsNoTenantListener(t *testing.T) {
+	t.Parallel()
+	tenants := []gentianov1alpha1.Tenant{{ObjectMeta: metav1.ObjectMeta{Name: gentianov1alpha1.SingleTenantName}}}
+	gw := buildAuthenticatedGateway("example.org", gentianov1alpha1.TenancyModeSingle, tenants)
+	for _, l := range gw.Spec.Listeners {
+		if l.Hostname != nil && string(*l.Hostname) == "*.example.org" && string(l.Name) != wildcardListenerName {
+			t.Fatalf("listener %s claims the kernel domain", l.Name)
+		}
+		if string(l.Name) == tenantGatewayListenerName(gentianov1alpha1.SingleTenantName) {
+			t.Fatalf("the single tenant got a listener of its own: %+v", l)
+		}
+	}
+}

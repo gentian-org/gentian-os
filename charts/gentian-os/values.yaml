@@ -13,7 +13,7 @@ kernelDomain: ""
 
 # tenancyMode controls tenant app URL shape (unless a TenantDomain binds a custom domain):
 #   multi  — {sub}.{tenant}.{kernelDomain} (default, shared cluster)
-#   single — {sub}.{kernelDomain} (dedicated single-tenant cluster; one Tenant named "default")
+#   single — {sub}.{kernelDomain} (dedicated single-tenant cluster; the platform tenant is the only one)
 # Plumbed as TENANCY_MODE.
 tenancyMode: multi
 

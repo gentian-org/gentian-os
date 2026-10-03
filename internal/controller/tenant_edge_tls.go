@@ -118,7 +118,7 @@ func (r *TenantReconciler) deleteLegacyKernelWildcardSecret(ctx context.Context,
 // address on a cluster that has one. Records for eight providers, written by
 // the component that already does that for mail.
 func (r *TenantReconciler) ensureTenantEdgeRoutes(ctx context.Context, tenant *gentianov1alpha1.Tenant, effectiveDomain string) {
-	if r.Ingress == nil {
+	if r.Ingress == nil || servedByKernelEdge(effectiveDomain, r.KernelDomain) {
 		return
 	}
 	logger := ctrl.LoggerFrom(ctx)

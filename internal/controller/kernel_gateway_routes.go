@@ -104,7 +104,9 @@ func (r *GatewayPlatformReconciler) reconcileKernelHTTPRoutes(ctx context.Contex
 		if tenantList.Items[i].DeletionTimestamp != nil {
 			continue
 		}
-		if d := tenantList.Items[i].EffectiveDomain(r.KernelDomain, r.TenancyMode); d != "" {
+		// A tenant on the kernel domain has the kernel's apex and listener,
+		// so it adds no apex route and no listener policy of its own.
+		if d := tenantList.Items[i].EffectiveDomain(r.KernelDomain, r.TenancyMode); d != "" && !servedByKernelEdge(d, r.KernelDomain) {
 			effectiveDomains = append(effectiveDomains, d)
 			tenantNames = append(tenantNames, tenantList.Items[i].Name)
 		}

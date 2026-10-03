@@ -27,6 +27,8 @@ import (
 	"time"
 
 	"sigs.k8s.io/yaml"
+
+	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
 // Bringing a tenant on and retiring one, as commits.
@@ -43,6 +45,24 @@ import (
 
 // ErrTenantExists is a create against a name the cluster already has.
 var ErrTenantExists = errors.New("tenant already exists")
+
+// ErrSingleTenancy is a new tenant on a cluster whose tenancy mode is single:
+// its one tenant is the platform tenant, which the install already made.
+var ErrSingleTenancy = errors.New("this cluster is single-tenant; its one tenant is the platform tenant")
+
+// refuseInSingleTenancy answers ErrSingleTenancy on a single-tenant cluster,
+// before anything is committed: the operator would refuse the tenant too,
+// but only once git already held it.
+func (g *GitOps) refuseInSingleTenancy(ctx context.Context) error {
+	settings, err := g.ClusterSettingValues(ctx)
+	if err != nil && !errors.Is(err, ErrNoClusterClaim) {
+		return err
+	}
+	if gentianov1alpha1.NormalizeTenancyMode(settings["tenancyMode"]) == gentianov1alpha1.TenancyModeSingle {
+		return ErrSingleTenancy
+	}
+	return nil
+}
 
 // ErrTenantProtected is a retire against a tenant that must not be retired.
 var ErrTenantProtected = errors.New("tenant is protected")
@@ -268,6 +288,9 @@ type NewTenant struct {
 func (g *GitOps) CreateTenant(ctx context.Context, req NewTenant, meta Meta) (Result, error) {
 	if !ValidName(req.Name) {
 		return Result{}, fmt.Errorf("%w: tenant %q", ErrInvalidName, req.Name)
+	}
+	if err := g.refuseInSingleTenancy(ctx); err != nil {
+		return Result{}, err
 	}
 	g.mu.Lock()
 	defer g.mu.Unlock()

@@ -143,6 +143,10 @@ func (s *Server) importTenant(w http.ResponseWriter, r *http.Request, c call) {
 		s.fail(w, r, http.StatusConflict, "a tenant of that name already exists; restore into it instead, or import under another name")
 		return
 	}
+	if errors.Is(err, gitops.ErrSingleTenancy) {
+		s.fail(w, r, http.StatusConflict, err.Error())
+		return
+	}
 	if err != nil {
 		s.repoError(w, r, err)
 		return

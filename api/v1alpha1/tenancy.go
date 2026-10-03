@@ -23,12 +23,16 @@ const (
 	// {sub}.{tenant}.{kernelDomain} unless a TenantDomain binds a custom domain.
 	TenancyModeMulti = "multi"
 
-	// TenancyModeSingle is for dedicated single-tenant clusters: one Tenant CR
-	// named "default", flat app URLs on {sub}.{kernelDomain}.
+	// TenancyModeSingle is for dedicated single-tenant clusters: the platform
+	// tenant is the only one, flat app URLs on {sub}.{kernelDomain}.
 	TenancyModeSingle = "single"
 
-	// SingleTenantName is the required Tenant metadata.name in single-tenancy mode.
-	SingleTenantName = "default"
+	// SingleTenantName is the one Tenant a single-tenancy cluster carries: the
+	// platform tenant every install scaffolds, whose realm is the kernel realm.
+	// The organisation that owns the cluster is its platform, so its people
+	// are the kernel realm's and its apps are the platform's, on the kernel
+	// domain. A second tenant beside it would want the same hosts.
+	SingleTenantName = "platform"
 )
 
 // NormalizeTenancyMode returns TenancyModeSingle or TenancyModeMulti.

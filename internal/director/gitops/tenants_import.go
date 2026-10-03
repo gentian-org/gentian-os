@@ -42,6 +42,9 @@ func (g *GitOps) DeclareTenant(ctx context.Context, name string, spec *gentianov
 	if spec == nil {
 		return Result{}, fmt.Errorf("the bundle carries no tenant spec")
 	}
+	if err := g.refuseInSingleTenancy(ctx); err != nil {
+		return Result{}, err
+	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if err := g.ensureRepo(ctx); err != nil {

@@ -51,9 +51,11 @@ func (r *TenantReconciler) buildTenantEdgeObjects(ctx context.Context, tenant *g
 	tlsSecret := tenantWildcardSecretName(tenant.Name)
 
 	var objects []client.Object
-	objects = append(objects,
-		buildTenantWildcardCertificate(tenant, nsName, wildcardCertName, tlsSecret, effectiveDomain, r.tenantDNS01ClusterIssuer()),
-	)
+	if !servedByKernelEdge(effectiveDomain, r.KernelDomain) {
+		objects = append(objects,
+			buildTenantWildcardCertificate(tenant, nsName, wildcardCertName, tlsSecret, effectiveDomain, r.tenantDNS01ClusterIssuer()),
+		)
+	}
 	// Tenant app hostnames are served by the kernel Gateway. The tenant's
 	// certificate stays in the tenant namespace and is referenced across
 	// namespaces by the ReferenceGrants below, so certificate ownership follows

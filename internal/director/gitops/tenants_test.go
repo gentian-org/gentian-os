@@ -344,3 +344,33 @@ func TestATenantsLoginDomainFollowsItsTenantDomain(t *testing.T) {
 		t.Fatalf("on the kernel domain: %q, %v", got, err)
 	}
 }
+
+// On a single-tenant cluster the director refuses a new tenant, and an
+// import, before anything reaches git: the operator would refuse it as well,
+// but only once the commit had landed.
+func TestASingleTenantClusterTakesNoNewTenant(t *testing.T) {
+	remote := dt.Remote(t, "platform")
+	seed := dt.Clone(t, remote)
+	claim := filepath.Join(seed, "clusters", dt.Cluster, "kernel", "claims", "cluster.yaml")
+	b, err := os.ReadFile(claim)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(claim, append(b, []byte("  tenancyMode: single\n")...), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dt.Git(t, seed, "-c", "user.name=seed", "-c", "user.email=seed@example.com", "commit", "-am", "single")
+	dt.Git(t, seed, "push", "origin", "HEAD:main")
+	before := dt.Git(t, "", "--git-dir", remote, "rev-parse", "main")
+
+	g := gitops.NewGitOps(dt.Clone(t, remote), remote, dt.Cluster, director)
+	if _, err := g.CreateTenant(context.Background(), gitops.NewTenant{Name: "acme"}, tenantMeta()); !errors.Is(err, gitops.ErrSingleTenancy) {
+		t.Fatalf("create: err = %v", err)
+	}
+	if _, err := g.DeclareTenant(context.Background(), "acme", &gentianov1alpha1.TenantSpec{DisplayName: "Acme"}, "test", tenantMeta()); !errors.Is(err, gitops.ErrSingleTenancy) {
+		t.Fatalf("import: err = %v", err)
+	}
+	if after := dt.Git(t, "", "--git-dir", remote, "rev-parse", "main"); after != before {
+		t.Fatal("a refused tenant still reached git")
+	}
+}

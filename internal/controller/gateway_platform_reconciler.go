@@ -369,7 +369,7 @@ func buildAuthenticatedGateway(kernelDomain, tenancyMode string, tenants []genti
 			continue
 		}
 		effectiveDomain := tenant.EffectiveDomain(kernelDomain, tenancyMode)
-		if effectiveDomain == "" {
+		if effectiveDomain == "" || servedByKernelEdge(effectiveDomain, kernelDomain) {
 			continue
 		}
 		nsName := tenantNamespaceName(tenant)
@@ -410,6 +410,15 @@ const (
 // tenantGatewayListenerName is the kernel-Gateway listener carrying a tenant's
 // own certificate for its subdomains. There is no apex variant: the tenant apex
 // is covered by the kernel certificate and served by the catch-all listener.
+// servedByKernelEdge reports a tenant whose domain is the kernel domain: the
+// single tenant of a single-tenant cluster. The kernel's catch-all listener,
+// certificate and DNS already cover every name under it, so the tenant gets
+// none of its own -- a *.<kernel> tenant listener would be the more specific
+// match for kernel hosts too, and route them nowhere.
+func servedByKernelEdge(effectiveDomain, kernelDomain string) bool {
+	return kernelDomain != "" && effectiveDomain == kernelDomain
+}
+
 func tenantGatewayListenerName(tenantName string) string {
 	return fmt.Sprintf("https-tenant-%s-wildcard", tenantName)
 }

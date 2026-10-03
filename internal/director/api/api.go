@@ -1162,6 +1162,10 @@ func (s *Server) createTenant(w http.ResponseWriter, r *http.Request, c call) {
 		s.fail(w, r, http.StatusConflict, "a tenant of that name already exists")
 		return
 	}
+	if errors.Is(err, gitops.ErrSingleTenancy) {
+		s.fail(w, r, http.StatusConflict, err.Error())
+		return
+	}
 	s.written(w, r, res, err)
 }
 
