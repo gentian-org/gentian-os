@@ -37,6 +37,7 @@ import (
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"github.com/gentian-org/gentian-os/internal/layout"
 	"github.com/gentian-org/gentian-os/internal/security"
 )
@@ -61,6 +62,9 @@ type ComponentReconciler struct {
 	// CredentialManagerURL overrides where a component is told the credential
 	// manager is. Empty derives it from the layout.
 	CredentialManagerURL string
+	// Seeder holds the credentials of the databases this reconciler makes
+	// for tenant components. Nil leaves those requirements waiting.
+	Seeder *secrets.Seeder
 }
 
 // The markers are a free-floating block: controller-gen ignores a block that
@@ -72,6 +76,7 @@ type ComponentReconciler struct {
 // +kubebuilder:rbac:groups=gentianos.io,resources=componentprofiles,verbs=get;list;watch
 // +kubebuilder:rbac:groups=helm.crossplane.io,resources=releases,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=referencegrants,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=postgresql.cnpg.io,resources=clusters,verbs=get;list;watch
 
 const (
 	conditionComponentReady = "Ready"

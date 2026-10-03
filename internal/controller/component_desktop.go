@@ -22,11 +22,14 @@ import (
 	"fmt"
 	"strings"
 
+	batchv1 "k8s.io/api/batch/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -34,6 +37,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"github.com/gentian-org/gentian-os/internal/layout"
 	"github.com/gentian-org/gentian-os/internal/locales"
 )
@@ -197,17 +201,129 @@ func (r *ComponentReconciler) componentDatabaseNamespace(tenant *gentianov1alpha
 // The platform tenant's data plane is the kernel's (namespace-cleanup.md §2):
 // its desktop's database is the portal_shell database kernel-data declares
 // on kernel-postgres, and the credential is the one the kernel keeps in the
-// vault, delivered here as an ExternalSecret. Every other tenant's databases
-// live on the tenant postgres of the system tier, which a cluster composes
-// with its data-plane functions; until it has, the requirement waits and
-// says so.
+// vault. Every other tenant's desktop database lives on the tenant postgres
+// of the system tier, provisioned here the way a tenant app's is: the
+// credential seeded in the vault, the role and database made by a psql Job,
+// the database declared as a CloudNativePG Database so a purge finds and
+// drops it. The name is the one exports and restores already address.
+//
+// Either way the credential reaches the component as an ExternalSecret.
 func (r *ComponentReconciler) ensureDatabaseRequirement(ctx context.Context, comp *gentianov1alpha1.Component, tenant *gentianov1alpha1.Tenant) (ready bool, reason, message string, err error) {
-	if !tenantAdoptsKernelRealm(tenant, r.KernelRealm) {
-		return false, "DatabaseUnavailable",
-			fmt.Sprintf("this cluster composes no tenant postgres yet (%s); the requirement waits", postgresNamespace), nil
+	var target map[string]interface{}
+	var data []interface{}
+	if tenantAdoptsKernelRealm(tenant, r.KernelRealm) {
+		host := fmt.Sprintf("kernel-postgres-rw.%s.svc.cluster.local", r.componentDatabaseNamespace(tenant))
+		target = databaseSecretTemplate(host, "5432", "portal_shell", "portal_shell_user", "{{ .password }}")
+		data = []interface{}{
+			map[string]interface{}{
+				"secretKey": "password",
+				"remoteRef": map[string]interface{}{"key": "gentian-os/kernel/database/postgresql", "property": "portal_shell_user_password"},
+			},
+		}
+	} else {
+		ready, reason, message, err := r.ensureTenantDatabase(ctx, tenant)
+		if err != nil || !ready {
+			return false, reason, message, err
+		}
+		target = databaseSecretTemplate("{{ .host }}", "{{ .port }}", "{{ .name }}", "{{ .user }}", "{{ .password }}")
+		path := secrets.CategoryPath(tenant.Name, portalShellAppName, "database")
+		for _, p := range []string{"host", "port", "name", "user", "password"} {
+			data = append(data, map[string]interface{}{
+				"secretKey": p,
+				"remoteRef": map[string]interface{}{"key": path, "property": p},
+			})
+		}
 	}
+	return r.ensureDatabaseSecret(ctx, comp, target, data)
+}
+
+// databaseSecretTemplate is the credential Secret every database requirement
+// is fulfilled with: each key by name, and the URL assembled from them.
+func databaseSecretTemplate(host, port, database, username, password string) map[string]interface{} {
+	return map[string]interface{}{
+		"host":         host,
+		"port":         port,
+		"database":     database,
+		"username":     username,
+		"password":     password,
+		"DATABASE_URL": "postgresql+psycopg://" + username + ":" + password + "@" + host + ":" + port + "/" + database,
+	}
+}
+
+// ensureTenantDatabase makes the desktop's database on the tenant postgres:
+// the vault record first, because the role Job sets the password it holds,
+// then the role and database, then the Database resource that records them.
+// Once that resource has been applied the Job is not run again: the role
+// exists with the seeded password, and the record is write-once.
+func (r *ComponentReconciler) ensureTenantDatabase(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ready bool, reason, message string, err error) {
+	cluster := &unstructured.Unstructured{}
+	cluster.SetGroupVersionKind(schema.GroupVersionKind{Group: cnpgGroup, Version: cnpgVersion, Kind: "Cluster"})
+	if err := r.Get(ctx, types.NamespacedName{Name: cnpgClusterName, Namespace: postgresNamespace}, cluster); err != nil {
+		if errors.IsNotFound(err) || meta.IsNoMatchError(err) {
+			return false, "DatabaseUnavailable",
+				fmt.Sprintf("this cluster composes no tenant postgres (%s/%s); the requirement waits", postgresNamespace, cnpgClusterName), nil
+		}
+		return false, "", "", err
+	}
+	if r.Seeder == nil {
+		return false, "DatabaseUnavailable", "the operator has no vault to seed the database credential in; the requirement waits", nil
+	}
+	dbName := databaseName(tenant, portalShellAppName)
+	creds, err := r.Seeder.SeedDatabase(ctx, tenant.Name, portalShellAppName, secrets.DatabaseCreds{
+		Host: fmt.Sprintf("%s-rw.%s.svc.cluster.local", cnpgClusterName, postgresNamespace),
+		Port: "5432",
+		Name: dbName,
+		User: roleUserName(tenant.Name, portalShellAppName),
+	})
+	if err != nil {
+		return false, "", "", fmt.Errorf("seed the desktop database credential: %w", err)
+	}
+
+	db := &unstructured.Unstructured{}
+	db.SetGroupVersionKind(schema.GroupVersionKind{Group: cnpgGroup, Version: cnpgVersion, Kind: cnpgDatabaseKind})
+	err = r.Get(ctx, types.NamespacedName{Name: databaseCRName(tenant.Name, portalShellAppName), Namespace: postgresNamespace}, db)
+	if err == nil {
+		if cnpgDatabaseIsReady(db) {
+			return true, "", "", nil
+		}
+		return false, "DatabaseProvisioning", "the database is being created", nil
+	}
+	if !errors.IsNotFound(err) {
+		return false, "", "", err
+	}
+
+	job := &batchv1.Job{}
+	err = r.Get(ctx, types.NamespacedName{Name: roleJobName(tenant.Name, portalShellAppName), Namespace: postgresNamespace}, job)
+	switch {
+	case errors.IsNotFound(err):
+		desired := makeRoleJob(tenant, tenantNamespaceName(tenant), dbName, portalShellAppName, creds.Password,
+			gentianov1alpha1.SchemaPreferenceAppSchema, false)
+		if err := r.Create(ctx, desired); err != nil && !errors.IsAlreadyExists(err) {
+			return false, "", "", err
+		}
+		return false, "DatabaseProvisioning", "the database role is being created", nil
+	case err != nil:
+		return false, "", "", err
+	case jobIsFailed(job):
+		prop := metav1.DeletePropagationBackground
+		if err := r.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &prop}); err != nil && !errors.IsNotFound(err) {
+			return false, "", "", err
+		}
+		return false, "DatabaseProvisioning", "the database role Job failed and is retried", nil
+	case !jobIsComplete(job):
+		return false, "DatabaseProvisioning", "the database role is being created", nil
+	}
+
+	if err := r.Create(ctx, buildDatabaseCR(tenant, tenantNamespaceName(tenant), dbName, portalShellAppName)); err != nil && !errors.IsAlreadyExists(err) {
+		return false, "", "", err
+	}
+	return false, "DatabaseProvisioning", "the database is being created", nil
+}
+
+// ensureDatabaseSecret delivers the credential into the component's
+// namespace and reports whether it has arrived.
+func (r *ComponentReconciler) ensureDatabaseSecret(ctx context.Context, comp *gentianov1alpha1.Component, template map[string]interface{}, data []interface{}) (ready bool, reason, message string, err error) {
 	name := comp.Name + componentDatabaseSecretSuffix
-	host := fmt.Sprintf("kernel-postgres-rw.%s.svc.cluster.local", r.componentDatabaseNamespace(tenant))
 	spec := map[string]interface{}{
 		"refreshInterval": "1h",
 		"secretStoreRef":  map[string]interface{}{"name": "openbao", "kind": "ClusterSecretStore"},
@@ -216,22 +332,10 @@ func (r *ComponentReconciler) ensureDatabaseRequirement(ctx context.Context, com
 			"creationPolicy": "Owner",
 			"template": map[string]interface{}{
 				"engineVersion": "v2",
-				"data": map[string]interface{}{
-					"host":         host,
-					"port":         "5432",
-					"database":     "portal_shell",
-					"username":     "portal_shell_user",
-					"password":     "{{ .password }}",
-					"DATABASE_URL": "postgresql+psycopg://portal_shell_user:{{ .password }}@" + host + ":5432/portal_shell",
-				},
+				"data":          template,
 			},
 		},
-		"data": []interface{}{
-			map[string]interface{}{
-				"secretKey": "password",
-				"remoteRef": map[string]interface{}{"key": "gentian-os/kernel/database/postgresql", "property": "portal_shell_user_password"},
-			},
-		},
+		"data": data,
 	}
 	desired := &unstructured.Unstructured{}
 	desired.SetGroupVersionKind(externalSecretGVK)

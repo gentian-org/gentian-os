@@ -339,6 +339,14 @@ rules:
   - apiGroups:
     - postgresql.cnpg.io
     resources:
+    - clusters
+    verbs:
+    - get
+    - list
+    - watch
+  - apiGroups:
+    - postgresql.cnpg.io
+    resources:
     - databases
     verbs:
     - get
