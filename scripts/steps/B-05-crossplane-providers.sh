@@ -59,6 +59,10 @@ apply() {
     banner "Crossplane providers"
     export CROSSPLANE_NAMESPACE
     CROSSPLANE_NAMESPACE="$(ns_kernel provisioning)"
+    # A provider CRD a previous teardown left Terminating is owned by a
+    # revision that no longer exists, and the revision this install creates
+    # cannot take control of it -- the provider then never becomes healthy.
+    _b05_release_terminating_provider_crds
     _v5_providers_apply providers.yaml
     local p fn crd
     for p in provider-kubernetes provider-helm provider-vault; do
@@ -102,36 +106,87 @@ apply() {
 # it a bounded wait, and strip the finalizers of whatever is left -- this is a
 # purge, and the namespaces those releases installed into go with it anyway.
 _b05_sweep_managed() {
-    local kinds="releases.helm.crossplane.io objects.kubernetes.crossplane.io" kind left deadline ns
-    for kind in ${kinds}; do
-        kubectl get "${kind}" -o name 2>/dev/null | xargs_r kubectl delete --wait=false >/dev/null 2>&1 || true
-    done
+    local left deadline obj ns
+    # Every managed resource of every provider -- `managed` is the category
+    # Crossplane gives them all. Naming kinds missed the Keycloak provider's.
+    kubectl get managed -o name 2>/dev/null | xargs_r kubectl delete --wait=false >/dev/null 2>&1 || true
     deadline=$((SECONDS + 90))
     while (( SECONDS < deadline )); do
-        left=""
-        for kind in ${kinds}; do
-            left+="$(kubectl get "${kind}" -o name 2>/dev/null || true)"
-        done
+        left="$(kubectl get managed -o name 2>/dev/null || true)"
         [[ -n "${left}" ]] || return 0
         sleep 5
     done
-    for kind in ${kinds}; do
+    while IFS= read -r obj; do
+        [[ -n "${obj}" ]] || continue
+        warn "  ${obj} was not released by its provider; removing its finalizer."
+        # A Release's target namespace, so one the provider recreated
+        # does not outlive the purge.
+        ns="$(kubectl get "${obj}" -o jsonpath='{.spec.forProvider.namespace}' 2>/dev/null || true)"
+        kubectl patch "${obj}" --type=merge -p '{"metadata":{"finalizers":null}}' >/dev/null 2>&1 || true
+        [[ -z "${ns}" ]] || kubectl delete namespace "${ns}" --ignore-not-found --wait=false >/dev/null 2>&1 || true
+    done < <(kubectl get managed -o name 2>/dev/null || true)
+}
+
+# _b05_release_provider_configs -- every ProviderConfig of every provider,
+# whoever applied it.
+#
+# A ProviderConfig carries in-use.crossplane.io while usages name it, and only
+# its provider clears that. The Keycloak one is applied by the platform's
+# compositions, not by provider-configs.yaml, so it was never deleted here:
+# it outlived its provider, held its CRD in Terminating, and the next install's
+# provider-keycloak could not take control of that CRD and never became
+# healthy -- the Cluster composite then waited 15 minutes on a kind nothing
+# served. So: delete them all while the providers still run, wait, strip what
+# is left.
+_b05_release_provider_configs() {
+    local crds crd deadline left obj
+    crds="$(kubectl get crd -o name 2>/dev/null | sed -n 's|^customresourcedefinition.apiextensions.k8s.io/\(providerconfigs\..*\)$|\1|p' || true)"
+    [[ -n "${crds}" ]] || return 0
+    for crd in ${crds}; do
+        kubectl get "${crd}" -A -o name 2>/dev/null | xargs_r kubectl delete --wait=false >/dev/null 2>&1 || true
+    done
+    deadline=$((SECONDS + 60))
+    while (( SECONDS < deadline )); do
+        left=""
+        for crd in ${crds}; do left+="$(kubectl get "${crd}" -A -o name 2>/dev/null || true)"; done
+        [[ -n "${left}" ]] || return 0
+        sleep 5
+    done
+    for crd in ${crds}; do
         while IFS= read -r obj; do
             [[ -n "${obj}" ]] || continue
-            warn "  ${obj} was not released by its provider; removing its finalizer."
-            # A Release's target namespace, so one the provider recreated
-            # does not outlive the purge.
-            ns="$(kubectl get "${obj}" -o jsonpath='{.spec.forProvider.namespace}' 2>/dev/null || true)"
+            warn "  ${obj} kept its in-use finalizer; removing it."
             kubectl patch "${obj}" --type=merge -p '{"metadata":{"finalizers":null}}' >/dev/null 2>&1 || true
-            [[ -z "${ns}" ]] || kubectl delete namespace "${ns}" --ignore-not-found --wait=false >/dev/null 2>&1 || true
-        done < <(kubectl get "${kind}" -o name 2>/dev/null || true)
+        done < <(kubectl get "${crd}" -o name 2>/dev/null || true)
     done
+}
+
+# _b05_release_terminating_provider_crds -- after the providers are gone, a
+# provider CRD still Terminating is held by an object whose finalizer nobody
+# will clear any more. Clearing it lets the CRD go, so the next install's
+# ProviderRevision can create and own it instead of meeting one owned by a
+# revision that no longer exists.
+_b05_release_terminating_provider_crds() {
+    local crd obj
+    while IFS= read -r crd; do
+        [[ -n "${crd}" ]] || continue
+        while IFS= read -r obj; do
+            [[ -n "${obj}" ]] || continue
+            kubectl patch "${obj}" --type=merge -p '{"metadata":{"finalizers":null}}' >/dev/null 2>&1 || true
+        done < <(kubectl get "${crd}" -A -o name 2>/dev/null || true)
+        warn "  ${crd} was left Terminating; released what held it."
+    done < <(kubectl get crd -o json 2>/dev/null | jq -r '.items[]
+        | select(.metadata.deletionTimestamp != null)
+        | select(any(.metadata.ownerReferences[]?; .kind == "ProviderRevision"))
+        | .metadata.name' 2>/dev/null || true)
 }
 
 destroy() {
     _b05_sweep_managed
+    _b05_release_provider_configs
     # Bounded, so a usage nobody can clear is a warning and not a hung purge.
     kubectl delete -f "${SCRIPT_DIR}/crossplane/providers/provider-configs.yaml" --ignore-not-found --timeout=120s >/dev/null 2>&1 \
         || warn "  Some ProviderConfigs did not delete within 2 minutes; the purge continues."
     kubectl delete -f "${SCRIPT_DIR}/crossplane/providers/providers.yaml" --ignore-not-found --timeout=180s >/dev/null 2>&1 || true
+    _b05_release_terminating_provider_crds
 }
