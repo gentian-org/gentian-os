@@ -853,6 +853,18 @@ resync_credential_consumers() {
         done
     fi
 
+    # Before C-01 there is no openbao ClusterSecretStore, so no ExternalSecret
+    # can produce the Secrets the issuers read: waiting here only spent three
+    # and a half minutes of every install before the same warning. C-01 runs
+    # this function again once the store is Ready.
+    if [[ "$(kubectl get clustersecretstore openbao \
+        -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || true)" != "True" ]]; then
+        if [[ -n "$(_not_ready_cluster_issuers)" ]]; then
+            info "ClusterIssuers wait for the secret store, which C-01 composes; re-synced there."
+        fi
+        return 0
+    fi
+
     # The Secrets the not-ready issuers name, waited for before the nudge.
     # The re-sync above stops at the first quiet poll, which can come before
     # External Secrets has written the Secret -- the store having only just
