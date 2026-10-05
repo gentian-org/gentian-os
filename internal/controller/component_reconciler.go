@@ -106,7 +106,11 @@ const (
 	edgeAuthzObjectAnnotation   = "gentianos.io/edge-authz-object"
 	edgeAuthzForwardAnnotation  = "gentianos.io/edge-authz-forward-token"
 	edgeAuthzCookieAnnotation   = "gentianos.io/edge-authz-cookie"
-	edgeAuthzAuthModeAnnotation = "gentianos.io/edge-authz-mode"
+	// The zone's id token cookie and its realm's end-session endpoint, for
+	// the shim's sign-out.
+	edgeAuthzIDCookieAnnotation   = "gentianos.io/edge-authz-id-cookie"
+	edgeAuthzEndSessionAnnotation = "gentianos.io/edge-authz-end-session"
+	edgeAuthzAuthModeAnnotation   = "gentianos.io/edge-authz-mode"
 	// edgeAuthzDenyPathsAnnotation carries the exposure's denyPaths to the
 	// shim's table. Comma-separated because an annotation is a string and a
 	// path cannot contain a comma without being escaped, which none are.
@@ -687,6 +691,13 @@ func buildExposureRoute(comp *gentianov1alpha1.Component, name, host string, zon
 		edgeAuthzForwardAnnotation:  fmt.Sprint(authz.forwardToken),
 		edgeAuthzCookieAnnotation:   zone.cookie,
 		edgeAuthzAuthModeAnnotation: mode,
+		// What sign-out needs: the zone's id token, which is the hint the
+		// realm ends a session on without asking, and where that realm ends
+		// one. Without them the edge drops its own cookies, the realm's
+		// session stands, and the next request is signed straight back in --
+		// a sign-out that reloads the page.
+		edgeAuthzIDCookieAnnotation:   zone.idCookie,
+		edgeAuthzEndSessionAnnotation: endSessionURL(kernelDomain, zone.realm),
 	}
 	// denyPaths is not a route rule. A gateway route matches by prefix, so
 	// the denied path is already inside the rule that serves the host, and

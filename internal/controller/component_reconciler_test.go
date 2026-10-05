@@ -151,7 +151,7 @@ func TestAProfileThatAsksForNothingGetsNothing(t *testing.T) {
 func TestAComponentRouteCarriesItsQuestion(t *testing.T) {
 	comp := &gentianov1alpha1.Component{}
 	comp.Name, comp.Namespace = "desktop", "tenant-platform"
-	zone := edgeZone{domain: "k.example", cookie: edgeKernelAccessTokenCookie, sectionName: wildcardListenerName, kernel: true}
+	zone := edgeZone{domain: "k.example", realm: "kernel", cookie: edgeKernelAccessTokenCookie, idCookie: edgeKernelIDTokenCookie, sectionName: wildcardListenerName, kernel: true}
 	e := &gentianov1alpha1.ExposureSpec{
 		Name: "api", Surface: gentianov1alpha1.SurfaceGateway, AuthMode: gentianov1alpha1.AuthModeOIDC,
 		SubDomain: "console", Paths: []string{"/api", "/healthz"}, ForwardToken: true,
@@ -196,6 +196,13 @@ func TestAComponentRouteCarriesItsQuestion(t *testing.T) {
 	}
 	if len(entries) != 1 || entries[0].Host != "console.k.example" || entries[0].Relation != "can_enter" || !entries[0].ForwardToken || entries[0].AuthMode != "oidc" || entries[0].AccessTokenCookie != edgeKernelAccessTokenCookie {
 		t.Fatalf("entries = %+v", entries)
+	}
+	// And what sign-out needs: without the id token cookie and the realm's
+	// end-session endpoint the edge only drops its own cookies, the realm's
+	// session stands, and signing out reloads the page signed in.
+	if entries[0].IDTokenCookie != edgeKernelIDTokenCookie ||
+		entries[0].EndSessionURL != "https://id.k.example/auth/realms/kernel/protocol/openid-connect/logout" {
+		t.Fatalf("sign-out is edge-only for a component: %+v", entries[0])
 	}
 }
 

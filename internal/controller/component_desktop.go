@@ -292,18 +292,28 @@ func (r *ComponentReconciler) ensureTenantDatabase(ctx context.Context, tenant *
 		return false, "", "", err
 	}
 
+	desired := makeRoleJob(tenant, tenantNamespaceName(tenant), dbName, portalShellAppName, creds.Password,
+		gentianov1alpha1.SchemaPreferenceAppSchema, false)
 	job := &batchv1.Job{}
 	err = r.Get(ctx, types.NamespacedName{Name: roleJobName(tenant.Name, portalShellAppName), Namespace: postgresNamespace}, job)
 	switch {
 	case errors.IsNotFound(err):
-		desired := makeRoleJob(tenant, tenantNamespaceName(tenant), dbName, portalShellAppName, creds.Password,
-			gentianov1alpha1.SchemaPreferenceAppSchema, false)
 		if err := r.Create(ctx, desired); err != nil && !errors.IsAlreadyExists(err) {
 			return false, "", "", err
 		}
 		return false, "DatabaseProvisioning", "the database role is being created", nil
 	case err != nil:
 		return false, "", "", err
+	case !jobIsComplete(job) && !equality.Semantic.DeepEqual(job.Spec.Template.Spec.Containers, desired.Spec.Template.Spec.Containers):
+		// A Job made by an earlier build of this. Its pod template cannot be
+		// changed, and if that template is what kept it from running -- a pod
+		// the namespace refuses is no pod at all -- waiting on it is waiting
+		// for ever. Replaced, and made again on the next pass.
+		prop := metav1.DeletePropagationBackground
+		if err := r.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &prop}); err != nil && !errors.IsNotFound(err) {
+			return false, "", "", err
+		}
+		return false, "DatabaseProvisioning", "the database role Job is replaced by the current one", nil
 	case jobIsFailed(job):
 		prop := metav1.DeletePropagationBackground
 		if err := r.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &prop}); err != nil && !errors.IsNotFound(err) {

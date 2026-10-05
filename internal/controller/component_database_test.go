@@ -133,6 +133,20 @@ func TestATenantDesktopsDatabaseIsMadeOnTheTenantPostgres(t *testing.T) {
 	if ready, _ := step(); ready {
 		t.Fatal("ready before the role Job finished")
 	}
+	// A Job an earlier build made, whose pod the namespace would refuse, is
+	// not waited on: it is deleted and the current one made in its place.
+	job.Spec.Template.Spec.Containers[0].SecurityContext = nil
+	if err := c.Update(ctx, job); err != nil {
+		t.Fatal(err)
+	}
+	step()
+	step()
+	if err := c.Get(ctx, types.NamespacedName{Name: roleJobName("acme", portalShellAppName), Namespace: postgresNamespace}, job); err != nil {
+		t.Fatalf("role Job after replacement: %v", err)
+	}
+	if job.Spec.Template.Spec.Containers[0].SecurityContext == nil {
+		t.Fatal("the outdated role Job was kept")
+	}
 	job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionTrue}}
 	if err := c.Status().Update(ctx, job); err != nil {
 		t.Fatal(err)
@@ -195,5 +209,30 @@ func TestATenantDesktopsDatabaseWaitsWithoutAVault(t *testing.T) {
 	ready, reason, _, err := r.ensureDatabaseRequirement(ctx, desktopComponentFixture("acme"), acmeTenantFixture())
 	if err != nil || ready || reason != "DatabaseUnavailable" {
 		t.Fatalf("ready=%v reason=%q err=%v", ready, reason, err)
+	}
+}
+
+// The system namespaces refuse a pod that may escalate privileges or runs
+// without a seccomp profile, and a Job whose pod is refused has no pod: it
+// stays Running and whatever waits on it waits for ever. Every provisioning
+// client container is built to be admitted there.
+func TestProvisioningContainersAreAdmittedInTheSystemNamespaces(t *testing.T) {
+	for name, c := range map[string]corev1.Container{
+		"psql":    psqlContainer("x", "true", ""),
+		"mariadb": mariadbContainer("x", "true", "db", "user"),
+		"redis":   redisContainer("x", "user", "prefix", "true"),
+		"minio":   minioContainer("x", "bucket", "true"),
+	} {
+		sc := c.SecurityContext
+		if sc == nil || sc.AllowPrivilegeEscalation == nil || *sc.AllowPrivilegeEscalation {
+			t.Errorf("%s: privilege escalation is not refused", name)
+			continue
+		}
+		if sc.SeccompProfile == nil || sc.SeccompProfile.Type != corev1.SeccompProfileTypeRuntimeDefault {
+			t.Errorf("%s: no RuntimeDefault seccomp profile", name)
+		}
+		if sc.Capabilities == nil || len(sc.Capabilities.Drop) != 1 || sc.Capabilities.Drop[0] != "ALL" {
+			t.Errorf("%s: capabilities are not dropped", name)
+		}
 	}
 }

@@ -204,9 +204,10 @@ func makeS3BucketDeleteJob(tenant *gentianov1alpha1.Tenant, appName string) *bat
 
 func minioContainer(name, bucket, script string) corev1.Container {
 	return corev1.Container{
-		Name:    name,
-		Image:   minioProvisionerImage,
-		Command: []string{"/bin/sh", "-c", script},
+		Name:            name,
+		Image:           minioProvisionerImage,
+		Command:         []string{"/bin/sh", "-c", script},
+		SecurityContext: provisioningSecurityContext(),
 		Env: []corev1.EnvVar{
 			{
 				Name: "MINIO_ENDPOINT",

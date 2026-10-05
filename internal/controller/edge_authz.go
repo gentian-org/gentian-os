@@ -396,6 +396,7 @@ func componentRouteTableEntries(ctx context.Context, c client.Reader) ([]edgeAut
 			byHost[host] = &edgeAuthzRoute{
 				Host: host, Relation: ann[edgeAuthzRelationAnnotation], Object: ann[edgeAuthzObjectAnnotation],
 				AccessTokenCookie: ann[edgeAuthzCookieAnnotation], ForwardToken: ann[edgeAuthzForwardAnnotation] == "true",
+				IDTokenCookie: ann[edgeAuthzIDCookieAnnotation], EndSessionURL: ann[edgeAuthzEndSessionAnnotation],
 				AuthMode: mode, DenyPaths: denied,
 			}
 			order = append(order, host)

@@ -311,9 +311,10 @@ func makeRoleJob(tenant *gentianov1alpha1.Tenant, nsName, dbName, appName, roleP
 // Credentials are injected from the postgres-admin Secret in the kernel namespace.
 func psqlContainer(name, script, tenantNamespace string) corev1.Container {
 	return corev1.Container{
-		Name:    name,
-		Image:   kernel.PostgresProvisionerImage(),
-		Command: []string{"/bin/bash", "-c", script},
+		Name:            name,
+		Image:           kernel.PostgresProvisionerImage(),
+		Command:         []string{"/bin/bash", "-c", script},
+		SecurityContext: provisioningSecurityContext(),
 		Env: []corev1.EnvVar{
 			{
 				Name: "PGHOST",
@@ -352,6 +353,21 @@ func psqlContainer(name, script, tenantNamespace string) corev1.Container {
 				},
 			},
 		},
+	}
+}
+
+// provisioningSecurityContext is what every provisioning client container runs
+// under: no privilege escalation, no capabilities, the runtime's seccomp
+// profile. The system namespaces these Jobs run in enforce exactly that, and a
+// Job whose pod is refused there never gets a pod at all -- it sits Running
+// with nothing behind it, and whatever waits on it waits for ever. A psql, a
+// mariadb, a redis-cli and an mc need none of what this takes away.
+func provisioningSecurityContext() *corev1.SecurityContext {
+	no := false
+	return &corev1.SecurityContext{
+		AllowPrivilegeEscalation: &no,
+		Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+		SeccompProfile:           &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
 	}
 }
 

@@ -354,9 +354,10 @@ func makeMemcachedService(tenant *gentianov1alpha1.Tenant) *corev1.Service {
 // injected from redis-admin Secret and user-specific values as literal env vars.
 func redisContainer(name, username, keyPrefix, script string) corev1.Container {
 	return corev1.Container{
-		Name:    name,
-		Image:   kernel.RedisProvisionerImage(),
-		Command: []string{"/bin/sh", "-c", script},
+		Name:            name,
+		Image:           kernel.RedisProvisionerImage(),
+		Command:         []string{"/bin/sh", "-c", script},
+		SecurityContext: provisioningSecurityContext(),
 		Env: []corev1.EnvVar{
 			{
 				Name: "REDIS_HOST",

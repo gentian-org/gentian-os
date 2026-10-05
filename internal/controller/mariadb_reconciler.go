@@ -114,9 +114,10 @@ func makeMariaDBDeleteJob(tenant *gentianov1alpha1.Tenant, appName string) *batc
 // from the mariadb-admin Secret.
 func mariadbContainer(name, script, dbName, dbUser string) corev1.Container {
 	return corev1.Container{
-		Name:    name,
-		Image:   kernel.MariaDBProvisionerImage(),
-		Command: []string{"/bin/bash", "-c", script},
+		Name:            name,
+		Image:           kernel.MariaDBProvisionerImage(),
+		Command:         []string{"/bin/bash", "-c", script},
+		SecurityContext: provisioningSecurityContext(),
 		Env: []corev1.EnvVar{
 			// Credentials from the kernel mariadb-admin Secret
 			{
