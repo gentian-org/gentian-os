@@ -361,7 +361,7 @@ spec:
                  means what it says: extra audiences on top of the ones the
                  platform requires. */}}
             {{- $requiredAudiences := list (default "openbao" $oidc.clientId) "gentian-director" }}
-            {{- range (default (list "gentian-portal") $oidc.additionalAudiences) }}
+            {{- range (default (list) $oidc.additionalAudiences) }}
             {{- if not (has . $requiredAudiences) }}
             {{- $requiredAudiences = append $requiredAudiences . }}
             {{- end }}

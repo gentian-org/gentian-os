@@ -610,7 +610,6 @@ spec:
     boundAudiences:
     - openbao
     - gentian-director
-    - gentian-portal
     boundClaims:
       groups: /gentian:platform:admin
     boundClaimsType: string
@@ -682,7 +681,6 @@ spec:
     boundAudiences:
     - openbao
     - gentian-director
-    - gentian-portal
     boundClaims:
       groups: /gentian:platform:admin
     boundClaimsType: string
@@ -722,7 +720,6 @@ spec:
     boundAudiences:
     - openbao
     - gentian-director
-    - gentian-portal
     boundClaims:
       groups: /gentian:tenant:*:admins
     boundClaimsType: glob

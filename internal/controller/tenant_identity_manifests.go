@@ -230,13 +230,8 @@ func (r *TenantReconciler) buildIdentityProvisioningJobs(ctx context.Context, te
 		// first-broker-login flow. No XTenant covers the kernel realm, so nothing
 		// composes it.
 		jobs = append(jobs, *makeKernelTenantBrokerJob(tenant.Name, realmName, r.KernelRealm))
-		// No portal BFF client Job. The client, its confidential secret taken
-		// from gentian-portal-bff, and its seven default scopes are all
-		// Composition resources now.
-		// No portal public client Job. The client and its openbao-audience
-		// protocol mapper are both Composition resources now, adopted by their
-		// natural keys, so a Job writing the same fields would be a second owner
-		// racing the first.
+		// No portal clients at all: the portal is retired, and a tenant's people
+		// sign in through the edge's zone client, which tenant-default composes.
 		if r.clusterKeycloakSMTPCredentialsAvailable(ctx) {
 			mailHost := ""
 			if r.KernelDomain != "" {
