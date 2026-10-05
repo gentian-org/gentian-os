@@ -715,6 +715,41 @@ spec:
                 name: keycloak
 
             {{- if not $adoptsKernelRealm }}
+            {{- /* The realm states its memberships to the platform.
+
+                 Who is in which group is Keycloak's to say, and the
+                 authorization store holds a projection of it, fed by the
+                 gentian-director listener inside Keycloak. The listener runs
+                 only in a realm that names it, and only the kernel realm did
+                 -- the install script sets it there. So no tenant realm ever
+                 stated a membership, the store never learned that a tenant's
+                 administrator administers it, and the edge refused every
+                 person of every tenant: "This is not available to you", after
+                 a sign-in that had just succeeded.
+
+                 Admin events carry what an administrator changes; user events
+                 carry a sign-in, on which the listener states that person's
+                 groups afresh -- which is also what repairs a membership that
+                 was made before this was declared. */}}
+            ---
+            apiVersion: realm.keycloak.crossplane.io/v1alpha1
+            kind: RealmEvents
+            metadata:
+              name: {{ $tenant }}-realm-events
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-realm-events
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $realm }}
+                eventsEnabled: true
+                adminEventsEnabled: true
+                adminEventsDetailsEnabled: false
+                eventsListeners:
+                  - jboss-logging
+                  - gentian-director
+              providerConfigRef:
+                name: keycloak
             {{- /* The mailbox store's client is realm state: one per realm,
                  owned by whoever owns the realm. A tenant that adopts the
                  kernel realm owns none of it, and composing it here would make

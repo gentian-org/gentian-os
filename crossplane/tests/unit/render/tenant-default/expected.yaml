@@ -7,7 +7,7 @@ status:
   conditions:
   - lastTransitionTime: "2024-01-01T00:00:00Z"
     message: 'Unready resources: app-catalogue-test-app, keycloak-broker-client, keycloak-broker-client-id,
-      and 19 more'
+      and 20 more'
     reason: Creating
     status: "False"
     type: Ready
@@ -763,6 +763,34 @@ spec:
       starttls: true
     ssoSessionIdleTimeout: 30m
     ssoSessionMaxLifespan: 12h
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: realm.keycloak.crossplane.io/v1alpha1
+kind: RealmEvents
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-realm-events
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-realm-events
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    adminEventsDetailsEnabled: false
+    adminEventsEnabled: true
+    eventsEnabled: true
+    eventsListeners:
+    - jboss-logging
+    - gentian-director
+    realmId: render-fixture
   providerConfigRef:
     name: keycloak
 ---
