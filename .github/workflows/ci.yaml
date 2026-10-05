@@ -36,7 +36,7 @@ jobs:
           cache: true
 
       - name: go vet
-        run: go vet ./...
+        run: go vet ./... ./api/...
 
       # Pinned, like controller-gen below. An unpinned @latest picks up a
       # toolchain bump on an unrelated day and fails a run nobody changed —
@@ -67,11 +67,11 @@ jobs:
         run: |
           # internal/controller uses envtest whose watch goroutines are incompatible
           # with the race detector; run it separately without -race.
-          go test $(go list ./... | grep -v 'internal/controller') -race -count=1
+          go test $(go list ./... ./api/... | grep -v 'internal/controller') -race -count=1
           go test ./internal/controller/... -count=1 -parallel 8 -timeout 20m
 
       - name: go build
-        run: go build ./...
+        run: go build ./... ./api/...
 
   generate:
     name: Verify generated files

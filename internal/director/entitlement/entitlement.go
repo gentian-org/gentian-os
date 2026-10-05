@@ -39,34 +39,14 @@ import (
 
 	"github.com/go-jose/go-jose/v4"
 
+	"github.com/gentian-org/gentian-os/api/statement"
 	"github.com/gentian-org/gentian-os/internal/director/authz"
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
 )
 
-// Claims is the payload of a signed statement.
-type Claims struct {
-	// Issuer identifies the store; informational, since trust is in the key.
-	Issuer string `json:"iss,omitempty"`
-	// Audience is "cluster:<id>": a statement for another cluster is not one
-	// for this cluster, whoever signed it.
-	Audience string `json:"aud"`
-	// Subject is "tenant:<name>".
-	Subject string `json:"sub"`
-	// ID identifies the statement in the store's own records.
-	ID string `json:"jti"`
-	// IssuedAt orders statements about the same entry.
-	IssuedAt int64 `json:"iat"`
-	// Expiry ends a grant. Required on a grant, ignored on a revocation.
-	Expiry int64 `json:"exp,omitempty"`
-	// Coordinate is the catalogue entry, <catalogue>/<app>.
-	Coordinate string `json:"coordinate"`
-	// Granted is false for a revocation or a denial.
-	Granted bool `json:"granted"`
-	// Reason is required when Granted is false: silence is not an answer a
-	// cluster can log.
-	Reason string `json:"reason,omitempty"`
-	Seats  int    `json:"seats,omitempty"`
-}
+// Claims is the payload of a signed statement. Its format is part of the
+// API, since a store has to write exactly what this reads.
+type Claims = statement.Claims
 
 var (
 	// ErrNotBelieved covers every reason a statement is not the store's.
