@@ -31,6 +31,7 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
+	"github.com/gentian-org/gentian-os/internal/usage"
 )
 
 // memVault is the vault as the Seeder sees it: write-once records by path.
@@ -252,5 +253,16 @@ func TestProvisioningContainersAreAdmittedInTheSystemNamespaces(t *testing.T) {
 		if sc.Capabilities == nil || len(sc.Capabilities.Drop) != 1 || sc.Capabilities.Drop[0] != "ALL" {
 			t.Errorf("%s: capabilities are not dropped", name)
 		}
+	}
+}
+
+// The usage history and the notifications live in the desktop's database, and
+// the operator finds it by the Secret the component reconciler writes for the
+// component called desktop. The two names are stated in two packages, so this
+// is what keeps them one: when they differed, both screens failed for every
+// tenant with a Secret that did not exist.
+func TestTheUsageStoreReadsTheDesktopComponentsDatabaseSecret(t *testing.T) {
+	if want := "desktop" + componentDatabaseSecretSuffix; usage.ShellDatabaseSecret != want {
+		t.Fatalf("usage reads %q; the desktop component's Secret is %q", usage.ShellDatabaseSecret, want)
 	}
 }

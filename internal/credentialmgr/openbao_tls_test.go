@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -187,5 +188,30 @@ func TestWrite_SendsNoCheckAndSet(t *testing.T) {
 	data, _ := got["data"].(map[string]any)
 	if data["relay_username"] != "u" {
 		t.Errorf("data = %v, want the supplied fields", got["data"])
+	}
+}
+
+// The refusal a person is told about is the one that concerns them. Every
+// role is offered to the mount in turn, and a tenant's mount does not have
+// the cluster's role, so "the role does not exist" is always among the
+// answers and never the reason: here the tenant's own role refused the
+// audience, and that is what has to come back.
+func TestExchange_TheRefusalReportedIsTheOneAboutTheCaller(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusBadRequest)
+		if strings.Contains(string(body), "cluster-admin-jwt") {
+			_, _ = w.Write([]byte(`{"errors":["role \"cluster-admin-jwt\" could not be found"]}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"errors":["error validating token: invalid audience (aud) claim: audience claim does not match any expected audience"]}`))
+	}))
+	defer srv.Close()
+	for _, roles := range [][]string{{"cluster-admin-jwt", "tenant-admin"}, {"tenant-admin", "cluster-admin-jwt"}} {
+		b := NewOpenBao(srv.URL, "secret", "oidc", "kernel", roles, serverCAPEM(t, srv), false)
+		_, err := b.ExchangeToken(context.Background(), "a.jwt.token")
+		if err == nil || !strings.Contains(err.Error(), "audience") || strings.Contains(err.Error(), "does not exist") {
+			t.Fatalf("roles %v: %v", roles, err)
+		}
 	}
 }

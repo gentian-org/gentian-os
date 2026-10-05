@@ -82,10 +82,16 @@ func (r *TenantReconciler) ensureTenantOpenBaoAuth(ctx context.Context, tenant *
 	}
 	if err := auth.EnsureRole(ctx, realm, secrets.RoleConfig{
 		Name: tenantAuthRoleName,
-		// The audience the portal's own client puts in the token. Without the
-		// audience mapper on that client this list matches nothing, which is a
-		// refusal that names the audience rather than the group.
-		BoundAudiences: []string{"openbao"},
+		// The audiences a tenant administrator's token may carry. The
+		// director's is the one that matters: every component behind the edge
+		// presents the zone's token, and that token is minted for the
+		// director (AD-13), so a role that does not accept it cannot exchange
+		// a token at all -- the credential manager then refuses every tenant
+		// administrator. The cluster's own roles accept it for the same
+		// reason (cluster-default). "openbao" stays for a token minted for
+		// OpenBao directly. The audience admits nobody by itself: the group
+		// below is what says who.
+		BoundAudiences: []string{"openbao", directorAudience},
 		GroupsClaim:    "groups",
 		// The group identity_reconciler actually puts a tenant administrator in,
 		// from the same helper that names it — so the two cannot drift apart.

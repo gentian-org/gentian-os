@@ -672,6 +672,59 @@ spec:
               providerConfigRef:
                 name: keycloak
 
+            {{- if not $adoptsKernelRealm }}
+            {{- /* Which tenant a zone token is for, as a claim.
+
+                 A tenant administrator's credential reads and writes go to
+                 OpenBao through the credential manager, which exchanges the
+                 zone's token at the tenant's own auth mount. The mount's role
+                 maps this claim into the OpenBao token's metadata, and the
+                 credential manager scopes every path by it: without the claim
+                 a tenant administrator's writes are not scoped to the tenant
+                 at all.
+
+                 It was stamped on the retired portal's client and went with
+                 it; the zone's client is what signs people in now, so it is
+                 stamped here. The tenant's NAME, not the realm: they are the
+                 same by default and need not be, and everything downstream is
+                 keyed by the tenant.
+
+                 Not for the tenant that adopts the kernel realm. Its people
+                 are the cluster's administrators and exchange their token at
+                 the cluster's mount, where scope comes from the role.
+
+                 All config keys and no external-name, as the audience mapper
+                 above explains. */}}
+            ---
+            apiVersion: client.keycloak.crossplane.io/v1alpha1
+            kind: ProtocolMapper
+            metadata:
+              name: {{ $tenant }}-edge-zone-tenant-claim
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-edge-zone-tenant-claim
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $realm }}
+                clientIdRef:
+                  name: {{ $tenant }}-edge-zone-client
+                  policy:
+                    resolve: Always
+                name: tenant
+                protocol: openid-connect
+                protocolMapper: oidc-hardcoded-claim-mapper
+                config:
+                  claim.name: tenant
+                  claim.value: {{ $tenant | quote }}
+                  jsonType.label: String
+                  id.token.claim: "false"
+                  access.token.claim: "true"
+                  introspection.token.claim: "true"
+                  userinfo.token.claim: "false"
+              providerConfigRef:
+                name: keycloak
+            {{- end }}
+
             {{- /* Keycloak's six own defaults and deliberately not groups.
 
                  This list is replaced wholesale on reconcile, so it has to name

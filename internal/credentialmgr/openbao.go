@@ -180,6 +180,18 @@ type Identity struct {
 // asking. Named so the summary can prefer any other refusal over it.
 const reasonWrongRoleType = "the auth backend role does not permit a direct token exchange"
 
+// reasonRoleMissing is the other refusal that is about the role and not about
+// the caller: a role tried on a mount that does not have it. The roles are
+// offered to every mount in turn, and a tenant's mount has the tenant's role
+// and not the cluster's, so on a tenant's token this refusal is always there
+// and never the answer.
+const reasonRoleMissing = "the auth backend role does not exist on this cluster"
+
+// aboutTheRole reports a refusal that would have been the same whoever asked.
+func aboutTheRole(reason string) bool {
+	return reason == reasonWrongRoleType || reason == reasonRoleMissing
+}
+
 func refusalReason(status int, body string) string {
 	b := strings.ToLower(body)
 	switch {
@@ -190,7 +202,7 @@ func refusalReason(status int, body string) string {
 	case strings.Contains(b, "role_type"), strings.Contains(b, "not allowed"):
 		return reasonWrongRoleType
 	case strings.Contains(b, "could not be found"), strings.Contains(b, "unknown role"):
-		return "the auth backend role does not exist on this cluster"
+		return reasonRoleMissing
 	case status == http.StatusNotFound:
 		return "the auth backend is not mounted where this service expects it"
 	case strings.Contains(b, "signature"), strings.Contains(b, "expired"), strings.Contains(b, "validating token"):
@@ -288,7 +300,12 @@ func (b *OpenBao) ExchangeToken(ctx context.Context, oidcToken string) (Identity
 		// role does not permit a direct token exchange" while the role that
 		// could have worked had refused the token's AUDIENCE two lines
 		// earlier.
-		if lastReason == "" || lastReason == reasonWrongRoleType {
+		//
+		// The same held for a role the mount does not have: a tenant
+		// administrator was told "the auth backend role does not exist"
+		// because the cluster's role was tried on the tenant's mount first,
+		// while the tenant's own role had refused the audience.
+		if lastReason == "" || (aboutTheRole(lastReason) && !aboutTheRole(reason)) {
 			lastReason = reason
 		}
 		// The log gets OpenBao's own words. Without this every refusal was a
@@ -296,7 +313,7 @@ func (b *OpenBao) ExchangeToken(ctx context.Context, oidcToken string) (Identity
 		// and each cause had to be found by reading code instead.
 		log.Info("OpenBao refused a token exchange",
 			"role", role, "mount", mount, "status", status,
-			"reason", lastReason, "openbao", truncate(body, 300))
+			"reason", reason, "openbao", truncate(body, 300))
 	}
 	// The category, not OpenBao's body: that can name policies and paths the
 	// caller has no business learning from a failed login. Naming the failed
