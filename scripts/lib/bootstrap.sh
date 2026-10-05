@@ -1495,6 +1495,26 @@ _claim_cluster_fields() {
     # "what may this cluster install from" is answerable without cluster
     # access. A cluster with no source still works: it materialises nothing on
     # reference, and its profiles arrive with the kernel.
+    _claim_catalogue_section
+    # The Gentian Corp extensions. Recorded here even while nothing reads it,
+    # so the choice an installer made is in git beside everything else it
+    # chose; the grant and the service entries follow when the catalogue
+    # serves them (sovereignty-concept.md §5.2, §5.4).
+    if [[ "${GENTIAN_DISABLE_API_EXTENSIONS:-0}" == "1" ]]; then
+        printf '  # apiExtensions: disabled (--disable-api-extensions): no Operations Console\n'
+    else
+        printf '  # apiExtensions: enabled: the Operations Console installs by default\n'
+    fi
+    return 0
+}
+
+# _claim_catalogue_section
+#
+# The claim's catalogue section: the App Store people are sent to, and the
+# source its entries are fetched from. One function, because it is written in
+# two places that must agree: a new claim's scaffold, and an existing claim
+# that has none (ensure_claim_catalogue_section).
+_claim_catalogue_section() {
     printf '\n'
     printf '  # Catalogues this cluster may fetch profiles from. A tenant installing\n'
     printf '  # "gentian/nextcloud-base-ce" gets the bundle from the source named\n'
@@ -1518,16 +1538,41 @@ _claim_cluster_fields() {
     printf '      #   url: https://git.example.com/profiles\n'
     printf '      #   access: open\n'
     printf '      #   tenants: [demo]\n'
-    # The Gentian Corp extensions. Recorded here even while nothing reads it,
-    # so the choice an installer made is in git beside everything else it
-    # chose; the grant and the service entries follow when the catalogue
-    # serves them (sovereignty-concept.md §5.2, §5.4).
-    if [[ "${GENTIAN_DISABLE_API_EXTENSIONS:-0}" == "1" ]]; then
-        printf '  # apiExtensions: disabled (--disable-api-extensions): no Operations Console\n'
-    else
-        printf '  # apiExtensions: enabled: the Operations Console installs by default\n'
+}
+
+# ensure_claim_catalogue_section <claim file>
+#
+# An installation loads the App Store by default, and that has to hold for a
+# claim written before the default existed as well as for a new one: such a
+# claim carries the section as a comment, the director reads no store from it,
+# and the desktop then has no App Store tile for anybody.
+#
+# So a claim with no spec.catalogue is given the default one. A claim that
+# says anything at all there is left alone, and that is how a cluster goes
+# without a store: `catalogue: {}` is a decision somebody wrote down, where an
+# absent key is only a key nobody wrote.
+ensure_claim_catalogue_section() {
+    local claim="$1"
+    [[ -f "${claim}" ]] || return 0
+    if yq_get '.spec.catalogue' "${claim}" >/dev/null 2>&1; then
+        return 0
     fi
-    return 0
+    # Appended to the file, which is only inside spec while spec is the last
+    # top-level key. A claim somebody has reordered is theirs to edit.
+    local last
+    last="$(grep -E '^[A-Za-z]' "${claim}" | tail -n 1)"
+    if [[ "${last}" != "spec:" ]]; then
+        warn "claims/cluster.yaml names no catalogue, and spec is not its last section,"
+        warn "  so the App Store default is not added. Add spec.catalogue by hand, or"
+        warn "  write 'catalogue: {}' there to say this cluster has no store."
+        return 0
+    fi
+    # A file that does not end in a newline would have the section glued to
+    # its last line.
+    [[ -z "$(tail -c 1 "${claim}")" ]] || printf '\n' >> "${claim}"
+    _claim_catalogue_section >> "${claim}"
+    info "claims/cluster.yaml named no catalogue: the App Store default was added."
+    info "  To run without a store, set 'catalogue: {}' under spec."
 }
 
 # _claim_default_line <field> <value> <default> <explanation>
@@ -2275,6 +2320,7 @@ require_cluster_deployment() {
     # produces a Service whose address nothing pins — the failure the old
     # requirement existed to prevent, now stated against the claim.
     local claim="${kernel_dir}/claims/cluster.yaml"
+    ensure_claim_catalogue_section "${claim}"
     if [[ -f "${claim}" ]]; then
         local net
         net="$(yq_get '.spec.networkMode' "${claim}" 2>/dev/null || true)"

@@ -336,6 +336,9 @@ spec:
                   name: {{ .Values.director.storeKeysSecretRef.name }}
                   key: {{ .Values.director.storeKeysSecretRef.key }}
                   optional: true
+            {{- else if .Values.director.storeKeys }}
+            - name: DIRECTOR_STORE_KEYS
+              value: {{ .Values.director.storeKeys | quote }}
             {{- end }}
             {{- /* No listener key here any more.
 
