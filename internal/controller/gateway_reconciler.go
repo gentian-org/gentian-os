@@ -85,17 +85,14 @@ func (r *TenantReconciler) ensureGateway(ctx context.Context, tenant *gentianov1
 	}
 	r.ensureTenantEdgeRoutes(ctx, tenant, effectiveDomain)
 
-	expectedRoutes := make(map[string]struct{}, len(intents))
-	expectedPolicies := make(map[string]struct{})
-	expectedClientPolicies := make(map[string]struct{})
-	for _, route := range appHTTPRoutesForIntents(tenant, nsName, intents, effectiveDomain, r.KernelDomain) {
-		expectedRoutes[route.Name] = struct{}{}
-	}
-	for _, intent := range intents {
-		if btp := buildAppBackendTrafficPolicyObject(tenant, nsName, intent.appProfile, intent.ingress); btp != nil {
-			expectedPolicies[btp.GetName()] = struct{}{}
-		}
-	}
+	// No route is written here. An installed app is a Component, and its
+	// routes are the Component reconciler's: one per exposure the profile
+	// declares, behind the zone's session and the bouncer's question. What
+	// this used to write -- a route per app with nothing asked at it -- is
+	// removed below wherever it is still found, with its traffic policies.
+	expectedRoutes := map[string]struct{}{}
+	expectedPolicies := map[string]struct{}{}
+	expectedClientPolicies := map[string]struct{}{}
 
 	if err := r.deleteStaleHTTPRoutesForTenant(ctx, tenant, nsName, expectedRoutes); err != nil {
 		return ctrl.Result{}, err

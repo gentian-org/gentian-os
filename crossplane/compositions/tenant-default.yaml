@@ -1644,48 +1644,13 @@ spec:
             {{- end }}
             {{- end }}
 
-            {{- range $app := dig "apps" list $spec }}
-            ---
-            apiVersion: gentianos.io/v1alpha1
-            kind: App
-            metadata:
-              name: {{ $app.profile }}
-              namespace: {{ $ns }}
-              annotations:
-                gotemplating.fn.crossplane.io/composition-resource-name: app-{{ $app.profile }}
-              labels:
-                gentianos.io/tenant: {{ $tenant }}
-                gentianos.io/app: {{ $app.profile }}
-                gentianos.io/managed-by: crossplane
-                app.kubernetes.io/managed-by: gentian-os
-            spec:
-              compositionUpdatePolicy: Automatic
-              profileRef:
-                name: {{ $app.profile }}
-              tenantNamespace: {{ $ns }}
-              domain: {{ $domain }}
-              {{- if $app.variant }}
-              compositionRef:
-                name: app-{{ $app.variant }}
-              {{- end }}
-              {{- with dig "addons" list $app }}
-              addons:
-                {{- range . }}
-                - {{ . | quote }}
-                {{- end }}
-              {{- end }}
-              {{- $appConfig := default dict $app.config }}
-              {{- if or (dig "replicas" nil $appConfig) (dig "extraValues" nil $appConfig) }}
-              config:
-                {{- if dig "replicas" nil $appConfig }}
-                replicas: {{ dig "replicas" 1 $appConfig }}
-                {{- end }}
-                {{- with dig "extraValues" nil $appConfig }}
-                extraValues:
-                  {{- . | toYaml | nindent 18 }}
-                {{- end }}
-              {{- end }}
-            {{- end }}
+            {{- /* No App claims. An installed app is a Component, and its
+                 Component writes the claim the app Composition answers
+                 (internal/controller/component_composition.go). This
+                 Composition used to emit one per entry of spec.apps, which
+                 made an installed app a list entry and a claim and never a
+                 thing of its own: no status, no tile, and a route with
+                 nothing asked at it. */}}
 
             {{- /* No implicit apps. open-webui used to be injected here whenever the
                  cluster served LLM — but an app the composition invents is an app

@@ -39,6 +39,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/catalogue"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"github.com/gentian-org/gentian-os/internal/layout"
 	"github.com/gentian-org/gentian-os/internal/locales"
@@ -477,6 +478,15 @@ func componentsOfZoneSecret(c client.Client) handler.EventHandler {
 	})
 }
 
+// componentOriginLabel says why a Component exists, which is what decides who
+// may remove it: one the platform ships to every tenant stays for the life of
+// the tenant, one a tenant installed goes when it leaves spec.apps.
+const (
+	componentOriginLabel   = "gentianos.io/component-origin"
+	componentOriginDefault = "default"
+	componentOriginInstall = "install"
+)
+
 // ensureDefaultComponents gives the tenant a Component of every profile that
 // declares defaultForTenants, named after the profile, and gives the platform
 // tenant one of every profile that declares defaultForPlatform.
@@ -501,81 +511,154 @@ func (r *TenantReconciler) ensureDefaultComponents(ctx context.Context, tenant *
 		if !wanted || !classIncludes(profile, gentianov1alpha1.ComponentClassApp) {
 			continue
 		}
-		desired := &gentianov1alpha1.Component{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      profile.Name,
-				Namespace: tenantNamespaceName(tenant),
-				Labels: map[string]string{
-					tenantLabel:    tenant.Name,
-					managedByLabel: managedByValue,
-				},
-			},
-			Spec: gentianov1alpha1.ComponentSpec{
-				ProfileRef: gentianov1alpha1.ProfileRef{Name: profile.Name},
-				Class:      gentianov1alpha1.ComponentClassApp,
-				Privileges: tenantPrivilegeGrants(tenant, profile.Name),
-				Exposures:  tenantExposures(tenant, profile.Name),
-			},
-		}
-		if err := controllerutil.SetControllerReference(tenant, desired, r.Scheme); err != nil {
+		if err := r.ensureComponent(ctx, tenant, profile.Name, componentOriginDefault, nil, nil); err != nil {
 			return err
 		}
-		existing := &gentianov1alpha1.Component{}
-		err := r.Get(ctx, types.NamespacedName{Name: desired.Name, Namespace: desired.Namespace}, existing)
-		if errors.IsNotFound(err) {
-			if err := r.Create(ctx, desired); err != nil {
-				return fmt.Errorf("create %s component: %w", profile.Name, err)
-			}
-			continue
-		}
+	}
+	return nil
+}
+
+// ensureAppComponents makes every app the tenant has installed a Component,
+// and every addon activated inside one a Component of its own.
+//
+// spec.apps is what git declares: the list a tenant's administrator changes
+// through the director. A Component is what the cluster runs from it, and it
+// is the unit everything else hangs off -- the release, the routes and the
+// question asked at them, the tile, the privileges it was granted and the
+// surfaces it publishes. An app that was only an entry in a list had none of
+// those as its own, which is why it had no tile.
+//
+// An addon gets one too. It deploys nothing: it is activation state inside
+// its base, and the base's Component carries the list. Its own Component is
+// what makes it a thing that can be named, entitled and given a tile.
+//
+// A Component whose install has left spec.apps is deleted here, and only
+// those: the label says which ones are installs. Uninstalling is a commit
+// that removes the entry, and this is where the cluster follows it.
+func (r *TenantReconciler) ensureAppComponents(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
+	wanted := map[string]struct{}{}
+	for _, app := range tenant.Spec.Apps {
+		profileName, err := catalogue.ResolveTenantAppProfile(ctx, r.Client, app)
 		if err != nil {
 			return err
 		}
-		// A Component written before spec.tenancy became spec.class has
-		// neither: the API server returns the stored object untouched, and
-		// the rename left the field this reconciler reads empty. Such a
-		// component reports ClassUnsupported and its release is never
-		// reconciled again.
-		//
-		// It is REPAIRED, not replaced. Deleting it was the first attempt and
-		// it deadlocked the cluster: the object has a finalizer, removing a
-		// finalizer is an update of the whole object, and the whole object is
-		// invalid while class is empty — so the delete never completed, the
-		// create that followed it answered AlreadyExists, and both shipped
-		// components sat terminating and un-finalizable with the reconciler
-		// erroring once a minute. Setting the field is one small write and
-		// the immutability rule admits it from empty for exactly this.
-		if existing.Spec.Class == "" {
-			patch := client.MergeFrom(existing.DeepCopy())
-			existing.Spec.Class = gentianov1alpha1.ComponentClassApp
-			if err := r.Patch(ctx, existing, patch); err != nil {
-				return fmt.Errorf("set spec.class on the %s component written before the rename: %w", profile.Name, err)
+		wanted[profileName] = struct{}{}
+		if err := r.ensureComponent(ctx, tenant, profileName, componentOriginInstall, app.Addons, app.Config); err != nil {
+			return err
+		}
+		for _, addon := range app.Addons {
+			if addon == "" {
+				continue
+			}
+			wanted[addon] = struct{}{}
+			if err := r.ensureComponent(ctx, tenant, addon, componentOriginInstall, nil, nil); err != nil {
+				return err
 			}
 		}
-		// Grants approved after the install reach the component here. This is
-		// the whole of the approval path's second half: the director commits
-		// to the Tenant, Argo applies it, and a component that was holding on
-		// a pending privilege is reconciled again with the grant in hand. An
-		// approval therefore takes effect without anybody touching the
-		// Component, which is what keeps git the only writer.
-		if want := tenantPrivilegeGrants(tenant, profile.Name); !equality.Semantic.DeepEqual(existing.Spec.Privileges, want) {
-			patch := client.MergeFrom(existing.DeepCopy())
-			existing.Spec.Privileges = want
-			if err := r.Patch(ctx, existing, patch); err != nil {
-				return fmt.Errorf("set the granted privileges on the %s component: %w", profile.Name, err)
-			}
+	}
+
+	installed := &gentianov1alpha1.ComponentList{}
+	if err := r.List(ctx, installed, client.InNamespace(tenantNamespaceName(tenant)),
+		client.MatchingLabels{componentOriginLabel: componentOriginInstall}); err != nil {
+		return err
+	}
+	for i := range installed.Items {
+		comp := &installed.Items[i]
+		if _, keep := wanted[comp.Name]; keep || comp.DeletionTimestamp != nil {
+			continue
 		}
-		// And what a perimeter approver published, for the same reason: the
-		// decision is a commit, and this is how it reaches the Component
-		// whose reconcile stands the proxy up. Withdrawing one takes the
-		// surface down by the same route.
-		if want := tenantExposures(tenant, profile.Name); !equality.Semantic.DeepEqual(existing.Spec.Exposures, want) {
-			patch := client.MergeFrom(existing.DeepCopy())
-			existing.Spec.Exposures = want
-			if err := r.Patch(ctx, existing, patch); err != nil {
-				return fmt.Errorf("set the published exposures on the %s component: %w", profile.Name, err)
-			}
+		if err := r.Delete(ctx, comp); client.IgnoreNotFound(err) != nil {
+			return fmt.Errorf("remove the %s component, which is no longer installed: %w", comp.Name, err)
 		}
+	}
+	return nil
+}
+
+// ensureComponent keeps one Component of the tenant: named after its profile,
+// of class app, carrying what the Tenant says about that install.
+func (r *TenantReconciler) ensureComponent(
+	ctx context.Context, tenant *gentianov1alpha1.Tenant, profileName, origin string,
+	addons []string, config *gentianov1alpha1.TenantAppConfig,
+) error {
+	desired := &gentianov1alpha1.Component{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      profileName,
+			Namespace: tenantNamespaceName(tenant),
+			Labels: map[string]string{
+				tenantLabel:          tenant.Name,
+				managedByLabel:       managedByValue,
+				componentOriginLabel: origin,
+			},
+		},
+		Spec: gentianov1alpha1.ComponentSpec{
+			ProfileRef: gentianov1alpha1.ProfileRef{Name: profileName},
+			Class:      gentianov1alpha1.ComponentClassApp,
+			Addons:     addons,
+			Config:     config,
+			Privileges: tenantPrivilegeGrants(tenant, profileName),
+			Exposures:  tenantExposures(tenant, profileName),
+		},
+	}
+	if err := controllerutil.SetControllerReference(tenant, desired, r.Scheme); err != nil {
+		return err
+	}
+	existing := &gentianov1alpha1.Component{}
+	err := r.Get(ctx, types.NamespacedName{Name: desired.Name, Namespace: desired.Namespace}, existing)
+	if errors.IsNotFound(err) {
+		if err := r.Create(ctx, desired); err != nil {
+			return fmt.Errorf("create %s component: %w", profileName, err)
+		}
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	patch := client.MergeFrom(existing.DeepCopy())
+	changed := false
+	// A Component written before spec.tenancy became spec.class has neither:
+	// the API server returns the stored object untouched, and the rename left
+	// the field this reconciler reads empty. It is REPAIRED, not replaced.
+	// Deleting it deadlocked the cluster once: the object has a finalizer,
+	// removing a finalizer is an update of the whole object, and the whole
+	// object is invalid while class is empty. Setting the field is one small
+	// write and the immutability rule admits it from empty for exactly this.
+	if existing.Spec.Class == "" {
+		existing.Spec.Class = gentianov1alpha1.ComponentClassApp
+		changed = true
+	}
+	// What the Tenant says about this install reaches the Component here, and
+	// that is the whole of how a commit takes effect: the director commits to
+	// the Tenant, Argo applies it, and the Component is reconciled again with
+	// the grant, the published surface, the addon list or the configuration
+	// in hand. Nobody touches the Component, which keeps git the only writer.
+	if !equality.Semantic.DeepEqual(existing.Spec.Privileges, desired.Spec.Privileges) {
+		existing.Spec.Privileges = desired.Spec.Privileges
+		changed = true
+	}
+	if !equality.Semantic.DeepEqual(existing.Spec.Exposures, desired.Spec.Exposures) {
+		existing.Spec.Exposures = desired.Spec.Exposures
+		changed = true
+	}
+	if !equality.Semantic.DeepEqual(existing.Spec.Addons, desired.Spec.Addons) {
+		existing.Spec.Addons = desired.Spec.Addons
+		changed = true
+	}
+	if !equality.Semantic.DeepEqual(existing.Spec.Config, desired.Spec.Config) {
+		existing.Spec.Config = desired.Spec.Config
+		changed = true
+	}
+	if existing.Labels[componentOriginLabel] != origin {
+		if existing.Labels == nil {
+			existing.Labels = map[string]string{}
+		}
+		existing.Labels[componentOriginLabel] = origin
+		changed = true
+	}
+	if !changed {
+		return nil
+	}
+	if err := r.Patch(ctx, existing, patch); err != nil {
+		return fmt.Errorf("update the %s component: %w", profileName, err)
 	}
 	return nil
 }

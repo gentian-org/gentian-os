@@ -67,6 +67,12 @@ type Exposure struct {
 	ReviewAt string `json:"reviewAt"`
 	// Reason is why this is public, in the approver's words.
 	Reason string `json:"reason,omitempty"`
+	// PublishedAt is when it was first published, RFC 3339. Set once.
+	PublishedAt string `json:"publishedAt,omitempty"`
+	// LastReviewedBy and LastReviewedAt are who last confirmed it should stay
+	// public, and when. Publishing is the first review.
+	LastReviewedBy string `json:"lastReviewedBy,omitempty"`
+	LastReviewedAt string `json:"lastReviewedAt,omitempty"`
 }
 
 // Key is what makes one unique: a component's entry, published once.
@@ -108,12 +114,16 @@ func (g *GitOps) tenantExposures(ctx context.Context, tenant string) ([]Exposure
 	return doc.Spec.Exposures, nil
 }
 
-// PublishExposure records that a perimeter approver enabled one surface.
+// PublishExposure records that a perimeter approver enabled one surface, or
+// looked again at one already published.
 //
-// Re-publishing the same surface on the same terms is "unchanged". New terms
-// — a later expiry, a different host — REPLACE the old entry, because two
-// enablements of one surface would leave the question of which applies, and
-// the answer would decide how long something is on the internet.
+// New terms -- a later review date, an expiry, another reason -- REPLACE the
+// old entry's, because two enablements of one surface would leave the
+// question of which applies, and the answer would decide how long something
+// is on the internet. Two things of the old entry are kept: who published it
+// and when. Publishing again is a review, and a review is recorded as one --
+// the caller becomes the last reviewer, not the owner -- so the registry can
+// answer both who put this on the internet and who last said it should stay.
 func (g *GitOps) PublishExposure(ctx context.Context, tenant string, e Exposure, meta Meta) (Result, error) {
 	if !ValidName(tenant) {
 		return Result{}, fmt.Errorf("%w: tenant %q", ErrInvalidName, tenant)
@@ -147,19 +157,27 @@ func (g *GitOps) PublishExposure(ctx context.Context, tenant string, e Exposure,
 	}
 	next := make([]Exposure, 0, len(have)+1)
 	replaced := false
+	now := time.Now().UTC().Format(time.RFC3339)
+	e.LastReviewedBy, e.LastReviewedAt = e.Owner, now
+	verb := "Publish"
 	for _, h := range have {
 		if h.Key() == e.Key() {
+			// The reviewer is whoever is calling; the owner and the date it
+			// was first published are the entry's own.
+			e.Owner, e.PublishedAt = h.Owner, h.PublishedAt
 			next = append(next, e)
 			replaced = true
+			verb = "Review"
 			continue
 		}
 		next = append(next, h)
 	}
 	if !replaced {
+		e.PublishedAt = now
 		next = append(next, e)
 	}
 	return g.writeTenantFileLocked(ctx, tenant, ExposuresFile, renderExposures(tenant, next), listPatch,
-		fmt.Sprintf("Publish %s/%s for tenant %s", e.Install, e.ExposureName, tenant), meta)
+		fmt.Sprintf("%s %s/%s for tenant %s", verb, e.Install, e.ExposureName, tenant), meta)
 }
 
 // WithdrawExposure takes one down. The operator removes the proxy, the route
@@ -227,6 +245,15 @@ func renderExposures(tenant string, exposures []Exposure) string {
 		}
 		if e.Reason != "" {
 			b.WriteString("      reason: " + yamlScalar(e.Reason) + "\n")
+		}
+		if e.PublishedAt != "" {
+			b.WriteString("      publishedAt: " + e.PublishedAt + "\n")
+		}
+		if e.LastReviewedBy != "" {
+			b.WriteString("      lastReviewedBy: " + e.LastReviewedBy + "\n")
+		}
+		if e.LastReviewedAt != "" {
+			b.WriteString("      lastReviewedAt: " + e.LastReviewedAt + "\n")
 		}
 	}
 	return b.String()

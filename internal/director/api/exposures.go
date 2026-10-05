@@ -41,12 +41,13 @@ import (
 // and takes a tenant's website with it the day nobody renewed.
 const maxReview = 365 * 24 * time.Hour
 
-// defaultReview is the review date a caller gets for naming none: half a year.
-const defaultReview = 182 * 24 * time.Hour
+// defaultReview is the review date a caller gets for naming none: a year,
+// which is also the longest. Once a year is the regular look this asks for.
+const defaultReview = maxReview
 
 type publishExposureRequest struct {
-	// ReviewAt is when it is looked at again, RFC 3339. Empty means the
-	// default; never later than a year from now.
+	// ReviewAt is when it is looked at again, RFC 3339. Empty means a year
+	// from now, and it is never later than that.
 	ReviewAt string `json:"reviewAt,omitempty"`
 	// ExpiresAt ends it, RFC 3339, for a surface published for a while.
 	// Empty means it stays until somebody withdraws it.

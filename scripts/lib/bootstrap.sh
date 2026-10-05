@@ -1508,55 +1508,82 @@ _claim_cluster_fields() {
     return 0
 }
 
-# _platform_concierge_exposure
+# ensure_platform_concierge_exposure <platform tenant directory>
 #
 # The one surface an installation publishes by itself: the concierge, on the
 # cluster's bare domain. It is the page anybody typing the cluster's address
 # meets before they have a session, so it cannot be behind one, and a cluster
 # nobody can find the sign-in of is not installed.
 #
-# It is published the way every perimeter surface is -- an enablement on the
-# tenant, with an owner and a review date -- so that it shows in the exposure
-# registry beside whatever is published later, and comes up for review like
-# the rest. The owner is the installer because nobody has an account yet.
-_platform_concierge_exposure() {
-    local review
-    review="$(date -u -d '+182 days' +%Y-%m-%dT00:00:00Z)"
-    printf '  # What this tenant publishes with no session in front of it. The\n'
-    printf '  # concierge is the page on the bare domain that sends a person to the\n'
-    printf '  # sign-in of their workspace. An empty list publishes nothing, and then\n'
-    printf '  # nobody reaches a sign-in from the address of the cluster itself.\n'
-    printf '  exposures:\n'
-    printf '    - install: concierge\n'
-    printf '      exposureName: front\n'
-    printf '      owner: installer\n'
-    printf '      reviewAt: "%s"\n' "${review}"
-    printf '      reason: The sign-in page on the bare domain of the cluster, published at install.\n'
-}
-
-# ensure_platform_concierge_exposure <platform tenant.yaml>
+# It is published the way every perimeter surface is, and in the same place:
+# exposures.yaml beside the tenant, which is the registry the director reads
+# and writes. Written anywhere else it would not show in that registry, and
+# the next surface published through the director would replace the list it
+# was in. So this writes the file the director would have written, with an
+# owner and a review date a year out, and lists it as a patch.
 #
-# A platform tenant written before the concierge was a published component
-# names no exposures, and its bare domain then answers nothing. One that says
-# nothing gets the default; one that says anything, an empty list included,
-# is left alone. Succeeds only when it wrote.
+# The owner is the installer because nobody has an account yet. Once the file
+# exists it is the director's and is left alone, an empty list included:
+# withdrawing the concierge is a decision this must not undo. Succeeds only
+# when it wrote.
 ensure_platform_concierge_exposure() {
-    local file="$1"
-    [[ -f "${file}" ]] || return 1
-    if grep -Eq '^  exposures:' "${file}"; then
-        return 1
+    local dir="$1"
+    local file="${dir}/exposures.yaml" manifest="${dir}/tenant.yaml" kustomization="${dir}/kustomization.yaml"
+    [[ -f "${manifest}" ]] || return 1
+
+    # An earlier installer appended the entry to the tenant's manifest itself.
+    # The block is this function's own, from its comment to the end of the
+    # file, and is taken out so the surface is declared once.
+    local wrote=1
+    if grep -q '^  # What this tenant publishes with no session in front of it' "${manifest}"; then
+        local kept
+        kept="$(sed '/^  # What this tenant publishes with no session in front of it/,$d' "${manifest}")"
+        printf '%s\n' "${kept}" > "${manifest}"
+        info "tenants/platform/tenant.yaml: the concierge's publication moves to exposures.yaml."
+        wrote=0
     fi
-    local last
-    last="$(grep -E '^[A-Za-z]' "${file}" | tail -n 1)"
-    if [[ "${last}" != "spec:" ]]; then
-        warn "tenants/platform/tenant.yaml publishes nothing and spec is not its last section,"
-        warn "  so the concierge is not published. Add spec.exposures by hand."
-        return 1
+
+    if [[ ! -f "${file}" ]]; then
+        local now review
+        now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        review="$(date -u -d '+365 days' +%Y-%m-%dT00:00:00Z)"
+        cat > "${file}" <<EXPOSURES
+# Managed by the director: what this tenant publishes to the internet.
+#
+# The concierge is the page on the bare domain of the cluster, which sends a
+# person to the sign-in of their workspace. The installer published it; from
+# here on this file is the director's, and withdrawing or reviewing the entry
+# is done there.
+apiVersion: gentianos.io/v1alpha1
+kind: Tenant
+metadata:
+  name: platform
+spec:
+  exposures:
+    - install: concierge
+      exposureName: front
+      owner: installer
+      reviewAt: ${review}
+      reason: The sign-in page on the bare domain of the cluster, published at install.
+      publishedAt: ${now}
+      lastReviewedBy: installer
+      lastReviewedAt: ${now}
+EXPOSURES
+        info "tenants/platform/exposures.yaml: the concierge is published on the bare domain."
+        wrote=0
     fi
-    [[ -z "$(tail -c 1 "${file}")" ]] || printf '\n' >> "${file}"
-    _platform_concierge_exposure >> "${file}"
-    info "tenants/platform/tenant.yaml published nothing: the concierge was added to spec.exposures."
-    return 0
+
+    # Listed as a patch, or kustomize never reads it.
+    if [[ -f "${file}" && -f "${kustomization}" ]] && ! grep -qx -- '- path: exposures.yaml' "${kustomization}"; then
+        if grep -qx 'patches:' "${kustomization}"; then
+            sed -i '/^patches:$/a - path: exposures.yaml' "${kustomization}"
+        else
+            [[ -z "$(tail -c 1 "${kustomization}")" ]] || printf '\n' >> "${kustomization}"
+            printf 'patches:\n- path: exposures.yaml\n' >> "${kustomization}"
+        fi
+        wrote=0
+    fi
+    return "${wrote}"
 }
 
 # _claim_catalogue_section
@@ -1982,7 +2009,7 @@ EOF
     fi
     # The concierge's publication, for the tenant just written and for one
     # written before the concierge was a published component alike.
-    if ensure_platform_concierge_exposure "${platform_dir}/tenant.yaml"; then
+    if ensure_platform_concierge_exposure "${platform_dir}"; then
         generated=1
     fi
 

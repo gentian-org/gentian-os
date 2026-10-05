@@ -198,6 +198,27 @@ of the three gaps below.
 8. **Delete `AppProfile`**: the Go types, the CRD, the composition's old path,
    and the references in the AppProject and the sync path list.
 
+## The instance: every installed app is a Component
+
+Done after the catalogue moved. `Tenant.spec.apps` is what git declares; the
+tenant reconciler makes each entry, and each addon activated inside one, a
+`Component` of class `app`, and removes it when the entry leaves. The
+Component is the unit everything hangs off: delivery, routes and the question
+asked at them, the tile, granted privileges, published surfaces.
+
+A chart is delivered one of two ways, by what the profile needs and never by
+which profile it is (`composedDelivery`). What the component reconciler renders
+itself it releases itself. Anything more — an identity provider client,
+generated secrets, a database, cache or mail account mapped into values key by
+key, a post-install job, a sidecar — is still rendered by `app-default`, and
+the Component writes and owns the `App` claim that Composition answers. The
+tenant Composition no longer emits claims.
+
+What is left of §13.6 is therefore one thing, and it is measurable: port what
+`app-default` renders into the component reconciler until `composedDelivery`
+cannot be true, then delete the `App` claim and its Composition. The render
+goldens are the proof, as they were for the conversion.
+
 ## How each step is proved
 
 A conversion is right when the composition renders the same objects from the

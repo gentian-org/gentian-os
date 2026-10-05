@@ -204,6 +204,21 @@ type TenantExposure struct {
 	// +optional
 	// +kubebuilder:validation:MaxLength=2000
 	Reason string `json:"reason,omitempty"`
+
+	// PublishedAt is when it was first published. It does not change when
+	// the entry is reviewed.
+	// +optional
+	PublishedAt *metav1.Time `json:"publishedAt,omitempty"`
+
+	// LastReviewedBy is the subject that last confirmed this should stay
+	// public, and LastReviewedAt when. Publishing is the first review, and
+	// the owner may well be the reviewer every time: what is asked for is a
+	// regular look, not a second person.
+	// +optional
+	// +kubebuilder:validation:MaxLength=256
+	LastReviewedBy string `json:"lastReviewedBy,omitempty"`
+	// +optional
+	LastReviewedAt *metav1.Time `json:"lastReviewedAt,omitempty"`
 }
 
 // Enablement is this entry as the Component carries it.

@@ -22,38 +22,11 @@ import (
 	"strconv"
 	"strings"
 
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
 func (r *TenantReconciler) collectTenantIngressIntents(ctx context.Context, tenant *gentianov1alpha1.Tenant) ([]ingressIntent, error) {
 	return collectTenantIngressIntents(ctx, r.Client, tenant)
-}
-
-func buildAppBackendTrafficPolicyObject(
-	tenant *gentianov1alpha1.Tenant,
-	nsName, appProfile string,
-	ingress *gentianov1alpha1.ExposureSpec,
-) *unstructured.Unstructured {
-	spec := backendTrafficPolicySpecFromIngressAnnotations(ingress.Annotations)
-	if spec == nil {
-		return nil
-	}
-	attachBackendTrafficPolicyTarget(spec, appHTTPRouteName(tenant.Name, appProfile))
-
-	obj := &unstructured.Unstructured{}
-	obj.SetGroupVersionKind(backendTrafficPolicyGVK)
-	obj.SetName(appBackendTrafficPolicyName(tenant.Name, appProfile))
-	obj.SetNamespace(nsName)
-	obj.SetLabels(map[string]string{
-		tenantLabel:           tenant.Name,
-		appLabel:              appProfile,
-		managedByLabel:        managedByValue,
-		gatewayComponentLabel: gatewayComponentApp,
-	})
-	_ = unstructured.SetNestedField(obj.Object, spec, "spec")
-	return obj
 }
 
 func backendTrafficPolicySpecFromIngressAnnotations(annotations map[string]string) map[string]interface{} {

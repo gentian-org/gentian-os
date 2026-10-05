@@ -217,77 +217,6 @@ func TestTenantGatewayName(t *testing.T) {
 	}
 }
 
-func TestBuildAppHTTPRoute(t *testing.T) {
-	t.Parallel()
-	tenant := &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "demo"}}
-	ingress := &gentianov1alpha1.ExposureSpec{
-		SubDomain: "app",
-	}
-	route := buildAppHTTPRoute(tenant, "tenant-demo", ingressIntent{
-		appProfile: "catalogue-test-app",
-		ingress:    ingress,
-	}, "demo.platform.example.test", "platform.example.test")
-	if route.Name != "httproute-demo-catalogue-test-app" {
-		t.Fatalf("name = %q", route.Name)
-	}
-	if len(route.Spec.Hostnames) != 1 || string(route.Spec.Hostnames[0]) != "app.demo.platform.example.test" {
-		t.Fatalf("hostnames = %v", route.Spec.Hostnames)
-	}
-	// One parent: the kernel Gateway, pinned to this tenant's listener.
-	if len(route.Spec.ParentRefs) != 1 {
-		t.Fatalf("parent refs = %d, want 1", len(route.Spec.ParentRefs))
-	}
-	if route.Spec.ParentRefs[0].Name != AuthenticatedGatewayName {
-		t.Fatalf("kernel parent = %v", route.Spec.ParentRefs[0].Name)
-	}
-	if route.Spec.ParentRefs[0].Namespace == nil || string(*route.Spec.ParentRefs[0].Namespace) != servicesNamespace {
-		t.Fatalf("kernel parent namespace = %v", route.Spec.ParentRefs[0].Namespace)
-	}
-	if route.Spec.ParentRefs[0].SectionName == nil ||
-		string(*route.Spec.ParentRefs[0].SectionName) != tenantGatewayListenerName("demo") {
-		t.Fatalf("kernel parent sectionName = %v", route.Spec.ParentRefs[0].SectionName)
-	}
-	if len(route.Spec.Rules[0].Filters) == 0 {
-		t.Fatal("expected embedding response filters")
-	}
-}
-
-func TestBuildAppHTTPRouteRootRedirect(t *testing.T) {
-	t.Parallel()
-	tenant := &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "demo"}}
-	ingress := &gentianov1alpha1.ExposureSpec{
-		SubDomain: "app",
-		Backend:   gentianov1alpha1.BackendRef{Service: "ui"},
-	}
-	profile := &gentianov1alpha1.ComponentProfile{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: "multi-route-app",
-			Annotations: map[string]string{
-				gentianov1alpha1.AnnotationProfileGatewayRootRedirect: "/ui/",
-				gentianov1alpha1.AnnotationProfileGatewayAPIBackends:  `[{"pathPrefix":"/ui/api","serviceName":"api"}]`,
-			},
-		},
-	}
-	route := buildAppHTTPRoute(tenant, "tenant-demo", ingressIntent{
-		appProfile: "multi-route-app",
-		profile:    profile,
-		ingress:    ingress,
-	}, "demo.platform.example.test", "platform.example.test")
-	if len(route.Spec.Rules) != 3 {
-		t.Fatalf("rules = %d, want 3", len(route.Spec.Rules))
-	}
-	redirect := route.Spec.Rules[0].Filters[0].RequestRedirect
-	if redirect == nil || redirect.Path == nil || redirect.Path.ReplaceFullPath == nil || *redirect.Path.ReplaceFullPath != "/ui/" {
-		t.Fatalf("redirect = %+v", redirect)
-	}
-	if len(route.Spec.Rules[1].BackendRefs) != 1 || string(route.Spec.Rules[1].BackendRefs[0].Name) != "api" {
-		t.Fatalf("api backend rule = %+v", route.Spec.Rules[1].BackendRefs)
-	}
-	if len(route.Spec.Rules[2].BackendRefs) != 1 || string(route.Spec.Rules[2].BackendRefs[0].Name) != "ui" {
-		t.Fatalf("ui backend rule = %+v", route.Spec.Rules[2].BackendRefs)
-	}
-}
-
 func TestComputeGatewayFrameAncestorsPolicy(t *testing.T) {
 	t.Parallel()
 	policy := computeGatewayFrameAncestorsPolicy("platform.example.test", "demo.platform.example.test", "app")
@@ -445,35 +374,6 @@ func TestBuildTenantReferenceGrantObjects(t *testing.T) {
 	}
 	if objects[1].GetNamespace() != "tenant-demo" {
 		t.Fatalf("tenant RG namespace = %q", objects[1].GetNamespace())
-	}
-}
-
-func TestBuildAppBackendTrafficPolicyObject(t *testing.T) {
-	t.Parallel()
-	tenant := &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "demo"}}
-	ingress := &gentianov1alpha1.ExposureSpec{
-		Annotations: map[string]string{
-			gentianov1alpha1.AnnotationIngressGatewayRequestTimeout: "600",
-		},
-	}
-	obj := buildAppBackendTrafficPolicyObject(tenant, "tenant-demo", "catalogue-test-app", ingress)
-	if obj == nil {
-		t.Fatal("expected BackendTrafficPolicy object")
-	}
-	if obj.GetName() != "btp-demo-catalogue-test-app" {
-		t.Fatalf("name = %q", obj.GetName())
-	}
-	refs, _, _ := unstructured.NestedSlice(obj.Object, "spec", "targetRefs")
-	if len(refs) != 1 {
-		t.Fatalf("targetRefs = %v", refs)
-	}
-	ref, _ := refs[0].(map[string]interface{})
-	if ref["name"] != "httproute-demo-catalogue-test-app" {
-		t.Fatalf("target route = %v", ref["name"])
-	}
-
-	if buildAppBackendTrafficPolicyObject(tenant, "tenant-demo", "plain", &gentianov1alpha1.ExposureSpec{}) != nil {
-		t.Fatal("expected nil for ingress without policy annotations")
 	}
 }
 

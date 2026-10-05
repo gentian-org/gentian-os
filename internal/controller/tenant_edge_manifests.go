@@ -68,15 +68,7 @@ func (r *TenantReconciler) buildTenantEdgeObjects(ctx context.Context, tenant *g
 	// the tenant without a Gateway of its own.
 	objects = append(objects, buildTenantReferenceGrantObjects(tenant)...)
 
-	for _, route := range appHTTPRoutesForIntents(tenant, nsName, intents, effectiveDomain, r.KernelDomain) {
-		route.SetGroupVersionKind(gatewayv1.SchemeGroupVersion.WithKind("HTTPRoute"))
-		objects = append(objects, route)
-	}
-	for _, intent := range intents {
-		if btp := buildAppBackendTrafficPolicyObject(tenant, nsName, intent.appProfile, intent.ingress); btp != nil {
-			objects = append(objects, btp)
-		}
-	}
+	// No routes: an installed app's are its Component's (component_reconciler.go).
 	// The escaped-slashes ClientTrafficPolicy for this tenant's listener is
 	// created alongside the kernel Gateway, since an Envoy Gateway policy must
 	// live in the same namespace as the Gateway it targets.
@@ -107,9 +99,7 @@ func (r *TenantReconciler) waitForTenantEdgeResources(ctx context.Context, tenan
 		return true, "", nil
 	}
 
-	nsName := tenantNamespaceName(tenant)
-	effectiveDomain := r.tenantEffectiveDomain(tenant)
-	if effectiveDomain == "" {
+	if r.tenantEffectiveDomain(tenant) == "" {
 		return false, "NoDomain", nil
 	}
 
@@ -122,10 +112,5 @@ func (r *TenantReconciler) waitForTenantEdgeResources(ctx context.Context, tenan
 		return false, reason, nil
 	}
 
-	for _, route := range appHTTPRoutesForIntents(tenant, nsName, intents, effectiveDomain, r.KernelDomain) {
-		if ok, reason := httpRouteProgrammed(ctx, r.Client, route); !ok {
-			return false, reason, nil
-		}
-	}
 	return true, "", nil
 }

@@ -86,6 +86,13 @@ type ComponentSpec struct {
 	// +kubebuilder:validation:items:MaxLength=63
 	Addons []string `json:"addons,omitempty"`
 
+	// Config is what this install overrides of the profile's defaults: the
+	// replica count and chart values the tenant chose. It is the install's
+	// and not the profile's, so two tenants installing one profile may differ
+	// here and nowhere else.
+	// +optional
+	Config *TenantAppConfig `json:"config,omitempty"`
+
 	// Exposures are the perimeter entries of the profile that are switched on.
 	// Gateway entries need none: they carry the session and are always on.
 	// +optional

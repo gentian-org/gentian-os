@@ -282,12 +282,29 @@ spec:
                       maxLength: 253
                       pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
                       type: string
+                    lastReviewedAt:
+                      format: date-time
+                      type: string
+                    lastReviewedBy:
+                      description: |-
+                        LastReviewedBy is the subject that last confirmed this should stay
+                        public, and LastReviewedAt when. Publishing is the first review, and
+                        the owner may well be the reviewer every time: what is asked for is a
+                        regular look, not a second person.
+                      maxLength: 256
+                      type: string
                     owner:
                       description: |-
                         Owner is the subject that published it, set by the director from the
                         caller's token.
                       maxLength: 256
                       minLength: 1
+                      type: string
+                    publishedAt:
+                      description: |-
+                        PublishedAt is when it was first published. It does not change when
+                        the entry is reviewed.
+                      format: date-time
                       type: string
                     reason:
                       description: Reason is why this is public, in the approver's

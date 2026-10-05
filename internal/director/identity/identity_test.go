@@ -751,3 +751,26 @@ func TestActivationFallsBackToTheLinkWhenTheMailFails(t *testing.T) {
 		t.Fatalf("the address must still become the recovery address: %+v", puts)
 	}
 }
+
+// An app the tenant provisioned for everybody says so on its group, and the
+// listing carries it: the console ticks that group when a person is added.
+func TestTheGroupListingSaysWhichAppsAreProvisionedForEverybody(t *testing.T) {
+	f, srv := newFake(t)
+	f.groups["kernel"] = []groupRep{
+		{ID: "g1", Path: "/gentian:tenant:demo:app:xwiki-ce", Attributes: map[string][]string{DefaultGrantAttribute: {"true"}}},
+		{ID: "g2", Path: "/gentian:tenant:demo:app:odoo-base-ce"},
+	}
+	c := clientFor(t, srv, StaticSource{"kernel": {Realm: "kernel", ClientID: "a", ClientSecret: "s"}})
+	base, _ := c.Realm("kernel")
+	groups, err := c.Groups(context.Background(), base.Scoped("gentian:tenant:demo:"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, g := range groups {
+		got[g.Path] = g.DefaultGrant
+	}
+	if !got["gentian:tenant:demo:app:xwiki-ce"] || got["gentian:tenant:demo:app:odoo-base-ce"] {
+		t.Fatalf("default grants = %v", got)
+	}
+}

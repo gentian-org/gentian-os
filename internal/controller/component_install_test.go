@@ -1,0 +1,256 @@
+/*
+Copyright 2026 Gentian Organization.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package controller
+
+import (
+	"context"
+	"sort"
+	"strings"
+	"testing"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+)
+
+func componentNames(t *testing.T, c client.Client, namespace string) string {
+	t.Helper()
+	list := &gentianov1alpha1.ComponentList{}
+	if err := c.List(context.Background(), list, client.InNamespace(namespace)); err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, comp := range list.Items {
+		names = append(names, comp.Name)
+	}
+	sort.Strings(names)
+	return strings.Join(names, " ")
+}
+
+// Every app a tenant installs is a Component, and so is every addon activated
+// inside one. Removing the entry removes the Component -- and only a
+// Component that was an install, never one the platform ships to everybody.
+func TestEveryInstalledAppIsAComponent(t *testing.T) {
+	ctx := context.Background()
+	scheme := runtime.NewScheme()
+	_ = gentianov1alpha1.AddToScheme(scheme)
+	tenant := acmeTenantFixture()
+	replicas := int32(2)
+	tenant.Spec.Apps = []gentianov1alpha1.TenantApp{
+		{Profile: "xwiki-ce", Config: &gentianov1alpha1.TenantAppConfig{Replicas: &replicas}},
+		{Profile: "odoo-base-ce", Addons: []string{"crm-ce", "sales-ce"}},
+	}
+	ns := tenantNamespaceName(tenant)
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
+		tenant.DeepCopy(),
+		profileFixture("desktop", true, gentianov1alpha1.ComponentClassApp),
+	).Build()
+	r := &TenantReconciler{Client: c, Scheme: scheme}
+
+	if err := r.ensureDefaultComponents(ctx, tenant); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.ensureAppComponents(ctx, tenant); err != nil {
+		t.Fatal(err)
+	}
+	if got := componentNames(t, c, ns); got != "crm-ce desktop odoo-base-ce sales-ce xwiki-ce" {
+		t.Fatalf("components = %q", got)
+	}
+	base := &gentianov1alpha1.Component{}
+	if err := c.Get(ctx, types.NamespacedName{Name: "odoo-base-ce", Namespace: ns}, base); err != nil {
+		t.Fatal(err)
+	}
+	// The base carries the list of what is activated inside it, because the
+	// base's chart is what activates it.
+	if strings.Join(base.Spec.Addons, " ") != "crm-ce sales-ce" || base.Spec.Class != gentianov1alpha1.ComponentClassApp ||
+		base.Labels[componentOriginLabel] != componentOriginInstall {
+		t.Fatalf("base = %+v labels %v", base.Spec, base.Labels)
+	}
+	wiki := &gentianov1alpha1.Component{}
+	if err := c.Get(ctx, types.NamespacedName{Name: "xwiki-ce", Namespace: ns}, wiki); err != nil {
+		t.Fatal(err)
+	}
+	if wiki.Spec.Config == nil || wiki.Spec.Config.Replicas == nil || *wiki.Spec.Config.Replicas != 2 {
+		t.Fatalf("the install's configuration did not reach its component: %+v", wiki.Spec.Config)
+	}
+
+	// An addon is deactivated and an app uninstalled: both go, the base
+	// learns its new list, and the platform's own component is untouched.
+	tenant.Spec.Apps = []gentianov1alpha1.TenantApp{{Profile: "odoo-base-ce", Addons: []string{"crm-ce"}}}
+	if err := r.ensureAppComponents(ctx, tenant); err != nil {
+		t.Fatal(err)
+	}
+	if got := componentNames(t, c, ns); got != "crm-ce desktop odoo-base-ce" {
+		t.Fatalf("after uninstall, components = %q", got)
+	}
+	if err := c.Get(ctx, types.NamespacedName{Name: "odoo-base-ce", Namespace: ns}, base); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(base.Spec.Addons, " ") != "crm-ce" {
+		t.Fatalf("the base still lists %v", base.Spec.Addons)
+	}
+
+	// Nothing installed at all.
+	tenant.Spec.Apps = nil
+	if err := r.ensureAppComponents(ctx, tenant); err != nil {
+		t.Fatal(err)
+	}
+	if got := componentNames(t, c, ns); got != "desktop" {
+		t.Fatalf("with nothing installed, components = %q", got)
+	}
+}
+
+// A component delivered through the app Composition writes the claim that
+// Composition answers, owns it, and is not ready before the claim is.
+func TestAComposedComponentWritesItsClaim(t *testing.T) {
+	ctx := context.Background()
+	scheme := runtime.NewScheme()
+	_ = gentianov1alpha1.AddToScheme(scheme)
+	tenant := acmeTenantFixture()
+	replicas := int32(3)
+	comp := &gentianov1alpha1.Component{}
+	comp.Name, comp.Namespace, comp.UID = "odoo-base-ce", tenantNamespaceName(tenant), "uid-comp"
+	comp.Spec.ProfileRef.Name = "odoo-base-ce"
+	comp.Spec.Addons = []string{"crm-ce"}
+	comp.Spec.Config = &gentianov1alpha1.TenantAppConfig{
+		Replicas:    &replicas,
+		ExtraValues: &runtime.RawExtension{Raw: []byte(`{"web":{"theme":"dark"}}`)},
+	}
+
+	// A claim nobody controls: adopted where it stands, because replacing it
+	// would uninstall the app.
+	old := &unstructured.Unstructured{}
+	old.SetGroupVersionKind(appClaimGVK)
+	old.SetName(comp.Name)
+	old.SetNamespace(comp.Namespace)
+	_ = unstructured.SetNestedField(old.Object, "xwiki-ce", "spec", "profileRef", "name")
+	_ = unstructured.SetNestedField(old.Object, "kept-by-crossplane", "spec", "resourceRef", "name")
+
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(old).Build()
+	r := &ComponentReconciler{Client: c, Scheme: scheme, KernelDomain: "k.example", KernelRealm: "kernel"}
+	zone := edgeZone{domain: "acme.k.example"}
+
+	ready, _, err := r.ensureAppClaim(ctx, comp, tenant, zone)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ready {
+		t.Fatal("a claim nothing has composed yet is ready")
+	}
+	claim := &unstructured.Unstructured{}
+	claim.SetGroupVersionKind(appClaimGVK)
+	if err := c.Get(ctx, types.NamespacedName{Name: comp.Name, Namespace: comp.Namespace}, claim); err != nil {
+		t.Fatal(err)
+	}
+	spec := claim.Object["spec"].(map[string]interface{})
+	if got, _, _ := unstructured.NestedString(spec, "profileRef", "name"); got != "odoo-base-ce" {
+		t.Errorf("profileRef = %q", got)
+	}
+	if spec["tenantNamespace"] != "tenant-acme" || spec["domain"] != "acme.k.example" {
+		t.Errorf("namespace and domain = %v %v", spec["tenantNamespace"], spec["domain"])
+	}
+	if addons, _, _ := unstructured.NestedStringSlice(spec, "addons"); strings.Join(addons, " ") != "crm-ce" {
+		t.Errorf("addons = %v", addons)
+	}
+	if n, _, _ := unstructured.NestedInt64(spec, "config", "replicas"); n != 3 {
+		t.Errorf("replicas = %d", n)
+	}
+	if v, _, _ := unstructured.NestedString(spec, "config", "extraValues", "web", "theme"); v != "dark" {
+		t.Errorf("extraValues = %v", spec["config"])
+	}
+	// What Crossplane put on the claim is still there.
+	if v, _, _ := unstructured.NestedString(spec, "resourceRef", "name"); v != "kept-by-crossplane" {
+		t.Error("the claim's own fields were overwritten")
+	}
+	if !ownedBy(claim, comp) {
+		t.Error("the claim is not owned by its component")
+	}
+
+	// Composed and deployed: ready, and a second pass changes nothing.
+	_ = unstructured.SetNestedSlice(claim.Object, []interface{}{
+		map[string]interface{}{"type": "Ready", "status": "True"},
+	}, "status", "conditions")
+	if err := c.Update(ctx, claim); err != nil {
+		t.Fatal(err)
+	}
+	ready, _, err = r.ensureAppClaim(ctx, comp, tenant, zone)
+	if err != nil || !ready {
+		t.Fatalf("ready = %v, err = %v", ready, err)
+	}
+
+	// The addon is deactivated and the configuration dropped: the claim
+	// follows, losing the fields rather than keeping the last value.
+	comp.Spec.Addons, comp.Spec.Config = nil, nil
+	if _, _, err := r.ensureAppClaim(ctx, comp, tenant, zone); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Get(ctx, types.NamespacedName{Name: comp.Name, Namespace: comp.Namespace}, claim); err != nil {
+		t.Fatal(err)
+	}
+	spec = claim.Object["spec"].(map[string]interface{})
+	if _, has := spec["addons"]; has {
+		t.Error("a deactivated addon is still on the claim")
+	}
+	if _, has := spec["config"]; has {
+		t.Error("configuration that was withdrawn is still on the claim")
+	}
+}
+
+// A claim another controller still holds is left to it: this component says
+// it is waiting and writes nothing, rather than fighting over the object.
+func TestAClaimSomethingElseControlsIsNotTaken(t *testing.T) {
+	ctx := context.Background()
+	scheme := runtime.NewScheme()
+	_ = gentianov1alpha1.AddToScheme(scheme)
+	tenant := acmeTenantFixture()
+	comp := &gentianov1alpha1.Component{}
+	comp.Name, comp.Namespace, comp.UID = "xwiki-ce", tenantNamespaceName(tenant), "uid-comp"
+	comp.Spec.ProfileRef.Name = "xwiki-ce"
+
+	yes := true
+	held := &unstructured.Unstructured{}
+	held.SetGroupVersionKind(appClaimGVK)
+	held.SetName(comp.Name)
+	held.SetNamespace(comp.Namespace)
+	held.SetOwnerReferences([]metav1.OwnerReference{{
+		APIVersion: "gentianos.io/v1alpha1", Kind: "XTenant", Name: "acme-x", UID: "uid-xtenant", Controller: &yes,
+	}})
+	_ = unstructured.SetNestedField(held.Object, "tenant-acme", "spec", "tenantNamespace")
+
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(held).Build()
+	r := &ComponentReconciler{Client: c, Scheme: scheme}
+	ready, message, err := r.ensureAppClaim(ctx, comp, tenant, edgeZone{domain: "acme.k.example"})
+	if err != nil || ready || !strings.Contains(message, "XTenant acme-x") {
+		t.Fatalf("ready=%v message=%q err=%v", ready, message, err)
+	}
+	after := &unstructured.Unstructured{}
+	after.SetGroupVersionKind(appClaimGVK)
+	if err := c.Get(ctx, types.NamespacedName{Name: comp.Name, Namespace: comp.Namespace}, after); err != nil {
+		t.Fatal(err)
+	}
+	if ownedBy(after, comp) {
+		t.Fatal("the claim was taken from its controller")
+	}
+	if _, has, _ := unstructured.NestedString(after.Object, "spec", "domain"); has {
+		t.Fatal("the claim was written to while another controller held it")
+	}
+}

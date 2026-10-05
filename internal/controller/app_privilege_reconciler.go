@@ -104,7 +104,7 @@ func (r *TenantReconciler) ensureAppPrivileges(ctx context.Context, tenant *gent
 		}
 		privilegedApps = append(privilegedApps, profileName)
 
-		ready, err := r.waitForAppClaimReady(ctx, tenant, profileName)
+		ready, err := r.appComponentReady(ctx, tenant, profileName)
 		if err != nil {
 			return ctrl.Result{}, err
 		}

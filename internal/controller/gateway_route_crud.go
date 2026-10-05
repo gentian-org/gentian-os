@@ -23,7 +23,6 @@ import (
 	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
@@ -185,23 +184,4 @@ func (r *TenantReconciler) deleteTenantHTTPRoutes(ctx context.Context, tenant *g
 		return err
 	}
 	return r.deleteStaleClientTrafficPoliciesForTenant(ctx, tenant, nsName, nil)
-}
-
-func httpRouteProgrammed(ctx context.Context, c client.Client, route *gatewayv1.HTTPRoute) (bool, string) {
-	current := &gatewayv1.HTTPRoute{}
-	if err := c.Get(ctx, types.NamespacedName{Name: route.Name, Namespace: route.Namespace}, current); err != nil {
-		return false, "HTTPRouteMissing"
-	}
-	for _, parent := range current.Status.Parents {
-		for _, cond := range parent.Conditions {
-			if cond.Type == string(gatewayv1.RouteConditionAccepted) && cond.Status == metav1.ConditionFalse {
-				reason := cond.Reason
-				if reason == "" {
-					reason = "NotAccepted"
-				}
-				return false, reason
-			}
-		}
-	}
-	return true, "Accepted"
 }

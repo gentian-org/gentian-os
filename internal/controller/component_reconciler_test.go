@@ -158,7 +158,7 @@ func TestAComponentRouteCarriesItsQuestion(t *testing.T) {
 		SubDomain: "console", Paths: []string{"/api", "/healthz"}, ForwardToken: true,
 		Backend: gentianov1alpha1.BackendRef{Service: "desktop-gentian-portal-api", Port: 8000},
 	}
-	route := buildExposureRoute(comp, "desktop-api", "console.k.example", zone, e, exposureAuthz(platformTenantFixture(), e.ForwardToken), "k.example")
+	route := buildExposureRoute(comp, "desktop-api", "console.k.example", zone, e, exposureAuthz(platformTenantFixture(), comp, launcherProfile(), e.ForwardToken), "k.example")
 	if route.Labels[bouncerRouteLabel] != "true" || route.Annotations[bouncerRelationAnnotation] != "can_enter" ||
 		route.Annotations[bouncerObjectAnnotation] != "tenant:platform" || route.Annotations[bouncerForwardAnnotation] != "true" {
 		t.Fatalf("route question = %v %v", route.Labels, route.Annotations)
@@ -176,7 +176,7 @@ func TestAComponentRouteCarriesItsQuestion(t *testing.T) {
 	web := buildExposureRoute(comp, "desktop-web", "console.k.example", zone,
 		&gentianov1alpha1.ExposureSpec{Name: "web", Surface: gentianov1alpha1.SurfaceGateway, AuthMode: gentianov1alpha1.AuthModeOIDC, SubDomain: "console",
 			Backend: gentianov1alpha1.BackendRef{Service: "desktop-gentian-portal-web", Port: 8080}},
-		exposureAuthz(platformTenantFixture(), false), "k.example")
+		exposureAuthz(platformTenantFixture(), comp, launcherProfile(), false), "k.example")
 
 	// Every rule admits embedding by the kernel domain and nothing else: the
 	// desktop opens components in frames, and nobody else may.
@@ -225,7 +225,7 @@ func TestDenyPathsReachTheTableAndAreUnionedPerHost(t *testing.T) {
 			Backend: gentianov1alpha1.BackendRef{Service: "odoo", Port: 80},
 		}
 		return buildExposureRoute(comp, "odoo-"+name, sub+".k.example", zone, e,
-			exposureAuthz(platformTenantFixture(), false), "k.example")
+			exposureAuthz(platformTenantFixture(), comp, launcherProfile(), false), "k.example")
 	}
 	web := build("web", "shop", []string{"/web/database"})
 	api := build("api", "shop", []string{"/admin"})
@@ -344,5 +344,98 @@ func TestOnlySessionBackedEntriesAreRoutedOnTheGateway(t *testing.T) {
 	}
 	if len(refused) != 4 {
 		t.Fatalf("refused %d entries, want the four gateway entries with no session", len(refused))
+	}
+}
+
+// launcherProfile is a profile that is part of the tenant itself: nothing
+// opens it, because it is what things are opened from.
+func launcherProfile() *gentianov1alpha1.ComponentProfile {
+	p := &gentianov1alpha1.ComponentProfile{}
+	p.Spec.Launch = gentianov1alpha1.ComponentLaunchNone
+	return p
+}
+
+// The question at a component's routes follows from what its profile says it
+// is. The desktop and a console whose tile is held on the tenant are entered
+// with the tenant; an app is asked about as the app, by the relation its tile
+// asks, so that knowing its hostname is not a way in.
+func TestAnAppsRouteAsksWhatItsTileAsks(t *testing.T) {
+	tenant := acmeTenantFixture()
+	comp := &gentianov1alpha1.Component{}
+	comp.Name, comp.Namespace = "xwiki-ce", "tenant-acme"
+	comp.Spec.ProfileRef.Name = "xwiki-ce"
+
+	app := &gentianov1alpha1.ComponentProfile{}
+	app.Spec.Launch = gentianov1alpha1.ComponentLaunchTile
+	app.Spec.Expose = []gentianov1alpha1.ExposureSpec{{Name: "web", Tile: &gentianov1alpha1.ExposureTile{Relation: "can_launch"}}}
+	if got := exposureAuthz(tenant, comp, app, false); got.relation != "can_use" || got.object != "app:acme/xwiki-ce" {
+		t.Fatalf("an app's route asks %s on %s", got.relation, got.object)
+	}
+
+	console := &gentianov1alpha1.ComponentProfile{}
+	console.Spec.Launch = gentianov1alpha1.ComponentLaunchTile
+	console.Spec.Expose = []gentianov1alpha1.ExposureSpec{{Name: "web", Tile: &gentianov1alpha1.ExposureTile{
+		Relation: "can_administer", Object: gentianov1alpha1.TileObjectTenant}}}
+	for name, profile := range map[string]*gentianov1alpha1.ComponentProfile{"the launcher": launcherProfile(), "a console": console} {
+		if got := exposureAuthz(tenant, comp, profile, true); got.relation != "can_enter" || got.object != "tenant:acme" || !got.forwardToken {
+			t.Fatalf("%s asks %s on %s", name, got.relation, got.object)
+		}
+	}
+}
+
+// Which way a chart is delivered follows from what it needs, never from which
+// profile it is: what this reconciler renders itself it releases itself, and
+// anything more is the app Composition's, whole.
+func TestAChartIsDeliveredByWhatItNeeds(t *testing.T) {
+	chart := func(mutate func(*gentianov1alpha1.ComponentProfile)) *gentianov1alpha1.ComponentProfile {
+		p := &gentianov1alpha1.ComponentProfile{}
+		p.Spec.Package.Chart = &gentianov1alpha1.ChartRef{Name: "x"}
+		if mutate != nil {
+			mutate(p)
+		}
+		return p
+	}
+	direct := map[string]*gentianov1alpha1.ComponentProfile{
+		"a bare chart": chart(nil),
+		"the desktop: platform facts and a database by Secret name": chart(func(p *gentianov1alpha1.ComponentProfile) {
+			p.Spec.Package.ValueMapping = &gentianov1alpha1.ValueMapping{
+				Platform: &gentianov1alpha1.PlatformValueMapping{TenantKey: "tenant"},
+				Database: &gentianov1alpha1.DatabaseValueMapping{SecretNameKey: "existingSecret.name"},
+			}
+			p.Spec.Requires = &gentianov1alpha1.RequirementSpec{Services: &gentianov1alpha1.ServiceRequirements{
+				Database: &gentianov1alpha1.DatabaseRequirement{}}}
+		}),
+	}
+	for name, p := range direct {
+		if composedDelivery(p) {
+			t.Errorf("%s is handed to the Composition", name)
+		}
+	}
+	composed := map[string]*gentianov1alpha1.ComponentProfile{
+		"a client of its own at the identity provider": chart(func(p *gentianov1alpha1.ComponentProfile) {
+			p.Spec.Package.ValueMapping = &gentianov1alpha1.ValueMapping{OIDC: &gentianov1alpha1.OIDCValueMapping{}}
+		}),
+		"a database mapped key by key": chart(func(p *gentianov1alpha1.ComponentProfile) {
+			p.Spec.Package.ValueMapping = &gentianov1alpha1.ValueMapping{Database: &gentianov1alpha1.DatabaseValueMapping{HostKey: "db.host"}}
+		}),
+		"generated secrets": chart(func(p *gentianov1alpha1.ComponentProfile) {
+			p.Spec.Secrets = &gentianov1alpha1.ComponentSecrets{}
+		}),
+		"a mail account": chart(func(p *gentianov1alpha1.ComponentProfile) {
+			p.Spec.Requires = &gentianov1alpha1.RequirementSpec{Services: &gentianov1alpha1.ServiceRequirements{
+				Mail: &gentianov1alpha1.MailRequirement{}}}
+		}),
+	}
+	for name, p := range composed {
+		if !composedDelivery(p) {
+			t.Errorf("%s is released without the Composition that renders it", name)
+		}
+	}
+	// Not a chart, not a question.
+	addon := &gentianov1alpha1.ComponentProfile{}
+	addon.Spec.Package.Addon = &gentianov1alpha1.PackageAddon{}
+	addon.Spec.Secrets = &gentianov1alpha1.ComponentSecrets{}
+	if composedDelivery(addon) {
+		t.Error("an addon was handed to the Composition")
 	}
 }

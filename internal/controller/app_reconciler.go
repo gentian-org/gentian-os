@@ -31,6 +31,7 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -98,6 +99,13 @@ func (r *TenantReconciler) reconcileTenantApps(ctx context.Context, tenant *gent
 		return ctrl.Result{}, fmt.Errorf("cleanup orphaned app workload: %w", err)
 	}
 
+	// Every installed app is a Component, and the Component is what installs
+	// it. Before the empty case below, because a tenant whose last app was
+	// removed still has that app's Component to take away.
+	if err := r.ensureAppComponents(ctx, tenant); err != nil {
+		return ctrl.Result{}, fmt.Errorf("ensure app components: %w", err)
+	}
+
 	if len(tenant.Spec.Apps) == 0 {
 		r.setCondition(tenant, conditionAppsReady, metav1.ConditionTrue, "NoAppsConfigured", "No applications are configured for this tenant")
 		return ctrl.Result{}, nil
@@ -122,18 +130,17 @@ func (r *TenantReconciler) reconcileTenantApps(ctx context.Context, tenant *gent
 			return ctrl.Result{}, nil
 		}
 
-		// ApiProfiles have no App claim to seed or await; they are always ready.
-		if profile.IsAPI() {
-			continue
+		// An API entry runs nothing, so there is nothing to seed for it. Its
+		// Component still says whether it is ready.
+		if !profile.IsAPI() {
+			if err := r.seedAppPrerequisites(ctx, tenant, profileName, profile); err != nil {
+				return ctrl.Result{}, err
+			}
 		}
 
-		if err := r.seedAppPrerequisites(ctx, tenant, profileName, profile); err != nil {
-			return ctrl.Result{}, err
-		}
-
-		ready, err := r.waitForAppClaimReady(ctx, tenant, profileName)
+		ready, err := r.appComponentReady(ctx, tenant, profileName)
 		if err != nil {
-			return ctrl.Result{}, fmt.Errorf("wait for App claim %s: %w", profileName, err)
+			return ctrl.Result{}, fmt.Errorf("read the %s component: %w", profileName, err)
 		}
 		if !ready {
 			allReady = false
@@ -171,7 +178,7 @@ func (r *TenantReconciler) reconcileTenantApps(ctx context.Context, tenant *gent
 		// claims" is true and says nothing an operator can act on; a claim
 		// pending because a pod was refused reads identically to one pending
 		// because Helm is still installing, and they need different responses.
-		msg := "Waiting for App claims to become Ready"
+		msg := "Waiting for the installed apps' components to become Ready"
 		if len(stuck) > 0 {
 			msg = fmt.Sprintf("%s; cannot create pods: %s", msg, strings.Join(stuck, "; "))
 		}
@@ -188,7 +195,7 @@ func (r *TenantReconciler) reconcileTenantApps(ctx context.Context, tenant *gent
 		return ctrl.Result{RequeueAfter: 60 * time.Second}, nil
 	}
 
-	r.setCondition(tenant, conditionAppsReady, metav1.ConditionTrue, "Provisioned", "All App claims are Ready")
+	r.setCondition(tenant, conditionAppsReady, metav1.ConditionTrue, "Provisioned", "Every installed app's component is Ready")
 	return ctrl.Result{}, nil
 }
 
@@ -252,20 +259,19 @@ func derivedSecretValue(tenantName, appName string) string {
 	return base64.URLEncoding.EncodeToString(h.Sum(nil))
 }
 
-// waitForAppClaimReady returns true when the Crossplane-managed App claim exists
-// and its Ready condition is True.
-func (r *TenantReconciler) waitForAppClaimReady(ctx context.Context, tenant *gentianov1alpha1.Tenant, profileName string) (bool, error) {
-	nsName := tenantNamespaceName(tenant)
-	obj := &unstructured.Unstructured{}
-	obj.SetGroupVersionKind(appClaimGVK)
-	err := r.Get(ctx, types.NamespacedName{Name: profileName, Namespace: nsName}, obj)
+// appComponentReady reports whether an installed app's Component is Ready,
+// which is the Component reconciler's statement that it is delivered and
+// routed. A Component that does not exist yet is not ready.
+func (r *TenantReconciler) appComponentReady(ctx context.Context, tenant *gentianov1alpha1.Tenant, profileName string) (bool, error) {
+	comp := &gentianov1alpha1.Component{}
+	err := r.Get(ctx, types.NamespacedName{Name: profileName, Namespace: tenantNamespaceName(tenant)}, comp)
 	if errors.IsNotFound(err) {
 		return false, nil
 	}
 	if err != nil {
 		return false, err
 	}
-	return appClaimIsReady(obj), nil
+	return meta.IsStatusConditionTrue(comp.Status.Conditions, "Ready"), nil
 }
 
 // injectLLMCredentials creates a secret inside the tenant namespace containing the OpenAI API

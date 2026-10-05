@@ -90,10 +90,6 @@ const (
 	// reconciler copies into the bouncer's table; the question is in the
 	// annotations below.
 	bouncerRouteLabel = "gentianos.io/bouncer"
-
-	// desktopAPIServiceName is the desktop's BFF Service in its tenant's
-	// namespace, as the desktop profile's api exposure names it.
-	desktopAPIServiceName = "desktop-gentian-portal-api"
 )
 
 // helmReleaseGVK is provider-helm's Release, the shape a component's chart is
@@ -186,9 +182,14 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		}
 	}
 
+	// A chart that needs what the app Composition renders is delivered
+	// through it, whole: its requirements, its values and its release are
+	// the Composition's, and nothing of them is written here as well.
+	composed := composedDelivery(profile)
+
 	// Requirements first: a chart whose database does not exist yet is not
 	// installed, it is waited for.
-	if profile.Spec.Requires != nil && profile.Spec.Requires.Services != nil && profile.Spec.Requires.Services.Database != nil {
+	if !composed && profile.Spec.Requires != nil && profile.Spec.Requires.Services != nil && profile.Spec.Requires.Services.Database != nil {
 		ready, reason, message, err := r.ensureDatabaseRequirement(ctx, comp, tenant)
 		if err != nil {
 			return ctrl.Result{}, err
@@ -204,8 +205,10 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// The namespace is closed by default; the component's pods may reach
 	// what its requirements were fulfilled with, written down before the
 	// chart runs so its first connection is not the one that is refused.
-	if err := r.ensureNetworkPolicy(ctx, comp, profile, tenant); err != nil {
-		return ctrl.Result{}, fmt.Errorf("network policy: %w", err)
+	if !composed {
+		if err := r.ensureNetworkPolicy(ctx, comp, profile, tenant); err != nil {
+			return ctrl.Result{}, fmt.Errorf("network policy: %w", err)
+		}
 	}
 
 	// The package is exactly one of chart, composition, api or addon, and what
@@ -213,6 +216,13 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// that is not a gap to refuse -- it is the answer.
 	releaseReady, releaseMessage := true, ""
 	switch {
+	case composed:
+		var err error
+		releaseReady, releaseMessage, err = r.ensureAppClaim(ctx, comp, tenant, zone)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+
 	case profile.Spec.Package.Chart != nil:
 		var err error
 		releaseReady, releaseMessage, err = r.ensureRelease(ctx, comp, profile, values)
@@ -297,7 +307,7 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		var oidcRoutes []string
 		forward := false
 		for _, e := range routable {
-			routeName, err := r.ensureExposureRoute(ctx, comp, tenant, zone, e)
+			routeName, err := r.ensureExposureRoute(ctx, comp, profile, tenant, zone, e)
 			if err != nil {
 				return ctrl.Result{}, fmt.Errorf("expose %s: %w", e.Name, err)
 			}
@@ -312,7 +322,7 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		// policies on one host would be two sessions; forwardToken is
 		// therefore the component's, held if any of its entries holds it.
 		if len(oidcRoutes) > 0 {
-			authz := exposureAuthz(tenant, forward)
+			authz := exposureAuthz(tenant, comp, profile, forward)
 			if err := r.ensureZonePolicy(ctx, comp, zone, oidcRoutes, authz); err != nil {
 				return ctrl.Result{}, fmt.Errorf("zone policy: %w", err)
 			}
@@ -595,10 +605,10 @@ func componentLabels(comp *gentianov1alpha1.Component) map[string]string {
 }
 
 // ensureExposureRoute keeps one gateway exposure's route.
-func (r *ComponentReconciler) ensureExposureRoute(ctx context.Context, comp *gentianov1alpha1.Component, tenant *gentianov1alpha1.Tenant, zone edgeZone, e *gentianov1alpha1.ExposureSpec) (string, error) {
+func (r *ComponentReconciler) ensureExposureRoute(ctx context.Context, comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile, tenant *gentianov1alpha1.Tenant, zone edgeZone, e *gentianov1alpha1.ExposureSpec) (string, error) {
 	host := exposureHost(zone, comp, e)
 	routeName := comp.Name + "-" + e.Name
-	route := buildExposureRoute(comp, routeName, host, zone, e, exposureAuthz(tenant, e.ForwardToken), r.KernelDomain)
+	route := buildExposureRoute(comp, routeName, host, zone, e, exposureAuthz(tenant, comp, profile, e.ForwardToken), r.KernelDomain)
 	if err := controllerutil.SetControllerReference(comp, route, r.Scheme); err != nil {
 		return "", err
 	}
@@ -689,11 +699,36 @@ func exposureHostIn(domain string, kernelZone bool, component string, e *gentian
 	return sub + "." + domain
 }
 
-// exposureAuthz is the L2 question a gateway entry asks (networking.md §3):
-// the tenant's desktop is can_enter on the tenant; an app is can_use on the
-// app. Only the desktop is routed yet.
-func exposureAuthz(tenant *gentianov1alpha1.Tenant, forwardToken bool) routeAuthz {
-	return routeAuthz{relation: "can_enter", object: "tenant:" + tenant.Name, forwardToken: forwardToken}
+// exposureAuthz is the L2 question a component's routes ask (networking.md
+// §3): whoever may enter the tenant, for what the tenant itself is entered
+// through; whoever may use the app, for an app.
+//
+// Which it is follows from what the profile says about itself, not from its
+// name. A component that is the launcher (launch: none) or whose tile is held
+// on the tenant -- the desktop, the consoles -- is part of the tenant, and
+// entering the tenant is what reaches it. Everything else is an app, and the
+// route asks the same relation on the same object its tile does
+// (app:<tenant>/<profile>, can_use), so the route cannot be more open than
+// the tile: knowing an app's hostname is not a way in.
+func exposureAuthz(tenant *gentianov1alpha1.Tenant, comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile, forwardToken bool) routeAuthz {
+	if tenantScoped(profile) {
+		return routeAuthz{relation: "can_enter", object: "tenant:" + tenant.Name, forwardToken: forwardToken}
+	}
+	return routeAuthz{relation: "can_use", object: "app:" + tenant.Name + "/" + comp.Spec.ProfileRef.Name, forwardToken: forwardToken}
+}
+
+// tenantScoped reports whether a profile is part of the tenant itself rather
+// than an app inside it.
+func tenantScoped(profile *gentianov1alpha1.ComponentProfile) bool {
+	if profile.Spec.Launch == gentianov1alpha1.ComponentLaunchNone {
+		return true
+	}
+	for i := range profile.Spec.Expose {
+		if t := profile.Spec.Expose[i].Tile; t != nil && t.Object == gentianov1alpha1.TileObjectTenant {
+			return true
+		}
+	}
+	return false
 }
 
 // buildExposureRoute is one exposure as an HTTPRoute on the zone's Gateway.

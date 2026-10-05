@@ -1,0 +1,210 @@
+/*
+Copyright 2026 Gentian Organization.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package controller
+
+import (
+	"context"
+	"fmt"
+
+	"k8s.io/apimachinery/pkg/api/equality"
+	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+
+	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+)
+
+// How a chart package is delivered.
+//
+// A Component is the instance of every app a tenant has, and this reconciler
+// is what installs it. For a chart it has two ways of doing that, and which
+// one is decided by what the profile asks for, never by which profile it is.
+//
+// DIRECTLY, as a Helm release this reconciler writes, when the chart needs
+// only what is rendered here: the profile's own values, the facts of the
+// cluster (valueMapping.platform), and a database handed over as the name of
+// a Secret. That is the desktop and the consoles.
+//
+// THROUGH THE APP COMPOSITION when it needs anything else: an identity
+// provider client of its own, generated or derived secrets, a database, cache,
+// object store or mail account mapped into chart values key by key, a
+// post-install job, a sidecar release. Rendering those is the app
+// Composition's, and it is a great deal of rendering. The Component writes
+// the App claim that Composition answers, owns it, and is Ready when it is.
+// The claim used to be emitted by the tenant's Composition straight from the
+// list of apps, which is why an installed app was a list entry and a claim
+// and never a Component.
+//
+// The second way shrinks as this reconciler learns to render what it now
+// hands over, and is gone when composedDelivery can no longer be true. Until
+// then nothing is installed twice and nothing is half-installed: a profile is
+// delivered wholly one way or wholly the other.
+
+// composedDelivery reports whether a chart package needs the app Composition.
+func composedDelivery(profile *gentianov1alpha1.ComponentProfile) bool {
+	spec := &profile.Spec
+	if spec.Package.Chart == nil {
+		return false
+	}
+	if spec.Secrets != nil || spec.Hooks != nil || len(spec.Extensions) > 0 || len(spec.Integrations) > 0 {
+		return true
+	}
+	if req := spec.Requires; req != nil && req.Services != nil {
+		s := req.Services
+		if s.Identity != nil || s.Storage != nil || s.Cache != nil || s.Mail != nil || s.MCP != nil {
+			return true
+		}
+	}
+	if m := spec.Package.ValueMapping; m != nil {
+		if m.OIDC != nil || m.Cache != nil || m.SMTP != nil || m.IMAP != nil || m.Volumes != nil || len(m.Integrations) > 0 {
+			return true
+		}
+		// A database handed over as a Secret's name is rendered here. One
+		// mapped key by key is the Composition's.
+		if db := m.Database; db != nil {
+			only := gentianov1alpha1.DatabaseValueMapping{SecretNameKey: db.SecretNameKey}
+			if *db != only {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// ensureAppClaim keeps the App claim the app Composition renders this
+// component from, and reports whether what it rendered is ready.
+//
+// Named after the component, in its namespace, and owned by it: removing the
+// Component removes the claim, and with it everything the Composition made.
+func (r *ComponentReconciler) ensureAppClaim(
+	ctx context.Context, comp *gentianov1alpha1.Component, tenant *gentianov1alpha1.Tenant, zone edgeZone,
+) (bool, string, error) {
+	spec := map[string]interface{}{
+		"compositionUpdatePolicy": "Automatic",
+		"profileRef":              map[string]interface{}{"name": comp.Spec.ProfileRef.Name},
+		"tenantNamespace":         comp.Namespace,
+		"domain":                  zone.domain,
+	}
+	if len(comp.Spec.Addons) > 0 {
+		addons := make([]interface{}, 0, len(comp.Spec.Addons))
+		for _, a := range comp.Spec.Addons {
+			addons = append(addons, a)
+		}
+		spec["addons"] = addons
+	}
+	if cfg := comp.Spec.Config; cfg != nil {
+		config := map[string]interface{}{}
+		if cfg.Replicas != nil {
+			config["replicas"] = int64(*cfg.Replicas)
+		}
+		if cfg.ExtraValues != nil && len(cfg.ExtraValues.Raw) > 0 {
+			values := map[string]interface{}{}
+			if err := decodeJSONObject(cfg.ExtraValues.Raw, &values); err != nil {
+				return false, "", fmt.Errorf("config.extraValues is not an object: %w", err)
+			}
+			config["extraValues"] = values
+		}
+		if len(config) > 0 {
+			spec["config"] = config
+		}
+	}
+
+	desired := &unstructured.Unstructured{}
+	desired.SetGroupVersionKind(appClaimGVK)
+	desired.SetName(comp.Name)
+	desired.SetNamespace(comp.Namespace)
+	desired.SetLabels(map[string]string{
+		tenantLabel:                    tenant.Name,
+		"gentianos.io/app":             comp.Name,
+		componentLabel:                 comp.Name,
+		"gentianos.io/managed-by":      "crossplane",
+		"app.kubernetes.io/managed-by": managedByValue,
+	})
+	if err := unstructured.SetNestedField(desired.Object, spec, "spec"); err != nil {
+		return false, "", err
+	}
+	if err := controllerutil.SetControllerReference(comp, desired, r.Scheme); err != nil {
+		return false, "", err
+	}
+
+	existing := &unstructured.Unstructured{}
+	existing.SetGroupVersionKind(appClaimGVK)
+	err := r.Get(ctx, types.NamespacedName{Name: comp.Name, Namespace: comp.Namespace}, existing)
+	if errors.IsNotFound(err) {
+		return false, "claim created; waiting for the app to be composed", r.Create(ctx, desired)
+	}
+	if err != nil {
+		return false, "", err
+	}
+	// A claim something else controls is not taken from it. On a cluster
+	// installed before components owned their claims that something is the
+	// tenant's Composition, which stops rendering the claim once it is
+	// updated and removes it; this then writes its own. Until then the app is
+	// not this component's to report on, and saying so is better than two
+	// controllers correcting each other's writes.
+	if owner := metav1.GetControllerOf(existing); owner != nil && owner.UID != comp.GetUID() {
+		return false, fmt.Sprintf("the App claim is still controlled by %s %s; waiting for it to be released", owner.Kind, owner.Name), nil
+	}
+	// Only what this reconciler writes is compared. Crossplane adds to a
+	// claim's spec (resourceRef, the composition it selected), and comparing
+	// the whole of it would find a difference on every pass.
+	patch := client.MergeFrom(existing.DeepCopy())
+	changed := false
+	for _, field := range []string{"profileRef", "tenantNamespace", "domain", "addons", "config", "compositionUpdatePolicy"} {
+		want, wanted := spec[field]
+		have, has, _ := unstructured.NestedFieldNoCopy(existing.Object, "spec", field)
+		switch {
+		case !wanted && has:
+			unstructured.RemoveNestedField(existing.Object, "spec", field)
+			changed = true
+		case wanted && (!has || !equality.Semantic.DeepEqual(have, want)):
+			if err := unstructured.SetNestedField(existing.Object, want, "spec", field); err != nil {
+				return false, "", err
+			}
+			changed = true
+		}
+	}
+	// A claim nobody controls is adopted, not replaced: replacing it would
+	// uninstall the app.
+	if !ownedBy(existing, comp) {
+		if err := controllerutil.SetControllerReference(comp, existing, r.Scheme); err != nil {
+			return false, "", fmt.Errorf("adopt the App claim: %w", err)
+		}
+		changed = true
+	}
+	if changed {
+		if err := r.Patch(ctx, existing, patch); err != nil {
+			return false, "", err
+		}
+	}
+	if !appClaimIsReady(existing) {
+		return false, "waiting for the app to be composed and its release to deploy", nil
+	}
+	return true, "composed and deployed", nil
+}
+
+func ownedBy(obj client.Object, owner client.Object) bool {
+	for _, ref := range obj.GetOwnerReferences() {
+		if ref.UID == owner.GetUID() {
+			return true
+		}
+	}
+	return false
+}

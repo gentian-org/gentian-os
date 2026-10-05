@@ -18,9 +18,10 @@ package controller
 
 import (
 	"fmt"
-	"github.com/gentian-org/gentian-os/internal/layout"
 	"strings"
 	"time"
+
+	"github.com/gentian-org/gentian-os/internal/layout"
 )
 
 const (

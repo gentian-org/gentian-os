@@ -82,7 +82,16 @@ type Group struct {
 	// platform composes (a tenant's admin group, an app's entitlement).
 	// Only a custom group can be deleted from here.
 	Custom bool `json:"custom"`
+	// DefaultGrant marks an app's group whose app the tenant provisioned for
+	// everybody rather than only installed: the console ticks it when a
+	// person is added, so such an app is opt-out for new people and an
+	// installed one is opt-in. It decides nothing about who may enter.
+	DefaultGrant bool `json:"defaultGrant,omitempty"`
 }
+
+// DefaultGrantAttribute is the Keycloak group attribute the operator sets
+// when an app is provisioned for a tenant's people (keycloak.DefaultGrantAttribute).
+const DefaultGrantAttribute = "gentianDefaultGrant"
 
 // CustomGroupAttribute marks a group created through CreateGroup.
 const CustomGroupAttribute = "gentian.custom"
@@ -206,7 +215,8 @@ func (c *Client) Groups(ctx context.Context, r Realm) ([]Group, error) {
 			continue
 		}
 		custom := len(g.Attributes[CustomGroupAttribute]) > 0 && g.Attributes[CustomGroupAttribute][0] == "true"
-		out = append(out, Group{ID: g.ID, Path: path, Name: g.Name, Custom: custom})
+		defaultGrant := len(g.Attributes[DefaultGrantAttribute]) > 0 && g.Attributes[DefaultGrantAttribute][0] == "true"
+		out = append(out, Group{ID: g.ID, Path: path, Name: g.Name, Custom: custom, DefaultGrant: defaultGrant})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
 	return out, nil
