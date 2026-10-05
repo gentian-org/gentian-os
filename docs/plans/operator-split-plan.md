@@ -7,6 +7,18 @@ between them:
 human intent ──► director ──writes git only──► Argo CD ──► operator ──writes cluster only──► Crossplane
 ```
 
+That is the **write** path, and it is the only one this document covered at
+first. Three more roles stand around it, each with one job and none of the
+director's authority (§3.10):
+
+```
+arriving   person ──► concierge ──► the right zone's sign-in          (before a session; decides nothing)
+entering   request ──► edge session ──► bouncer ──► backend           (every request; enforces, holds no rule)
+looking    person ──► usher ──► "what is here, what may I open"       (reads only; changes nothing)
+changing   person ──► director ──► git ──► Argo CD ──► operator ──► resources
+                                                          └──► projections ──► bouncer, usher, OpenFGA
+```
+
 The **director** is the only process that can push to `gentian-deployments`.
 Every push it makes was authenticated by Keycloak and authorised by OpenFGA,
 so the repository becomes an audit log that can be trusted as the single
@@ -209,9 +221,16 @@ director consumes all three verdicts and issues none.
 
 The existing contract is kept so callers switch by URL, not by rewrite.
 
-**Every write has a read.** The director is the only writer, so it is also the
-only place that knows the current state, and a UI that cannot read it has to
-guess. The App Store must show which apps a tenant already has, at which
+**Every write has a read — of what was declared.** The director is the only
+writer, so it is the only place that knows what git says, and a UI that
+offers a change has to show the declared state it is changing. It is *not*
+the place that knows what exists: that is the cluster, and "what is here and
+what may I open" is the usher's to answer (§3.10), from what the operator
+projected. The reads below that describe declared state stay here; the ones
+every signed-in person needs merely to use the platform — tiles, "what may I
+do", status — move to the usher, so that loading a desktop no longer reaches
+the process that holds the push credential. A UI that cannot read either has
+to guess. The App Store must show which apps a tenant already has, at which
 version, with which addons and integrations enabled; the console must show
 which users, groups, policies and surfaces exist before it can offer a
 sensible change. Both render from these reads, with the signed-in human's
@@ -420,6 +439,106 @@ OpenFGA check on the human and a signed commit naming them, and an
 entitlement it could not also forge is required. A store that must be
 unable to forge needs the browser to sign the intent with a key the store
 never sees; that is recorded as the stronger option, not built.
+
+### 3.10 Concierge, bouncer, usher
+
+Three roles the split did not name. Two of them existed under other names;
+the third is new, and is what the director's read routes become.
+
+| Role | One sentence | Runs in | Holds | Was |
+| --- | --- | --- | --- | --- |
+| **Director** | Turns an authorised intent into a signed commit. | `kernel-control` | the push credential, the signing key | — |
+| **Concierge** | Sends a person who has no session yet to the sign-in of the zone their address belongs to. | the platform tenant's DMZ (`tenant-platform-dmz`), as a perimeter surface of a platform-tenant component | nothing | `sign-in`, beside Keycloak |
+| **Bouncer** | Asks, for every request on the authenticated Gateway, whether this session may enter this host, and refuses when the answer is not yes. | `kernel-edge` | nothing; reads the route table and asks OpenFGA | `edge-authz`, "the shim" |
+| **Usher** | Tells a signed-in person what is here and what they may open. | `kernel-edge` | nothing; reads the operator's projections and asks OpenFGA | the director's `tiles`, `me` and status reads |
+
+The names are a cast on purpose: the concierge points you to the right
+door, the bouncer checks you at it, the usher shows you round inside, and
+the director decides what the house runs. Only the last one changes
+anything.
+
+**What each must not do** — the contract, stated as the failure it rules out.
+
+- *The concierge is not an authority.* It derives a zone from the part of an
+  address after the `@` and redirects; it asks the cluster nothing about
+  accounts, so it cannot say whether one exists. It may only send a browser to
+  a console of this cluster — `console.<tenant>.<kernel>`, or a custom domain
+  the operator published — never to an address taken from its input. It is
+  the one page on the platform with no session in front of it, which is why
+  it is a perimeter surface in a DMZ and not a path on the identity
+  provider's route.
+- *The bouncer decides nothing.* It verifies the session the edge
+  established and asks the store one question per (session, host), named by
+  the table the operator wrote. A rule that lived in the bouncer would be a
+  second policy, edited by deploying a binary.
+- *The usher decides nothing either,* and changes nothing. Every answer is a
+  projection the operator wrote, filtered by a question put to the store. It
+  holds no git credential, no signing key and no Kubernetes write.
+- *The director does not answer for the cluster.* It keeps the reads of
+  declared state, for the people who may change it.
+
+**Why the usher is not part of the bouncer.** Both are read-only and ask the
+same store, and they share their code: one image, the same verifier, the same
+store client. They are two processes because the bouncer is in the path of
+every request and must stay small, rarely released and reachable only by the
+Gateway, while the usher takes requests from browsers' backends and will grow
+a route per screen. The usher builds the tiles from the bouncer's own table,
+so a tile is shown only for something the bouncer would admit.
+
+**Where this is weaker than it should be** — recorded so that the roles are
+not mistaken for the controls.
+
+1. *The bouncer is opt-in per route.* It sees a request only where a
+   `SecurityPolicy` attaches it. A route on the authenticated Gateway without
+   one is served with nothing in front of it, and two were: the LiteLLM
+   console, and any component entry whose `authMode` was not `oidc`. Both are
+   closed, and a test now walks the kernel routes, but the shape is still
+   "protected where somebody remembered". The Gateway should refuse by
+   default — the bouncer attached to the Gateway itself, answering "no" for
+   any host it has no line for — so that forgetting a policy closes a route
+   instead of opening it (§8).
+2. *The bouncer's table is assembled from annotations on routes.* The
+   question a route is asked — which relation, on which object — is read
+   from the route's own annotations. That is policy carried by the thing it
+   governs: a route written by anything other than the operator could name a
+   weaker question for itself, and a change to the question does not reach a
+   route that already exists unless the writer remembers annotations (it did
+   not, once). The table should be derived from the `Component` and its
+   profile, which are what the question follows from (§8).
+3. *The bouncer does not guard the perimeter.* Surfaces published from a DMZ
+   have no session; what stands in front of them is the publishing proxy
+   (networking.md, L1′). "The bouncer checks everything" is true of the
+   authenticated Gateway only.
+4. *A right withdrawn takes up to the bouncer's cache lifetime to bite* —
+   five minutes — and a session ended at Keycloak takes up to the access
+   token's lifetime, also five. The design names a changelog poll that would
+   make the first a second or two; it is not built.
+5. *The usher will be asked to become a backend for everything.* Its routes
+   are lists, and lists are where one tenant's objects leak to another. Each
+   route names its object and its relation and is registered through one
+   guard, as the director's are; a route that filters in its handler instead
+   is the mistake to refuse in review.
+6. *The concierge puts an address in a URL.* The sign-in form is filled from
+   `login_hint` on the console's address, carried to the identity provider in
+   the edge's `state`. Nothing is stored, but the address is in browser
+   history and in the edge's access logs. It also depends on the format of
+   `state`, which is the edge's own; when that changes the form is simply
+   not filled.
+7. *Four processes are not four controls.* The concierge is a convenience
+   and could be removed without weakening anything; the usher is a
+   separation of privilege, not an enforcement point. The controls are the
+   edge session, the bouncer, the publishing proxies, and the director's
+   check before a commit.
+
+**What moves, and in what order.**
+
+| Step | Change |
+| --- | --- |
+| Rename | `edge-authz` → `bouncer` (binary, package, Deployment and Service, the route table and its annotations, values, environment); `sign-in` → `concierge` (the gentian-ui app and its image, the Deployment and Service). Done on an empty cluster: the bouncer's Service is named by every session policy, and renaming it under live policies refuses every request until the last one follows. The address a person sees (`/sign-in/`) is not renamed. |
+| Usher, first route | `GET /v1/tenants/{t}/tiles`: the tiles of one tenant, open to whoever may enter it, each filtered by its own relation, built from the bouncer's table. The desktop's backend calls it in-cluster with the person's token; it has no public route. Tenant namespaces are let through to it in `kernel-edge`, as they are to the director. |
+| Usher, the rest | `me` (the relations a person holds on a tenant and on the cluster), then status reads. Each leaves the director when its last caller has moved. The director's `GET /v1/clusters/{c}/tiles` — reachable only with a cluster relation, which is why a tenant's own people saw an empty desktop — goes with the first. |
+| Launch rights | Tiles of installed catalogue apps need `can_launch` on `app:<t>/<p>`, which nothing writes yet. Written by the operator when it installs the component, like the rest of the structure. |
+| Concierge to the DMZ | A component of the platform tenant with one perimeter surface, `authMode: none`, published from `tenant-platform-dmz` with an owner and a review date. The brand files it serves today move with the branding work, not with this. |
 
 ## 4. Bootstrap: writing configuration before Keycloak exists
 
@@ -700,5 +819,24 @@ Cluster claim — in git, written through the director. The values never are.
   chain, and its tuples must exist). The first is simpler and keeps the
   store out of the FGA model; the second is what an autonomous store action
   — a scheduled upgrade — will need. Start with the first.
+- **Refuse by default at the Gateway.** Attach the bouncer to the
+  authenticated Gateway itself, so a route with no line in its table is
+  refused, and keep the per-route policy for the zone's session only.
+  Recommended: it turns the two holes of §3.10 into something that cannot
+  recur. To verify first: that Envoy Gateway applies a Gateway-level
+  external authorization together with a route-level OIDC session in the
+  order the bouncer needs, and what it does to the edge's own `/oauth2/`
+  paths.
+- **Where the bouncer's table comes from.** From the `Component` and its
+  profile, written by the operator into the table directly, instead of from
+  annotations on the routes. Recommended, with the default above.
+- **Which reads the director keeps.** Declared state for those who may
+  change it; everything a person needs merely to use the platform goes to
+  the usher. The line to hold: a director route that a tenant member's
+  desktop calls on every load is on the wrong side of it.
+- **The concierge's address.** A host of its own in the kernel zone, or the
+  kernel domain's apex itself. The apex is what people type; a perimeter
+  surface on it means the apex is served from the DMZ rather than redirected
+  from the authenticated Gateway.
 - **Whether `credentialmgr` moves in the same milestone.** Recommended no —
   it is correct today and the move is mechanical once the director exists.
