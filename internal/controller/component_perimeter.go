@@ -58,6 +58,15 @@ import (
 // public internet with no session in front of it does not belong in the same
 // blast radius as the tenant's application and its database.
 
+// The publishing proxy is a Deployment this operator creates and removes, so
+// it has to be allowed to: without create the proxy never starts, the route
+// is never written, and a published host answers 404 from the Gateway with
+// the listener in place and nothing behind it. The markers are a
+// free-floating block: controller-gen ignores one that is part of a
+// declaration's doc comment.
+//
+// +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
+
 // perimeterEnablement is one live enablement paired with the profile entry it
 // enables. Both are needed and they come from different people: the profile
 // says which paths this surface is, the enablement says it may be published,
