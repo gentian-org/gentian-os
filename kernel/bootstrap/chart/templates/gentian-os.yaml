@@ -25,6 +25,15 @@ metadata:
   namespace: {{ include "ns" (list . "gitops") }}
   annotations:
     argocd.argoproj.io/sync-wave: "0"
+    # Compared by asking the API server what applying would change, not by
+    # Argo CD's own diff. This Application ships its CRDs together with
+    # objects of those kinds, and Argo CD's diff reads a schema it cached:
+    # after a CRD gains a field it kept reporting the desktop's profile
+    # OutOfSync, re-applying it every few minutes, while a server-side dry
+    # run of the same manifest returned the live object unchanged. The
+    # install then waits its whole timeout on an Application that is in fact
+    # in sync.
+    argocd.argoproj.io/compare-options: ServerSideDiff=true
   finalizers:
   - resources-finalizer.argocd.argoproj.io
 spec:
