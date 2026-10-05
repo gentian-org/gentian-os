@@ -38,9 +38,9 @@ import (
 // always its own audit line rather than something an administrator does
 // incidentally while doing everything else.
 //
-// The expiry is required and there is no way to say "forever". A public
-// surface with no end is not something anybody decided; it is something
-// somebody once did.
+// A review date is required and an expiry is not. A surface meant to stay may
+// have no end, but none goes unlooked-at: the date is when its owner and the
+// approver see it again, and an overdue one is reported.
 //
 // This file is also the REGISTRY. Every URL a tenant has ever published is
 // here with who published it and until when, and a perimeter approver reads

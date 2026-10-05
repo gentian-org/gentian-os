@@ -478,7 +478,8 @@ func componentsOfZoneSecret(c client.Client) handler.EventHandler {
 }
 
 // ensureDefaultComponents gives the tenant a Component of every profile that
-// declares defaultForTenants, named after the profile.
+// declares defaultForTenants, named after the profile, and gives the platform
+// tenant one of every profile that declares defaultForPlatform.
 //
 // The desktop was the one component every tenant got, created here by name.
 // The administration console is the second, and rather than teach this
@@ -494,7 +495,10 @@ func (r *TenantReconciler) ensureDefaultComponents(ctx context.Context, tenant *
 	}
 	for i := range profiles.Items {
 		profile := &profiles.Items[i]
-		if !profile.Spec.DefaultForTenants || !classIncludes(profile, gentianov1alpha1.ComponentClassApp) {
+		// Every tenant's, or the platform tenant's alone.
+		wanted := profile.Spec.DefaultForTenants ||
+			(profile.Spec.DefaultForPlatform && r.adoptsKernelRealm(tenant))
+		if !wanted || !classIncludes(profile, gentianov1alpha1.ComponentClassApp) {
 			continue
 		}
 		desired := &gentianov1alpha1.Component{

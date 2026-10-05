@@ -100,8 +100,17 @@ func perimeterProxyConfig(e *gentianov1alpha1.ExposureSpec, upstreamHost string,
 	b.WriteString("    autoindex off;\n")
 	b.WriteString("    server_tokens off;\n")
 	b.WriteString("\n")
-	b.WriteString("    # Anything not declared never reaches the tenant.\n")
-	b.WriteString("    location / { return 404; }\n")
+	// A surface that declares "/" publishes the whole host -- a public site
+	// is one -- and its own location below is the root. Declaring it is the
+	// only way to have it: an entry with no paths still publishes nothing.
+	wholeHost := false
+	for _, prefix := range perimeterPrefixes(e) {
+		wholeHost = wholeHost || prefix == "/"
+	}
+	if !wholeHost {
+		b.WriteString("    # Anything not declared never reaches the tenant.\n")
+		b.WriteString("    location / { return 404; }\n")
+	}
 
 	for _, prefix := range perimeterPrefixes(e) {
 		b.WriteString("\n")

@@ -236,10 +236,20 @@ func (r *GatewayPlatformReconciler) ensureEdgeGateways(ctx context.Context) erro
 	if err := r.List(ctx, tenantList); err != nil {
 		return fmt.Errorf("list tenants for the edge Gateways: %w", err)
 	}
+	// A published host is the entry's own, which the profile says. Components
+	// are named after their profile, so the install names both.
+	profileList := &gentianov1alpha1.ComponentProfileList{}
+	if err := r.List(ctx, profileList); err != nil {
+		return fmt.Errorf("list profiles for the perimeter Gateway: %w", err)
+	}
+	profiles := map[string]*gentianov1alpha1.ComponentProfile{}
+	for i := range profileList.Items {
+		profiles[profileList.Items[i].Name] = &profileList.Items[i]
+	}
 	ann := edgeDNSAnnotations(r.Ingress)
 	for _, desired := range []*gatewayv1.Gateway{
 		buildAuthenticatedGateway(r.KernelDomain, r.TenancyMode, zonedTenants(tenantList.Items, r.kernelRealm())),
-		buildPerimeterGateway(r.KernelDomain, r.TenancyMode, tenantList.Items),
+		buildPerimeterGateway(r.KernelDomain, r.TenancyMode, r.kernelRealm(), tenantList.Items, profiles),
 	} {
 		if len(ann) > 0 {
 			if desired.Annotations == nil {
@@ -261,7 +271,7 @@ func (r *GatewayPlatformReconciler) ensureEdgeGateways(ctx context.Context) erro
 // the ACME HTTP-01 solver answers and everything else is redirected to https.
 // Under mergeGateways a listener is unique per port and hostname across the
 // class, so :80 lives here and nowhere else.
-func buildPerimeterGateway(kernelDomain, tenancyMode string, tenants []gentianov1alpha1.Tenant) *gatewayv1.Gateway {
+func buildPerimeterGateway(kernelDomain, tenancyMode, kernelRealm string, tenants []gentianov1alpha1.Tenant, profiles map[string]*gentianov1alpha1.ComponentProfile) *gatewayv1.Gateway {
 	idHost := gatewayv1.Hostname("id." + kernelDomain)
 	return &gatewayv1.Gateway{
 		ObjectMeta: metav1.ObjectMeta{
@@ -278,7 +288,7 @@ func buildPerimeterGateway(kernelDomain, tenancyMode string, tenants []gentianov
 			Listeners: append([]gatewayv1.Listener{
 				withAllowedRoutes(tlsListener(perimeterIDListenerName, idHost, kernelWildcardTLSSecretName, servicesNamespace), true),
 				withAllowedRoutes(httpRedirectListener(), true),
-			}, perimeterTenantListeners(kernelDomain, tenancyMode, tenants)...),
+			}, perimeterTenantListeners(kernelDomain, tenancyMode, kernelRealm, tenants, profiles)...),
 		},
 	}
 }
@@ -301,7 +311,7 @@ func buildPerimeterGateway(kernelDomain, tenancyMode string, tenants []gentianov
 //
 // The certificate is the tenant's own wildcard, which already covers any
 // subdomain of its domain, so publishing a surface issues nothing new.
-func perimeterTenantListeners(kernelDomain, tenancyMode string, tenants []gentianov1alpha1.Tenant) []gatewayv1.Listener {
+func perimeterTenantListeners(kernelDomain, tenancyMode, kernelRealm string, tenants []gentianov1alpha1.Tenant, profiles map[string]*gentianov1alpha1.ComponentProfile) []gatewayv1.Listener {
 	var out []gatewayv1.Listener
 	seen := map[string]struct{}{}
 	for i := range tenants {
@@ -309,12 +319,18 @@ func perimeterTenantListeners(kernelDomain, tenancyMode string, tenants []gentia
 		if tenant.DeletionTimestamp != nil {
 			continue
 		}
+		// The platform tenant's zone is the kernel's: its domain is the
+		// cluster's own and its certificate the kernel's, which names the
+		// bare domain as well as everything under it.
+		kernelZone := tenantAdoptsKernelRealm(tenant, kernelRealm)
 		domain := tenant.EffectiveDomain(kernelDomain, tenancyMode)
-		if domain == "" {
-			continue
+		secret, secretNamespace := tenantWildcardSecretName(tenant.Name), tenantNamespaceName(tenant)
+		if kernelZone {
+			domain = kernelDomain
+			secret, secretNamespace = kernelWildcardTLSSecretName, servicesNamespace
 		}
 		for j := range tenant.Spec.Exposures {
-			host := publishedHost(&tenant.Spec.Exposures[j], domain)
+			host := publishedHost(&tenant.Spec.Exposures[j], profiles, domain, kernelZone)
 			if host == "" {
 				continue
 			}
@@ -323,8 +339,7 @@ func perimeterTenantListeners(kernelDomain, tenancyMode string, tenants []gentia
 			}
 			seen[host] = struct{}{}
 			out = append(out, withAllowedRoutes(tlsListener(
-				perimeterListenerName(host), gatewayv1.Hostname(host),
-				tenantWildcardSecretName(tenant.Name), tenantNamespaceName(tenant),
+				perimeterListenerName(host), gatewayv1.Hostname(host), secret, secretNamespace,
 			), true))
 		}
 	}
@@ -332,18 +347,29 @@ func perimeterTenantListeners(kernelDomain, tenancyMode string, tenants []gentia
 	return out
 }
 
-// publishedHost is where one enablement answers: the entry's own name under
-// the tenant's domain.
+// publishedHost is where one enablement answers, by the same rule the route
+// behind it is written with (exposureHostIn): the listener and the route are
+// two halves of one host and must not each have an opinion about its name.
+//
+// An enablement naming a profile or an entry that does not exist, or an entry
+// that is not a perimeter one, has no host and gets no listener.
 //
 // An expired enablement still gets a listener. A listener with no route
 // behind it serves nothing -- the proxy and the route are what the operator
 // takes down at expiry -- and keeping it means a renewal does not have to
 // wait for the Gateway to be reprogrammed before the link works again.
-func publishedHost(e *gentianov1alpha1.TenantExposure, domain string) string {
-	if e.ExposureName == "" {
+func publishedHost(e *gentianov1alpha1.TenantExposure, profiles map[string]*gentianov1alpha1.ComponentProfile, domain string, kernelZone bool) string {
+	profile := profiles[e.Install]
+	if profile == nil {
 		return ""
 	}
-	return e.ExposureName + "." + domain
+	for i := range profile.Spec.Expose {
+		entry := &profile.Spec.Expose[i]
+		if entry.Name == e.ExposureName && entry.Surface == gentianov1alpha1.SurfacePerimeter {
+			return exposureHostIn(domain, kernelZone, e.Install, entry)
+		}
+	}
+	return ""
 }
 
 // perimeterListenerName is a Gateway listener name derived from the host:

@@ -262,6 +262,19 @@ adminConsole:
   # Values the profile carries as its own, merged over what it sets already.
   extraValues: {}
 
+# The concierge: the page on the cluster's bare domain, a component of the
+# platform tenant published from its DMZ. Off by default; the v5 bootstrap
+# turns it on. Like the consoles it comes from gentian-ui as a moving chart
+# per branch and an immutable one per commit, and the installer pins the
+# immutable one.
+concierge:
+  enabled: false
+  chart:
+    repository: oci://ghcr.io/gentian-org/charts
+    name: concierge
+    version: "0.1.0-develop"
+  extraValues: {}
+
 # The ext-auth bouncer: L2 of the edge, run in the edge namespace from this
 # image. Off by default; the v5 bootstrap turns it on with the director,
 # because it decides against the store the director established.

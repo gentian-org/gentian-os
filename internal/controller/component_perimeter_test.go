@@ -317,7 +317,10 @@ func TestAGatewayEntryCannotBePublishedOnThePerimeter(t *testing.T) {
 }
 
 // A published host needs a listener on the perimeter Gateway, or its route
-// attaches to nothing.
+// attaches to nothing. The host is the one the ROUTE is written with -- the
+// entry's own label -- and not a name of the listener's own making: the two
+// once differed (the entry's name against its subDomain), and a route whose
+// host no listener serves answers nothing.
 //
 // This is the failure with no error to read: the HTTPRoute exists, the proxy
 // runs, and the hostname resolves to an Envoy that has never been told to
@@ -329,7 +332,7 @@ func TestAPublishedHostGetsAListenerOnThePerimeterGateway(t *testing.T) {
 		Install: "nextcloud-base-ce", ExposureName: "shares", Owner: "u-tom",
 		ExpiresAt: exposureEnds(time.Now().Add(24 * time.Hour)),
 	}}
-	gw := buildPerimeterGateway("k.example", "", []gentianov1alpha1.Tenant{*tenant})
+	gw := buildPerimeterGateway("k.example", "", "kernel", []gentianov1alpha1.Tenant{*tenant}, perimeterProfiles())
 
 	var hosts []string
 	for _, l := range gw.Spec.Listeners {
@@ -337,7 +340,7 @@ func TestAPublishedHostGetsAListenerOnThePerimeterGateway(t *testing.T) {
 			hosts = append(hosts, string(*l.Hostname))
 		}
 	}
-	if !containsString(hosts, "shares.acme.k.example") {
+	if !containsString(hosts, "share.acme.k.example") {
 		t.Fatalf("the published host has no listener; got %v", hosts)
 	}
 	// The identity provider's own listener is still there: publishing a
@@ -357,7 +360,7 @@ func TestThePerimeterDoesNotClaimTheTenantsWildcard(t *testing.T) {
 		Install: "nextcloud-base-ce", ExposureName: "shares", Owner: "u-tom",
 		ExpiresAt: exposureEnds(time.Now().Add(24 * time.Hour)),
 	}}
-	gw := buildPerimeterGateway("k.example", "", []gentianov1alpha1.Tenant{*tenant})
+	gw := buildPerimeterGateway("k.example", "", "kernel", []gentianov1alpha1.Tenant{*tenant}, perimeterProfiles())
 	for _, l := range gw.Spec.Listeners {
 		if l.Hostname != nil && strings.HasPrefix(string(*l.Hostname), "*") {
 			t.Fatalf("the perimeter claimed a wildcard listener: %s", *l.Hostname)
@@ -374,14 +377,14 @@ func TestACustomDomainTenantPublishesUnderItsDomain(t *testing.T) {
 		Install: "nextcloud-base-ce", ExposureName: "shares", Owner: "u-tom",
 		ExpiresAt: exposureEnds(time.Now().Add(24 * time.Hour)),
 	}}
-	gw := buildPerimeterGateway("k.example", "", []gentianov1alpha1.Tenant{*tenant})
+	gw := buildPerimeterGateway("k.example", "", "kernel", []gentianov1alpha1.Tenant{*tenant}, perimeterProfiles())
 	var hosts []string
 	for _, l := range gw.Spec.Listeners {
 		if l.Hostname != nil {
 			hosts = append(hosts, string(*l.Hostname))
 		}
 	}
-	if !containsString(hosts, "shares.acme.example") {
+	if !containsString(hosts, "share.acme.example") {
 		t.Fatalf("the custom domain's host has no listener; got %v", hosts)
 	}
 }
@@ -390,7 +393,70 @@ func TestACustomDomainTenantPublishesUnderItsDomain(t *testing.T) {
 // listeners the kernel needs.
 func TestATenantPublishingNothingAddsNoListener(t *testing.T) {
 	tenant := acmeTenantFixture()
-	gw := buildPerimeterGateway("k.example", "", []gentianov1alpha1.Tenant{*tenant})
+	gw := buildPerimeterGateway("k.example", "", "kernel", []gentianov1alpha1.Tenant{*tenant}, perimeterProfiles())
+	if len(gw.Spec.Listeners) != 2 {
+		t.Fatalf("listeners = %d, want the identity provider and :80 only", len(gw.Spec.Listeners))
+	}
+}
+
+// perimeterProfiles is what the Gateway is given to name a published host:
+// the profiles, by the name an install carries.
+func perimeterProfiles() map[string]*gentianov1alpha1.ComponentProfile {
+	p := nextcloudWithPerimeter()
+	return map[string]*gentianov1alpha1.ComponentProfile{p.Name: p}
+}
+
+// The platform tenant may publish on the cluster's bare domain, with the
+// kernel's own certificate; no other tenant's apex entry gets a listener.
+func TestOnlyThePlatformTenantPublishesOnTheBareDomain(t *testing.T) {
+	front := &gentianov1alpha1.ComponentProfile{}
+	front.Name = "front"
+	front.Spec.Expose = []gentianov1alpha1.ExposureSpec{{
+		Name: "site", Surface: gentianov1alpha1.SurfacePerimeter, AuthMode: gentianov1alpha1.AuthModeNone,
+		Apex: true, Paths: []string{"/"},
+		Backend: gentianov1alpha1.BackendRef{Service: "front", Port: 8080},
+	}}
+	profiles := map[string]*gentianov1alpha1.ComponentProfile{"front": front}
+	published := []gentianov1alpha1.TenantExposure{{Install: "front", ExposureName: "site", Owner: "installer"}}
+
+	platform := platformTenantFixture()
+	platform.Spec.Exposures = published
+	acme := acmeTenantFixture()
+	acme.Spec.Exposures = published
+
+	gw := buildPerimeterGateway("k.example", "", "kernel", []gentianov1alpha1.Tenant{*platform, *acme}, profiles)
+	var apex *gatewayv1.Listener
+	for i, l := range gw.Spec.Listeners {
+		if l.Hostname == nil {
+			continue
+		}
+		switch string(*l.Hostname) {
+		case "k.example":
+			apex = &gw.Spec.Listeners[i]
+		case "acme.k.example":
+			t.Fatalf("a tenant other than the platform's got a listener on its bare domain")
+		}
+	}
+	if apex == nil {
+		t.Fatalf("the platform tenant's apex entry has no listener")
+	}
+	ref := apex.TLS.CertificateRefs[0]
+	// No namespace on the reference means the Gateway's own, which is where
+	// the kernel's certificate is.
+	if string(ref.Name) != kernelWildcardTLSSecretName || (ref.Namespace != nil && string(*ref.Namespace) != servicesNamespace) {
+		t.Fatalf("the bare domain is served with %v, want the kernel's certificate", ref)
+	}
+}
+
+// An enablement that names nothing the profile declares as a perimeter entry
+// gets no listener.
+func TestAnEnablementOfNothingDeclaredGetsNoListener(t *testing.T) {
+	tenant := acmeTenantFixture()
+	tenant.Spec.Exposures = []gentianov1alpha1.TenantExposure{
+		{Install: "nextcloud-base-ce", ExposureName: "web", Owner: "u-tom"},
+		{Install: "unknown", ExposureName: "shares", Owner: "u-tom"},
+	}
+	gw := buildPerimeterGateway("k.example", "", "kernel", []gentianov1alpha1.Tenant{*tenant}, perimeterProfiles())
 	if len(gw.Spec.Listeners) != 2 {
 		t.Fatalf("listeners = %d, want the identity provider and :80 only", len(gw.Spec.Listeners))
 	}

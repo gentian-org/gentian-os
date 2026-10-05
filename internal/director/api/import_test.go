@@ -105,7 +105,7 @@ func (o *importingOperator) Plans(context.Context, string, bool) ([]lifecycle.Pl
 func TestAnImportDeclaresWaitsAndRestores(t *testing.T) {
 	defer api.SetImportPoll(20 * time.Millisecond)()
 	op := &importingOperator{}
-	h := startWith(t, false, "", op)
+	h := startWith(t, false, op)
 	alice := h.token(t, "gentian", "alice")
 
 	code, body := h.do(t, "POST", "/v1/clusters/"+dt.Cluster+"/bundles", alice, "not really a tar")

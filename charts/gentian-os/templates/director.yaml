@@ -254,10 +254,6 @@ spec:
               value: {{ $deployments.cluster | quote }}
             - name: DIRECTOR_ENTITLEMENTS
               value: {{ .Values.director.entitlements | quote }}
-            # internal/tiles.ConfigMapName and internal/tiles.Key, as the
-            # operator's projection writes them.
-            - name: DIRECTOR_TILES_PATH
-              value: /etc/gentian/tiles/tiles.yaml
             # The operator's app-lifecycle API, beside this pod: the one
             # cluster question the director asks. A tenant's enforced
             # ceiling and the plans it may move to come from here; the plan
@@ -408,8 +404,6 @@ spec:
               mountPath: {{ $checkout }}
             - name: tmp
               mountPath: /tmp
-            - name: tiles
-              mountPath: /etc/gentian/tiles
               readOnly: true
             - name: realm-credentials
               mountPath: /etc/gentian/realms
@@ -429,12 +423,6 @@ spec:
           emptyDir: {}
         - name: tmp
           emptyDir: {}
-        # Optional: the projection is the operator's, and the director serves
-        # an empty catalogue until it exists rather than refusing to start.
-        - name: tiles
-          configMap:
-            name: gentian-tiles
-            optional: true
         # Optional, and re-read rather than read once: the operator writes a
         # realm's key when the realm appears, which for every tenant is after
         # this pod started. A director that read the directory at boot would

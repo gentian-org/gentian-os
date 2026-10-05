@@ -132,6 +132,12 @@ spec:
           enabled: true
           chart:
             version: {{ .Values.adminConsole.chartVersion | default (printf "0.1.1-%s" (.Values.adminConsole.chartBranch | default "develop")) | quote }}
+        # The concierge: the page on the cluster's bare domain, the platform
+        # tenant's component, published from its DMZ. Pinned like the consoles.
+        concierge:
+          enabled: true
+          chart:
+            version: {{ .Values.concierge.chartVersion | default (printf "0.1.0-%s" (.Values.concierge.chartBranch | default "develop")) | quote }}
         # The public half of the key Keycloak's event listener signs with.
         # Without it nothing accepts a membership statement, so OpenFGA never
         # learns who is in which group and every permission that follows from

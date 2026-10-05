@@ -98,7 +98,13 @@ func livePerimeterExposures(
 		if on.ExpiresAt != nil && !now.Before(on.ExpiresAt.Time) {
 			continue
 		}
-		out = append(out, perimeterEnablement{spec: spec, on: on, host: exposureHost(zone, comp, spec)})
+		host := exposureHost(zone, comp, spec)
+		if host == "" {
+			// An entry with nowhere to answer in this zone: the bare domain,
+			// asked for by a tenant that is not the platform's.
+			continue
+		}
+		out = append(out, perimeterEnablement{spec: spec, on: on, host: host})
 	}
 	return out
 }
@@ -409,6 +415,7 @@ func (r *ComponentReconciler) ensurePerimeterRoute(
 	gwName := gatewayv1.ObjectName(PerimeterGatewayName)
 	svcKind := gatewayv1.Kind("Service")
 	port := gatewayv1.PortNumber(perimeterProxyPort)
+	section := gatewayv1.SectionName(perimeterListenerName(p.host))
 
 	var rules []gatewayv1.HTTPRouteRule
 	for _, prefix := range perimeterPrefixes(p.spec) {
@@ -429,8 +436,12 @@ func (r *ComponentReconciler) ensurePerimeterRoute(
 	route := &gatewayv1.HTTPRoute{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: dmz, Labels: labels},
 		Spec: gatewayv1.HTTPRouteSpec{
+			// The host's own listener, by name. Without it the route attaches
+			// to every listener of the Gateway that admits its hostname, and
+			// the :80 listener admits any: the surface would then be served
+			// in clear text instead of being redirected to https.
 			CommonRouteSpec: gatewayv1.CommonRouteSpec{ParentRefs: []gatewayv1.ParentReference{{
-				Name: gwName, Namespace: &edge,
+				Name: gwName, Namespace: &edge, SectionName: &section,
 			}}},
 			Hostnames: []gatewayv1.Hostname{gatewayv1.Hostname(p.host)},
 			Rules:     rules,

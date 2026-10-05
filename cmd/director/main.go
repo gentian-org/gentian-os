@@ -359,7 +359,6 @@ func run(log *slog.Logger) error {
 		StoreURL:            storeURL,
 		Binder:              checker,
 		EnforceEntitlements: enforce, Store: store, Cluster: cluster,
-		TilesPath: envOr("DIRECTOR_TILES_PATH", "/etc/gentian/tiles/tiles.yaml"),
 		Lifecycle: lc, Identity: ident,
 		InviteClientID:    os.Getenv("DIRECTOR_INVITE_CLIENT_ID"),
 		InviteRedirectURI: os.Getenv("DIRECTOR_INVITE_REDIRECT_URI"),

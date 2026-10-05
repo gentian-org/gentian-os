@@ -35,10 +35,11 @@ import (
 	"github.com/gentian-org/gentian-os/internal/branding"
 )
 
-// brandingConfigMap is where the brand is published: beside the sign-in
-// router, which serves it at id.<kernel>/branding/ to every page. Labelled so
+// brandingConfigMap is where the brand is published, twice. In the platform
+// tenant's namespace, beside the concierge, which serves it on the cluster's
+// bare domain to every page. And beside the identity provider, labelled so
 // the tenant Composition finds it the way it finds the cluster config, for
-// the name its realms' mail is sent under.
+// the name its realms' mail is sent under; that copy is read, never served.
 const (
 	brandingConfigMap  = "branding"
 	configTypeLabel    = "gentianos.io/config-type"
@@ -67,6 +68,9 @@ func brandName(ctx context.Context, c client.Reader) string {
 // page's styling away.
 type BrandingReconciler struct {
 	client.Client
+	// KernelRealm is the realm the platform tenant adopts, which is how that
+	// tenant, and so the concierge's namespace, is found.
+	KernelRealm string
 }
 
 // The markers are a free-floating block: controller-gen ignores a block that
@@ -101,12 +105,35 @@ func (r *BrandingReconciler) Reconcile(ctx context.Context, _ ctrl.Request) (ctr
 }
 
 func (r *BrandingReconciler) publish(ctx context.Context, files branding.Files) error {
+	if err := r.publishTo(ctx, identityNamespace, true, files); err != nil {
+		return err
+	}
+	tenants := &gentianov1alpha1.TenantList{}
+	if err := r.List(ctx, tenants); err != nil {
+		return err
+	}
+	// No platform tenant yet means no concierge to serve it; the tenant's
+	// arrival is watched and brings this back.
+	if ns := platformTenantNamespace(tenants.Items, r.KernelRealm); ns != "" {
+		return r.publishTo(ctx, ns, false, files)
+	}
+	return nil
+}
+
+// publishTo writes the brand's files into one namespace. Only the copy the
+// Composition selects by label carries it: a selector that matched two
+// ConfigMaps would have two answers to what the cluster is called.
+func (r *BrandingReconciler) publishTo(ctx context.Context, namespace string, labelled bool, files branding.Files) error {
+	labels := map[string]string{managedByLabel: managedByValue}
+	if labelled {
+		labels[configTypeLabel] = brandingConfigType
+	}
 	existing := &corev1.ConfigMap{}
-	err := r.Get(ctx, types.NamespacedName{Name: brandingConfigMap, Namespace: identityNamespace}, existing)
+	err := r.Get(ctx, types.NamespacedName{Name: brandingConfigMap, Namespace: namespace}, existing)
 	if errors.IsNotFound(err) {
 		cm := &corev1.ConfigMap{}
-		cm.Name, cm.Namespace = brandingConfigMap, identityNamespace
-		cm.Labels = map[string]string{managedByLabel: managedByValue, configTypeLabel: brandingConfigType}
+		cm.Name, cm.Namespace = brandingConfigMap, namespace
+		cm.Labels = labels
 		cm.Data, cm.BinaryData = files.Text, files.Binary
 		return r.Create(ctx, cm)
 	}
@@ -122,7 +149,9 @@ func (r *BrandingReconciler) publish(ctx context.Context, files branding.Files) 
 	if existing.Labels == nil {
 		existing.Labels = map[string]string{}
 	}
-	existing.Labels[configTypeLabel] = brandingConfigType
+	for k, v := range labels {
+		existing.Labels[k] = v
+	}
 	return r.Update(ctx, existing)
 }
 

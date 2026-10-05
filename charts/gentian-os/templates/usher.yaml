@@ -140,8 +140,8 @@ spec:
               mountPath: /etc/gentian/tiles
               readOnly: true
       volumes:
-        # The operator's tile catalogue. Optional: before the first projection
-        # the usher answers that there are no tiles.
+        # The operator's tile catalogue. Optional so the pod starts before the
+        # first projection; until then the tiles route answers 503.
         - name: tiles
           configMap:
             name: gentian-tiles

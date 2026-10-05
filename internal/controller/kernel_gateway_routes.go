@@ -39,7 +39,6 @@ const (
 	// specific than the allow and closed by a policy: what a perimeter
 	// surface refuses is written down, not left to absence.
 	kernelRouteKeycloakRefused = "kernel-idp-refused"
-	kernelRouteKernelApex      = "kernel-apex-redirect"
 	kernelRouteHTTPRedirect    = "kernel-http-redirect"
 	kernelRouteArgoCD          = "kernel-argocd"
 	kernelRouteHeadlamp        = "kernel-headlamp"
@@ -125,8 +124,7 @@ func (r *GatewayPlatformReconciler) reconcileKernelHTTPRoutes(ctx context.Contex
 	}
 
 	specs := kernelHTTPRouteSpecs(r.KernelDomain, effectiveDomains, oidcSubs, tenantNames,
-		clusterLLMEnabled(ctx, r.Client), r.Cluster, r.kernelZoneReady(ctx), desktopPresent(ctx, r.Client),
-		conciergeFor(r.TenancyMode))
+		clusterLLMEnabled(ctx, r.Client), r.Cluster, r.kernelZoneReady(ctx), desktopPresent(ctx, r.Client))
 	// The bouncer's table first: a route whose policy asks the bouncer before the
 	// bouncer knows the host is refused, which is the right direction, but a
 	// short one.
@@ -204,7 +202,6 @@ func kernelHTTPRouteSpecs(
 	cluster string,
 	kernelZoneReady bool,
 	desktop bool,
-	concierge bool,
 ) []kernelHTTPRouteSpec {
 	idHost := fmt.Sprintf("id.%s", kernelDomain)
 
@@ -227,13 +224,6 @@ func kernelHTTPRouteSpecs(
 			rules: []gatewayv1.HTTPRouteRule{
 				kernelBackendRulePrefixNS(kcService, identityNamespace, kcPort, "/auth/realms/", idFilters...),
 				kernelBackendRulePrefixNS(kcService, identityNamespace, kcPort, "/auth/resources/", idFilters...),
-				// The concierge: the page before the realm's own form,
-				// on the same host so the address it hands on reaches that
-				// form and nothing else.
-				kernelBackendRulePrefixNS(conciergeService, identityNamespace, conciergePort, conciergePath, idFilters...),
-				// The cluster's brand, published by the operator and served
-				// by the same container: one place every page loads it from.
-				kernelBackendRulePrefixNS(conciergeService, identityNamespace, conciergePort, brandingPath, idFilters...),
 			},
 			policy: keycloakProxyBackendTrafficPolicySpec(),
 		},
@@ -303,36 +293,20 @@ func kernelHTTPRouteSpecs(
 		})
 	}
 	// The desktop is the tenant's own component, routed where it runs
-	// (tenant-<t>, on console.<zone>); the kernel routes two names to it.
-	// www.<kernel> and the apex are the names people type, and both send the
-	// browser to the platform console with path and query kept: a session
-	// travels in cookies on the kernel domain, so nothing is lost on the way.
-	// Only once the kernel zone exists, because the console does not before.
+	// (tenant-<t>, on console.<zone>).
 	//
-	// On a multi-tenant cluster those names belong to no one workspace, so
-	// they go to the concierge instead, which asks for an address and
-	// sends the browser to its workspace's console. A single-tenant cluster
-	// has one workspace, and its console is where everyone is going.
-	if kernelZoneReady && desktop {
-		landing := consoleRedirectRule(consoleHost(kernelDomain))
-		if concierge {
-			landing = conciergeRedirectRule(idHost)
-		}
-		specs = append(specs,
-			kernelHTTPRouteSpec{
-				name:        kernelRouteWWWRedirect,
-				host:        "www." + kernelDomain,
-				sectionName: wildcardListenerName,
-				rules:       []gatewayv1.HTTPRouteRule{landing},
-			},
-			kernelHTTPRouteSpec{
-				name:        kernelRouteKernelApex,
-				host:        kernelDomain,
-				sectionName: wildcardListenerName,
-				rules:       []gatewayv1.HTTPRouteRule{landing},
-			},
-		)
-	}
+	// The cluster's bare domain is not routed here at all. It is the first
+	// thing anybody typing the cluster's address meets, before any session,
+	// so it is a perimeter surface: the concierge, a component of the platform
+	// tenant, published from that tenant's DMZ on a listener of the perimeter
+	// Gateway (networking.md §1). www.<kernel> is the other name people type,
+	// and it is sent to the bare domain.
+	specs = append(specs, kernelHTTPRouteSpec{
+		name:        kernelRouteWWWRedirect,
+		host:        "www." + kernelDomain,
+		sectionName: wildcardListenerName,
+		rules:       []gatewayv1.HTTPRouteRule{consoleRedirectRule(kernelDomain)},
+	})
 	// A tenant's apex likewise sends the browser to the tenant's own console.
 	// The apex is published with the tenant either way (it is the tenant's
 	// name), so the redirect is what makes it answer.
@@ -586,49 +560,6 @@ func kernelHTTPSRedirectRule() gatewayv1.HTTPRouteRule {
 // the request, which is why the portal used to be served on these names
 // rather than redirected. Nothing travels on them now -- the session is in
 // cookies on the zone's domain -- so an alias by redirect loses nothing.
-// The concierge, served beside the identity provider (keycloak-idp's
-// concierge Deployment, gentian-ui apps/concierge).
-const (
-	conciergeService = "concierge"
-	conciergePort    = int32(8080)
-	conciergePath    = "/sign-in"
-	brandingPath     = "/branding"
-)
-
-// conciergeFor reports whether the kernel's apex lands on the concierge:
-// on a multi-tenant cluster, where the apex is nobody's workspace.
-func conciergeFor(tenancyMode string) bool {
-	return gentianov1alpha1.NormalizeTenancyMode(tenancyMode) == gentianov1alpha1.TenancyModeMulti
-}
-
-// conciergeRedirectRule sends every path to the concierge's page. The
-// query is kept, which is how a link can carry a hint through.
-func conciergeRedirectRule(idHost string) gatewayv1.HTTPRouteRule {
-	scheme := "https"
-	status := 302
-	port := gatewayv1.PortNumber(443)
-	host := gatewayv1.PreciseHostname(idHost)
-	path := conciergePath + "/"
-	return gatewayv1.HTTPRouteRule{
-		Matches: []gatewayv1.HTTPRouteMatch{pathPrefixMatch("/")},
-		Filters: []gatewayv1.HTTPRouteFilter{
-			{
-				Type: gatewayv1.HTTPRouteFilterRequestRedirect,
-				RequestRedirect: &gatewayv1.HTTPRequestRedirectFilter{
-					Scheme:   &scheme,
-					Hostname: &host,
-					Port:     &port,
-					Path: &gatewayv1.HTTPPathModifier{
-						Type:            gatewayv1.FullPathHTTPPathModifier,
-						ReplaceFullPath: &path,
-					},
-					StatusCode: &status,
-				},
-			},
-		},
-	}
-}
-
 func consoleRedirectRule(console string) gatewayv1.HTTPRouteRule {
 	scheme := "https"
 	status := 302

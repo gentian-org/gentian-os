@@ -14,11 +14,9 @@
  * Keycloak from its own origin and cannot reach the desktop's assets.
  */
 
-/* The cluster's brand: --brand-* custom properties, rendered by the operator
- * from the Branding (W3C design tokens) and served beside the concierge.
- * Every --gtn-* below reads its token and keeps the platform's own value when
- * the token is absent, or when the file is. */
-@import url("/branding/brand.css");
+/* Every --gtn-* below reads a --brand-* token and keeps the platform's own
+ * value when the token is absent. Nothing loads the tokens on this page: the
+ * brand is not served from the identity provider's host. */
 
 :root {
   --gtn-ink-0: var(--brand-color-ink-0, #07081a);

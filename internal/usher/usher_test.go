@@ -183,13 +183,13 @@ func TestAnUnreachableStoreShowsNothing(t *testing.T) {
 	}
 }
 
-// Before the operator has projected anything there are no tiles, and that is
-// an answer rather than an error.
-func TestNoCatalogueYetIsAnEmptyDesktop(t *testing.T) {
+// A catalogue that is not there is a failure, not an empty desktop: nothing on
+// the page would look like a person who holds nothing.
+func TestAMissingCatalogueIsAFailure(t *testing.T) {
 	store := &fakeStore{held: map[string]bool{"user:ada can_enter tenant:acme": true}}
 	s := New(Config{Authn: fakeAuthn{"ada": "ada"}, Authz: store, TilesPath: filepath.Join(t.TempDir(), "absent.yaml")})
 	code, body := ask(t, s, "/v1/tenants/acme/tiles", "ada")
-	if code != http.StatusOK || names(body) != "[]" {
+	if code != http.StatusServiceUnavailable || body["tiles"] != nil {
 		t.Errorf("status %d body %v", code, body)
 	}
 }

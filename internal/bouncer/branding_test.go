@@ -21,17 +21,20 @@ import (
 	"testing"
 )
 
-// The denied page wears the cluster's brand, loaded by the browser from where
-// the issuer's host publishes it; without one it keeps the platform's colours.
+// The denied page wears the cluster's brand, loaded by the browser from the
+// cluster's bare domain, where the concierge serves it; without one it keeps
+// the platform's colours.
 func TestTheDeniedPageWearsTheBrand(t *testing.T) {
-	if got := BrandingBase("https://id.k.example/auth"); got != "https://id.k.example/branding/" {
+	if got := BrandingBase("https://id.k.example/auth"); got != "https://k.example/branding/" {
 		t.Fatalf("branding base = %q", got)
 	}
-	if got := BrandingBase("http://keycloak.svc:8080/auth"); got != "" {
-		t.Fatalf("a non-TLS issuer gave %q", got)
+	for _, issuer := range []string{"http://keycloak.svc:8080/auth", "https://login.k.example/auth", "https://id./auth"} {
+		if got := BrandingBase(issuer); got != "" {
+			t.Fatalf("issuer %q gave %q", issuer, got)
+		}
 	}
 	page := deniedPage(BrandingBase("https://id.k.example/auth/"))
-	if !strings.Contains(page, `<link rel="stylesheet" href="https://id.k.example/branding/brand.css">`) {
+	if !strings.Contains(page, `<link rel="stylesheet" href="https://k.example/branding/brand.css">`) {
 		t.Fatalf("no brand stylesheet:\n%s", page)
 	}
 	if !strings.Contains(page, "var(--brand-color-brand-500,#262696)") {

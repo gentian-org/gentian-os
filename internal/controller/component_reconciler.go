@@ -663,11 +663,30 @@ func (r *ComponentReconciler) ensureZonePolicy(ctx context.Context, comp *gentia
 // names no subDomain. A desktop's console entry in the kernel zone is
 // console.<kernel> (networking.md §3).
 func exposureHost(zone edgeZone, comp *gentianov1alpha1.Component, e *gentianov1alpha1.ExposureSpec) string {
+	return exposureHostIn(zone.domain, zone.kernel, comp.Name, e)
+}
+
+// exposureHostIn is where an entry answers: a label under the zone's domain,
+// the entry's own or the component's name.
+//
+// An apex entry answers on the bare domain, and only in the kernel zone. It
+// has no host anywhere else, which is the empty string here and "not
+// published" to every caller: a tenant's bare domain is its own to route.
+func exposureHostIn(domain string, kernelZone bool, component string, e *gentianov1alpha1.ExposureSpec) string {
+	if domain == "" {
+		return ""
+	}
+	if e.Apex {
+		if !kernelZone {
+			return ""
+		}
+		return domain
+	}
 	sub := e.SubDomain
 	if sub == "" {
-		sub = comp.Name
+		sub = component
 	}
-	return sub + "." + zone.domain
+	return sub + "." + domain
 }
 
 // exposureAuthz is the L2 question a gateway entry asks (networking.md §3):

@@ -57,14 +57,17 @@ func deniedPage(brandingBase string) string {
 }
 
 // BrandingBase is where the cluster's brand is published, from the issuer
-// base this service already verifies against: https://id.<kernel>/auth
-// becomes https://id.<kernel>/branding/.
+// base this service is configured with: the cluster's bare domain, which is
+// the issuer's host (id.<kernel>) without its first label, where the
+// concierge serves it. Empty when that is not a public https address of that
+// shape.
 func BrandingBase(issuerBase string) string {
 	base := strings.TrimSuffix(strings.TrimSuffix(issuerBase, "/"), "/auth")
-	if !strings.HasPrefix(base, "https://") {
+	host, ok := strings.CutPrefix(base, "https://id.")
+	if !ok || host == "" || strings.ContainsAny(host, "/?#") {
 		return ""
 	}
-	return base + "/branding/"
+	return "https://" + host + "/branding/"
 }
 
 // Server is the Envoy ext_authz gRPC service over a Decider.

@@ -15,7 +15,7 @@ limitations under the License.
 */
 
 // Package tilecatalogue is the tile catalogue's format: what the operator
-// writes and what the director reads.
+// writes and what the usher reads.
 //
 // It is its own package, and not part of internal/tiles, because that one is
 // the portal's icon set. The two share a word and nothing else, and the
@@ -45,8 +45,7 @@ import (
 
 const (
 	// ConfigMapName is the one ConfigMap the catalogue is projected into. It
-	// lives in the control namespace, beside both the operator that writes it
-	// and the director that reads it.
+	// lives in the edge namespace, beside the usher that reads it.
 	ConfigMapName = "gentian-tiles"
 
 	// Key is the entry within it. The content is YAML rather than one key per
@@ -106,7 +105,7 @@ const header = `# The tiles this cluster offers, projected by the operator.
 #
 # Every entry is something the operator routes: a kernel console it composes an
 # HTTPRoute for, or an exposure of an installed component whose profile
-# declares a tile. Nothing here decides who sees what. The director asks the
+# declares a tile. Nothing here decides who sees what. The usher asks the
 # authorization graph, per caller, whether that person holds one of the
 # relations in anyOf on the object, and answers with the tiles that survive.
 #

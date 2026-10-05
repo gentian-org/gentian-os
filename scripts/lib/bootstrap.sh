@@ -1508,6 +1508,57 @@ _claim_cluster_fields() {
     return 0
 }
 
+# _platform_concierge_exposure
+#
+# The one surface an installation publishes by itself: the concierge, on the
+# cluster's bare domain. It is the page anybody typing the cluster's address
+# meets before they have a session, so it cannot be behind one, and a cluster
+# nobody can find the sign-in of is not installed.
+#
+# It is published the way every perimeter surface is -- an enablement on the
+# tenant, with an owner and a review date -- so that it shows in the exposure
+# registry beside whatever is published later, and comes up for review like
+# the rest. The owner is the installer because nobody has an account yet.
+_platform_concierge_exposure() {
+    local review
+    review="$(date -u -d '+182 days' +%Y-%m-%dT00:00:00Z)"
+    printf '  # What this tenant publishes with no session in front of it. The\n'
+    printf '  # concierge is the page on the bare domain that sends a person to the\n'
+    printf '  # sign-in of their workspace. An empty list publishes nothing, and then\n'
+    printf '  # nobody reaches a sign-in from the address of the cluster itself.\n'
+    printf '  exposures:\n'
+    printf '    - install: concierge\n'
+    printf '      exposureName: front\n'
+    printf '      owner: installer\n'
+    printf '      reviewAt: "%s"\n' "${review}"
+    printf '      reason: The sign-in page on the bare domain of the cluster, published at install.\n'
+}
+
+# ensure_platform_concierge_exposure <platform tenant.yaml>
+#
+# A platform tenant written before the concierge was a published component
+# names no exposures, and its bare domain then answers nothing. One that says
+# nothing gets the default; one that says anything, an empty list included,
+# is left alone. Succeeds only when it wrote.
+ensure_platform_concierge_exposure() {
+    local file="$1"
+    [[ -f "${file}" ]] || return 1
+    if grep -Eq '^  exposures:' "${file}"; then
+        return 1
+    fi
+    local last
+    last="$(grep -E '^[A-Za-z]' "${file}" | tail -n 1)"
+    if [[ "${last}" != "spec:" ]]; then
+        warn "tenants/platform/tenant.yaml publishes nothing and spec is not its last section,"
+        warn "  so the concierge is not published. Add spec.exposures by hand."
+        return 1
+    fi
+    [[ -z "$(tail -c 1 "${file}")" ]] || printf '\n' >> "${file}"
+    _platform_concierge_exposure >> "${file}"
+    info "tenants/platform/tenant.yaml published nothing: the concierge was added to spec.exposures."
+    return 0
+}
+
 # _claim_catalogue_section
 #
 # The claim's catalogue section: the App Store people are sent to, and the
@@ -1927,6 +1978,11 @@ resources:
 - tenant.yaml
 EOF
         info "Scaffolded clusters/${cluster}/tenants/platform"
+        generated=1
+    fi
+    # The concierge's publication, for the tenant just written and for one
+    # written before the concierge was a published component alike.
+    if ensure_platform_concierge_exposure "${platform_dir}/tenant.yaml"; then
         generated=1
     fi
 

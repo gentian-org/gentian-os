@@ -1,12 +1,19 @@
-/* The cluster's name and logo on the sign-in card.
+/* The brand on the sign-in card: its colours, its name and its logo.
  *
- * The colours arrive by stylesheet (the @import of /branding/brand.css); the
- * name and the logo are content, so they are read from /branding/brand.json,
- * which the operator renders from the Branding. Without it the card keeps the
- * platform's own.
+ * The operator renders the brand from the Branding and the concierge serves
+ * it on the cluster's bare domain, which is this host without its first
+ * label (id.<kernel>). The colours are a stylesheet of --brand-* custom
+ * properties, linked here; the name and the logo are content, read from
+ * brand.json. Without either the card keeps the platform's own.
  */
 (function () {
-  var BASE = "/branding/";
+  var host = location.hostname;
+  if (location.protocol !== "https:" || host.indexOf("id.") !== 0) return;
+  var BASE = "https://" + host.slice(3) + "/branding/";
+  var link = document.createElement("link");
+  link.rel = "stylesheet";
+  link.href = BASE + "brand.css";
+  document.head.appendChild(link);
   function apply(brand) {
     if (!brand || typeof brand.name !== "string" || !brand.name) return;
     var titles = document.querySelectorAll(".gentian-login__title");
@@ -19,7 +26,7 @@
     for (var j = 0; j < logos.length; j++) {
       logos[j].setAttribute("aria-label", brand.name);
       if (icon) {
-        var url = new URL(icon.src, location.origin + BASE).href;
+        var url = new URL(icon.src, BASE).href;
         if (/^https:\/\//.test(url)) logos[j].style.backgroundImage = 'url("' + url.replace(/"/g, "") + '")';
       }
     }

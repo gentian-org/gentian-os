@@ -666,6 +666,13 @@ spec:
                     type: array
                     x-kubernetes-list-type: set
                 type: object
+              defaultForPlatform:
+                description: |-
+                  DefaultForPlatform means the platform tenant gets a Component of this
+                  profile, and no other tenant does: something the cluster has one of and
+                  that runs with a tenant's authority rather than the kernel's. Created
+                  and named the way DefaultForTenants creates its own.
+                type: boolean
               defaultForTenants:
                 description: |-
                   DefaultForTenants means every tenant gets a Component of this profile,
@@ -705,6 +712,14 @@ spec:
                         own policy now and are not read from here.
                       maxProperties: 16
                       type: object
+                    apex:
+                      description: |-
+                        Apex publishes this entry on the zone's bare domain instead of a host
+                        under it. Only a perimeter entry may say it, and the operator honours
+                        it only for the platform tenant, whose zone is the cluster's own
+                        domain: the bare domain is the first thing anybody typing the cluster's
+                        address meets, and it belongs to nobody else.
+                      type: boolean
                     authMode:
                       description: AuthMode is mandatory and has no default.
                       enum:
@@ -942,6 +957,10 @@ spec:
                   - message: 'a perimeter entry cannot use authMode oidc: the session
                       lives on the gateway'
                     rule: self.surface != 'perimeter' || self.authMode != 'oidc'
+                  - message: 'apex is for a perimeter entry and names the whole host:
+                      it takes no subDomain'
+                    rule: '!has(self.apex) || !self.apex || (self.surface == ''perimeter''
+                      && !has(self.subDomain))'
                   - message: a gateway entry is behind the zone's session (authMode
                       oidc) or pins its caller (source). What needs neither is a perimeter
                       surface

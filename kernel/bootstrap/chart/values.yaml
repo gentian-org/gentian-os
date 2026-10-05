@@ -90,6 +90,11 @@ desktop:
 adminConsole:
   chartBranch: develop
   chartVersion: ""
+# The concierge's chart, from the same repository and branch, pinned the same
+# way.
+concierge:
+  chartBranch: develop
+  chartVersion: ""
 
 operator:
   enabled: false

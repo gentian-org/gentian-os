@@ -212,6 +212,13 @@ type ComponentProfileSpec struct {
 	// have one instance, so there is nothing to give each tenant.
 	// +optional
 	DefaultForTenants bool `json:"defaultForTenants,omitempty"`
+
+	// DefaultForPlatform means the platform tenant gets a Component of this
+	// profile, and no other tenant does: something the cluster has one of and
+	// that runs with a tenant's authority rather than the kernel's. Created
+	// and named the way DefaultForTenants creates its own.
+	// +optional
+	DefaultForPlatform bool `json:"defaultForPlatform,omitempty"`
 }
 
 // PackageSpec is the chart, the deployment method, and the mapping from granted
@@ -405,6 +412,7 @@ const (
 //
 // +kubebuilder:validation:XValidation:rule="!(self.surface == 'perimeter' && has(self.forwardToken) && self.forwardToken)",message="forwardToken is meaningless on a perimeter entry: it has no session"
 // +kubebuilder:validation:XValidation:rule="self.surface != 'perimeter' || self.authMode != 'oidc'",message="a perimeter entry cannot use authMode oidc: the session lives on the gateway"
+// +kubebuilder:validation:XValidation:rule="!has(self.apex) || !self.apex || (self.surface == 'perimeter' && !has(self.subDomain))",message="apex is for a perimeter entry and names the whole host: it takes no subDomain"
 // +kubebuilder:validation:XValidation:rule="self.surface != 'gateway' || self.authMode == 'oidc' || has(self.source)",message="a gateway entry is behind the zone's session (authMode oidc) or pins its caller (source). What needs neither is a perimeter surface"
 type ExposureSpec struct {
 	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
@@ -422,6 +430,14 @@ type ExposureSpec struct {
 	// +optional
 	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
 	SubDomain string `json:"subDomain,omitempty"`
+
+	// Apex publishes this entry on the zone's bare domain instead of a host
+	// under it. Only a perimeter entry may say it, and the operator honours
+	// it only for the platform tenant, whose zone is the cluster's own
+	// domain: the bare domain is the first thing anybody typing the cluster's
+	// address meets, and it belongs to nobody else.
+	// +optional
+	Apex bool `json:"apex,omitempty"`
 
 	// Paths this entry serves. Empty means the whole host.
 	// +optional

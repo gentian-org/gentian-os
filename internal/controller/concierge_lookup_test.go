@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"k8s.io/apimachinery/pkg/types"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -36,7 +37,8 @@ func TestTheSignInLookupHoldsOnlyCustomDomainsByTheirHash(t *testing.T) {
 	acme.Status.Domain = "acme.example"
 	plain := &gentianov1alpha1.Tenant{}
 	plain.Name = "plain"
-	c := fake.NewClientBuilder().WithScheme(s).WithObjects(acme, plain).WithStatusSubresource(acme).Build()
+	platform := platformTenantFixture()
+	c := fake.NewClientBuilder().WithScheme(s).WithObjects(acme, plain, platform).WithStatusSubresource(acme).Build()
 	if err := c.Status().Update(ctx, acme); err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +47,9 @@ func TestTheSignInLookupHoldsOnlyCustomDomainsByTheirHash(t *testing.T) {
 		t.Fatal(err)
 	}
 	cm := &corev1.ConfigMap{}
-	if err := c.Get(ctx, conciergeLookupRequest.NamespacedName, cm); err != nil {
+	// Beside the concierge, which is the platform tenant's component.
+	key := types.NamespacedName{Name: conciergeLookupConfigMap, Namespace: tenantNamespaceName(platform)}
+	if err := c.Get(ctx, key, cm); err != nil {
 		t.Fatal(err)
 	}
 	if len(cm.Data) != 1 {
@@ -59,5 +63,17 @@ func TestTheSignInLookupHoldsOnlyCustomDomainsByTheirHash(t *testing.T) {
 	}
 	if cm.Data[got] != `{"url":"https://console.acme.example/"}` {
 		t.Fatalf("entry = %q", cm.Data[got])
+	}
+}
+
+// A cluster with one tenant names that tenant's console, so the page sends
+// everybody there without asking for an address.
+func TestASingleTenantClusterNamesItsOneConsole(t *testing.T) {
+	data := conciergeLookupData(nil, "k.example", "single")
+	if data[conciergeSingleKey] != `{"url":"https://console.k.example/"}` {
+		t.Fatalf("single = %q", data[conciergeSingleKey])
+	}
+	if _, ok := conciergeLookupData(nil, "k.example", "multi")[conciergeSingleKey]; ok {
+		t.Fatal("a cluster of many tenants named one console")
 	}
 }

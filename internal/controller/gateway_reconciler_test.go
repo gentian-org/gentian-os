@@ -115,7 +115,7 @@ func TestBuildKernelGateway(t *testing.T) {
 	if _, exists := byName[httpRedirectListenerName]; exists {
 		t.Fatalf("listener %q on the authenticated Gateway; :80 belongs to the perimeter", httpRedirectListenerName)
 	}
-	perimeter := buildPerimeterGateway("platform.example.test", "", nil)
+	perimeter := buildPerimeterGateway("platform.example.test", "", "kernel", nil, nil)
 	if perimeter.Name != PerimeterGatewayName || perimeter.Namespace != servicesNamespace {
 		t.Fatalf("perimeter Gateway = %s/%s", perimeter.Namespace, perimeter.Name)
 	}
@@ -479,7 +479,7 @@ func TestBuildAppBackendTrafficPolicyObject(t *testing.T) {
 
 func TestKernelHTTPRouteSpecs(t *testing.T) {
 	t.Parallel()
-	specs := kernelHTTPRouteSpecs("platform.example.test", []string{"demo.platform.example.test"}, nil, []string{"demo"}, false, "c1", true, true, false)
+	specs := kernelHTTPRouteSpecs("platform.example.test", []string{"demo.platform.example.test"}, nil, []string{"demo"}, false, "c1", true, true)
 	// One route per kernel host, plus one per tenant apex sending the browser
 	// to that tenant's console. Asserted by name rather than by count, so
 	// adding a route does not fail a test that has nothing to do with it.
@@ -488,7 +488,7 @@ func TestKernelHTTPRouteSpecs(t *testing.T) {
 		byName[s.name] = s
 	}
 	for _, want := range []string{
-		kernelRouteKeycloakIDP, kernelRouteKeycloakRefused, kernelRouteKeycloakAdmin, kernelRouteWWWRedirect, kernelRouteKernelApex,
+		kernelRouteKeycloakIDP, kernelRouteKeycloakRefused, kernelRouteKeycloakAdmin, kernelRouteWWWRedirect,
 		kernelRouteArgoCD, kernelRouteHTTPRedirect, "tenant-demo-apex",
 	} {
 		if _, ok := byName[want]; !ok {
@@ -580,13 +580,13 @@ func TestKernelHTTPRouteSpecs(t *testing.T) {
 	if got := string(redirect.Spec.ParentRefs[0].Name); got != PerimeterGatewayName {
 		t.Fatalf("http redirect parent = %q, want the perimeter Gateway", got)
 	}
-	// www is an alias of the platform console, by redirect; a tenant's apex
-	// is an alias of the tenant's own.
+	// www is an alias of the bare domain, by redirect; a tenant's apex is an
+	// alias of the tenant's own console.
 	www := buildKernelHTTPRoute(byName[kernelRouteWWWRedirect])
 	if string(www.Spec.Hostnames[0]) != "www.platform.example.test" {
 		t.Fatalf("www host = %v", www.Spec.Hostnames[0])
 	}
-	if got := *www.Spec.Rules[0].Filters[0].RequestRedirect.Hostname; string(got) != "console.platform.example.test" {
+	if got := *www.Spec.Rules[0].Filters[0].RequestRedirect.Hostname; string(got) != "platform.example.test" {
 		t.Fatalf("www redirects to %q", got)
 	}
 	apex := buildKernelHTTPRoute(byName["tenant-demo-apex"])
@@ -601,21 +601,15 @@ func TestKernelHTTPRouteSpecs(t *testing.T) {
 func TestNoConsoleRedirectsWithoutADesktop(t *testing.T) {
 	t.Parallel()
 	specs := kernelHTTPRouteSpecs("platform.example.test",
-		[]string{"demo.platform.example.test"}, nil, []string{"demo"}, false, "c1", true, false, false)
+		[]string{"demo.platform.example.test"}, nil, []string{"demo"}, false, "c1", true, false)
 	for _, s := range specs {
 		switch s.name {
-		case kernelRouteWWWRedirect, kernelRouteKernelApex, "tenant-demo-apex":
+		case "tenant-demo-apex":
 			t.Errorf("route %q published with no desktop behind it", s.name)
 		}
 	}
 	specs = kernelHTTPRouteSpecs("platform.example.test",
-		[]string{"demo.platform.example.test"}, nil, []string{"demo"}, false, "c1", false, true, false)
-	for _, s := range specs {
-		switch s.name {
-		case kernelRouteWWWRedirect, kernelRouteKernelApex:
-			t.Errorf("route %q published before the kernel zone exists", s.name)
-		}
-	}
+		[]string{"demo.platform.example.test"}, nil, []string{"demo"}, false, "c1", false, true)
 	// The routes that do not depend on the desktop are still there.
 	var sawIDP bool
 	for _, s := range specs {
@@ -629,7 +623,7 @@ func TestNoConsoleRedirectsWithoutADesktop(t *testing.T) {
 }
 
 func TestKernelHTTPRouteSpecsLLMDisabledByDefault(t *testing.T) {
-	specs := kernelHTTPRouteSpecs("platform.example.test", []string{"demo.platform.example.test"}, nil, []string{"demo"}, false, "c1", true, true, false)
+	specs := kernelHTTPRouteSpecs("platform.example.test", []string{"demo.platform.example.test"}, nil, []string{"demo"}, false, "c1", true, true)
 	for _, spec := range specs {
 		if spec.name == kernelRouteLiteLLM {
 			t.Fatalf("kernel-llm route present with llm disabled")
@@ -638,7 +632,7 @@ func TestKernelHTTPRouteSpecsLLMDisabledByDefault(t *testing.T) {
 }
 
 func TestKernelHTTPRouteSpecsLLMEnabled(t *testing.T) {
-	specs := kernelHTTPRouteSpecs("platform.example.test", nil, nil, nil, true, "c1", true, true, false)
+	specs := kernelHTTPRouteSpecs("platform.example.test", nil, nil, nil, true, "c1", true, true)
 	// By name, not by count: adding a kernel route should not fail a test
 	// about the LLM one. The LLM route is still appended last, which is what
 	// the specs[len-1] lookup below relies on.
@@ -647,7 +641,7 @@ func TestKernelHTTPRouteSpecsLLMEnabled(t *testing.T) {
 		byName[s.name] = struct{}{}
 	}
 	for _, want := range []string{
-		kernelRouteKeycloakIDP, kernelRouteWWWRedirect, kernelRouteKernelApex,
+		kernelRouteKeycloakIDP, kernelRouteWWWRedirect,
 		kernelRouteArgoCD, kernelRouteHTTPRedirect, kernelRouteLiteLLM,
 	} {
 		if _, ok := byName[want]; !ok {
@@ -730,7 +724,7 @@ func TestKernelHTTPRouteSpecsAllBindToAListener(t *testing.T) {
 		nil,
 		[]string{"demo"},
 		true,
-		"c1", true, true, false)
+		"c1", true, true)
 	if len(specs) == 0 {
 		t.Fatal("no kernel route specs produced")
 	}
@@ -746,7 +740,7 @@ func TestKernelHTTPRouteSpecsAllBindToAListener(t *testing.T) {
 // the catch-all redirect must stay on :80. If it ever attached to a :443
 // listener it would redirect https traffic back to itself, forever.
 func TestKernelHTTPRedirectBindsOnlyToPort80(t *testing.T) {
-	specs := kernelHTTPRouteSpecs("platform.example.test", nil, nil, nil, false, "c1", true, true, false)
+	specs := kernelHTTPRouteSpecs("platform.example.test", nil, nil, nil, false, "c1", true, true)
 	var found bool
 	for _, s := range specs {
 		if s.name != kernelRouteHTTPRedirect {
@@ -802,7 +796,7 @@ func TestKernelConsolesMayBeFramedByTheDesktop(t *testing.T) {
 	observabilityNamespace = "kernel-observability"
 	t.Cleanup(func() { observabilityNamespace = saved })
 
-	specs := kernelHTTPRouteSpecs("platform.example.test", nil, nil, nil, false, "c1", true, true, false)
+	specs := kernelHTTPRouteSpecs("platform.example.test", nil, nil, nil, false, "c1", true, true)
 	for _, name := range []string{kernelRouteArgoCD, kernelRouteHeadlamp} {
 		var spec *kernelHTTPRouteSpec
 		for i := range specs {
@@ -836,7 +830,7 @@ func TestKernelConsolesMayBeFramedByTheDesktop(t *testing.T) {
 // an application that is not the admin console".
 func TestTheKeycloakConsoleKeepsItsOwnBearer(t *testing.T) {
 	t.Parallel()
-	specs := kernelHTTPRouteSpecs("platform.example.test", nil, nil, nil, false, "c1", true, true, false)
+	specs := kernelHTTPRouteSpecs("platform.example.test", nil, nil, nil, false, "c1", true, true)
 	for _, s := range specs {
 		if s.name != kernelRouteKeycloakAdmin {
 			continue
@@ -879,39 +873,30 @@ func TestASingleTenantClusterAddsNoTenantListener(t *testing.T) {
 	}
 }
 
-// On a multi-tenant cluster the kernel's apex is nobody's workspace: it and
-// www land on the concierge beside the identity provider, which is a
-// path on the identity provider's public route. A single-tenant cluster's
-// apex goes to its one console.
-func TestTheApexLandsOnTheSignInRouterWhenThereAreManyWorkspaces(t *testing.T) {
+// The cluster's bare domain is not a kernel route: it is a perimeter surface
+// of the platform tenant, published from that tenant's DMZ. Nothing here
+// routes it, the identity provider's route carries nothing but the identity
+// provider, and www is sent to the bare domain.
+func TestTheBareDomainIsNotAKernelRoute(t *testing.T) {
 	t.Parallel()
-	landing := func(concierge bool) (host, path string, idHasSignIn bool) {
-		for _, spec := range kernelHTTPRouteSpecs("k.example", nil, nil, nil, false, "c1", true, true, concierge) {
-			switch spec.name {
-			case kernelRouteKernelApex:
-				f := spec.rules[0].Filters[0].RequestRedirect
-				host = string(*f.Hostname)
-				if f.Path != nil {
-					path = *f.Path.ReplaceFullPath
-				}
-			case kernelRouteKeycloakIDP:
-				for _, rule := range spec.rules {
-					if v := rule.Matches[0].Path.Value; v != nil && *v == conciergePath {
-						idHasSignIn = string(rule.BackendRefs[0].Name) == conciergeService
-					}
+	var www string
+	for _, spec := range kernelHTTPRouteSpecs("k.example", nil, nil, nil, false, "c1", true, true) {
+		if spec.host == "k.example" {
+			t.Fatalf("route %q serves the bare domain from the kernel", spec.name)
+		}
+		switch spec.name {
+		case kernelRouteWWWRedirect:
+			www = string(*spec.rules[0].Filters[0].RequestRedirect.Hostname)
+		case kernelRouteKeycloakIDP:
+			for _, rule := range spec.rules {
+				if v := rule.Matches[0].Path.Value; v == nil || !strings.HasPrefix(*v, "/auth/") {
+					t.Fatalf("the identity provider's public route carries a path that is not its own: %v", v)
 				}
 			}
 		}
-		return host, path, idHasSignIn
 	}
-	if host, path, routed := landing(true); host != "id.k.example" || path != "/sign-in/" || !routed {
-		t.Fatalf("multi: apex -> %s%s, sign-in routed on id: %v", host, path, routed)
-	}
-	if host, path, _ := landing(false); host != "console.k.example" || path != "" {
-		t.Fatalf("single: apex -> %s%s", host, path)
-	}
-	if !conciergeFor("multi") || !conciergeFor("") || conciergeFor("single") {
-		t.Fatal("conciergeFor does not follow the tenancy mode")
+	if www != "k.example" {
+		t.Fatalf("www -> %q, want the bare domain", www)
 	}
 }
 
@@ -998,12 +983,12 @@ func TestATenantWithoutAppsGetsItsCertificateAndGrants(t *testing.T) {
 func TestEveryKernelRouteIsBehindAQuestionOrDeliberatelyPublic(t *testing.T) {
 	t.Parallel()
 	public := map[string]bool{
-		kernelRouteKeycloakIDP:  true, // the identity provider's realm endpoints, and the concierge and brand beside it
+		kernelRouteKeycloakIDP:  true, // the identity provider's realm endpoints and theme assets
 		kernelRouteHTTPRedirect: true, // :80 to :443
 	}
 	for _, zoneReady := range []bool{true, false} {
-		for _, concierge := range []bool{true, false} {
-			specs := kernelHTTPRouteSpecs("k.example", []string{"demo.k.example"}, nil, []string{"demo"}, true, "c1", zoneReady, true, concierge)
+		{
+			specs := kernelHTTPRouteSpecs("k.example", []string{"demo.k.example"}, nil, []string{"demo"}, true, "c1", zoneReady, true)
 			for _, s := range specs {
 				backends, redirectOnly := 0, true
 				for _, rule := range s.rules {

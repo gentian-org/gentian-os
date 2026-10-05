@@ -39,17 +39,40 @@ import (
 // SHA-256, holding {"url": <its console>}. Mounted beside the page as
 // /sign-in/lookup/, so the page finds a domain it already knows and nobody
 // can list the domains a cluster serves.
+//
+// It lives in the platform tenant's namespace, because that is where the
+// concierge runs: a component of the platform tenant, published from its DMZ.
 const conciergeLookupConfigMap = "concierge-lookup"
+
+// conciergeSingleKey is the one file that is not a domain's: on a cluster
+// with one tenant it names that tenant's console, and the page sends
+// everybody there without asking for an address.
+const conciergeSingleKey = "_single.json"
 
 // ConciergeLookupReconciler projects the tenants' custom domains into that
 // ConfigMap. Every tenant event re-derives the whole of it, under one key.
 type ConciergeLookupReconciler struct {
 	client.Client
 	KernelDomain string
+	KernelRealm  string
 	TenancyMode  string
 }
 
-var conciergeLookupRequest = reconcile.Request{NamespacedName: types.NamespacedName{Name: conciergeLookupConfigMap, Namespace: identityNamespace}}
+var conciergeLookupRequest = reconcile.Request{NamespacedName: types.NamespacedName{Name: conciergeLookupConfigMap}}
+
+// platformTenantNamespace is the namespace of the tenant that adopts the
+// kernel realm, or empty while there is none.
+func platformTenantNamespace(tenants []gentianov1alpha1.Tenant, kernelRealm string) string {
+	if kernelRealm == "" {
+		kernelRealm = "kernel"
+	}
+	for i := range tenants {
+		if tenants[i].DeletionTimestamp == nil && tenantAdoptsKernelRealm(&tenants[i], kernelRealm) {
+			return tenantNamespaceName(&tenants[i])
+		}
+	}
+	return ""
+}
 
 // conciergeLookupKey is the file name the page asks for an e-mail domain.
 func conciergeLookupKey(domain string) string {
@@ -68,6 +91,10 @@ func conciergeLookupData(tenants []gentianov1alpha1.Tenant, kernelDomain, tenanc
 		body, _ := json.Marshal(map[string]string{"url": "https://" + consoleHost(t.EffectiveDomain(kernelDomain, tenancyMode)) + "/"})
 		data[conciergeLookupKey(t.Status.Domain)] = string(body)
 	}
+	if gentianov1alpha1.NormalizeTenancyMode(tenancyMode) == gentianov1alpha1.TenancyModeSingle && kernelDomain != "" {
+		body, _ := json.Marshal(map[string]string{"url": "https://" + consoleHost(kernelDomain) + "/"})
+		data[conciergeSingleKey] = string(body)
+	}
 	return data
 }
 
@@ -77,12 +104,19 @@ func (r *ConciergeLookupReconciler) Reconcile(ctx context.Context, _ ctrl.Reques
 		return ctrl.Result{}, err
 	}
 	data := conciergeLookupData(tenants.Items, r.KernelDomain, r.TenancyMode)
+	namespace := platformTenantNamespace(tenants.Items, r.KernelRealm)
+	if namespace == "" {
+		// No platform tenant yet, so nowhere the concierge could run. Its
+		// arrival is a tenant event and brings this back.
+		return ctrl.Result{}, nil
+	}
+	key := types.NamespacedName{Name: conciergeLookupConfigMap, Namespace: namespace}
 
 	existing := &corev1.ConfigMap{}
-	err := r.Get(ctx, conciergeLookupRequest.NamespacedName, existing)
+	err := r.Get(ctx, key, existing)
 	if errors.IsNotFound(err) {
 		cm := &corev1.ConfigMap{}
-		cm.Name, cm.Namespace = conciergeLookupConfigMap, identityNamespace
+		cm.Name, cm.Namespace = key.Name, key.Namespace
 		cm.Labels = map[string]string{managedByLabel: managedByValue}
 		cm.Data = data
 		return ctrl.Result{}, r.Create(ctx, cm)

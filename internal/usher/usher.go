@@ -32,8 +32,6 @@ package usher
 
 import (
 	"encoding/json"
-	"errors"
-	"io/fs"
 	"log/slog"
 	"net/http"
 	"os"
@@ -137,17 +135,14 @@ type tileOut struct {
 	Icon         string            `json:"icon"`
 }
 
-// catalogue is what the operator projected, or nothing. A missing file is an
-// empty catalogue: it is what a cluster whose operator has not projected yet
-// looks like, and the honest answer then is that there are no tiles.
+// catalogue is what the operator projected.
+//
+// A catalogue that cannot be read is a failure and is answered as one. An
+// empty list in its place would show a person a desktop with nothing on it,
+// which looks exactly like holding no rights and says nothing about the
+// projection being missing.
 func (s *Server) catalogue() ([]tilecatalogue.Tile, error) {
-	if s.cfg.TilesPath == "" {
-		return nil, nil
-	}
 	data, err := os.ReadFile(s.cfg.TilesPath)
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil, nil
-	}
 	if err != nil {
 		return nil, err
 	}

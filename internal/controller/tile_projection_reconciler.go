@@ -52,14 +52,14 @@ import (
 // director could only drift from the first, and while it existed an installed
 // app could not appear on the portal without a director release.
 //
-// So the catalogue is projected from what is actually routed, and the director
+// So the catalogue is projected from what is actually routed, and the usher
 // is left with the question it exists to answer: which of these may this
 // caller open. A tile whose route does not exist is not in the catalogue,
 // which means a console the cluster does not serve yet cannot be advertised as
 // a broken link.
 //
-// The projection is one ConfigMap in the control namespace, beside the
-// director, and it is declarative like the rest: an app uninstalled loses its
+// The projection is one ConfigMap in the edge namespace, beside the
+// usher, and it is declarative like the rest: an app uninstalled loses its
 // tile because the projection is rebuilt, not because anything remembers to
 // delete it.
 
@@ -411,28 +411,15 @@ func tileObject(tile *gentianov1alpha1.ExposureTile, tenant, profile string) str
 	return "app:" + tenant + "/" + profile
 }
 
-// write puts the catalogue beside each of its readers, creating the ConfigMap
-// the first time and patching it only when the content differs.
-//
-// Two copies, because a ConfigMap is mounted from its own namespace and the
-// readers are in two: the director in the control namespace, for the cluster's
-// own administrators, and the usher in the edge namespace, for everybody who
-// has a desktop. They are the same content written in the same pass.
+// write puts the catalogue in the edge namespace, beside the usher that
+// reads it, creating the ConfigMap the first time and patching it only when
+// the content differs.
 func (r *TileProjectionReconciler) write(ctx context.Context, catalogue tilecatalogue.Catalogue) error {
 	rendered, err := tilecatalogue.Marshal(catalogue)
 	if err != nil {
 		return err
 	}
-	namespaces := []string{layout.Namespace(layout.Control)}
-	if edge := layout.Namespace(layout.Edge); edge != namespaces[0] {
-		namespaces = append(namespaces, edge)
-	}
-	for _, ns := range namespaces {
-		if err := r.writeTo(ctx, ns, rendered); err != nil {
-			return fmt.Errorf("namespace %s: %w", ns, err)
-		}
-	}
-	return nil
+	return r.writeTo(ctx, layout.Namespace(layout.Edge), rendered)
 }
 
 func (r *TileProjectionReconciler) writeTo(ctx context.Context, namespace, rendered string) error {
