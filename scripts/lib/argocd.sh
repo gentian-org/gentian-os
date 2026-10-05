@@ -23,68 +23,63 @@ gentian_argocd_namespace() {
 }
 
 # =============================================================================
-# _apply_argocd_repo_creds <role> <repo_var> <auth_var> <user_var> <token_var>
+# argocd_bootstrap_repo_credential <requirement>
 #
-# Registers a prefix-matched ArgoCD repo-creds Secret directly from the
-# shell-collected credential — the one Path-A exception in an otherwise
-# ESO/OpenBao-managed credential design (see repository-default.yaml). Exists
-# only for repositories a bootstrap Application needs before OpenBao is
-# reachable; today that is gentian-os alone, called from install_argocd() above.
+# Hands Argo CD the credential the installer collected for one repository, as
+# a repo-creds Secret, before OpenBao can serve it. Every other repository
+# credential reaches Argo CD from OpenBao through the Repository claim; this is
+# for a repository a bootstrap Application has to read earlier than that, and
+# it is removed again once the claim has taken over.
 #
-# url is a PREFIX match in an ArgoCD repo-creds Secret (secret-type:
-# repo-creds, as opposed to the exact-match secret-type: repository the
-# Composition emits later) — an exact repo URL here matches only that repo, so
-# it does not need trimming or wildcarding.
+# A repo-creds Secret matches by URL prefix, so the repository's own URL
+# matches that repository and nothing else.
 #
-# Skipped, not an error, when auth is "none" (public repo, nothing to
-# authenticate) or when the credential was never collected — collect_bootstrap_credentials
-# only gathers it when _requirement_applies() gated it in, which mirrors the
-# same GENTIAN_OS_AUTH check here.
+# Does nothing for a repository that does not authenticate, and warns without
+# failing when it does but no token was collected.
 # =============================================================================
-_apply_argocd_repo_creds() {
-    local role="$1" repo_var="$2" auth_var="$3" user_var="$4" token_var="$5"
-    local repo="${!repo_var:-}"
-    local auth="${!auth_var:-none}"
-    [[ -n "${repo}" && "${auth}" != "none" ]] || return 0
+argocd_bootstrap_repo_credential() {
+    local req="$1" name mode repo_var user_var token_var
+    name="$(_repo_credential "${req}" vault)" || {
+        error "argocd_bootstrap_repo_credential: '${req}' is not a repository credential."
+        return 1
+    }
+    mode="$(_repo_credential_mode "${req}")"
+    repo_var="$(_repo_credential "${req}" repo)"
+    user_var="$(_repo_credential "${req}" username)"
+    token_var="$(_repo_credential "${req}" token)"
 
-    local user="${!user_var:-}" token="${!token_var:-}"
-    if [[ -z "${token}" ]]; then
-        warn "No credential collected for ${role} repository (${auth_var}=${auth}); skipping bootstrap ArgoCD repo-creds Secret."
+    if [[ "${mode}" == "none" || -z "${!repo_var:-}" ]]; then
+        return 0
+    fi
+    if [[ -z "${!token_var:-}" ]]; then
+        warn "The ${name} repository authenticates (${mode}) but no token was collected; no bootstrap repo-creds Secret for Argo CD."
         return 0
     fi
 
-    local ns; ns="$(gentian_argocd_namespace)"
-    info "Registering bootstrap ArgoCD repo-creds for ${role} (${repo}) in ${ns}..."
-    if [[ "${auth}" == "bearer" ]]; then
-        kubectl apply -f - <<EOF
-apiVersion: v1
-kind: Secret
-metadata:
-  name: argocd-repo-creds-bootstrap-${role}
-  namespace: ${ns}
-  labels:
-    argocd.argoproj.io/secret-type: repo-creds
-stringData:
-  type: git
-  url: ${repo}
-  bearerToken: "${token}"
-EOF
+    # The two modes differ only in the keys Argo CD reads the credential from.
+    local login
+    if [[ "${mode}" == "bearer" ]]; then
+        login="bearerToken: \"${!token_var}\""
     else
-        kubectl apply -f - <<EOF
+        login="username: \"${!user_var:-}\"
+  password: \"${!token_var}\""
+    fi
+
+    local ns; ns="$(gentian_argocd_namespace)"
+    info "Registering bootstrap ArgoCD repo-creds for ${name} (${!repo_var}) in ${ns}..."
+    kubectl apply -f - <<EOF
 apiVersion: v1
 kind: Secret
 metadata:
-  name: argocd-repo-creds-bootstrap-${role}
+  name: argocd-repo-creds-bootstrap-${name}
   namespace: ${ns}
   labels:
     argocd.argoproj.io/secret-type: repo-creds
 stringData:
   type: git
-  url: ${repo}
-  username: "${user}"
-  password: "${token}"
+  url: ${!repo_var}
+  ${login}
 EOF
-    fi
 }
 
 # =============================================================================

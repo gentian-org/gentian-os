@@ -115,8 +115,7 @@ apply() {
     # C-05-os-repository-handoff deletes it as soon as the Repository claim
     # proves it can read the same credential from OpenBao. Requiring it here
     # would leave this step unsatisfiable from that moment on.
-    _apply_argocd_repo_creds gentian-os GENTIAN_OS_REPO GENTIAN_OS_AUTH \
-        GENTIAN_OS_GIT_USERNAME GENTIAN_OS_GIT_TOKEN
+    argocd_bootstrap_repo_credential gentian-os-repository
 }
 
 # The Applications, removed while their controller still runs.

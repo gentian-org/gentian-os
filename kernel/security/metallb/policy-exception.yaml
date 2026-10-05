@@ -1,51 +1,39 @@
 ---
-# Exception for MetalLB v0.9.6 (minikube's addon — c. 2020, predates modern
-# security-context conventions entirely) against three gentian-baseline.yaml
-# policies:
-#   gentian-disallow-host-namespaces  speaker needs hostNetwork for ARP
-#   gentian-require-seccomp           neither pod sets a seccompProfile
-#   gentian-restrict-capabilities     speaker needs NET_ADMIN/NET_RAW, and
-#                                     neither container drops ALL first
-# Confirmed against live admission denials, not assumed — host-namespaces
-# alone was insufficient; the next attempt surfaced the other two on both the
-# speaker DaemonSet and the controller Deployment.
+# MetalLB, as minikube's addon ships it (v0.9.6), cannot run under three of
+# the baseline policies in gentian-baseline.yaml:
 #
-# Synced by the metallb-policy-exception Application (kernel/appsets/raw/
-# 05b-metallb-exception.yaml), under its own AppProject rather than the
-# shared gentian one — that project is common to every gentian-os cluster,
-# MetalLB or not, and the whole point of isolating this is to keep MetalLB's
-# footprint out of it entirely, not just conditionally add to it.
+#   gentian-disallow-host-namespaces   the speaker answers ARP, which needs
+#                                      the host's network
+#   gentian-require-seccomp            neither workload sets a seccomp profile
+#   gentian-restrict-capabilities      the speaker holds NET_ADMIN and NET_RAW,
+#                                      and nothing drops ALL
+#
+# All three were met as admission denials on a real cluster, one after the
+# other: lifting the first only uncovered the next.
+#
+# Each policy is named twice below. Kyverno derives a second rule, called
+# autogen-<rule>, from every rule that matches Pods, and that derived rule is
+# the one a DaemonSet or a Deployment is admitted against. The plain rule is
+# listed as well for a Pod created on its own.
+#
+# The exception is confined to MetalLB's namespace. It belongs to clusters
+# that run MetalLB and to no others, so it is kept apart from the policies
+# every cluster shares; whatever installs it should keep it apart too.
 apiVersion: kyverno.io/v2
 kind: PolicyException
 metadata:
   name: metallb-speaker-host-network
   namespace: metallb-system
 spec:
-  # Kyverno autogenerates a second rule from any Pod-matching rule, covering
-  # controller kinds (DaemonSet/Deployment/etc.) — named autogen-<rule-name>,
-  # unless the ClusterPolicy disables it. The admission request for the
-  # speaker DaemonSet and controller Deployment themselves hit those
-  # generated rules, not the original ones, so both names are listed for
-  # each policy (the plain name in case a bare Pod is ever created directly).
-  exceptions:
-  - policyName: gentian-disallow-host-namespaces
-    ruleNames:
-    - host-namespaces
-    - autogen-host-namespaces
-  - policyName: gentian-require-seccomp
-    ruleNames:
-    - seccomp
-    - autogen-seccomp
-  - policyName: gentian-restrict-capabilities
-    ruleNames:
-    - restrict-capabilities
-    - autogen-restrict-capabilities
   match:
     any:
-    - resources:
-        kinds:
-        - Pod
-        - DaemonSet
-        - Deployment
-        namespaces:
-        - metallb-system
+      - resources:
+          namespaces: [metallb-system]
+          kinds: [Pod, DaemonSet, Deployment]
+  exceptions:
+    - policyName: gentian-disallow-host-namespaces
+      ruleNames: [host-namespaces, autogen-host-namespaces]
+    - policyName: gentian-require-seccomp
+      ruleNames: [seccomp, autogen-seccomp]
+    - policyName: gentian-restrict-capabilities
+      ruleNames: [restrict-capabilities, autogen-restrict-capabilities]

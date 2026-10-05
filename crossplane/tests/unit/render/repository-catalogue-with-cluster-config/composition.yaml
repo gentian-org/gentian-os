@@ -97,8 +97,14 @@ spec:
             {{- $isOci := eq $spec.type "oci" }}
             {{- $isGit := eq $spec.type "git" }}
             {{- $vtype := (($cred.validate).type) | default "noop" }}
-            {{- $authType := $cred.authType | default "basic" }}
-            {{- $isBearer := eq $authType "bearer" }}
+            {{- /*
+                 A bearer credential is one token and no username. It is kept
+                 under the same vault path and in the same `password` field as
+                 a basic one, so only the fields asked for and the keys each
+                 Secret is given differ.
+            */}}
+            {{- $bearer := eq ($cred.authType | default "basic") "bearer" }}
+            {{- $credFields := ternary (list "password") (list "username" "password") $bearer }}
             {{- /*
                  Everything written into the cluster uses the in-cluster
                  address. The external address exists only for the installer's
@@ -190,14 +196,18 @@ spec:
               optional: {{ $cred.optional | default false }}
               vaultPath: {{ $cred.vaultPath | quote }}
               fields:
-                {{- if not $isBearer }}
+                {{- if $bearer }}
+                - key: password
+                  format: token
+                  secret: true
+                {{- else }}
                 - key: username
                   format: string
                   secret: false
-                {{- end }}
                 - key: password
-                  format: {{ if $isBearer }}token{{ else }}password{{ end }}
+                  format: password
                   secret: true
+                {{- end }}
               validate:
                 type: {{ $vtype }}
                 {{- if ne $vtype "noop" }}
@@ -347,23 +357,19 @@ spec:
                           # repository, and the pull fails on a registry that only speaks OCI.
                           enableOCI: "true"
                           {{- end }}
-                          {{- if $isBearer }}
-                          bearerToken: "{{ `{{ .password }}` }}"
-                          {{- else }}
+                          {{- if not $bearer }}
                           username: "{{ `{{ .username }}` }}"
                           password: "{{ `{{ .password }}` }}"
+                          {{- else }}
+                          bearerToken: "{{ `{{ .password }}` }}"
                           {{- end }}
                     data:
-                      {{- if not $isBearer }}
-                      - secretKey: username
+                      {{- range $credFields }}
+                      - secretKey: {{ . }}
                         remoteRef:
                           key: {{ $cred.vaultPath | quote }}
-                          property: username
+                          property: {{ . }}
                       {{- end }}
-                      - secretKey: password
-                        remoteRef:
-                          key: {{ $cred.vaultPath | quote }}
-                          property: password
                     {{- end }}
               providerConfigRef:
                 name: kubernetes
@@ -607,33 +613,25 @@ spec:
                       name: {{ $claimName }}-git-credentials
                       template:
                         data:
-                          {{- if $isBearer }}
-                          # Plain git speaks Basic auth via .git-credentials; a
-                          # bearer token has no equivalent userinfo form, so
-                          # this is consumed instead as
-                          # `git -c http.extraHeader="Authorization: Bearer $(cat token)"`
-                          # by whatever clones or pushes with this credential.
+                          {{- if not $bearer }}
+                          .git-credentials: |
+                            {{- $scheme := ternary "http://" "https://" (hasPrefix "http://" $url) }}
+                            {{ $scheme }}{{ `{{ .username }}` }}:{{ `{{ .password }}` }}@{{ trimPrefix $scheme $url }}
+                          {{- else }}
+                          {{- /* A URL has no place for a bearer token, so there
+                               is no .git-credentials line to write. Whoever
+                               uses this Secret sends the token in an
+                               Authorization header instead. */}}
                           token: |
                             {{ `{{ .password }}` }}
-                          {{- else }}
-                          .git-credentials: |
-                            {{- $scheme := "https://" }}
-                            {{- if hasPrefix "http://" $url }}
-                            {{- $scheme = "http://" }}
-                            {{- end }}
-                            {{ $scheme }}{{ `{{ .username }}` }}:{{ `{{ .password }}` }}@{{ trimPrefix $scheme $url }}
                           {{- end }}
                     data:
-                      {{- if not $isBearer }}
-                      - secretKey: username
+                      {{- range $credFields }}
+                      - secretKey: {{ . }}
                         remoteRef:
                           key: {{ $cred.vaultPath | quote }}
-                          property: username
+                          property: {{ . }}
                       {{- end }}
-                      - secretKey: password
-                        remoteRef:
-                          key: {{ $cred.vaultPath | quote }}
-                          property: password
               providerConfigRef:
                 name: kubernetes
             {{- end }}

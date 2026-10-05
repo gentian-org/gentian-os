@@ -2,17 +2,17 @@
 apiVersion: gentianos.io/v1alpha1
 kind: XRepository
 metadata:
-  name: deployments-b3rk1
+  name: deployments-q7xw2
 status:
   artefacts:
-  - credreq-deployments-b3rk1
-  - credprobe-deployments-b3rk1
-  - argocd-repo-deployments-b3rk1
-  - appproject-source-deployments-b3rk1
+  - credreq-deployments-q7xw2
+  - credprobe-deployments-q7xw2
+  - argocd-repo-deployments-q7xw2
+  - appproject-source-deployments-q7xw2
   conditions:
   - lastTransitionTime: "2024-01-01T00:00:00Z"
-    message: 'Unready resources: appproject-source-deployments-b3rk1, argocd-repo-deployments-b3rk1,
-      credprobe-deployments-b3rk1, and 1 more'
+    message: 'Unready resources: appproject-source-deployments-q7xw2, argocd-repo-deployments-q7xw2,
+      credprobe-deployments-q7xw2, and 1 more'
     reason: Creating
     status: "False"
     type: Ready
@@ -23,18 +23,18 @@ apiVersion: kubernetes.crossplane.io/v1alpha2
 kind: Object
 metadata:
   annotations:
-    crossplane.io/composition-resource-name: appproject-source-deployments-b3rk1
-  generateName: deployments-b3rk1-
+    crossplane.io/composition-resource-name: appproject-source-deployments-q7xw2
+  generateName: deployments-q7xw2-
   labels:
     crossplane.io/claim-name: deployments
     crossplane.io/claim-namespace: crossplane-system
-    crossplane.io/composite: deployments-b3rk1
+    crossplane.io/composite: deployments-q7xw2
   ownerReferences:
   - apiVersion: gentianos.io/v1alpha1
     blockOwnerDeletion: true
     controller: true
     kind: XRepository
-    name: deployments-b3rk1
+    name: deployments-q7xw2
     uid: ""
 spec:
   forProvider:
@@ -46,7 +46,7 @@ spec:
         namespace: argocd
       spec:
         sourceRepos:
-        - https://git.internal.example/gentian-deployments
+        - https://git.mirror.example/platform/gentian-deployments
   managementPolicies:
   - Observe
   - Create
@@ -58,18 +58,18 @@ apiVersion: kubernetes.crossplane.io/v1alpha2
 kind: Object
 metadata:
   annotations:
-    crossplane.io/composition-resource-name: argocd-repo-deployments-b3rk1
-  generateName: deployments-b3rk1-
+    crossplane.io/composition-resource-name: argocd-repo-deployments-q7xw2
+  generateName: deployments-q7xw2-
   labels:
     crossplane.io/claim-name: deployments
     crossplane.io/claim-namespace: crossplane-system
-    crossplane.io/composite: deployments-b3rk1
+    crossplane.io/composite: deployments-q7xw2
   ownerReferences:
   - apiVersion: gentianos.io/v1alpha1
     blockOwnerDeletion: true
     controller: true
     kind: XRepository
-    name: deployments-b3rk1
+    name: deployments-q7xw2
     uid: ""
 spec:
   forProvider:
@@ -77,7 +77,7 @@ spec:
       apiVersion: external-secrets.io/v1
       kind: ExternalSecret
       metadata:
-        name: repo-deployments-b3rk1
+        name: repo-deployments-q7xw2
         namespace: argocd
       spec:
         data:
@@ -90,12 +90,12 @@ spec:
           kind: ClusterSecretStore
           name: openbao
         target:
-          name: repo-deployments-b3rk1
+          name: repo-deployments-q7xw2
           template:
             data:
               bearerToken: '{{ .password }}'
               type: git
-              url: https://git.internal.example/gentian-deployments
+              url: https://git.mirror.example/platform/gentian-deployments
             metadata:
               labels:
                 argocd.argoproj.io/secret-type: repository
@@ -106,18 +106,18 @@ apiVersion: kubernetes.crossplane.io/v1alpha2
 kind: Object
 metadata:
   annotations:
-    crossplane.io/composition-resource-name: credprobe-deployments-b3rk1
-  generateName: deployments-b3rk1-
+    crossplane.io/composition-resource-name: credprobe-deployments-q7xw2
+  generateName: deployments-q7xw2-
   labels:
     crossplane.io/claim-name: deployments
     crossplane.io/claim-namespace: crossplane-system
-    crossplane.io/composite: deployments-b3rk1
+    crossplane.io/composite: deployments-q7xw2
   ownerReferences:
   - apiVersion: gentianos.io/v1alpha1
     blockOwnerDeletion: true
     controller: true
     kind: XRepository
-    name: deployments-b3rk1
+    name: deployments-q7xw2
     uid: ""
 spec:
   forProvider:
@@ -126,8 +126,8 @@ spec:
       kind: ExternalSecret
       metadata:
         labels:
-          gentianos.io/credential-requirement: deployments-b3rk1
-        name: credreq-repository-deployments-b3rk1
+          gentianos.io/credential-requirement: deployments-q7xw2
+        name: credreq-repository-deployments-q7xw2
         namespace: gentian-system
       spec:
         data:
@@ -152,25 +152,25 @@ apiVersion: gentianos.io/v1alpha1
 kind: CredentialRequirement
 metadata:
   annotations:
-    crossplane.io/composition-resource-name: credreq-deployments-b3rk1
+    crossplane.io/composition-resource-name: credreq-deployments-q7xw2
   labels:
     crossplane.io/claim-name: deployments
     crossplane.io/claim-namespace: crossplane-system
-    crossplane.io/composite: deployments-b3rk1
+    crossplane.io/composite: deployments-q7xw2
     gentianos.io/credential-phase: bootstrap
     gentianos.io/credential-scope: cluster
-  name: repository-deployments-b3rk1
+  name: repository-deployments-q7xw2
   ownerReferences:
   - apiVersion: gentianos.io/v1alpha1
     blockOwnerDeletion: true
     controller: true
     kind: XRepository
-    name: deployments-b3rk1
+    name: deployments-q7xw2
     uid: ""
 spec:
   consumedBy:
   - kind: XRepository
-    name: deployments-b3rk1
+    name: deployments-q7xw2
   description: ""
   displayName: Deployments Repository Access
   fields:
@@ -181,7 +181,7 @@ spec:
   phase: bootstrap
   scope: cluster
   validate:
-    host: https://git.internal.example/gentian-deployments
+    host: https://git.mirror.example/platform/gentian-deployments
     type: git-https
   vaultPath: gentian/repositories/deployments
 ---
@@ -189,18 +189,18 @@ apiVersion: kubernetes.crossplane.io/v1alpha2
 kind: Object
 metadata:
   annotations:
-    crossplane.io/composition-resource-name: git-credentials-deployments-b3rk1
-  generateName: deployments-b3rk1-
+    crossplane.io/composition-resource-name: git-credentials-deployments-q7xw2
+  generateName: deployments-q7xw2-
   labels:
     crossplane.io/claim-name: deployments
     crossplane.io/claim-namespace: crossplane-system
-    crossplane.io/composite: deployments-b3rk1
+    crossplane.io/composite: deployments-q7xw2
   ownerReferences:
   - apiVersion: gentianos.io/v1alpha1
     blockOwnerDeletion: true
     controller: true
     kind: XRepository
-    name: deployments-b3rk1
+    name: deployments-q7xw2
     uid: ""
 spec:
   forProvider:
