@@ -225,6 +225,8 @@ func TestComponentProfileRules(t *testing.T) {
 		{"forwardToken on the perimeter", "  classes: [app]\n  launch: none\n  trustTier: platform\n  expose:\n  - {name: hook, surface: perimeter, authMode: signature, forwardToken: true, backend: {service: x, port: 80}}\n", "meaningless on a perimeter entry"},
 
 		{"a pinned caller, by component", app + "\n  expose:\n  - {name: wopi, surface: gateway, authMode: none, source: {component: collabora}, backend: {service: x, port: 80}}\n", ""},
+		{"a gateway entry with no session and no pinned caller", app + "\n  expose:\n  - {name: open, surface: gateway, authMode: none, backend: {service: x, port: 80}}\n", "behind the zone's session"},
+		{"a gateway entry with a bearer and no session", app + "\n  expose:\n  - {name: api, surface: gateway, authMode: bearer, backend: {service: x, port: 80}}\n", "behind the zone's session"},
 		{"a source that pins nothing", app + "\n  expose:\n  - {name: wopi, surface: gateway, authMode: none, source: {}, backend: {service: x, port: 80}}\n", "exactly one of cidrs or component"},
 		{"a source that pins both ways", app + "\n  expose:\n  - {name: wopi, surface: gateway, authMode: none, source: {component: c, cidrs: [10.0.0.0/8]}, backend: {service: x, port: 80}}\n", "exactly one of cidrs or component"},
 

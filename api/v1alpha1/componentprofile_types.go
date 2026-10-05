@@ -405,6 +405,7 @@ const (
 //
 // +kubebuilder:validation:XValidation:rule="!(self.surface == 'perimeter' && has(self.forwardToken) && self.forwardToken)",message="forwardToken is meaningless on a perimeter entry: it has no session"
 // +kubebuilder:validation:XValidation:rule="self.surface != 'perimeter' || self.authMode != 'oidc'",message="a perimeter entry cannot use authMode oidc: the session lives on the gateway"
+// +kubebuilder:validation:XValidation:rule="self.surface != 'gateway' || self.authMode == 'oidc' || has(self.source)",message="a gateway entry is behind the zone's session (authMode oidc) or pins its caller (source). What needs neither is a perimeter surface"
 type ExposureSpec struct {
 	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
 	// +kubebuilder:validation:MaxLength=40

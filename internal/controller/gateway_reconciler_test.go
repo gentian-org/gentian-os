@@ -986,3 +986,56 @@ func TestATenantWithoutAppsGetsItsCertificateAndGrants(t *testing.T) {
 		t.Fatalf("platform: %d objects, %v", len(objects), err)
 	}
 }
+
+// Nothing with a backend is routed on the authenticated Gateway without a
+// question, and nothing is public on the perimeter that is not on the list
+// below. A route on the authenticated Gateway that carries no authz gets no
+// session policy at all, so a console added without one answers anyone who
+// knows its hostname -- which is how the LiteLLM console stood, and what this
+// refuses for whatever is added next. Adding to the perimeter's list is a
+// decision to publish something to the internet, and has to be made here, in
+// a line somebody reviews.
+func TestEveryKernelRouteIsBehindAQuestionOrDeliberatelyPublic(t *testing.T) {
+	t.Parallel()
+	public := map[string]bool{
+		kernelRouteKeycloakIDP:  true, // the identity provider's realm endpoints, and the sign-in router and brand beside it
+		kernelRouteHTTPRedirect: true, // :80 to :443
+	}
+	for _, zoneReady := range []bool{true, false} {
+		for _, signIn := range []bool{true, false} {
+			specs := kernelHTTPRouteSpecs("k.example", []string{"demo.k.example"}, nil, []string{"demo"}, true, "c1", zoneReady, true, signIn)
+			for _, s := range specs {
+				backends, redirectOnly := 0, true
+				for _, rule := range s.rules {
+					backends += len(rule.BackendRefs)
+					isRedirect := false
+					for _, f := range rule.Filters {
+						if f.Type == gatewayv1.HTTPRouteFilterRequestRedirect {
+							isRedirect = true
+						}
+					}
+					if !isRedirect || len(rule.BackendRefs) > 0 {
+						redirectOnly = false
+					}
+				}
+				switch {
+				case redirectOnly && backends == 0:
+					// Sends the browser elsewhere and serves nothing.
+				case s.authz != nil:
+					// Behind the kernel session and an L2 question.
+				case s.securityPolicy != nil:
+					if action, _ := s.securityPolicy["authorization"].(map[string]interface{})["defaultAction"].(string); action != "Deny" {
+						t.Errorf("%s: a policy of its own that is not a refusal", s.name)
+					}
+				case s.gateway == PerimeterGatewayName && public[s.name]:
+					// Public by decision, named above.
+				default:
+					t.Errorf("%s (%s) serves a backend with no session, no question and no refusal (zoneReady=%v)", s.name, s.host, zoneReady)
+				}
+				if s.gateway != PerimeterGatewayName && s.authz == nil && backends > 0 {
+					t.Errorf("%s (%s) is on the authenticated Gateway with a backend and no authz", s.name, s.host)
+				}
+			}
+		}
+	}
+}

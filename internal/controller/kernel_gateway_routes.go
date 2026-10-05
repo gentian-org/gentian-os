@@ -392,7 +392,11 @@ func kernelHTTPRouteSpecs(
 	// LiteLLM admin console — platform-level only (the claim's llm.enabled).
 	// Tenants do not get their own route; app-catalogue "litellm" tiles stay
 	// unused until per-tenant access is designed (see docs/design/llms.md).
-	if llmEnabled {
+	//
+	// Only once the kernel zone exists, like the other consoles: before it
+	// there is no session to put the route behind, and a console that is not
+	// routed is the safe way to be early.
+	if llmEnabled && kernelZoneReady {
 		specs = append(specs, kernelHTTPRouteSpec{
 			name:        kernelRouteLiteLLM,
 			host:        fmt.Sprintf("llm.%s", kernelDomain),
@@ -404,6 +408,13 @@ func kernelHTTPRouteSpecs(
 				// answers 503 on a host that looks configured.
 				kernelBackendRulePrefixNS(litellmProxyServiceName, llmNamespace, litellmProxyPort, "/"),
 			},
+			// Behind the kernel session, and for whoever may configure the
+			// cluster, like every other kernel console. It had no question
+			// at all: a route on the authenticated Gateway with a backend
+			// and no authz gets no session policy, so the console and its
+			// API answered anyone who knew the hostname, with only LiteLLM's
+			// own key check between the internet and the model gateway.
+			authz: &routeAuthz{relation: "can_configure", object: clusterObject},
 		})
 	}
 	return specs

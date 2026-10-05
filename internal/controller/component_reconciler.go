@@ -269,16 +269,10 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// whose every entry is somebody else's needs no zone client, no
 	// ReferenceGrant and no policy, and must not wait for a secret it will
 	// never use. That is every addon.
-	var routable []*gentianov1alpha1.ExposureSpec
-	for i := range profile.Spec.Expose {
-		e := &profile.Spec.Expose[i]
-		if e.Surface != gentianov1alpha1.SurfaceGateway {
-			continue // perimeter surfaces are enabled per tenant (§5.1); not yet
-		}
-		if e.Backend.Component != "" && e.Backend.Component != comp.Name {
-			continue
-		}
-		routable = append(routable, e)
+	routable, refused := routableExposures(comp, profile)
+	for _, e := range refused {
+		logger.Info("gateway exposure not routed: only authMode oidc is served on the authenticated Gateway",
+			"component", comp.Name, "namespace", comp.Namespace, "exposure", e.Name, "authMode", string(e.AuthMode))
 	}
 
 	exposed := 0
@@ -434,6 +428,37 @@ type edgeZone struct {
 	idCookie    string
 	sectionName string // the authenticated Gateway's listener
 	kernel      bool
+}
+
+// routableExposures are the entries of a profile this component routes on the
+// authenticated Gateway, and the ones it refuses to.
+//
+// A gateway entry is behind the zone's session or it is not routed. The
+// policy that puts a session and the authorization question in front of a
+// route is written for oidc entries only, so an entry with any other mode
+// would be a route on the authenticated Gateway with nothing in front of it
+// at all -- not the session, not even the shim. That includes an entry that
+// pins its caller with `source`: the schema admits it, and nothing enforces a
+// source yet, so routing it would publish it to everyone. What needs no
+// session is a perimeter surface, enabled and published from the DMZ.
+func routableExposures(comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile) (routable, refused []*gentianov1alpha1.ExposureSpec) {
+	for i := range profile.Spec.Expose {
+		e := &profile.Spec.Expose[i]
+		if e.Surface != gentianov1alpha1.SurfaceGateway {
+			continue // perimeter surfaces are enabled per tenant (§5.1)
+		}
+		// An entry that routes into another component is not this one's to
+		// route: the named component already serves that host.
+		if e.Backend.Component != "" && e.Backend.Component != comp.Name {
+			continue
+		}
+		if e.AuthMode != gentianov1alpha1.AuthModeOIDC {
+			refused = append(refused, e)
+			continue
+		}
+		routable = append(routable, e)
+	}
+	return routable, refused
 }
 
 func (r *ComponentReconciler) zoneOf(tenant *gentianov1alpha1.Tenant) edgeZone {

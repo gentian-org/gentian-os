@@ -942,6 +942,11 @@ spec:
                   - message: 'a perimeter entry cannot use authMode oidc: the session
                       lives on the gateway'
                     rule: self.surface != 'perimeter' || self.authMode != 'oidc'
+                  - message: a gateway entry is behind the zone's session (authMode
+                      oidc) or pins its caller (source). What needs neither is a perimeter
+                      surface
+                    rule: self.surface != 'gateway' || self.authMode == 'oidc' ||
+                      has(self.source)
                 maxItems: 32
                 type: array
                 x-kubernetes-list-map-keys:
