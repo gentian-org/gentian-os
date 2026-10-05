@@ -126,7 +126,7 @@ cri_cleanup() {
         if [[ -n "$ctr_bin" ]]; then
             info "CRI cleanup: removing stopped containerd tasks (via ctr)..."
             local stopped raw
-            # Use long-form --namespace because some snap shims mis-parse
+            # Use long-form --namespace because some snap bouncers mis-parse
             # the short -n flag (it gets confused with sudo's -n or ctr's
             # own global options and prints help instead of the task list).
             raw=$(sudo "$ctr_bin" --namespace k8s.io tasks ls 2>/dev/null || true)

@@ -123,7 +123,7 @@ func authorizationGraph(log logr.Logger) *authz.OpenFGA {
 		if err != nil {
 			// Exit, so the pod restarts and asks again. Carrying on without
 			// the graph was carrying on for good: nothing retried, the store
-			// was never created, and the director and the edge shim -- which
+			// was never created, and the director and the edge bouncer -- which
 			// only read it -- crash-looped on "no authorization store yet"
 			// long after OpenFGA was answering. A configured OpenFGA that
 			// does not answer is a dependency not up yet, and a restart with
@@ -316,29 +316,29 @@ func main() {
 	}
 
 	if err := (&controller.GatewayPlatformReconciler{
-		Client:           mgr.GetClient(),
-		KernelDomain:     os.Getenv("KERNEL_DOMAIN"),
-		TenancyMode:      tenancyMode,
-		RoutingMode:      routingMode,
-		Ingress:          buildEdgeIngress(),
-		Cluster:          envOrDefault("GENTIAN_DEPLOYMENTS_CLUSTER_ID", "default-cluster"),
-		KernelRealm:      kernelRealmOrDefault(os.Getenv("KERNEL_REALM")),
-		EdgeAuthzService: envOrDefault("EDGE_AUTHZ_SERVICE", "gentian-os-edge-authz"),
+		Client:         mgr.GetClient(),
+		KernelDomain:   os.Getenv("KERNEL_DOMAIN"),
+		TenancyMode:    tenancyMode,
+		RoutingMode:    routingMode,
+		Ingress:        buildEdgeIngress(),
+		Cluster:        envOrDefault("GENTIAN_DEPLOYMENTS_CLUSTER_ID", "default-cluster"),
+		KernelRealm:    kernelRealmOrDefault(os.Getenv("KERNEL_REALM")),
+		BouncerService: envOrDefault("BOUNCER_SERVICE", "gentian-os-bouncer"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "GatewayPlatform")
 		os.Exit(1)
 	}
 
 	if err := (&controller.ComponentReconciler{
-		Client:           mgr.GetClient(),
-		Scheme:           mgr.GetScheme(),
-		KernelDomain:     os.Getenv("KERNEL_DOMAIN"),
-		KernelRealm:      kernelRealmOrDefault(os.Getenv("KERNEL_REALM")),
-		TenancyMode:      tenancyMode,
-		Cluster:          envOrDefault("GENTIAN_DEPLOYMENTS_CLUSTER_ID", "default-cluster"),
-		EdgeAuthzService: envOrDefault("EDGE_AUTHZ_SERVICE", "gentian-os-edge-authz"),
-		DirectorURL:      os.Getenv("DIRECTOR_URL"),
-		Seeder:           buildSeeder(),
+		Client:         mgr.GetClient(),
+		Scheme:         mgr.GetScheme(),
+		KernelDomain:   os.Getenv("KERNEL_DOMAIN"),
+		KernelRealm:    kernelRealmOrDefault(os.Getenv("KERNEL_REALM")),
+		TenancyMode:    tenancyMode,
+		Cluster:        envOrDefault("GENTIAN_DEPLOYMENTS_CLUSTER_ID", "default-cluster"),
+		BouncerService: envOrDefault("BOUNCER_SERVICE", "gentian-os-bouncer"),
+		DirectorURL:    os.Getenv("DIRECTOR_URL"),
+		Seeder:         buildSeeder(),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Component")
 		os.Exit(1)
@@ -372,12 +372,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := (&controller.SignInLookupReconciler{
+	if err := (&controller.ConciergeLookupReconciler{
 		Client:       mgr.GetClient(),
 		KernelDomain: os.Getenv("KERNEL_DOMAIN"),
 		TenancyMode:  tenancyMode,
 	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "SignInLookup")
+		setupLog.Error(err, "unable to create controller", "controller", "ConciergeLookup")
 		os.Exit(1)
 	}
 

@@ -24,9 +24,9 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -a -o manager ./cmd
 # credential. Which binary runs is the Deployment's command.
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -o director ./cmd/director
 
-# The ext-auth shim ships the same way: the edge's one enforcement point, run
+# The ext-auth bouncer ships the same way: the edge's one enforcement point, run
 # in the edge namespace from this image with its own command.
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -o edge-authz ./cmd/edge-authz
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -o bouncer ./cmd/bouncer
 
 # ── Runtime stage ──────────────────────────────────────────────────────────────
 FROM debian:bookworm-slim
@@ -41,7 +41,7 @@ RUN apt-get update \
 
 COPY --from=builder /workspace/manager /manager
 COPY --from=builder /workspace/director /director
-COPY --from=builder /workspace/edge-authz /edge-authz
+COPY --from=builder /workspace/bouncer /bouncer
 
 USER 65532:65532
 

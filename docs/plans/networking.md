@@ -73,7 +73,7 @@ flowchart TB
 
     subgraph EDGE["kernel-edge — one address, one Envoy fleet"]
         AG["authenticated Gateway<br/>L0 TLS, rate limit<br/>L1 session per tenant zone (OIDC) / JWT for bearer<br/>L2 ext-auth: can_use"]
-        SHIM["ext-auth shim"]
+        BOUNCER["ext-auth bouncer"]
         ACME["ACME HTTP-01 solver"]
         PG["perimeter Gateway<br/>L0 only<br/>own-hostname surfaces<br/>rate and body limits<br/>TCP/UDP listeners"]
     end
@@ -132,8 +132,8 @@ flowchart TB
 
 
     NET -->|"https, surface: gateway"| AG
-    AG -->|"headers or token"| SHIM
-    SHIM -->|"Check"| FGA
+    AG -->|"headers or token"| BOUNCER
+    BOUNCER -->|"Check"| FGA
     AG --> DESK
     AG --> SAPP
     AG --> CON
@@ -168,7 +168,7 @@ flowchart TB
     S2 ~~~ TURN
     S2 ~~~ PX
     PX ~~~ S4
-    SHIM ~~~ S3
+    BOUNCER ~~~ S3
     S3 ~~~ DESK
     S3 ~~~ SAPP
     S3 ~~~ CON
@@ -183,7 +183,7 @@ flowchart TB
     classDef perim fill:#d9731a33,stroke:#f0883e,stroke-width:1.5px
     classDef ew fill:#80808026,stroke:#9a9a9a
     classDef spacer fill:none,stroke:none
-    class AG,SHIM,DESK,APP,PEER,SAPP,CON,DIR,LA auth
+    class AG,BOUNCER,DESK,APP,PEER,SAPP,CON,DIR,LA auth
     class PG,PX,MTA,TURN,ACME,LP perim
     class KC,FGA,DB,LLM,STORE,LE ew
     class S2,S3,S4,S5 spacer
@@ -225,7 +225,7 @@ higher one.
 | L0 | TLS, DNS, rate limit | is this traffic well-formed and within budget? | Envoy listener, `BackendTrafficPolicy` | none |
 | L1 | Edge session | who is this, in which realm? | Envoy `SecurityPolicy.oidc` (one confidential client per tenant zone in that tenant's realm; the kernel realm for `console.<kernel>`) and `SecurityPolicy.jwt` for bearer clients | Keycloak token: `sub`, realm, groups |
 | L1′ | Perimeter authentication | is this credential, signature or source valid? | the **publishing proxy** in the DMZ — a named enforcement point (principle 3): `none`, `basic` and `signature` are verified here and nowhere else. It strips every inbound identity header before forwarding and sets only its own, which is what lets the app trust one at all | the entry's `authMode` credential, or none |
-| L2 | Reachability | may this person reach this component at all? | ext-auth shim → OpenFGA `can_use` on `app` over the stored membership projection (AD-12); cached per `(sub, sid, route)`; a token whose `sid` the shim has seen revoked is denied here | the same token |
+| L2 | Reachability | may this person reach this component at all? | ext-auth bouncer → OpenFGA `can_use` on `app` over the stored membership projection (AD-12); cached per `(sub, sid, route)`; a token whose `sid` the bouncer has seen revoked is denied here | the same token |
 | L3 | App session and authorization | what may they do inside? | the app: identity headers set by the gateway, or its own silent SSO login with **its own client and audience** and its own cookie, capped by the profile's `sessionMaxAge`. The edge token itself is forwarded only on a route that declares `forwardToken` — the desktop | identity headers, or the app's own session |
 | L4 | Delegated access | may this agent or peer act, and for whom? | MCP gateway and contract bindings: RFC 8693 exchanged tokens carrying `act`; per-tenant contract credentials | agent identity + delegating human |
 | L5 | Network | may these two pods talk at all? | NetworkPolicy derived from `requires` and `integrations`; Kyverno | ServiceAccount, namespace labels |
@@ -302,21 +302,21 @@ policy. `id-admin.<kernel>` is retired.
   token. Keying on `jti` would make every refresh a cache miss, so load would
   scale with refreshes rather than logins, and no entry could be evicted for a
   session nothing can name. Load on OpenFGA is logins × apps. Eviction, not
-  expiry, is what makes a change visible: the shim polls OpenFGA's
+  expiry, is what makes a change visible: the bouncer polls OpenFGA's
   `ReadChanges` changelog on an interval and evicts by subject. OpenFGA has no
   push stream, so that interval is the stated bound on how long a revoked
   right survives.
-- **Logout is enforced at the shim and recorded by the director.** Envoy
+- **Logout is enforced at the bouncer and recorded by the director.** Envoy
   Gateway's OIDC filter implements only the local `logoutPath`: there is no
   back-channel endpoint, and the edge session is a signed cookie in the
   browser, so there is no server-side session for a logout token to end. The
-  shim is the only component in every request path, so it is where revocation
+  bouncer is the only component in every request path, so it is where revocation
   is *enforced* — but it runs as several replicas and must not keep state of
   its own, or a logout delivered to one replica is unknown to the others and
   lost on restart. So Keycloak's back-channel logout URI for each zone client
   points at the **director**, which already receives Keycloak's events and is
   the store's only writer: it writes `session:<sid>#revoked` and removes the
-  tuple once that session's longest token has expired. Every shim replica
+  tuple once that session's longest token has expired. Every bouncer replica
   sees it on the `ReadChanges` poll it already runs, evicts the session's
   cached decisions, and denies the `sid` at L2. The poll interval, kept to a
   second or two, is the stated bound on how long a logged-out session
@@ -327,13 +327,13 @@ policy. `id-admin.<kernel>` is retired.
 - **Platform rights follow the store; app rights follow the token.**
   Membership reaches OpenFGA from Keycloak's events through the director
   sub-second on the normal path, and within one rolling sweep in the worst
-  case (AD-12; the bound is in authorization-model.md §2), and the shim evicts its cached decisions on the
+  case (AD-12; the bound is in authorization-model.md §2), and the bouncer evicts its cached decisions on the
   `ReadChanges` poll, so a revoked platform right is gone within one poll
   interval without any token being touched. Apps, however, read groups from
   their own tokens, so for *their* rights the rule stays: **a membership
   change revokes the user's Keycloak sessions.** The operator, on applying
   a group change, calls the admin API's logout for that user; the back-channel
-  logout reaches the director, the shim denies the revoked `sid` at L2; the next
+  logout reaches the director, the bouncer denies the revoked `sid` at L2; the next
   request is a silent re-login with the new groups. The hard bound for
   app-level rights is the **app's own session**, not the access token: L1
   governs whether a request arrives, and does not refresh the group model an
@@ -466,7 +466,7 @@ design cannot do for it.
   `HTTPRoute` in the instance's namespace plus a `SecurityPolicy` for its
   `authMode`; per enabled `surface: perimeter` entry, an `HTTPRoute` in
   `tenant-<t>-dmz` targeting the proxy.
-- The ext-auth shim is the new enforcement point of
+- The ext-auth bouncer is the new enforcement point of
   [security-gap-closing.md](security-gap-closing.md) G3; the per-zone edge
   OIDC clients are created alongside the app clients, each with its
   back-channel logout URI pointing at the director, not at the Gateway (§4).

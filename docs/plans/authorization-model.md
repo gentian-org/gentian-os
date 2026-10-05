@@ -52,7 +52,7 @@ projection honest, and security principle 2 intact:
   | Event applied, normal path | sub-second |
   | Failed event → targeted re-read of that subject | seconds |
   | Rolling sweep, every realm, cluster complete | **15 minutes** |
-  | Shim evicts its cached decision (`ReadChanges` poll) | 10 seconds |
+  | Bouncer evicts its cached decision (`ReadChanges` poll) | 10 seconds |
   | **Worst case for an authorization change to take effect** | **~16 minutes** |
   | Projection declared stale → alert | no sweep completed in 30 minutes |
 
@@ -65,7 +65,7 @@ projection honest, and security principle 2 intact:
   Fifteen minutes is tolerable only because it bounds *authorization*
   changes, not lockout. Shutting someone out does not wait for the
   projection: revoking their Keycloak sessions ends the edge session — the
-  director records `session:<sid>#revoked` and the shim denies it within one
+  director records `session:<sid>#revoked` and the bouncer denies it within one
   poll (networking.md §4) — and
   disabling the user stops new tokens at the issuer. Those are immediate and
   independent of any tuple. The bound covers "this person should no longer
@@ -89,7 +89,7 @@ worst case for an authorization change (§2).
 | `tenant:<t>#cluster@cluster:<c>` | director | tenant deploy |
 | `tenant:<t>#<role>@group:gentian/tenant/<t>/<g>#member` | director | tenant deploy (groups are conventional per tenant) |
 | `tenant:<t>#operated_by@cluster:<c>` | director | tenant deploy, and always for `tenant:platform`. **Consent, not structure**: it is what lets `admin from cluster` reach into the tenant — user management and secret writes included. A tenant that administers itself has it removed (`can_configure` on the cluster, at the tenant's request) and loses nothing else: `cluster` stays, so audit and cluster-scope approval still derive |
-| `session:<sid>#revoked@user:<sub>` | director | a zone client's back-channel logout arrives; removed when that session's longest token has expired. What lets several shim replicas enforce one logout without state of their own |
+| `session:<sid>#revoked@user:<sub>` | director | a zone client's back-channel logout arrives; removed when that session's longest token has expired. What lets several bouncer replicas enforce one logout without state of their own |
 | *(no bootstrap tuple for the platform tenant)* | — | `tenant#admin` derives `or admin from operated_by`, so a platform administrator is an administrator of `tenant:platform` — and of any tenant that has not withdrawn the consent — through the chain. Writing the platform group into a tenant relation would be the copied tuple R4 forbids, and a tuple somebody has to remember to remove |
 | `tenant:<t>#perimeter_approver@group:gentian/tenant/<t>/admins#member` | director | tenant deploy — the default: publishing is its own grant, but most tenants do not staff the role separately. A tenant that wants the separation removes this tuple and adds its own `:perimeter` group |
 | `app:<t>/<p>#tenant@tenant:<t>` | director | app install |
@@ -107,7 +107,7 @@ worst case for an authorization change (§2).
 
 | PEP | Object | Relations |
 |---|---|---|
-| Gateway ext-auth shim | `tenant:<t>` for the desktop host; `app:<t>/<p>` for an app host; `cluster:<c>` for a kernel tool host; `session:<sid>` on every miss | `can_enter`; `can_use`; `can_configure`, `can_audit`; `revoked` (deny if true) |
+| Gateway ext-auth bouncer | `tenant:<t>` for the desktop host; `app:<t>/<p>` for an app host; `cluster:<c>` for a kernel tool host; `session:<sid>` on every miss | `can_enter`; `can_use`; `can_configure`, `can_audit`; `revoked` (deny if true) |
 | — | — | *The gateway and the desktop resolve the **same** relation on the **same** object: `can_use`, and `can_launch` which derives from it. One rule, two enforcement points, no second implementation to drift. The portal stops computing entitlement in Python when the director answers it; keeping both is how the tile list and the route come to disagree.* |
 | *(none yet)* | `contract:<t>/<name>` | `can_consume` — the relation exists so the vocabulary is complete and the director can bound what it binds; there is no east-west PEP to ask it until G8 |
 | Credential manager | `app:<t>/<p>` for a component's secrets; `cluster:<c>` for kernel and system ones | `can_write_credential`; `can_configure` |

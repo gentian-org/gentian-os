@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package authz
+package bouncer
 
 import (
 	"context"
@@ -41,7 +41,7 @@ type Store interface {
 	Changes(ctx context.Context, objectType, token string) ([]authz.Change, string, error)
 }
 
-// Request is what the Gateway tells the shim about a request.
+// Request is what the Gateway tells the bouncer about a request.
 type Request struct {
 	ID            string
 	Host          string
@@ -50,11 +50,11 @@ type Request struct {
 	Cookies       map[string]string
 }
 
-// Decision is the shim's answer.
+// Decision is the bouncer's answer.
 type Decision struct {
 	Allow bool
 	// Identified is false when the request passed with no identity: an oidc
-	// route with no valid session, left to the OIDC filter behind the shim.
+	// route with no valid session, left to the OIDC filter behind the bouncer.
 	Identified bool
 	// Status is the HTTP status to answer with when not allowed.
 	Status int
@@ -277,12 +277,12 @@ func deny(status int, reason string) Decision {
 	return Decision{Allow: false, Status: status, Reason: reason}
 }
 
-// identityHeaders are what a backend may trust, so the shim owns them: set
+// identityHeaders are what a backend may trust, so the bouncer owns them: set
 // on an identified request, stripped on every other.
 var identityHeaders = []string{HeaderSubject, HeaderRealm, HeaderSession, HeaderEmail, HeaderName}
 
 // unauthenticated answers a request that carries no valid token. On a bearer
-// route that is a refusal. On an oidc route it is not this shim's question:
+// route that is a refusal. On an oidc route it is not this bouncer's question:
 // Envoy Gateway runs ext_authz before its OIDC filter, so the request goes on
 // -- stripped of every identity header and of whatever bearer it carried --
 // to the OIDC filter, which sends it to sign in or completes the code flow.

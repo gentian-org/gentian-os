@@ -107,7 +107,7 @@ A custom domain is not a field on the Tenant. It is a cluster-scoped
 the domain to the Tenant's `status.domain`, which `EffectiveDomain` reads, and
 reports `DomainBound`; a domain on or under the kernel domain is refused, as is
 one another tenant holds. The tenant's hosts, mail and logins move to it, and
-the sign-in router finds it through `sign-in-lookup`: one file per bound domain,
+the concierge finds it through `concierge-lookup`: one file per bound domain,
 named by its SHA-256, so a domain is found by whoever already knows it and the
 cluster's list of customers is not published.
 
@@ -149,7 +149,7 @@ NetworkPolicies enforce three rules at the CNI level:
 **Suze** (Keycloak + OpenFGA) is the **single trust anchor** on new installs.
 Each tenant gets a dedicated Keycloak realm; apps authenticate users via OIDC
 against that realm, and its people sign in there too: the edge in front of a
-tenant's console sends the browser to the tenant realm, and the sign-in router
+tenant's console sends the browser to the tenant realm, and the concierge
 on the kernel domain sends an address to its tenant's console (see
 [iam.md](iam.md)). App-to-app calls use **OIDC token exchange (RFC 8693)** — app A
 presents its user-bound token and receives a scoped token usable against app B.

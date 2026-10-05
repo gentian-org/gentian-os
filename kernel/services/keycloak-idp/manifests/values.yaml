@@ -37,19 +37,19 @@ eventListener:
   # The id the director lists this key under.
   keyID: gentian-listener
 
-# The sign-in router at id.<kernel>/sign-in/, where the kernel domain's apex
+# The concierge at id.<kernel>/sign-in/, where the kernel domain's apex
 # sends people on a multi-tenant cluster: an e-mail address in, its
-# workspace's console out (gentian-ui apps/sign-in). Served beside Keycloak
+# workspace's console out (gentian-ui apps/concierge). Served beside Keycloak
 # because the address it hands on travels in a cookie only Keycloak's realm
 # pages may receive.
-signIn:
+concierge:
   enabled: true
   # An immutable tag: the branch and commit it was built from.
-  image: ghcr.io/gentian-org/sign-in-web:develop-e1f1a2f
-  # config.json; see apps/sign-in/README.md. The name and logo on the card
+  image: ghcr.io/gentian-org/concierge-web:develop-a6385e4
+  # config.json; see apps/concierge/README.md. The name and logo on the card
   # are the cluster's brand (the Branding), not configured here.
   config:
     # Where the page looks up an address on a custom domain: the directory
-    # the operator fills from the tenants' TenantDomains (sign-in-lookup),
+    # the operator fills from the tenants' TenantDomains (concierge-lookup),
     # one file per domain named by its SHA-256.
     lookup: /sign-in/lookup/

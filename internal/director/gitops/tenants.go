@@ -82,7 +82,7 @@ type Tenant struct {
 	// Apps are the profile names installed into it.
 	Apps []string `json:"apps"`
 	// LoginDomain is the domain its people sign in under, and so where the
-	// sign-in router sends an address on it: see TenantLoginDomain.
+	// concierge sends an address on it: see TenantLoginDomain.
 	LoginDomain string `json:"loginDomain,omitempty"`
 	// CustomDomain is the domain a TenantDomain binds it to, if any.
 	CustomDomain string `json:"customDomain,omitempty"`

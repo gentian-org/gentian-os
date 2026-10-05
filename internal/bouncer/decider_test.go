@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package authz
+package bouncer
 
 import (
 	"context"
@@ -286,7 +286,7 @@ func TestWhatHasNoRouteClassOrNoTokenIsRefused(t *testing.T) {
 		t.Fatalf("no class: %+v", dec)
 	}
 	// On an oidc route a request with no valid session is the OIDC filter's,
-	// which runs behind the shim: it passes, with no identity and no bearer.
+	// which runs behind the bouncer: it passes, with no identity and no bearer.
 	for name, req := range map[string]Request{
 		"no token": {Host: "argocd.k.example"},
 		"forged":   {Host: "argocd.k.example", Authorization: "Bearer forged"},

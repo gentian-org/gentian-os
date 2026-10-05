@@ -33,7 +33,7 @@ data:
      */
 
     /* The cluster's brand: --brand-* custom properties, rendered by the operator
-     * from the Branding (W3C design tokens) and served beside the sign-in router.
+     * from the Branding (W3C design tokens) and served beside the concierge.
      * Every --gtn-* below reads its token and keeps the platform's own value when
      * the token is absent, or when the file is. */
     @import url("/branding/brand.css");
@@ -126,7 +126,7 @@ data:
      */
 
     /* The cluster's brand: --brand-* custom properties, rendered by the operator
-     * from the Branding (W3C design tokens) and served beside the sign-in router.
+     * from the Branding (W3C design tokens) and served beside the concierge.
      * Every --gtn-* below reads its token and keeps the platform's own value when
      * the token is absent, or when the file is. */
     @import url("/branding/brand.css");
@@ -326,7 +326,7 @@ data:
      */
 
     /* The cluster's brand: --brand-* custom properties, rendered by the operator
-     * from the Branding (W3C design tokens) and served beside the sign-in router.
+     * from the Branding (W3C design tokens) and served beside the concierge.
      * Every --gtn-* below reads its token and keeps the platform's own value when
      * the token is absent, or when the file is. */
     @import url("/branding/brand.css");
@@ -805,7 +805,7 @@ data:
       }
     })();
   login__resources__js__login-hint.js: |-
-    /* The address the sign-in router was given, filled in for the person.
+    /* The address the concierge was given, filled in for the person.
      *
      * The router sends the browser to the workspace's console with the address on
      * it as ?login_hint=. The console is behind the edge, which starts the
@@ -868,7 +868,7 @@ data:
     import=common/keycloak
 
     styles=css/gentian-login.css
-    # login-hint fills the username from the sign-in router's hint; brand sets
+    # login-hint fills the username from the concierge's hint; brand sets
     # the card's name and logo from the cluster's brand. See the files.
     scripts=js/login-hint.js js/brand.js
 

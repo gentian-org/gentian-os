@@ -230,7 +230,7 @@ Specified in [authorization-model.md](authorization-model.md) and
       deleting the tuple revokes a delivered credential.
 - [ ] `tenant#operated_by` (modelled and tested; the writers are open): platform administration of a tenant is a
       removable consent tuple, written at deploy; `session#revoked` written
-      by the director on back-channel logout and read by the shim.
+      by the director on back-channel logout and read by the bouncer.
 - [ ] App-admin groups become per app — `gentian:tenant:<t>:app:<p>:admins` —
       and are created only for profiles declaring a `privilegedRole`. The
       cross-app group made a Nextcloud administrator an Odoo administrator.
@@ -287,7 +287,7 @@ Specified in [authorization-model.md](authorization-model.md) and
       completed sweep; no sweep in 30 minutes raises an alert. A stale
       projection does not fail checks closed — an issuer hiccup must not
       become a platform outage — it fails loudly.
-- [ ] Ext-auth shim polls OpenFGA's `ReadChanges` changelog and evicts
+- [ ] Ext-auth bouncer polls OpenFGA's `ReadChanges` changelog and evicts
       cached decisions (WP-4).
 - [ ] OpenFGA on its own CNPG cluster or pooled database with a reserved
       connection limit, isolated from Keycloak's login load (AD-8).
@@ -309,14 +309,14 @@ Specified in [networking.md](networking.md).
       component's oidc routes share one policy.
 - [ ] `SecurityPolicy` per route for tenant zones (edge clients from WP-2)
       and JWT for bearer routes.
-- [x] **Ext-auth shim** — `edge-authz` in `kernel-edge`, shipped in the
+- [x] **Ext-auth bouncer** — `bouncer` in `kernel-edge`, shipped in the
       operator image: verifies the token, asks the route's relation, caches
       per `(sub, sid, route)`, evicts on every `ReadChanges` entry, fails
       closed with cached allows carrying, denies a revoked `sid`; gRPC. Envoy
       Gateway runs ext_authz before its OIDC filter, so on an oidc route a
       request with no session passes to the OIDC filter with no identity and
       is refused only on a bearer route.
-- [ ] Shim: `can_use` on app routes; topology-aware routing to it.
+- [ ] Bouncer: `can_use` on app routes; topology-aware routing to it.
 - [ ] DMZ publishing proxy image: generic Envoy/nginx with config rendered
       per surface — path allow/deny, `authMode` adapter (basic via the
       broker's passdb, bearer via JWKS, signature via HMAC from OpenBao),
@@ -575,7 +575,7 @@ From [security-gap-closing.md](security-gap-closing.md).
       `sourceIntegrity` policy for `gentian-deployments`
       (artefacts/roadmap-additions.md); image signing in CI and admission
       verification; provider-helm scoped per tenant (roadmap 1.16).
-- [ ] G10 decision log and request-id propagation across director, shim,
+- [ ] G10 decision log and request-id propagation across director, bouncer,
       console and Keycloak events; the log store.
 - [ ] G12 per-app OpenBao policies bound to the app's ServiceAccount.
 - [ ] G13 Reloader annotation on every Release from `app-default`.
@@ -756,7 +756,7 @@ compliance:
       control objective → principle → mechanism → evidence query. The
       auditor's first document and ISAE 3402's system description; the
       roles document is the list of complementary user-entity controls.
-- [ ] **Request id everywhere**: the director, the shim, the console and
+- [ ] **Request id everywhere**: the director, the bouncer, the console and
       the Keycloak listener propagate one id; the exports join on it.
 
 ## WP-14 Store reference implementation (`store`)

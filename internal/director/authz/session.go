@@ -32,7 +32,7 @@ type Change struct {
 // Changes returns a page of the store's changelog for one object type, from
 // the continuation token of the previous page, and the token for the next.
 // The last page's token is what to poll with: OpenFGA answers it with the
-// changes since, which is how the shim learns of a revocation or a membership
+// changes since, which is how the bouncer learns of a revocation or a membership
 // change without a push stream (networking.md §4).
 func (c *OpenFGA) Changes(ctx context.Context, objectType, token string) ([]Change, string, error) {
 	q := url.Values{"page_size": {"100"}}

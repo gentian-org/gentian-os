@@ -183,8 +183,8 @@ type session
   relations
     # A Keycloak session the issuer has ended. Written by the director when a
     # zone client's back-channel logout arrives, removed once that session's
-    # longest token has expired. The shim asks it at L2; because it is a stored
-    # tuple, every shim replica sees it on the ReadChanges poll it already
+    # longest token has expired. The bouncer asks it at L2; because it is a stored
+    # tuple, every bouncer replica sees it on the ReadChanges poll it already
     # runs, and nothing is lost when a replica restarts (AD-13).
     define revoked: [user]
 

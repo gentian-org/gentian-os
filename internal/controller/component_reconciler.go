@@ -50,12 +50,12 @@ import (
 // policy needs in the edge namespace.
 type ComponentReconciler struct {
 	client.Client
-	Scheme           *runtime.Scheme
-	KernelDomain     string
-	KernelRealm      string
-	TenancyMode      string
-	Cluster          string
-	EdgeAuthzService string
+	Scheme         *runtime.Scheme
+	KernelDomain   string
+	KernelRealm    string
+	TenancyMode    string
+	Cluster        string
+	BouncerService string
 	// DirectorURL is where the desktop relays to; empty derives it from the
 	// layout's control namespace.
 	DirectorURL string
@@ -83,10 +83,10 @@ const (
 	componentFinalizer      = "gentianos.io/component-cleanup"
 	componentLabel          = "gentianos.io/component"
 	componentRequeue        = 15 * time.Second
-	// edgeAuthzRouteLabel marks an HTTPRoute whose L2 question the gateway
-	// reconciler copies into the shim's table; the question is in the
+	// bouncerRouteLabel marks an HTTPRoute whose L2 question the gateway
+	// reconciler copies into the bouncer's table; the question is in the
 	// annotations below.
-	edgeAuthzRouteLabel = "gentianos.io/edge-authz"
+	bouncerRouteLabel = "gentianos.io/bouncer"
 
 	// desktopAPIServiceName is the desktop's BFF Service in its tenant's
 	// namespace, as the desktop profile's api exposure names it.
@@ -102,19 +102,19 @@ var helmReleaseGVK = schema.GroupVersionKind{
 }
 
 const (
-	edgeAuthzRelationAnnotation = "gentianos.io/edge-authz-relation"
-	edgeAuthzObjectAnnotation   = "gentianos.io/edge-authz-object"
-	edgeAuthzForwardAnnotation  = "gentianos.io/edge-authz-forward-token"
-	edgeAuthzCookieAnnotation   = "gentianos.io/edge-authz-cookie"
+	bouncerRelationAnnotation = "gentianos.io/bouncer-relation"
+	bouncerObjectAnnotation   = "gentianos.io/bouncer-object"
+	bouncerForwardAnnotation  = "gentianos.io/bouncer-forward-token"
+	bouncerCookieAnnotation   = "gentianos.io/bouncer-cookie"
 	// The zone's id token cookie and its realm's end-session endpoint, for
-	// the shim's sign-out.
-	edgeAuthzIDCookieAnnotation   = "gentianos.io/edge-authz-id-cookie"
-	edgeAuthzEndSessionAnnotation = "gentianos.io/edge-authz-end-session"
-	edgeAuthzAuthModeAnnotation   = "gentianos.io/edge-authz-mode"
-	// edgeAuthzDenyPathsAnnotation carries the exposure's denyPaths to the
-	// shim's table. Comma-separated because an annotation is a string and a
+	// the bouncer's sign-out.
+	bouncerIDCookieAnnotation   = "gentianos.io/bouncer-id-cookie"
+	bouncerEndSessionAnnotation = "gentianos.io/bouncer-end-session"
+	bouncerAuthModeAnnotation   = "gentianos.io/bouncer-mode"
+	// bouncerDenyPathsAnnotation carries the exposure's denyPaths to the
+	// bouncer's table. Comma-separated because an annotation is a string and a
 	// path cannot contain a comma without being escaped, which none are.
-	edgeAuthzDenyPathsAnnotation  = "gentianos.io/edge-authz-deny-paths"
+	bouncerDenyPathsAnnotation    = "gentianos.io/bouncer-deny-paths"
 	componentDatabaseSecretSuffix = "-database"
 )
 
@@ -260,7 +260,7 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 
 	// Exposures: every gateway entry becomes a route in this namespace and
-	// a policy carrying the zone's session and the shim. Not before the
+	// a policy carrying the zone's session and the bouncer. Not before the
 	// zone's client exists -- a policy naming a missing Secret is invalid,
 	// and an invalid policy leaves its route open.
 	// What this component actually PUBLISHES, which is not the same as what it
@@ -437,7 +437,7 @@ type edgeZone struct {
 // policy that puts a session and the authorization question in front of a
 // route is written for oidc entries only, so an entry with any other mode
 // would be a route on the authenticated Gateway with nothing in front of it
-// at all -- not the session, not even the shim. That includes an entry that
+// at all -- not the session, not even the bouncer. That includes an entry that
 // pins its caller with `source`: the schema admits it, and nothing enforces a
 // source yet, so routing it would publish it to everyone. What needs no
 // session is a perimeter surface, enabled and published from the DMZ.
@@ -603,9 +603,9 @@ func (r *ComponentReconciler) ensureExposureRoute(ctx context.Context, comp *gen
 }
 
 // ensureZonePolicy keeps the component's one SecurityPolicy: the zone's
-// session and the shim, over every oidc route the component has.
+// session and the bouncer, over every oidc route the component has.
 func (r *ComponentReconciler) ensureZonePolicy(ctx context.Context, comp *gentianov1alpha1.Component, zone edgeZone, routes []string, authz routeAuthz) error {
-	spec := zoneSecurityPolicySpec(r.KernelDomain, zone, routes[0], authz, servicesNamespace, r.edgeAuthzService())
+	spec := zoneSecurityPolicySpec(r.KernelDomain, zone, routes[0], authz, servicesNamespace, r.bouncerService())
 	targets := make([]interface{}, 0, len(routes))
 	for _, name := range routes {
 		targets = append(targets, map[string]interface{}{"group": gatewayv1.GroupName, "kind": "HTTPRoute", "name": name})
@@ -705,24 +705,24 @@ func buildExposureRoute(comp *gentianov1alpha1.Component, name, host string, zon
 		rules = append(rules, kernelBackendRulePrefixNS(e.Backend.Service, comp.Namespace, e.Backend.Port, edgeOAuth2Prefix, frame...))
 	}
 	labels := componentLabels(comp)
-	labels[edgeAuthzRouteLabel] = "true"
+	labels[bouncerRouteLabel] = "true"
 	mode := string(e.AuthMode)
 	if e.AuthMode == gentianov1alpha1.AuthModeJWT || e.AuthMode == gentianov1alpha1.AuthModeBearer {
 		mode = "bearer"
 	}
 	annotations := map[string]string{
-		edgeAuthzRelationAnnotation: authz.relation,
-		edgeAuthzObjectAnnotation:   authz.object,
-		edgeAuthzForwardAnnotation:  fmt.Sprint(authz.forwardToken),
-		edgeAuthzCookieAnnotation:   zone.cookie,
-		edgeAuthzAuthModeAnnotation: mode,
+		bouncerRelationAnnotation: authz.relation,
+		bouncerObjectAnnotation:   authz.object,
+		bouncerForwardAnnotation:  fmt.Sprint(authz.forwardToken),
+		bouncerCookieAnnotation:   zone.cookie,
+		bouncerAuthModeAnnotation: mode,
 		// What sign-out needs: the zone's id token, which is the hint the
 		// realm ends a session on without asking, and where that realm ends
 		// one. Without them the edge drops its own cookies, the realm's
 		// session stands, and the next request is signed straight back in --
 		// a sign-out that reloads the page.
-		edgeAuthzIDCookieAnnotation:   zone.idCookie,
-		edgeAuthzEndSessionAnnotation: endSessionURL(kernelDomain, zone.realm),
+		bouncerIDCookieAnnotation:   zone.idCookie,
+		bouncerEndSessionAnnotation: endSessionURL(kernelDomain, zone.realm),
 	}
 	// denyPaths is not a route rule. A gateway route matches by prefix, so
 	// the denied path is already inside the rule that serves the host, and
@@ -730,7 +730,7 @@ func buildExposureRoute(comp *gentianov1alpha1.Component, name, host string, zon
 	// send the request to. It is refused at L2 instead, which is the one
 	// place that sees every request to this host.
 	if len(e.DenyPaths) > 0 {
-		annotations[edgeAuthzDenyPathsAnnotation] = strings.Join(e.DenyPaths, ",")
+		annotations[bouncerDenyPathsAnnotation] = strings.Join(e.DenyPaths, ",")
 	}
 	return &gatewayv1.HTTPRoute{
 		ObjectMeta: metav1.ObjectMeta{
@@ -749,7 +749,7 @@ func buildExposureRoute(comp *gentianov1alpha1.Component, name, host string, zon
 
 // zoneGrantName is the ReferenceGrant in the edge namespace that lets a
 // component namespace's SecurityPolicies name the zone's client Secret and
-// the shim's Service.
+// the bouncer's Service.
 func zoneGrantName(namespace string) string { return "allow-zone-policy-" + namespace }
 
 func (r *ComponentReconciler) ensureZoneGrant(ctx context.Context, comp *gentianov1alpha1.Component) error {
@@ -757,7 +757,7 @@ func (r *ComponentReconciler) ensureZoneGrant(ctx context.Context, comp *gentian
 		"from": []interface{}{
 			map[string]interface{}{"group": "gateway.envoyproxy.io", "kind": "SecurityPolicy", "namespace": comp.Namespace},
 		},
-		// The shim's Service only: the zone's client secret is copied beside
+		// The bouncer's Service only: the zone's client secret is copied beside
 		// the policy, because Envoy Gateway reads it from no other namespace.
 		"to": []interface{}{
 			map[string]interface{}{"group": "", "kind": "Service"},
@@ -842,11 +842,11 @@ func (r *ComponentReconciler) deleteZoneGrant(ctx context.Context, comp *gentian
 	return client.IgnoreNotFound(r.Delete(ctx, obj))
 }
 
-func (r *ComponentReconciler) edgeAuthzService() string {
-	if r.EdgeAuthzService == "" {
-		return "gentian-os-edge-authz"
+func (r *ComponentReconciler) bouncerService() string {
+	if r.BouncerService == "" {
+		return "gentian-os-bouncer"
 	}
-	return r.EdgeAuthzService
+	return r.BouncerService
 }
 
 func (r *ComponentReconciler) directorURL() string {

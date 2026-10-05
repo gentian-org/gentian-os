@@ -22,11 +22,11 @@ import (
 )
 
 // The SecurityPolicy is the whole of L1 and L2 for a kernel-zone route: the
-// zone's session and the shim, failing closed. What a reviewer has to be able
+// zone's session and the bouncer, failing closed. What a reviewer has to be able
 // to find is here: which client, whose cookie, whether the token is handed on.
-func TestKernelSecurityPolicyIsTheZoneSessionAndTheShim(t *testing.T) {
+func TestKernelSecurityPolicyIsTheZoneSessionAndTheBouncer(t *testing.T) {
 	spec := kernelSecurityPolicySpec("k.example", "kernel", "kernel-argocd",
-		routeAuthz{relation: "can_configure", object: "cluster:c1"}, "gentian-os-edge-authz")
+		routeAuthz{relation: "can_configure", object: "cluster:c1"}, "gentian-os-bouncer")
 	oidc := spec["oidc"].(map[string]interface{})
 	if oidc["clientID"] != edgeKernelClientID {
 		t.Fatalf("clientID = %v", oidc["clientID"])
@@ -46,7 +46,7 @@ func TestKernelSecurityPolicyIsTheZoneSessionAndTheShim(t *testing.T) {
 	}
 	ext := spec["extAuth"].(map[string]interface{})
 	if ext["failOpen"] != false {
-		t.Fatal("the shim must fail closed")
+		t.Fatal("the bouncer must fail closed")
 	}
 	target := spec["targetRefs"].([]interface{})[0].(map[string]interface{})
 	if target["kind"] != "HTTPRoute" || target["name"] != "kernel-argocd" {
@@ -60,11 +60,11 @@ func TestKernelSecurityPolicyIsTheZoneSessionAndTheShim(t *testing.T) {
 }
 
 func TestTheRouteTableListsEveryRouteWithAQuestionSortedByHost(t *testing.T) {
-	table, err := edgeAuthzRouteTable([]kernelHTTPRouteSpec{
+	table, err := bouncerRouteTable([]kernelHTTPRouteSpec{
 		{name: "b", host: "headlamp.k.example", authz: &routeAuthz{relation: "can_audit", object: "cluster:c1"}},
 		{name: "id", host: "id.k.example"},
 		{name: "a", host: "argocd.k.example", authz: &routeAuthz{relation: "can_configure", object: "cluster:c1"}},
-	}, []edgeAuthzRoute{{Host: "console.k.example", Relation: "can_enter", Object: "tenant:platform", AccessTokenCookie: edgeKernelAccessTokenCookie, ForwardToken: true, AuthMode: "oidc"}}, "k.example", "kernel")
+	}, []bouncerRoute{{Host: "console.k.example", Relation: "can_enter", Object: "tenant:platform", AccessTokenCookie: edgeKernelAccessTokenCookie, ForwardToken: true, AuthMode: "oidc"}}, "k.example", "kernel")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,9 +81,9 @@ func TestTheRouteTableListsEveryRouteWithAQuestionSortedByHost(t *testing.T) {
 		t.Fatalf("a component's route is in the table beside the kernel's:\n%s", table)
 	}
 	if !strings.Contains(table, "authMode: oidc") {
-		t.Fatalf("the route's L1 mode is what tells the shim whose question a missing session is:\n%s", table)
+		t.Fatalf("the route's L1 mode is what tells the bouncer whose question a missing session is:\n%s", table)
 	}
 	if !strings.Contains(table, "accessTokenCookie: "+edgeKernelAccessTokenCookie) {
-		t.Fatalf("the zone's cookie name is what the shim reads the token from:\n%s", table)
+		t.Fatalf("the zone's cookie name is what the bouncer reads the token from:\n%s", table)
 	}
 }

@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-// Package authz is the ext-auth shim: L2 of the edge (networking.md §2).
+// Package authz is the ext-auth bouncer: L2 of the edge (networking.md §2).
 //
 // The Gateway has established who the caller is (L1: a session or a bearer
 // token). This answers one question per request -- may this person reach
@@ -22,7 +22,7 @@ limitations under the License.
 // route declares, over the stored membership projection, and caching the
 // answer per (subject, session, route). It decides reachability; the app
 // behind the route decides everything finer.
-package authz
+package bouncer
 
 import (
 	"fmt"
@@ -43,7 +43,7 @@ type Route struct {
 	// AuthMode is the route's L1: "oidc", a session the Gateway's OIDC filter
 	// establishes, or "bearer", a token the caller presents. Envoy Gateway
 	// runs ext_authz before its OIDC filter, so on an oidc route a request
-	// with no valid token is not this shim's to refuse: it passes, carrying
+	// with no valid token is not this bouncer's to refuse: it passes, carrying
 	// no identity, and the OIDC filter behind sends it to sign in. On a
 	// bearer route the same request is refused here.
 	AuthMode string `json:"authMode"`

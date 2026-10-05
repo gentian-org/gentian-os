@@ -19,7 +19,7 @@ limitations under the License.
 // The brand's look is a design-token document in the W3C Design Tokens
 // Community Group format (2025.10): groups of tokens, each with a $value and
 // a $type inherited from its group when not its own, and aliases written
-// {group.token}. Every page the platform serves -- the sign-in router, the
+// {group.token}. Every page the platform serves -- the concierge, the
 // identity provider's screens, the desktop and the consoles -- reads the
 // same tokens as CSS custom properties, --brand-<group>-<token>, and keeps
 // its own value where a token is absent.

@@ -116,7 +116,7 @@ realm, so a single password form in front of users from several realms isn't
 possible — which is why the tenant's console, not the apex, is what's meant to
 be bookmarked: it's the only entry point that knows the realm before rendering
 the form, so it can ask for both email and password in one stage. The apex
-lands on the sign-in router (gentian-ui `apps/sign-in`, served beside Keycloak),
+lands on the concierge (gentian-ui `apps/concierge`, served beside Keycloak),
 which only asks for an email and sends the browser to that tenant's console.
 The edge starts the code flow there and can carry no `login_hint`, so the router
 leaves the address in a ten-minute cookie scoped to `id.<kernel>/auth/realms/`,

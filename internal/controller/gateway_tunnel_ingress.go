@@ -74,7 +74,7 @@ func ensureKernelGatewayTunnelIngress(
 	// does not reach a hostname.
 	for _, spec := range kernelHTTPRouteSpecs(kernelDomain, effectiveDomains, oidcSubs, tenantNames,
 		clusterLLMEnabled(ctx, c), "", kernelZoneReadyWith(ctx, c), desktopPresent(ctx, c),
-		signInRouterFor(tenancyMode)) {
+		conciergeFor(tenancyMode)) {
 		if spec.host != "" {
 			hosts[spec.host] = struct{}{}
 		}

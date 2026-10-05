@@ -1,18 +1,18 @@
-{{- if .Values.signIn.enabled }}
+{{- if .Values.concierge.enabled }}
 {{- /*
-  The sign-in router: static files and nothing else. It holds no credential,
+  The concierge: static files and nothing else. It holds no credential,
   talks to no service, and serves only GETs, so it gets no service account
   token and no write access to anything, its own filesystem included.
 */}}
 {{- $cfg := dict }}
-{{- range $k, $v := .Values.signIn.config }}
+{{- range $k, $v := .Values.concierge.config }}
 {{- if $v }}{{- $_ := set $cfg $k $v }}{{- end }}
 {{- end }}
 ---
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: sign-in-config
+  name: concierge-config
   namespace: {{ .Release.Namespace }}
 data:
   config.json: {{ $cfg | toJson | quote }}
@@ -20,20 +20,20 @@ data:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: sign-in
+  name: concierge
   namespace: {{ .Release.Namespace }}
   labels:
-    app.kubernetes.io/name: sign-in
+    app.kubernetes.io/name: concierge
     app.kubernetes.io/part-of: gentian-os
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app.kubernetes.io/name: sign-in
+      app.kubernetes.io/name: concierge
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: sign-in
+        app.kubernetes.io/name: concierge
         app.kubernetes.io/part-of: gentian-os
       annotations:
         # A changed config.json is a new pod: the file is mounted by subPath,
@@ -49,7 +49,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: web
-          image: {{ .Values.signIn.image | quote }}
+          image: {{ .Values.concierge.image | quote }}
           ports:
             - name: http
               containerPort: 8080
@@ -95,10 +95,10 @@ spec:
       volumes:
         - name: config
           configMap:
-            name: sign-in-config
+            name: concierge-config
         - name: lookup
           configMap:
-            name: sign-in-lookup
+            name: concierge-lookup
             optional: true
         - name: branding
           configMap:
@@ -108,14 +108,14 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: sign-in
+  name: concierge
   namespace: {{ .Release.Namespace }}
   labels:
-    app.kubernetes.io/name: sign-in
+    app.kubernetes.io/name: concierge
     app.kubernetes.io/part-of: gentian-os
 spec:
   selector:
-    app.kubernetes.io/name: sign-in
+    app.kubernetes.io/name: concierge
   ports:
     - name: http
       port: 8080

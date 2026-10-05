@@ -49,11 +49,11 @@ const (
 	// policy's cookies with a hash of its own and give every host its own.
 	edgeKernelAccessTokenCookie = "gentian-kernel-access"
 	edgeKernelIDTokenCookie     = "gentian-kernel-id"
-	// edgeAuthzRoutesConfigMap is the route table the ext-auth shim reads:
+	// bouncerRoutesConfigMap is the route table the ext-auth bouncer reads:
 	// per host, the relation a caller must hold, written beside the routes.
-	edgeAuthzRoutesConfigMap = "edge-authz-routes"
-	edgeAuthzRoutesKey       = "routes.yaml"
-	edgeAuthzPort            = int32(9001)
+	bouncerRoutesConfigMap = "bouncer-routes"
+	bouncerRoutesKey       = "routes.yaml"
+	bouncerPort            = int32(9001)
 	// edgeOAuth2Prefix is where Envoy Gateway's OIDC filter answers the code
 	// flow's callback and the logout: a route behind a session carries it,
 	// or the flow has nowhere to land.
@@ -104,28 +104,28 @@ func kernelSecurityPolicyName(route string) string { return "sp-" + route }
 
 // kernelSecurityPolicySpec is L1 and L2 for one kernel-zone route: the
 // zone's session (OIDC against the kernel realm with the zone client,
-// cookie on the kernel domain) and the ext-auth shim, which fails closed.
-func kernelSecurityPolicySpec(kernelDomain, kernelRealm, route string, authz routeAuthz, shimService string) map[string]interface{} {
+// cookie on the kernel domain) and the ext-auth bouncer, which fails closed.
+func kernelSecurityPolicySpec(kernelDomain, kernelRealm, route string, authz routeAuthz, bouncerService string) map[string]interface{} {
 	zone := edgeZone{
 		domain: kernelDomain, realm: kernelRealm, clientID: edgeKernelClientID, secretName: edgeKernelSecretName,
 		cookie: edgeKernelAccessTokenCookie, idCookie: edgeKernelIDTokenCookie, kernel: true,
 	}
-	return zoneSecurityPolicySpec(kernelDomain, zone, route, authz, "", shimService)
+	return zoneSecurityPolicySpec(kernelDomain, zone, route, authz, "", bouncerService)
 }
 
 // zoneSecurityPolicySpec is L1 and L2 for one route in a zone. The zone's
-// client Secret and the shim live in the edge namespace; a policy elsewhere
+// client Secret and the bouncer live in the edge namespace; a policy elsewhere
 // names that namespace and relies on the ReferenceGrant the component
 // reconciler keeps there.
-// zoneSecurityPolicySpec is the session-and-shim policy for one route. The
+// zoneSecurityPolicySpec is the session-and-bouncer policy for one route. The
 // client secret is named without a namespace: Envoy Gateway (1.2) reads an
 // OIDC client secret only from the policy's own namespace, ReferenceGrant or
 // not, so whoever writes a policy outside the edge puts the zone's secret
-// beside it (ensureZoneSecret). The shim is reached across namespaces, which
+// beside it (ensureZoneSecret). The bouncer is reached across namespaces, which
 // a backendRef may do under a grant.
-func zoneSecurityPolicySpec(kernelDomain string, zone edgeZone, route string, authz routeAuthz, edgeNamespace, shimService string) map[string]interface{} {
+func zoneSecurityPolicySpec(kernelDomain string, zone edgeZone, route string, authz routeAuthz, edgeNamespace, bouncerService string) map[string]interface{} {
 	clientSecret := map[string]interface{}{"name": zone.secretName}
-	backend := map[string]interface{}{"name": shimService, "port": int64(edgeAuthzPort)}
+	backend := map[string]interface{}{"name": bouncerService, "port": int64(bouncerPort)}
 	if edgeNamespace != "" {
 		backend["namespace"] = edgeNamespace
 	}
@@ -186,7 +186,7 @@ func (r *GatewayPlatformReconciler) ensureKernelSecurityPolicy(ctx context.Conte
 	var policySpec map[string]interface{}
 	switch {
 	case spec.authz != nil:
-		policySpec = kernelSecurityPolicySpec(r.KernelDomain, r.kernelRealm(), spec.name, *spec.authz, r.edgeAuthzService())
+		policySpec = kernelSecurityPolicySpec(r.KernelDomain, r.kernelRealm(), spec.name, *spec.authz, r.bouncerService())
 	case spec.securityPolicy != nil:
 		policySpec = cloneMap(spec.securityPolicy)
 		policySpec["targetRefs"] = []interface{}{
@@ -246,8 +246,8 @@ func (r *GatewayPlatformReconciler) deleteStaleKernelSecurityPolicies(ctx contex
 	return nil
 }
 
-// edgeAuthzRoute is one line of the shim's table (internal/edge/authz).
-type edgeAuthzRoute struct {
+// bouncerRoute is one line of the bouncer's table (internal/bouncer).
+type bouncerRoute struct {
 	Host              string `json:"host"`
 	Relation          string `json:"relation"`
 	Object            string `json:"object"`
@@ -278,16 +278,16 @@ func endSessionURL(kernelDomain, realm string) string {
 	return fmt.Sprintf("https://id.%s/auth/realms/%s/protocol/openid-connect/logout", kernelDomain, realm)
 }
 
-// edgeAuthzRouteTable renders the shim's table from the routes that carry an
+// bouncerRouteTable renders the bouncer's table from the routes that carry an
 // L2 question. Sorted by host: one table for one state, however the specs
 // were listed.
-func edgeAuthzRouteTable(specs []kernelHTTPRouteSpec, extra []edgeAuthzRoute, kernelDomain, kernelRealm string) (string, error) {
-	var routes []edgeAuthzRoute
+func bouncerRouteTable(specs []kernelHTTPRouteSpec, extra []bouncerRoute, kernelDomain, kernelRealm string) (string, error) {
+	var routes []bouncerRoute
 	for _, s := range specs {
 		if s.authz == nil || s.host == "" {
 			continue
 		}
-		routes = append(routes, edgeAuthzRoute{
+		routes = append(routes, bouncerRoute{
 			Host: s.host, Relation: s.authz.relation, Object: s.authz.object,
 			AccessTokenCookie: edgeKernelAccessTokenCookie, ForwardToken: s.authz.forwardToken,
 			KeepClientToken: s.authz.keepClientToken,
@@ -307,25 +307,25 @@ func edgeAuthzRouteTable(specs []kernelHTTPRouteSpec, extra []edgeAuthzRoute, ke
 	return string(b), nil
 }
 
-func (r *GatewayPlatformReconciler) ensureEdgeAuthzRouteTable(ctx context.Context, specs []kernelHTTPRouteSpec) error {
+func (r *GatewayPlatformReconciler) ensureBouncerRouteTable(ctx context.Context, specs []kernelHTTPRouteSpec) error {
 	extra, err := componentRouteTableEntries(ctx, r.Client)
 	if err != nil {
 		return err
 	}
-	table, err := edgeAuthzRouteTable(specs, extra, r.KernelDomain, r.kernelRealm())
+	table, err := bouncerRouteTable(specs, extra, r.KernelDomain, r.kernelRealm())
 	if err != nil {
 		return err
 	}
 	desired := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      edgeAuthzRoutesConfigMap,
+			Name:      bouncerRoutesConfigMap,
 			Namespace: servicesNamespace,
 			Labels: map[string]string{
 				managedByLabel:        managedByValue,
 				gatewayComponentLabel: gatewayComponentKernel,
 			},
 		},
-		Data: map[string]string{edgeAuthzRoutesKey: table},
+		Data: map[string]string{bouncerRoutesKey: table},
 	}
 	existing := &corev1.ConfigMap{}
 	err = r.Get(ctx, types.NamespacedName{Name: desired.Name, Namespace: desired.Namespace}, existing)
@@ -335,7 +335,7 @@ func (r *GatewayPlatformReconciler) ensureEdgeAuthzRouteTable(ctx context.Contex
 	if err != nil {
 		return err
 	}
-	if existing.Data[edgeAuthzRoutesKey] == table {
+	if existing.Data[bouncerRoutesKey] == table {
 		return nil
 	}
 	patch := client.MergeFrom(existing.DeepCopy())
@@ -351,22 +351,22 @@ func (r *GatewayPlatformReconciler) kernelRealm() string {
 	return r.KernelRealm
 }
 
-func (r *GatewayPlatformReconciler) edgeAuthzService() string {
-	if r.EdgeAuthzService == "" {
-		return "gentian-os-edge-authz"
+func (r *GatewayPlatformReconciler) bouncerService() string {
+	if r.BouncerService == "" {
+		return "gentian-os-bouncer"
 	}
-	return r.EdgeAuthzService
+	return r.BouncerService
 }
 
 // componentRouteTableEntries are the questions of every component route: the
 // component reconciler writes them on the route, and this is the one writer
-// of the table the shim reads.
-func componentRouteTableEntries(ctx context.Context, c client.Reader) ([]edgeAuthzRoute, error) {
+// of the table the bouncer reads.
+func componentRouteTableEntries(ctx context.Context, c client.Reader) ([]bouncerRoute, error) {
 	list := &gatewayv1.HTTPRouteList{}
-	if err := c.List(ctx, list, client.MatchingLabels{edgeAuthzRouteLabel: "true"}); err != nil {
+	if err := c.List(ctx, list, client.MatchingLabels{bouncerRouteLabel: "true"}); err != nil {
 		return nil, err
 	}
-	byHost := map[string]*edgeAuthzRoute{}
+	byHost := map[string]*bouncerRoute{}
 	var order []string
 	for i := range list.Items {
 		route := &list.Items[i]
@@ -374,14 +374,14 @@ func componentRouteTableEntries(ctx context.Context, c client.Reader) ([]edgeAut
 			continue
 		}
 		ann := route.Annotations
-		if ann[edgeAuthzRelationAnnotation] == "" || ann[edgeAuthzObjectAnnotation] == "" {
+		if ann[bouncerRelationAnnotation] == "" || ann[bouncerObjectAnnotation] == "" {
 			continue
 		}
-		mode := ann[edgeAuthzAuthModeAnnotation]
+		mode := ann[bouncerAuthModeAnnotation]
 		if mode == "" {
 			mode = "oidc"
 		}
-		denied := splitDenyPaths(ann[edgeAuthzDenyPathsAnnotation])
+		denied := splitDenyPaths(ann[bouncerDenyPathsAnnotation])
 		for _, h := range route.Spec.Hostnames {
 			host := string(h)
 			// A component's routes share its host and its question; the
@@ -389,20 +389,20 @@ func componentRouteTableEntries(ctx context.Context, c client.Reader) ([]edgeAut
 			// path denied by any of them is denied for the host, because
 			// deny wins.
 			if cur, ok := byHost[host]; ok {
-				cur.ForwardToken = cur.ForwardToken || ann[edgeAuthzForwardAnnotation] == "true"
+				cur.ForwardToken = cur.ForwardToken || ann[bouncerForwardAnnotation] == "true"
 				cur.DenyPaths = mergeDenyPaths(cur.DenyPaths, denied)
 				continue
 			}
-			byHost[host] = &edgeAuthzRoute{
-				Host: host, Relation: ann[edgeAuthzRelationAnnotation], Object: ann[edgeAuthzObjectAnnotation],
-				AccessTokenCookie: ann[edgeAuthzCookieAnnotation], ForwardToken: ann[edgeAuthzForwardAnnotation] == "true",
-				IDTokenCookie: ann[edgeAuthzIDCookieAnnotation], EndSessionURL: ann[edgeAuthzEndSessionAnnotation],
+			byHost[host] = &bouncerRoute{
+				Host: host, Relation: ann[bouncerRelationAnnotation], Object: ann[bouncerObjectAnnotation],
+				AccessTokenCookie: ann[bouncerCookieAnnotation], ForwardToken: ann[bouncerForwardAnnotation] == "true",
+				IDTokenCookie: ann[bouncerIDCookieAnnotation], EndSessionURL: ann[bouncerEndSessionAnnotation],
 				AuthMode: mode, DenyPaths: denied,
 			}
 			order = append(order, host)
 		}
 	}
-	out := make([]edgeAuthzRoute, 0, len(order))
+	out := make([]bouncerRoute, 0, len(order))
 	for _, h := range order {
 		out = append(out, *byHost[h])
 	}

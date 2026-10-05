@@ -114,7 +114,7 @@ type BrandingStatus struct {
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 }
 
-// Branding is the brand every page on the cluster shows: the sign-in router,
+// Branding is the brand every page on the cluster shows: the concierge,
 // the identity provider's screens, the desktop and the consoles. One per
 // cluster, named "default"; without it they show the platform's own.
 //

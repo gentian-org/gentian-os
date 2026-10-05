@@ -514,7 +514,7 @@ spec:
                  client, and no other grant type has a caller.
 
                  fullScopeAllowed false. The token this client issues is a
-                 session, not an authorization: the shim asks OpenFGA on every
+                 session, not an authorization: the bouncer asks OpenFGA on every
                  request and reads nothing out of the token but who the person
                  is, and nothing in this platform decides a permission from a
                  claim.
@@ -704,7 +704,7 @@ spec:
                   - basic
                   - email
                   # OpenBao binds its auth backend roles to this claim and has
-                  # no way to ask OpenFGA. Nothing else reads it: the shim
+                  # no way to ask OpenFGA. Nothing else reads it: the bouncer
                   # ignores it, and the rule that a permission is never
                   # decided from a claim is unchanged.
                   - groups

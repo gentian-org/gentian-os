@@ -15,7 +15,7 @@
  */
 
 /* The cluster's brand: --brand-* custom properties, rendered by the operator
- * from the Branding (W3C design tokens) and served beside the sign-in router.
+ * from the Branding (W3C design tokens) and served beside the concierge.
  * Every --gtn-* below reads its token and keeps the platform's own value when
  * the token is absent, or when the file is. */
 @import url("/branding/brand.css");

@@ -318,13 +318,13 @@ Keycloak OIDC broker policy:
 The **kernel** apex and `www.<kernelDomain>` redirect with an HTTPRoute filter,
 once the kernel zone and the desktop exist:
 
-- multi-tenant: to `https://id.<kernelDomain>/sign-in/`, the sign-in router,
+- multi-tenant: to `https://id.<kernelDomain>/sign-in/`, the concierge,
   which asks for an e-mail address and sends the browser to its workspace's
   console. The apex is nobody's workspace on such a cluster.
 - single-tenant: to `https://console.<kernelDomain>/`, the one console.
 
-The sign-in router and the cluster's brand (`/branding/`) are paths on the
-identity provider's public route, served by the `sign-in` Deployment beside
+The concierge and the cluster's brand (`/branding/`) are paths on the
+identity provider's public route, served by the `concierge` Deployment beside
 Keycloak. Being on that host is the point: the router hands the address to the
 realm's form in a cookie scoped to `/auth/realms/`, which no other host sees.
 

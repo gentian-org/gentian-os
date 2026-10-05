@@ -1,5 +1,5 @@
 {{- /*
-  The ext-auth shim: L2 of the edge (networking.md §2), the one enforcement
+  The ext-auth bouncer: L2 of the edge (networking.md §2), the one enforcement
   point between the Gateway's session and every backend behind it.
 
   It runs in the edge namespace, beside the Gateways whose SecurityPolicies
@@ -8,9 +8,9 @@
   is the operator's ConfigMap, decisions are the store's, revocation arrives
   through the store's changelog. No ServiceAccount token, no RBAC.
 */ -}}
-{{- if .Values.edgeAuthz.enabled }}
+{{- if .Values.bouncer.enabled }}
 {{- $ns := .Values.layout.edge | default .Values.servicesNamespace }}
-{{- $name := printf "%s-edge-authz" (include "gentian-os.fullname" .) }}
+{{- $name := printf "%s-bouncer" (include "gentian-os.fullname" .) }}
 {{- if .Values.director.openfgaTokenSecretRef.openbaoPath }}
 apiVersion: external-secrets.io/v1
 kind: ExternalSecret
@@ -19,7 +19,7 @@ metadata:
   namespace: {{ $ns }}
   labels:
     {{- include "gentian-os.labels" . | nindent 4 }}
-    app.kubernetes.io/component: edge-authz
+    app.kubernetes.io/component: bouncer
 spec:
   refreshInterval: 1h
   secretStoreRef:
@@ -43,11 +43,11 @@ metadata:
   namespace: {{ $ns }}
   labels:
     {{- include "gentian-os.labels" . | nindent 4 }}
-    app.kubernetes.io/component: edge-authz
+    app.kubernetes.io/component: bouncer
 spec:
   selector:
     {{- include "gentian-os.selectorLabels" . | nindent 4 }}
-    app.kubernetes.io/component: edge-authz
+    app.kubernetes.io/component: bouncer
   ports:
     - name: grpc
       port: 9001
@@ -62,18 +62,18 @@ metadata:
   namespace: {{ $ns }}
   labels:
     {{- include "gentian-os.labels" . | nindent 4 }}
-    app.kubernetes.io/component: edge-authz
+    app.kubernetes.io/component: bouncer
 spec:
-  replicas: {{ .Values.edgeAuthz.replicas }}
+  replicas: {{ .Values.bouncer.replicas }}
   selector:
     matchLabels:
       {{- include "gentian-os.selectorLabels" . | nindent 6 }}
-      app.kubernetes.io/component: edge-authz
+      app.kubernetes.io/component: bouncer
   template:
     metadata:
       labels:
         {{- include "gentian-os.labels" . | nindent 8 }}
-        app.kubernetes.io/component: edge-authz
+        app.kubernetes.io/component: bouncer
     spec:
       automountServiceAccountToken: false
       securityContext:
@@ -88,29 +88,29 @@ spec:
           labelSelector:
             matchLabels:
               {{- include "gentian-os.selectorLabels" . | nindent 14 }}
-              app.kubernetes.io/component: edge-authz
+              app.kubernetes.io/component: bouncer
       containers:
-        - name: edge-authz
+        - name: bouncer
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-          command: ["/edge-authz"]
+          command: ["/bouncer"]
           ports:
             - name: grpc
               containerPort: 9001
             - name: health
               containerPort: 8081
           env:
-            - name: EDGE_AUTHZ_LISTEN
+            - name: BOUNCER_LISTEN
               value: ":9001"
-            - name: EDGE_AUTHZ_HEALTH
+            - name: BOUNCER_HEALTH
               value: ":8081"
-            - name: EDGE_AUTHZ_ROUTES
-              value: /etc/edge-authz/routes.yaml
-            - name: EDGE_AUTHZ_CACHE_TTL
-              value: {{ .Values.edgeAuthz.cacheTTL | quote }}
-            - name: EDGE_AUTHZ_POLL_INTERVAL
-              value: {{ .Values.edgeAuthz.pollInterval | quote }}
-            - name: EDGE_AUTHZ_AUDIENCE
+            - name: BOUNCER_ROUTES
+              value: /etc/bouncer/routes.yaml
+            - name: BOUNCER_CACHE_TTL
+              value: {{ .Values.bouncer.cacheTTL | quote }}
+            - name: BOUNCER_POLL_INTERVAL
+              value: {{ .Values.bouncer.pollInterval | quote }}
+            - name: BOUNCER_AUDIENCE
               value: {{ .Values.director.audience | quote }}
             - name: DIRECTOR_ISSUER_BASE_URL
               value: {{ printf "https://id.%s/auth" .Values.kernelDomain | quote }}
@@ -143,16 +143,16 @@ spec:
               drop: ["ALL"]
             readOnlyRootFilesystem: true
           resources:
-            {{- toYaml .Values.edgeAuthz.resources | nindent 12 }}
+            {{- toYaml .Values.bouncer.resources | nindent 12 }}
           volumeMounts:
             - name: routes
-              mountPath: /etc/edge-authz
+              mountPath: /etc/bouncer
               readOnly: true
       volumes:
         # The operator's route table. Optional: before the first route is
-        # written the shim runs with an empty table and refuses every host.
+        # written the bouncer runs with an empty table and refuses every host.
         - name: routes
           configMap:
-            name: edge-authz-routes
+            name: bouncer-routes
             optional: true
 {{- end }}

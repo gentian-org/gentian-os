@@ -159,8 +159,8 @@ func TestAComponentRouteCarriesItsQuestion(t *testing.T) {
 		Backend: gentianov1alpha1.BackendRef{Service: "desktop-gentian-portal-api", Port: 8000},
 	}
 	route := buildExposureRoute(comp, "desktop-api", "console.k.example", zone, e, exposureAuthz(platformTenantFixture(), e.ForwardToken), "k.example")
-	if route.Labels[edgeAuthzRouteLabel] != "true" || route.Annotations[edgeAuthzRelationAnnotation] != "can_enter" ||
-		route.Annotations[edgeAuthzObjectAnnotation] != "tenant:platform" || route.Annotations[edgeAuthzForwardAnnotation] != "true" {
+	if route.Labels[bouncerRouteLabel] != "true" || route.Annotations[bouncerRelationAnnotation] != "can_enter" ||
+		route.Annotations[bouncerObjectAnnotation] != "tenant:platform" || route.Annotations[bouncerForwardAnnotation] != "true" {
 		t.Fatalf("route question = %v %v", route.Labels, route.Annotations)
 	}
 	if string(route.Spec.ParentRefs[0].Name) != AuthenticatedGatewayName || string(*route.Spec.ParentRefs[0].SectionName) != wildcardListenerName {
@@ -231,10 +231,10 @@ func TestDenyPathsReachTheTableAndAreUnionedPerHost(t *testing.T) {
 	api := build("api", "shop", []string{"/admin"})
 	other := build("wiki", "wiki", nil)
 
-	if web.Annotations[edgeAuthzDenyPathsAnnotation] != "/web/database" {
-		t.Fatalf("annotation = %q", web.Annotations[edgeAuthzDenyPathsAnnotation])
+	if web.Annotations[bouncerDenyPathsAnnotation] != "/web/database" {
+		t.Fatalf("annotation = %q", web.Annotations[bouncerDenyPathsAnnotation])
 	}
-	if _, has := other.Annotations[edgeAuthzDenyPathsAnnotation]; has {
+	if _, has := other.Annotations[bouncerDenyPathsAnnotation]; has {
 		t.Fatal("an exposure that denies nothing must not carry the annotation")
 	}
 
@@ -250,7 +250,7 @@ func TestDenyPathsReachTheTableAndAreUnionedPerHost(t *testing.T) {
 		byHost[e.Host] = e.DenyPaths
 	}
 	// Both exposures' entries, in the order the routes list: stable across
-	// reconciles, which is what keeps the shim's ConfigMap from churning.
+	// reconciles, which is what keeps the bouncer's ConfigMap from churning.
 	got := append([]string(nil), byHost["shop.k.example"]...)
 	sort.Strings(got)
 	if len(got) != 2 || got[0] != "/admin" || got[1] != "/web/database" {
@@ -262,13 +262,13 @@ func TestDenyPathsReachTheTableAndAreUnionedPerHost(t *testing.T) {
 }
 
 // A policy in a component's namespace names the edge namespace for the
-// zone's Secret and the shim, which the ReferenceGrant there admits.
+// zone's Secret and the bouncer, which the ReferenceGrant there admits.
 func TestAZonePolicyOutsideTheEdgeNamesIt(t *testing.T) {
 	zone := edgeZone{domain: "k.example", realm: "kernel", clientID: edgeKernelClientID, secretName: edgeKernelSecretName, cookie: "c", idCookie: "i"}
-	spec := zoneSecurityPolicySpec("k.example", zone, "desktop-api", routeAuthz{forwardToken: true}, "kernel-edge", "gentian-os-edge-authz")
+	spec := zoneSecurityPolicySpec("k.example", zone, "desktop-api", routeAuthz{forwardToken: true}, "kernel-edge", "gentian-os-bouncer")
 	// The secret is read from the policy's own namespace and no other
 	// (Envoy Gateway 1.2), so it is named without one and copied beside
-	// the policy; the shim is reached across namespaces under the grant.
+	// the policy; the bouncer is reached across namespaces under the grant.
 	secret := spec["oidc"].(map[string]interface{})["clientSecret"].(map[string]interface{})
 	if _, has := secret["namespace"]; has || secret["name"] != edgeKernelSecretName {
 		t.Fatalf("clientSecret = %v", secret)
@@ -296,14 +296,14 @@ func TestAnExistingRouteTakesANewAnnotation(t *testing.T) {
 	_ = gatewayv1.Install(scheme)
 	existing := &gatewayv1.HTTPRoute{}
 	existing.Name, existing.Namespace = "desktop-web", "tenant-platform"
-	existing.Annotations = map[string]string{edgeAuthzCookieAnnotation: "gentian-kernel-access", "someone/else": "kept"}
+	existing.Annotations = map[string]string{bouncerCookieAnnotation: "gentian-kernel-access", "someone/else": "kept"}
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(existing).Build()
 
 	desired := existing.DeepCopy()
 	desired.ResourceVersion = ""
 	desired.Annotations = map[string]string{
-		edgeAuthzCookieAnnotation:   "gentian-kernel-access",
-		edgeAuthzIDCookieAnnotation: edgeKernelIDTokenCookie,
+		bouncerCookieAnnotation:   "gentian-kernel-access",
+		bouncerIDCookieAnnotation: edgeKernelIDTokenCookie,
 	}
 	if err := ensureHTTPRouteResource(ctx, c, desired); err != nil {
 		t.Fatal(err)
@@ -312,7 +312,7 @@ func TestAnExistingRouteTakesANewAnnotation(t *testing.T) {
 	if err := c.Get(ctx, types.NamespacedName{Name: existing.Name, Namespace: existing.Namespace}, got); err != nil {
 		t.Fatal(err)
 	}
-	if got.Annotations[edgeAuthzIDCookieAnnotation] != edgeKernelIDTokenCookie || got.Annotations["someone/else"] != "kept" {
+	if got.Annotations[bouncerIDCookieAnnotation] != edgeKernelIDTokenCookie || got.Annotations["someone/else"] != "kept" {
 		t.Fatalf("annotations = %v", got.Annotations)
 	}
 }

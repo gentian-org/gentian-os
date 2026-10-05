@@ -166,7 +166,7 @@ apply() {
     success "Tenant/platform is Ready: the platform tenant adopts realm ${KERNEL_REALM:-kernel}."
 
     # The zone's session on the kernel UIs. The operator writes the policies
-    # once the zone secret exists; Envoy Gateway accepts them once the shim's
+    # once the zone secret exists; Envoy Gateway accepts them once the bouncer's
     # Service and the secret resolve.
     info "Waiting for the kernel zone's session policy on argocd.${KERNEL_DOMAIN}..."
     deadline=$((SECONDS + 600))
@@ -179,7 +179,7 @@ apply() {
         fi
         sleep 10
     done
-    success "The kernel UIs sit behind the kernel zone's session and the ext-auth shim."
+    success "The kernel UIs sit behind the kernel zone's session and the ext-auth bouncer."
 
     # The platform's two UIs: the component reconciler installs each from its
     # profile once the zone exists and its credentials are delivered; the

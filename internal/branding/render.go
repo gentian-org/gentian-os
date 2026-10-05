@@ -35,7 +35,7 @@ const (
 	DefaultShortName = "Gentian"
 )
 
-// The files a brand is published as, beside the sign-in router at
+// The files a brand is published as, beside the concierge at
 // id.<kernel>/branding/, which every page loads.
 const (
 	CSSFile      = "brand.css"

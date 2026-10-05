@@ -78,8 +78,8 @@ type GatewayPlatformReconciler struct {
 	Cluster string
 	// KernelRealm is the realm the kernel zone's session is established in.
 	KernelRealm string
-	// EdgeAuthzService is the ext-auth shim's Service in the edge namespace.
-	EdgeAuthzService string
+	// BouncerService is the ext-auth bouncer's Service in the edge namespace.
+	BouncerService string
 }
 
 func (r *GatewayPlatformReconciler) Reconcile(ctx context.Context, _ reconcile.Request) (reconcile.Result, error) {
@@ -175,12 +175,12 @@ func (r *GatewayPlatformReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			handler.EnqueueRequestsFromMapFunc(mapToPlatform),
 			builder.WithPredicates(zoneSecretPredicate),
 		).
-		// A component's route carries a question the shim's table must hold.
+		// A component's route carries a question the bouncer's table must hold.
 		Watches(
 			&gatewayv1.HTTPRoute{},
 			handler.EnqueueRequestsFromMapFunc(mapToPlatform),
 			builder.WithPredicates(predicate.NewPredicateFuncs(func(obj client.Object) bool {
-				return obj.GetLabels()[edgeAuthzRouteLabel] == "true"
+				return obj.GetLabels()[bouncerRouteLabel] == "true"
 			})),
 		).
 		Complete(r)

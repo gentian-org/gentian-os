@@ -26,7 +26,7 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
-// The sign-in router finds a tenant on a custom domain by the domain's hash
+// The concierge finds a tenant on a custom domain by the domain's hash
 // and nothing else: a tenant without one adds no entry, and the entry sends
 // the browser to the console on the custom domain.
 func TestTheSignInLookupHoldsOnlyCustomDomainsByTheirHash(t *testing.T) {
@@ -40,12 +40,12 @@ func TestTheSignInLookupHoldsOnlyCustomDomainsByTheirHash(t *testing.T) {
 	if err := c.Status().Update(ctx, acme); err != nil {
 		t.Fatal(err)
 	}
-	r := &SignInLookupReconciler{Client: c, KernelDomain: "k.example", TenancyMode: "multi"}
-	if _, err := r.Reconcile(ctx, signInLookupRequest); err != nil {
+	r := &ConciergeLookupReconciler{Client: c, KernelDomain: "k.example", TenancyMode: "multi"}
+	if _, err := r.Reconcile(ctx, conciergeLookupRequest); err != nil {
 		t.Fatal(err)
 	}
 	cm := &corev1.ConfigMap{}
-	if err := c.Get(ctx, signInLookupRequest.NamespacedName, cm); err != nil {
+	if err := c.Get(ctx, conciergeLookupRequest.NamespacedName, cm); err != nil {
 		t.Fatal(err)
 	}
 	if len(cm.Data) != 1 {
@@ -53,7 +53,7 @@ func TestTheSignInLookupHoldsOnlyCustomDomainsByTheirHash(t *testing.T) {
 	}
 	// sha256("acme.example"), as the page computes it with WebCrypto.
 	want := "54667cc7be6265f6a4cdfe25b9c89d52aea7817c4e570cb678feec57c23f4a6a.json"
-	got := signInLookupKey("acme.example")
+	got := conciergeLookupKey("acme.example")
 	if got != want {
 		t.Fatalf("key = %q, want %q", got, want)
 	}

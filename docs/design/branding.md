@@ -1,6 +1,6 @@
 # Branding
 
-Every page the platform serves shows one brand: the sign-in router, the
+Every page the platform serves shows one brand: the concierge, the
 identity provider's screens, the desktops, the consoles and the edge's
 access-denied page. A provider running the cluster under its own name sets it
 once; without it the pages show the platform's own.
@@ -38,7 +38,7 @@ brand's over them path by path — into the `branding` ConfigMap beside Keycloak
 | `brand.webmanifest` | A Web App Manifest: name, icons, `theme_color` from `color.brand.500` |
 | `icon-<n>.<ext>` | An icon a data URL carried, decoded |
 
-The `sign-in` Deployment serves them at `https://id.<kernel>/branding/`
+The `concierge` Deployment serves them at `https://id.<kernel>/branding/`
 (`brand.json` with CORS), and every page loads them from there. A brand whose
 tokens cannot be rendered leaves the published files as they were, and its
 status says why (`Rendered=False`).

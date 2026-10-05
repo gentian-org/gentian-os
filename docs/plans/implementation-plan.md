@@ -489,7 +489,7 @@ this branch that alters how signing in behaves. Two things to watch:
   component comes up blank on first open, this is why.
 
 Signing out everywhere at once is unaffected: the realm session ends and the
-back-channel logout marks it revoked, which every host's shim honours whatever
+back-channel logout marks it revoked, which every host's bouncer honours whatever
 cookie it read.
 
 ### S7A.8 ✅ A read-only view of the authorization state
@@ -795,7 +795,7 @@ specific rule that would shadow it still needs a backend to send the request
 to. Gateway API has no direct-response filter here. The edge authorization
 service is the one place that already sees every request to a host, so the
 exposure's list travels there on the route as an annotation, the operator
-unions it per host — two exposures share a host and deny wins — and the shim
+unions it per host — two exposures share a host and deny wins — and the bouncer
 refuses a match with 403 before it looks at identity. The profile said the
 path is not published, so who is asking does not enter into it.
 
@@ -1417,7 +1417,7 @@ To be considered rather than decided, and recorded before the reasoning is
 lost.
 
 App profiles currently ship sidecars and per-app arrangements to make single
-sign-on work: a SAML shim, a session bridge, an OIDC pack per application, and
+sign-on work: a SAML bouncer, a session bridge, an OIDC pack per application, and
 in some cases nothing at all because the application only understands a
 username and a password. That is a per-application cost paid again for every
 catalogue entry, and the applications that cannot do SSO are simply outside it.

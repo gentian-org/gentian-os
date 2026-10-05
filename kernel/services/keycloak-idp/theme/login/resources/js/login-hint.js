@@ -1,4 +1,4 @@
-/* The address the sign-in router was given, filled in for the person.
+/* The address the concierge was given, filled in for the person.
  *
  * The router sends the browser to the workspace's console with the address on
  * it as ?login_hint=. The console is behind the edge, which starts the

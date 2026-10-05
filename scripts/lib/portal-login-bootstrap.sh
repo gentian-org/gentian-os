@@ -1128,7 +1128,7 @@ spec:
 
               # The groups scope: what Argo CD and Headlamp read a person's
               # platform role from. The edge client does not carry it (the
-              # shim asks the store, never the token).
+              # bouncer asks the store, never the token).
               SCOPE_LIST=\$(curl -sf -H "\${AUTH}" "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/client-scopes")
               GROUPS_SCOPE_ID=\$(printf '%s' "\${SCOPE_LIST}" | jq -r '.[] | select(.name=="groups") | .id' | head -1)
 

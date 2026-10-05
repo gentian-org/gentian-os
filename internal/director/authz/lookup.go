@@ -24,7 +24,7 @@ import (
 )
 
 // Lookup finds the store and its current model without writing either: for
-// a reader such as the ext-auth shim, which must decide against what the
+// a reader such as the ext-auth bouncer, which must decide against what the
 // director established and never establish anything of its own.
 func Lookup(ctx context.Context, o Options) (storeID, modelID string, err error) {
 	c, err := newClient(o)

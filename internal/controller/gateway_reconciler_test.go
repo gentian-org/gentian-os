@@ -849,7 +849,7 @@ func TestTheKeycloakConsoleKeepsItsOwnBearer(t *testing.T) {
 		}
 		// And the two must reach their two destinations: the table line the
 		// authorization service reads, and the policy Envoy reads.
-		table, err := edgeAuthzRouteTable([]kernelHTTPRouteSpec{s}, nil, "platform.example.test", "kernel")
+		table, err := bouncerRouteTable([]kernelHTTPRouteSpec{s}, nil, "platform.example.test", "kernel")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -880,13 +880,13 @@ func TestASingleTenantClusterAddsNoTenantListener(t *testing.T) {
 }
 
 // On a multi-tenant cluster the kernel's apex is nobody's workspace: it and
-// www land on the sign-in router beside the identity provider, which is a
+// www land on the concierge beside the identity provider, which is a
 // path on the identity provider's public route. A single-tenant cluster's
 // apex goes to its one console.
 func TestTheApexLandsOnTheSignInRouterWhenThereAreManyWorkspaces(t *testing.T) {
 	t.Parallel()
-	landing := func(signIn bool) (host, path string, idHasSignIn bool) {
-		for _, spec := range kernelHTTPRouteSpecs("k.example", nil, nil, nil, false, "c1", true, true, signIn) {
+	landing := func(concierge bool) (host, path string, idHasSignIn bool) {
+		for _, spec := range kernelHTTPRouteSpecs("k.example", nil, nil, nil, false, "c1", true, true, concierge) {
 			switch spec.name {
 			case kernelRouteKernelApex:
 				f := spec.rules[0].Filters[0].RequestRedirect
@@ -896,8 +896,8 @@ func TestTheApexLandsOnTheSignInRouterWhenThereAreManyWorkspaces(t *testing.T) {
 				}
 			case kernelRouteKeycloakIDP:
 				for _, rule := range spec.rules {
-					if v := rule.Matches[0].Path.Value; v != nil && *v == signInPath {
-						idHasSignIn = string(rule.BackendRefs[0].Name) == signInService
+					if v := rule.Matches[0].Path.Value; v != nil && *v == conciergePath {
+						idHasSignIn = string(rule.BackendRefs[0].Name) == conciergeService
 					}
 				}
 			}
@@ -910,8 +910,8 @@ func TestTheApexLandsOnTheSignInRouterWhenThereAreManyWorkspaces(t *testing.T) {
 	if host, path, _ := landing(false); host != "console.k.example" || path != "" {
 		t.Fatalf("single: apex -> %s%s", host, path)
 	}
-	if !signInRouterFor("multi") || !signInRouterFor("") || signInRouterFor("single") {
-		t.Fatal("signInRouterFor does not follow the tenancy mode")
+	if !conciergeFor("multi") || !conciergeFor("") || conciergeFor("single") {
+		t.Fatal("conciergeFor does not follow the tenancy mode")
 	}
 }
 
@@ -998,12 +998,12 @@ func TestATenantWithoutAppsGetsItsCertificateAndGrants(t *testing.T) {
 func TestEveryKernelRouteIsBehindAQuestionOrDeliberatelyPublic(t *testing.T) {
 	t.Parallel()
 	public := map[string]bool{
-		kernelRouteKeycloakIDP:  true, // the identity provider's realm endpoints, and the sign-in router and brand beside it
+		kernelRouteKeycloakIDP:  true, // the identity provider's realm endpoints, and the concierge and brand beside it
 		kernelRouteHTTPRedirect: true, // :80 to :443
 	}
 	for _, zoneReady := range []bool{true, false} {
-		for _, signIn := range []bool{true, false} {
-			specs := kernelHTTPRouteSpecs("k.example", []string{"demo.k.example"}, nil, []string{"demo"}, true, "c1", zoneReady, true, signIn)
+		for _, concierge := range []bool{true, false} {
+			specs := kernelHTTPRouteSpecs("k.example", []string{"demo.k.example"}, nil, []string{"demo"}, true, "c1", zoneReady, true, concierge)
 			for _, s := range specs {
 				backends, redirectOnly := 0, true
 				for _, rule := range s.rules {

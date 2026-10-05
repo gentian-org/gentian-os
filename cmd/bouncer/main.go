@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-// edge-authz is the ext-auth shim: L2 of the edge, the one enforcement point
+// bouncer is the ext-auth bouncer: L2 of the edge, the one enforcement point
 // between the Gateway's session and every backend (networking.md §2).
 //
 // It holds one credential -- the store's, if the store wants one -- and no
@@ -40,15 +40,15 @@ import (
 	"google.golang.org/grpc/health"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 
+	"github.com/gentian-org/gentian-os/internal/bouncer"
 	"github.com/gentian-org/gentian-os/internal/director/authn"
 	"github.com/gentian-org/gentian-os/internal/director/authz"
-	edge "github.com/gentian-org/gentian-os/internal/edge/authz"
 )
 
 func main() {
 	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	if err := run(log); err != nil {
-		log.Error("edge-authz stopped", "error", err.Error())
+		log.Error("bouncer stopped", "error", err.Error())
 		os.Exit(1)
 	}
 }
@@ -70,17 +70,17 @@ func envDuration(name, def string) (time.Duration, error) {
 
 func run(log *slog.Logger) error {
 	issuerBase := os.Getenv("DIRECTOR_ISSUER_BASE_URL")
-	audience := envOr("EDGE_AUTHZ_AUDIENCE", "gentian-director")
+	audience := envOr("BOUNCER_AUDIENCE", "gentian-director")
 	fgaURL := os.Getenv("OPENFGA_API_URL")
-	tablePath := envOr("EDGE_AUTHZ_ROUTES", "/etc/edge-authz/routes.yaml")
+	tablePath := envOr("BOUNCER_ROUTES", "/etc/bouncer/routes.yaml")
 	if issuerBase == "" || fgaURL == "" {
 		return errors.New("DIRECTOR_ISSUER_BASE_URL and OPENFGA_API_URL are required")
 	}
-	cacheTTL, err := envDuration("EDGE_AUTHZ_CACHE_TTL", "5m")
+	cacheTTL, err := envDuration("BOUNCER_CACHE_TTL", "5m")
 	if err != nil {
 		return err
 	}
-	poll, err := envDuration("EDGE_AUTHZ_POLL_INTERVAL", "2s")
+	poll, err := envDuration("BOUNCER_POLL_INTERVAL", "2s")
 	if err != nil {
 		return err
 	}
@@ -116,14 +116,14 @@ func run(log *slog.Logger) error {
 		return err
 	}
 
-	table, err := edge.LoadTable(tablePath)
+	table, err := bouncer.LoadTable(tablePath)
 	if err != nil {
 		// No table is a table with no routes: every host is refused until
 		// the operator writes one, which is the safe direction.
 		log.Warn("no route table yet; every host is refused until the operator writes one", "path", tablePath, "error", err.Error())
-		table = &edge.Table{}
+		table = &bouncer.Table{}
 	}
-	decider := edge.New(edge.Options{Verifier: verifier, Store: store, Table: table, CacheTTL: cacheTTL, Logger: log})
+	decider := bouncer.New(bouncer.Options{Verifier: verifier, Store: store, Table: table, CacheTTL: cacheTTL, Logger: log})
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -132,27 +132,27 @@ func run(log *slog.Logger) error {
 	// when the operator changes it, and the modification time says so.
 	go watchTable(ctx, tablePath, decider, log)
 	// Eviction, not expiry, is what makes a change visible.
-	go edge.Poll(ctx, store, poll, log, func(n int) {
+	go bouncer.Poll(ctx, store, poll, log, func(n int) {
 		if evicted := decider.Evict(); evicted > 0 {
 			log.Info("changelog moved; cached decisions evicted", "changes", n, "evicted", evicted)
 		}
 	})
 
-	lis, err := net.Listen("tcp", envOr("EDGE_AUTHZ_LISTEN", ":9001"))
+	lis, err := net.Listen("tcp", envOr("BOUNCER_LISTEN", ":9001"))
 	if err != nil {
 		return err
 	}
 	srv := grpc.NewServer()
-	authv3.RegisterAuthorizationServer(srv, &edge.Server{Decider: decider, BrandingBase: edge.BrandingBase(issuerBase)})
+	authv3.RegisterAuthorizationServer(srv, &bouncer.Server{Decider: decider, BrandingBase: bouncer.BrandingBase(issuerBase)})
 	healthpb.RegisterHealthServer(srv, health.NewServer())
 
-	httpSrv := &http.Server{Addr: envOr("EDGE_AUTHZ_HEALTH", ":8081"), ReadHeaderTimeout: 5 * time.Second}
+	httpSrv := &http.Server{Addr: envOr("BOUNCER_HEALTH", ":8081"), ReadHeaderTimeout: 5 * time.Second}
 	http.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	go func() { _ = httpSrv.ListenAndServe() }()
 
 	done := make(chan error, 1)
 	go func() { done <- srv.Serve(lis) }()
-	log.Info("edge-authz listening", "addr", lis.Addr().String(), "routes", len(table.Routes), "issuer", issuerBase, "store", fgaOptions.StoreID)
+	log.Info("bouncer listening", "addr", lis.Addr().String(), "routes", len(table.Routes), "issuer", issuerBase, "store", fgaOptions.StoreID)
 	select {
 	case err := <-done:
 		return err
@@ -165,7 +165,7 @@ func run(log *slog.Logger) error {
 	return nil
 }
 
-func watchTable(ctx context.Context, path string, decider *edge.Decider, log *slog.Logger) {
+func watchTable(ctx context.Context, path string, decider *bouncer.Decider, log *slog.Logger) {
 	var last time.Time
 	if st, err := os.Stat(path); err == nil {
 		last = st.ModTime()
@@ -186,7 +186,7 @@ func watchTable(ctx context.Context, path string, decider *edge.Decider, log *sl
 			continue
 		}
 		last = st.ModTime()
-		table, err := edge.LoadTable(path)
+		table, err := bouncer.LoadTable(path)
 		if err != nil {
 			log.Warn("route table not reloaded", "error", err.Error())
 			continue
