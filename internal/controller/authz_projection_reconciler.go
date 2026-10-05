@@ -32,6 +32,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/catalogue"
 	"github.com/gentian-org/gentian-os/internal/director/authz"
 )
 
@@ -122,6 +123,17 @@ func (r *AuthzProjectionReconciler) Reconcile(ctx context.Context, _ ctrl.Reques
 		return ctrl.Result{}, fmt.Errorf("project catalogue sources: %w", err)
 	}
 
+	// What each tenant has installed, so that an app's tile and its route can
+	// be asked about: the app attached to its tenant, and entitled by the
+	// Keycloak group the identity reconciler creates for it.
+	apps, err := r.installedApps(ctx)
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("list installed apps: %w", err)
+	}
+	if err := r.Graph.ReconcileApps(ctx, apps); err != nil {
+		return ctrl.Result{}, fmt.Errorf("project installed apps: %w", err)
+	}
+
 	logger.V(1).Info("authorization structure projected",
 		"cluster", r.Cluster, "roles", len(roles), "tenants", len(tenants), "openCatalogues", len(sources))
 	return ctrl.Result{RequeueAfter: authzProjectionRequeue}, nil
@@ -201,6 +213,40 @@ func (r *AuthzProjectionReconciler) openCatalogueSources(ctx context.Context) (m
 	}
 	for name := range out {
 		sort.Strings(out[name])
+	}
+	return out, nil
+}
+
+// installedApps is what every tenant has installed, by profile name, with the
+// addons activated inside each. A tenant being deleted is listed with nothing,
+// so its apps leave the graph with it.
+//
+// From spec.apps, which is the same list the identity reconciler creates the
+// apps' groups from: an app has a group exactly when it has an object here.
+// An entry whose profile cannot be named is skipped rather than failing the
+// projection, because one unresolvable install must not stop every other
+// tenant's rights from being written.
+func (r *AuthzProjectionReconciler) installedApps(ctx context.Context) (map[string][]authz.InstalledApp, error) {
+	list := &gentianov1alpha1.TenantList{}
+	if err := r.List(ctx, list); err != nil {
+		return nil, err
+	}
+	out := map[string][]authz.InstalledApp{}
+	for i := range list.Items {
+		tenant := &list.Items[i]
+		out[tenant.Name] = nil
+		if tenant.DeletionTimestamp != nil {
+			continue
+		}
+		for _, app := range tenant.Spec.Apps {
+			profile, err := catalogue.ResolveTenantAppProfile(ctx, r.Client, app)
+			if err != nil {
+				log.FromContext(ctx).Info("installed app not projected: its profile cannot be named",
+					"tenant", tenant.Name, "error", err.Error())
+				continue
+			}
+			out[tenant.Name] = append(out[tenant.Name], authz.InstalledApp{Profile: profile, Addons: app.Addons})
+		}
 	}
 	return out, nil
 }
