@@ -1546,7 +1546,9 @@ ensure_platform_concierge_exposure() {
     if [[ ! -f "${file}" ]]; then
         local now review
         now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-        review="$(date -u -d '+365 days' +%Y-%m-%dT00:00:00Z)"
+        # A year from now. GNU date takes -d, BSD date takes -v; one of the
+        # two is what this host has.
+        review="$(date -u -d '+365 days' +%Y-%m-%dT00:00:00Z 2>/dev/null || date -u -v+365d +%Y-%m-%dT00:00:00Z)"
         cat > "${file}" <<EXPOSURES
 # Managed by the director: what this tenant publishes to the internet.
 #
@@ -1576,7 +1578,9 @@ EXPOSURES
     # Listed as a patch, or kustomize never reads it.
     if [[ -f "${file}" && -f "${kustomization}" ]] && ! grep -qx -- '- path: exposures.yaml' "${kustomization}"; then
         if grep -qx 'patches:' "${kustomization}"; then
-            sed -i '/^patches:$/a - path: exposures.yaml' "${kustomization}"
+            local listed
+            listed="$(awk '{ print } $0 == "patches:" { print "- path: exposures.yaml" }' "${kustomization}")"
+            printf '%s\n' "${listed}" > "${kustomization}"
         else
             [[ -z "$(tail -c 1 "${kustomization}")" ]] || printf '\n' >> "${kustomization}"
             printf 'patches:\n- path: exposures.yaml\n' >> "${kustomization}"
