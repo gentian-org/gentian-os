@@ -23,6 +23,7 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
@@ -282,4 +283,36 @@ func TestAZonePolicyOutsideTheEdgeNamesIt(t *testing.T) {
 		t.Fatal("a policy in the edge namespace must not name it")
 	}
 	_ = metav1.Now()
+}
+
+// A route that already exists takes a new annotation. The edge's table is
+// built from a route's annotations, and the upsert compared only the spec, so
+// an annotation a later build added never reached a route an earlier build
+// had made -- the cluster kept the old answer while every test of the new one
+// passed. What something else put on the route stays.
+func TestAnExistingRouteTakesANewAnnotation(t *testing.T) {
+	ctx := context.Background()
+	scheme := runtime.NewScheme()
+	_ = gatewayv1.Install(scheme)
+	existing := &gatewayv1.HTTPRoute{}
+	existing.Name, existing.Namespace = "desktop-web", "tenant-platform"
+	existing.Annotations = map[string]string{edgeAuthzCookieAnnotation: "gentian-kernel-access", "someone/else": "kept"}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(existing).Build()
+
+	desired := existing.DeepCopy()
+	desired.ResourceVersion = ""
+	desired.Annotations = map[string]string{
+		edgeAuthzCookieAnnotation:   "gentian-kernel-access",
+		edgeAuthzIDCookieAnnotation: edgeKernelIDTokenCookie,
+	}
+	if err := ensureHTTPRouteResource(ctx, c, desired); err != nil {
+		t.Fatal(err)
+	}
+	got := &gatewayv1.HTTPRoute{}
+	if err := c.Get(ctx, types.NamespacedName{Name: existing.Name, Namespace: existing.Namespace}, got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Annotations[edgeAuthzIDCookieAnnotation] != edgeKernelIDTokenCookie || got.Annotations["someone/else"] != "kept" {
+		t.Fatalf("annotations = %v", got.Annotations)
+	}
 }

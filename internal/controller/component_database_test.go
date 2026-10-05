@@ -135,7 +135,25 @@ func TestATenantDesktopsDatabaseIsMadeOnTheTenantPostgres(t *testing.T) {
 	}
 	// A Job an earlier build made, whose pod the namespace would refuse, is
 	// not waited on: it is deleted and the current one made in its place.
+	// And a Job that is the current one is left to run, however the API
+	// server has since filled in its defaults: a comparison that never
+	// matched deleted it on every pass, before its pod could start.
+	job.Spec.Template.Spec.Containers[0].TerminationMessagePath = "/dev/termination-log"
+	job.Spec.Template.Spec.Containers[0].ImagePullPolicy = corev1.PullIfNotPresent
+	if err := c.Update(ctx, job); err != nil {
+		t.Fatal(err)
+	}
+	uid := job.UID
+	created := job.CreationTimestamp
+	step()
+	if err := c.Get(ctx, types.NamespacedName{Name: roleJobName("acme", portalShellAppName), Namespace: postgresNamespace}, job); err != nil {
+		t.Fatalf("the current role Job was deleted: %v", err)
+	}
+	if job.UID != uid || !job.CreationTimestamp.Equal(&created) || job.Spec.Template.Spec.Containers[0].ImagePullPolicy != corev1.PullIfNotPresent {
+		t.Fatal("the current role Job was replaced")
+	}
 	job.Spec.Template.Spec.Containers[0].SecurityContext = nil
+	job.Annotations[roleJobHashAnnotation] = "an-earlier-build"
 	if err := c.Update(ctx, job); err != nil {
 		t.Fatal(err)
 	}

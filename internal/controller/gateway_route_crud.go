@@ -48,15 +48,36 @@ func ensureHTTPRouteResource(ctx context.Context, c client.Client, desired *gate
 	if err != nil {
 		return err
 	}
-	if !equality.Semantic.DeepEqual(existing.Spec, desired.Spec) {
-		patch := client.MergeFrom(existing.DeepCopy())
-		existing.Spec = desired.Spec
-		if !equality.Semantic.DeepEqual(existing.Labels, desired.Labels) {
-			existing.Labels = desired.Labels
+	// Annotations too, not only the spec. A route's annotations are read:
+	// the edge's authorization table is built from them, so a route whose
+	// spec was right and whose annotations were an earlier build's kept
+	// that build's answer for good -- a new annotation never reached a
+	// route that already existed. Only the ones this asks for are set;
+	// what something else put on the route stays.
+	annotationsStale := false
+	for k, v := range desired.Annotations {
+		if existing.Annotations[k] != v {
+			annotationsStale = true
+			break
 		}
-		return c.Patch(ctx, existing, patch)
 	}
-	return nil
+	if equality.Semantic.DeepEqual(existing.Spec, desired.Spec) && !annotationsStale {
+		return nil
+	}
+	patch := client.MergeFrom(existing.DeepCopy())
+	existing.Spec = desired.Spec
+	if !equality.Semantic.DeepEqual(existing.Labels, desired.Labels) {
+		existing.Labels = desired.Labels
+	}
+	if annotationsStale {
+		if existing.Annotations == nil {
+			existing.Annotations = map[string]string{}
+		}
+		for k, v := range desired.Annotations {
+			existing.Annotations[k] = v
+		}
+	}
+	return c.Patch(ctx, existing, patch)
 }
 
 func (r *TenantReconciler) deleteStaleHTTPRoutesForTenant(

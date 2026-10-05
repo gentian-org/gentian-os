@@ -18,6 +18,8 @@ package controller
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -294,6 +296,15 @@ func (r *ComponentReconciler) ensureTenantDatabase(ctx context.Context, tenant *
 
 	desired := makeRoleJob(tenant, tenantNamespaceName(tenant), dbName, portalShellAppName, creds.Password,
 		gentianov1alpha1.SchemaPreferenceAppSchema, false)
+	// What was asked for, as a hash on the Job. The live Job cannot be
+	// compared with the desired one field by field: the API server fills in
+	// defaults, so the two never match, and a comparison that never matches
+	// deletes the Job on every pass before its pod has run.
+	wanted := roleJobHash(desired)
+	if desired.Annotations == nil {
+		desired.Annotations = map[string]string{}
+	}
+	desired.Annotations[roleJobHashAnnotation] = wanted
 	job := &batchv1.Job{}
 	err = r.Get(ctx, types.NamespacedName{Name: roleJobName(tenant.Name, portalShellAppName), Namespace: postgresNamespace}, job)
 	switch {
@@ -304,7 +315,7 @@ func (r *ComponentReconciler) ensureTenantDatabase(ctx context.Context, tenant *
 		return false, "DatabaseProvisioning", "the database role is being created", nil
 	case err != nil:
 		return false, "", "", err
-	case !jobIsComplete(job) && !equality.Semantic.DeepEqual(job.Spec.Template.Spec.Containers, desired.Spec.Template.Spec.Containers):
+	case !jobIsComplete(job) && job.Annotations[roleJobHashAnnotation] != wanted:
 		// A Job made by an earlier build of this. Its pod template cannot be
 		// changed, and if that template is what kept it from running -- a pod
 		// the namespace refuses is no pod at all -- waiting on it is waiting
@@ -328,6 +339,16 @@ func (r *ComponentReconciler) ensureTenantDatabase(ctx context.Context, tenant *
 		return false, "", "", err
 	}
 	return false, "DatabaseProvisioning", "the database is being created", nil
+}
+
+// roleJobHashAnnotation records what a role Job was made from.
+const roleJobHashAnnotation = "gentianos.io/role-job-hash"
+
+// roleJobHash is a digest of the containers a role Job runs.
+func roleJobHash(job *batchv1.Job) string {
+	raw, _ := json.Marshal(job.Spec.Template.Spec.Containers)
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:8])
 }
 
 // ensureDatabaseSecret delivers the credential into the component's
