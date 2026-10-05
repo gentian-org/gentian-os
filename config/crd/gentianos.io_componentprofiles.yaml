@@ -1929,6 +1929,13 @@ spec:
                             description: TenantKey receives the name of the tenant
                               the component runs in.
                             type: string
+                          usherUrlKey:
+                            description: |-
+                              UsherURLKey receives the usher's in-cluster URL: where a desktop asks,
+                              with the person's own token, what that person may open. Naming it also
+                              opens the component's egress to the edge namespace, where the usher
+                              runs.
+                            type: string
                           zoneClientIdKey:
                             description: |-
                               ZoneClientIDKey receives the client id the edge holds the zone's session

@@ -92,6 +92,7 @@ func (r *ComponentReconciler) platformValues(profile *gentianov1alpha1.Component
 		m.ZoneClientIDKey:         zone.clientID,
 		m.AudienceKey:             directorAudience,
 		m.DirectorURLKey:          r.directorURL(),
+		m.UsherURLKey:             r.usherURL(),
 		m.CredentialManagerURLKey: r.credentialManagerURL(),
 		m.ClusterKey:              r.Cluster,
 		m.TenantKey:               tenant.Name,
@@ -117,6 +118,12 @@ func (r *ComponentReconciler) platformValues(profile *gentianov1alpha1.Component
 // reach: its egress to the control namespace follows from it.
 func wantsDirector(profile *gentianov1alpha1.ComponentProfile) bool {
 	return platformMapping(profile) != nil && platformMapping(profile).DirectorURLKey != ""
+}
+
+// wantsUsher reports whether a profile asked to be told where the usher is.
+// It runs in the edge namespace, so asking opens the way there.
+func wantsUsher(profile *gentianov1alpha1.ComponentProfile) bool {
+	return platformMapping(profile) != nil && platformMapping(profile).UsherURLKey != ""
 }
 
 // wantsCredentialManager reports the same for the credential manager, and has

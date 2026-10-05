@@ -59,6 +59,9 @@ type ComponentReconciler struct {
 	// DirectorURL is where the desktop relays to; empty derives it from the
 	// layout's control namespace.
 	DirectorURL string
+	// UsherURL is where a desktop asks what a person may open; empty derives
+	// it from the edge namespace.
+	UsherURL string
 	// CredentialManagerURL overrides where a component is told the credential
 	// manager is. Empty derives it from the layout.
 	CredentialManagerURL string
@@ -854,6 +857,15 @@ func (r *ComponentReconciler) directorURL() string {
 		return r.DirectorURL
 	}
 	return fmt.Sprintf("http://gentian-os-director.%s.svc.cluster.local:8080", layout.Namespace(layout.Control))
+}
+
+// usherURL is where the usher answers inside the cluster: the Service the
+// operator's chart puts in the edge namespace (templates/usher.yaml).
+func (r *ComponentReconciler) usherURL() string {
+	if r.UsherURL != "" {
+		return r.UsherURL
+	}
+	return fmt.Sprintf("http://gentian-os-usher.%s.svc.cluster.local:8080", layout.Namespace(layout.Edge))
 }
 
 // credentialManagerPort is charts/gentian-os/values.yaml's

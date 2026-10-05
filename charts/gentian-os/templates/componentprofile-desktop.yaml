@@ -43,6 +43,8 @@ spec:
         zoneClientIdKey: auth.clientId
         audienceKey: auth.audience
         directorUrlKey: director.url
+        # Where the desktop asks which tiles this person may open.
+        usherUrlKey: usher.url
         clusterKey: director.cluster
         tenantKey: tenant
         kernelDomainKey: kernelDomain

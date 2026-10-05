@@ -338,6 +338,7 @@ func main() {
 		Cluster:        envOrDefault("GENTIAN_DEPLOYMENTS_CLUSTER_ID", "default-cluster"),
 		BouncerService: envOrDefault("BOUNCER_SERVICE", "gentian-os-bouncer"),
 		DirectorURL:    os.Getenv("DIRECTOR_URL"),
+		UsherURL:       os.Getenv("USHER_URL"),
 		Seeder:         buildSeeder(),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Component")

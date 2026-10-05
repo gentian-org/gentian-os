@@ -70,6 +70,16 @@ func project(t *testing.T, objs ...client.Object) []tilecatalogue.Tile {
 	if err := c.Get(context.Background(), key, cm); err != nil {
 		t.Fatal(err)
 	}
+	// The usher's copy, in the edge namespace, is the same content: a desktop
+	// and the cluster's administrators are told about the same tiles.
+	edge := &corev1.ConfigMap{}
+	edgeKey := types.NamespacedName{Name: tilecatalogue.ConfigMapName, Namespace: layout.Namespace(layout.Edge)}
+	if err := c.Get(context.Background(), edgeKey, edge); err != nil {
+		t.Fatalf("the usher's copy of the catalogue: %v", err)
+	}
+	if edge.Data[tilecatalogue.Key] != cm.Data[tilecatalogue.Key] {
+		t.Fatal("the usher's copy of the catalogue differs from the director's")
+	}
 	catalogue, err := tilecatalogue.Parse([]byte(cm.Data[tilecatalogue.Key]))
 	if err != nil {
 		t.Fatal(err)

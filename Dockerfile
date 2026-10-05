@@ -28,6 +28,10 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -o director ./cmd/dir
 # in the edge namespace from this image with its own command.
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -o bouncer ./cmd/bouncer
 
+# The usher beside it: the reads a signed-in person's desktop asks for, from a
+# process that holds nothing but the two things the bouncer holds.
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -o usher ./cmd/usher
+
 # ── Runtime stage ──────────────────────────────────────────────────────────────
 FROM debian:bookworm-slim
 
@@ -42,6 +46,7 @@ RUN apt-get update \
 COPY --from=builder /workspace/manager /manager
 COPY --from=builder /workspace/director /director
 COPY --from=builder /workspace/bouncer /bouncer
+COPY --from=builder /workspace/usher /usher
 
 USER 65532:65532
 

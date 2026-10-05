@@ -91,6 +91,10 @@ func (r *ComponentReconciler) componentEgressNamespaces(profile *gentianov1alpha
 	if wantsDirector(profile) || wantsCredentialManager(profile) {
 		add(layout.Namespace(layout.Control))
 	}
+	// The usher is in the edge namespace.
+	if wantsUsher(profile) {
+		add(layout.Namespace(layout.Edge))
+	}
 	return out
 }
 

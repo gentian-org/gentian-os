@@ -598,6 +598,13 @@ type PlatformValueMapping struct {
 	// +optional
 	DirectorURLKey string `json:"directorUrlKey,omitempty"`
 
+	// UsherURLKey receives the usher's in-cluster URL: where a desktop asks,
+	// with the person's own token, what that person may open. Naming it also
+	// opens the component's egress to the edge namespace, where the usher
+	// runs.
+	// +optional
+	UsherURLKey string `json:"usherUrlKey,omitempty"`
+
 	// CredentialManagerURLKey receives the credential manager's in-cluster
 	// URL. Like DirectorURLKey it is more than a fact: naming it is what
 	// opens the component's egress to the control namespace, because a

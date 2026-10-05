@@ -273,6 +273,20 @@ bouncer:
     limits:
       memory: 128Mi
 
+# The usher: the reads a signed-in person's desktop asks for -- what is here
+# and what they may open -- run in the edge namespace from this image. It
+# holds no git credential and no Kubernetes access. Off by default; the v5
+# bootstrap turns it on beside the bouncer.
+usher:
+  enabled: false
+  replicas: 2
+  resources:
+    requests:
+      cpu: 20m
+      memory: 32Mi
+    limits:
+      memory: 128Mi
+
 # kernelServices exposes cluster-wide infrastructure endpoints to Crossplane
 # compositions. Published as a `gentian-kernel-services` ConfigMap in gentian-system
 # and fetched by app-default.yaml via function-extra-resources.

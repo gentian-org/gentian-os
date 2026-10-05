@@ -411,14 +411,32 @@ func tileObject(tile *gentianov1alpha1.ExposureTile, tenant, profile string) str
 	return "app:" + tenant + "/" + profile
 }
 
-// write puts the catalogue in the control namespace, creating the ConfigMap
+// write puts the catalogue beside each of its readers, creating the ConfigMap
 // the first time and patching it only when the content differs.
+//
+// Two copies, because a ConfigMap is mounted from its own namespace and the
+// readers are in two: the director in the control namespace, for the cluster's
+// own administrators, and the usher in the edge namespace, for everybody who
+// has a desktop. They are the same content written in the same pass.
 func (r *TileProjectionReconciler) write(ctx context.Context, catalogue tilecatalogue.Catalogue) error {
 	rendered, err := tilecatalogue.Marshal(catalogue)
 	if err != nil {
 		return err
 	}
-	key := types.NamespacedName{Name: tilecatalogue.ConfigMapName, Namespace: layout.Namespace(layout.Control)}
+	namespaces := []string{layout.Namespace(layout.Control)}
+	if edge := layout.Namespace(layout.Edge); edge != namespaces[0] {
+		namespaces = append(namespaces, edge)
+	}
+	for _, ns := range namespaces {
+		if err := r.writeTo(ctx, ns, rendered); err != nil {
+			return fmt.Errorf("namespace %s: %w", ns, err)
+		}
+	}
+	return nil
+}
+
+func (r *TileProjectionReconciler) writeTo(ctx context.Context, namespace, rendered string) error {
+	key := types.NamespacedName{Name: tilecatalogue.ConfigMapName, Namespace: namespace}
 	desired := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      key.Name,
@@ -429,7 +447,7 @@ func (r *TileProjectionReconciler) write(ctx context.Context, catalogue tilecata
 	}
 
 	existing := &corev1.ConfigMap{}
-	err = r.Get(ctx, key, existing)
+	err := r.Get(ctx, key, existing)
 	if errors.IsNotFound(err) {
 		return r.Create(ctx, desired)
 	}
