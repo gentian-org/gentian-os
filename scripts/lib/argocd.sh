@@ -434,6 +434,25 @@ request_argo_sync_if_stalled() {
         kubectl annotate application "${app}" -n "${ns}" argocd.argoproj.io/refresh=hard --overwrite >/dev/null 2>&1 || true
         return 0
     fi
+    # A sync that SUCCEEDED and an Application that is still OutOfSync: what
+    # Argo CD applied changed nothing, and it goes on reporting a difference.
+    # Seen when a CRD gained a field in the same sync as an object using it:
+    # the diff computed at that moment had the object without the field,
+    # Argo CD caches diffs by the object's version, and every later apply was
+    # a no-op -- so the version never moved, the cached diff was served for
+    # ever, and restarting the controller did not help because the cache is
+    # not in it. A hard refresh recomputes without the cache. It changes
+    # nothing in the cluster, and is asked at most once a minute.
+    if [[ "${phase}" == "Succeeded" && "${sync}" == "OutOfSync" ]] && \
+       [[ "$(jq -r '.operation // "" | type' <<<"${json}")" == "string" ]]; then
+        local now=${SECONDS} last_var="_ARGO_HARD_REFRESH_${app//[^A-Za-z0-9]/_}"
+        if (( now - ${!last_var:--60} >= 60 )); then
+            printf -v "${last_var}" '%s' "${now}"
+            info "${app}: synced and still OutOfSync; asking Argo CD to recompute the comparison."
+            kubectl annotate application "${app}" -n "${ns}" argocd.argoproj.io/refresh=hard --overwrite >/dev/null 2>&1 || true
+        fi
+        return 0
+    fi
     [[ "${phase}" == "Failed" || "${phase}" == "Error" ]] || return 0
     [[ "${sync}" != "Synced" ]] || return 0
     # An operation still in flight has its own phase; only a finished one is
