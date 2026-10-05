@@ -45,7 +45,7 @@ eventListener:
 signIn:
   enabled: true
   # An immutable tag: the branch and commit it was built from.
-  image: ghcr.io/gentian-org/sign-in-web:develop-5c98f8a
+  image: ghcr.io/gentian-org/sign-in-web:develop-e7565f6
   # config.json; see apps/sign-in/README.md. The name and logo on the card
   # are the cluster's brand (the Branding), not configured here.
   config:
