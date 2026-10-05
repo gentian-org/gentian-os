@@ -1,7 +1,7 @@
 # AppProfile Versioning, Metadata, and Portal Tiles
 
 **Status:** Implemented (API + App Store controller)  
-**Companion to:** [app-catalogue.md](app-catalogue.md), [business-logic-plan.md](business-logic-plan.md)
+**Companion to:** [app-catalogue.md](app-catalogue.md), [store-contract.md](store-contract.md)
 
 ---
 
@@ -26,7 +26,7 @@ Public vs premium is implied by **source repo** and **license**:
 
 `spec.chart.version` is the **Helm chart pin** — distinct from `catalogueVersion`.
 
-Commerce (price, customer, invoice) lives in **CRM/ERP** — see [business-logic-plan.md](business-logic-plan.md).
+Commerce (price, customer, invoice) is not the cluster's: it lives with whoever runs the App Store, and reaches the cluster only as the signed statements of [store-contract.md](store-contract.md).
 
 ---
 

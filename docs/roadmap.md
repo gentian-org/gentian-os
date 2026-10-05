@@ -680,15 +680,6 @@ does not exist yet that something cannot be the Composition.
   - `[ ]` Build a packaging pipeline to compile `AppProfile` resources into OCI artifacts.
   - `[ ]` Refactor the App Catalogue setup to pull files directly from the registry.
 
-### 2.5 Commercial App Entitlements & Licensing (***)
-* **Target Domain**: Platform Billing & Business Logic
-* **Context**: Pro apps can currently be listed by all cluster tenants, even if they have not been purchased or licensed.
-* **Proposed Solution**: Extend the `AppCatalogue` and `Tenant` controllers to verify customer entitlements against CRM data, and reject installation requests for proprietary profiles unless valid licenses are found.
-* **Backlog Items**:
-  - `[ ]` Sync licensing/entitlement metadata to cluster ConfigMaps or CRs.
-  - `[ ]` Extend the `Tenant` validating webhook to reject Pro app installations if a tenant lacks an active entitlement.
-  - `[ ]` Restrict Pro images from being pulled unless namespace-scoped pull secrets are provisioned.
-
 ### 2.6 Office & Mail Composition Refactoring (**)
 * **Target Domain**: Platform Infrastructure
 * **Context**: ~~Postfix/Dovecot and Collabora are deployed and managed by the operator via hardcoded installation scripts.~~ **No longer true.** Postfix arrives through the `gentian-infra-helm` ApplicationSet and Dovecot through `kernel/appsets/raw/09b-dovecot.yaml`, generated only when `mail.serviceMode` is `kernel`; both are Helm charts synced by Argo CD. Collabora is a catalogue app, and the operator's only remaining knowledge of it is a routing default in `gateway_route_helpers.go`. `mail_reconciler.go` runs no `helm` and no `kubectl apply`: it registers tenants in a stack it does not deploy.
@@ -706,25 +697,6 @@ does not exist yet that something cannot be the Composition.
   - `[ ]` Add HTTP-01 challenge fields to the `AppProfile` API specification.
   - `[ ]` Update the ingress reconciler to map HTTP-01 challenge routes to Cert-Manager pods.
 
-### 2.8 Database-Backed Marketplace Catalog (***)
-* **Target Domain**: Software Supply & Catalog Management
-* **Context**: In the short term, Git is the source of truth for the app catalog, requiring PR reviews for developer submissions to ensure quality control and audit logs. As the developer ecosystem scales, a Git-based workflow will become a bottleneck for updates.
-* **Proposed Solution**: Migrate from a Git-based metadata store to a database-backed marketplace catalog managed by the commerce backend. Developers will upload and update their profiles via a developer dashboard portal, bypassing Git PRs entirely while keeping automated validation testbenches.
-* **Backlog Items**:
-  - `[ ]` Design the developer portal onboarding flow for app catalog submissions.
-  - `[ ]` Define database schemas in Odoo/Postgres to store and version `AppProfile` manifests.
-  - `[ ]` Implement automated quality check pipelines (testbenches) to validate submissions before publishing.
-  - `[ ]` Update `app-store` and `gentian-os` cluster components to consume catalog APIs directly from the central database.
-
-### 2.9 Third-Party App Developer Revenue Split (Stripe Connect) (***)
-* **Target Domain**: Platform Billing & Business Logic
-* **Context**: When external developers start publishing paid (Pro) applications on the Gentian Marketplace, a system is needed to automatically collect payments, deduct Gentian's commission, and distribute the remainder to the developer.
-* **Proposed Solution**: Integrate Stripe Connect (Express/Custom) into the commerce backend's checkout pipeline. Allow developers to onboard as sub-merchants, and configure Stripe Checkout to dynamically split payments between Gentian (commission fee) and the developer (revenue cut).
-* **Backlog Items**:
-  - `[ ]` Integrate Stripe Connect Express onboarding flow for developers in the dashboard.
-  - `[ ]` Implement split-payment execution in commerce-backend checkout sessions.
-  - `[ ]` Update Odoo custom subscription billing modules to account for commission shares and developer payout records.
-
 ### 2.10 DNS TXT Record Verification for Custom Domains (**)
 * **Target Domain**: Ingress & Domain Security
 * **Context**: When a tenant registers an organization using a custom domain (e.g. `acme.com`), there is no check to ensure they actually own or control it. This can lead to domain conflicts, namespace hijacking, or incorrect routing.
@@ -733,21 +705,13 @@ does not exist yet that something cannot be the Composition.
   - `[ ]` Implement a DNS TXT challenge generator in the commerce backend API.
   - `[ ]` Update the cluster operator ingress controller to query and verify TXT challenge records before binding host ingresses.
 
-### 2.11 Zero-Hurdle Demo Sandbox Launcher (***)
-* **Target Domain**: Platform Trial & Engagement
-* **Context**: The current demo flow requires email signup, email confirmation, and manual login credentials setup, which introduces friction for new evaluators.
-* **Proposed Solution**: Enable instant "one-click" anonymous demo accounts. The SaaS portal will provision a sandboxed workspace instantly, generate a temporary login JWT, and redirect the user straight to the portal in-browser without requiring signup. If the user wishes to save their progress, they can register their email and convert it to a permanent tenant.
-* **Backlog Items**:
-  - `[ ]` Build anonymous ephemeral Keycloak session authorization handlers.
-  - `[ ]` Implement the instant sandbox provisioning gateway in the demo engine.
-
-### 2.12 Community Serverless Isolation (Auto-Sleep / Scale-to-Zero) (***)
+### 2.12 Tenant Auto-Sleep / Scale-to-Zero (***)
 * **Target Domain**: Resource Optimization & Tenant Isolation
-* **Context**: Grouping community users in a single shared cluster namespace avoids resource overhead but compromises data isolation and privacy.
-* **Proposed Solution**: Give community users their own individual isolated namespace, but configure the operator to automatically shut down or sleep (scale to zero) their workloads (Nextcloud, Element, Keycloak clients) after 15 minutes of inactivity. When a user requests their domain again, the ingress controller intercepts the request, wakes up the pods dynamically, and serves the page.
+* **Context**: A tenant that is rarely used reserves the same capacity as a busy one. Putting small tenants into one shared namespace would avoid that overhead, at the price of the isolation a namespace per tenant gives.
+* **Proposed Solution**: Keep one isolated namespace per tenant, and let the operator scale a tenant's workloads to zero after a period of inactivity. When a request for the tenant's domain arrives, the gateway holds it, the workloads are woken, and the page is served.
 * **Backlog Items**:
   - `[ ]` Write an auto-sleep / scale-to-zero controller in the cluster operator.
-  - `[ ]` Configure the ingress proxy to intercept requests for sleeping namespaces and trigger container wakeup.
+  - `[ ]` Configure the gateway to intercept requests for sleeping namespaces and trigger the wake-up.
 
 ### 2.13 Automated Customization Readiness Grading (**)
 * **Target Domain**: App Catalogue & Customization Framework

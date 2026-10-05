@@ -1,18 +1,21 @@
 # Sovereignty concept: the tenant's data is the tenant's
 
-Two products, two promises. **Gentian OS** promises security and sovereignty:
+Two layers, two promises. **Gentian OS** promises security and sovereignty:
 at any moment a tenant can take all of their data with them, and at any moment
 they can have all of it destroyed, without asking the platform's permission and
 without depending on anyone's tooling to read what they took. **Gentian Corp**
 promises convenience and reliability: the same data looked after on a schedule,
 kept off-site, recoverable with one click, and movable in and out of the
-workspace products an organisation already uses. The first is free software.
-The second is openly available under a different license — free for
-organisations under fifty users and not for resale — because convenience is
-what people pay for and sovereignty is what they must never have to. That
-license is enforced legally, not technically: nothing in the store or the
-cluster counts users or gates an install on a subscription. The Corp entries
-are listed, anyone installs them, and the terms are the terms.
+workspace products an organisation already uses. The first is this
+repository. The second is a set of add-ons installed from a catalogue under
+their own license; what that license asks of whoever installs them is stated
+with the add-ons, not here, and no install is gated on it by the cluster.
+
+What the OS contributes to any license stated in users is a fact, not a gate:
+the director answers how many people hold an account on the cluster, per
+realm (`GET /v1/clusters/{c}/people/count`, `can_audit`). A platform
+administrator can read it today; a console telling them that the number has
+crossed what an installed add-on's license allows is not wired yet.
 
 Everything in this document follows from keeping those two promises distinct,
 and from one further rule: every lifecycle flow is built from the same few
@@ -100,7 +103,7 @@ default bundle is one the provider cannot read.
 ## 2. The primitives
 
 Five operations, each implemented once in Gentian OS, from which every flow in
-§3 is built — the free ones and the paid ones alike.
+§3 is built — the OS's own and the add-ons' alike.
 
 | # | Primitive | Where it lives | Does |
 |---|---|---|---|
@@ -136,8 +139,8 @@ Import is Create plus Restore; Recovery is Import or Restore chosen by whether
 the tenant exists; Backup is Export on a timer; Offboard is Export plus Purge;
 Ingest and Egress are a converter on either side of Import and Export. No flow
 introduces machinery the others lack, which is the DRY the title asks for: not
-one binary, but one inventory, one bundle, one manifest path, and the paid
-flows calling the free primitives through the director like any other client.
+one binary, but one inventory, one bundle, one manifest path, and the add-on
+flows calling the OS primitives through the director like any other client.
 
 ## 4. What has to change in Gentian OS for the flows to hold
 
@@ -226,11 +229,10 @@ only sequences them and refuses to purge before the export is Ready.
 Everything a tenant needs to **own** their data is in gentian-os. Everything
 that makes owning it **convenient and reliable** is Gentian Corp's: delivered
 as catalogue entries under its own license, bringing its own profiles, its own
-controller and its own AppProject as every add-on does. The OS is written by
-the company that sells the Corp layer, and it says so: the free console
-promotes the paid features and builds its default workflows around them. What
-it never does is make them mandatory — every promise in §1 holds with nothing
-but Gentian OS installed.
+controller and its own AppProject as every add-on does. The Admin Console
+points at them and builds its default workflows around them. What it never
+does is make them mandatory — every promise in §1 holds with nothing but
+Gentian OS installed.
 
 | | Gentian OS (FOSS) | Gentian Corp |
 |---|---|---|
@@ -251,7 +253,7 @@ schedule (`TenantExport`) and the director's routes that write a committed
 backup policy for a tenant — the director is the only writer of git (AD-2),
 so a Corp console sets a policy the same way the Admin Console sets anything:
 by asking the director. A cluster without the Corp component installed holds
-the policy file and nothing acts on it; that is the free tier, precisely.
+the policy file and nothing acts on it; that is the OS on its own, precisely.
 
 **The 2026-09-22 backup split** recorded in work-packages WP-9 drew the line
 one step further towards gentian-os: it kept "local backup" — scheduling to
@@ -289,12 +291,11 @@ bundle the person was allowed to open.
 Operations Console being there: with it installed, the tab shows the schedule,
 the last run and a link into Recovery beside the one-click export; without it,
 the same places show what scheduled backups, recovery and drills would give
-this tenant and an **Install** that opens the store entry — free under fifty
-users, so for most tenants the install is the whole decision. The same pattern
-applies wherever a free flow has a paid continuation: the purge dialog mentions
+this tenant and an **Install** that opens the store entry. The same pattern
+applies wherever an OS flow has an add-on continuation: the purge dialog mentions
 that a tenant with scheduled backups keeps its bundles off-site; the import
 screen mentions that Ingest does the same from M365 or Google Workspace. The
-free path is always there and always works; the paid path is the default the
+OS path is always there and always works; the add-on path is the default the
 screens lead to.
 
 ### 5.2 Shipping a controller from the catalogue
