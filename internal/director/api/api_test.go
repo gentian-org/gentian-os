@@ -579,6 +579,26 @@ func TestTilesFollowTheCallersRelations(t *testing.T) {
 	if code, _ := h.do(t, "GET", "/v1/clusters/other/tiles", h.token(t, "gentian", "alice"), ""); code != http.StatusBadRequest {
 		t.Fatalf("another cluster id: %d", code)
 	}
+	// A desktop in another zone does not offer this tenant's consoles, even
+	// to someone who holds the relation on it: they sit behind the tenant's
+	// own session. The tenant's own desktop does.
+	zoned := func(tenant string) string {
+		_, body := h.do(t, "GET", "/v1/clusters/demo-cluster/tiles?tenant="+tenant, h.token(t, "gentian", "alice"), "")
+		var out []string
+		for _, tile := range body["tiles"].([]any) {
+			out = append(out, tile.(map[string]any)["name"].(string))
+		}
+		return fmt.Sprint(out)
+	}
+	if got := zoned("platform"); got != "[headlamp argocd keycloak]" {
+		t.Fatalf("on the platform desktop: %s", got)
+	}
+	if got := zoned("demo"); got != "[headlamp argocd keycloak demo/notes/web]" {
+		t.Fatalf("on the tenant's own desktop: %s", got)
+	}
+	if code, _ := h.do(t, "GET", "/v1/clusters/demo-cluster/tiles?tenant=not%20a%20name", h.token(t, "gentian", "alice"), ""); code != http.StatusBadRequest {
+		t.Fatalf("a tenant that is not a name: %d", code)
+	}
 }
 
 // A cluster whose operator has not projected yet has no catalogue to read, and

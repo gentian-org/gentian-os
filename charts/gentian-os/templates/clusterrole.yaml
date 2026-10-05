@@ -253,6 +253,7 @@ rules:
     resources:
     - appgrants/status
     - backuppolicies/status
+    - brandings/status
     - components/status
     - customizations/status
     - integrationbindings/status
@@ -269,6 +270,7 @@ rules:
   - apiGroups:
     - gentianos.io
     resources:
+    - brandings
     - clusters
     - componentprofiles
     - oidcpackcatalogs

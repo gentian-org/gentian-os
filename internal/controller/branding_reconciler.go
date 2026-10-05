@@ -65,12 +65,16 @@ func brandName(ctx context.Context, c client.Reader) string {
 // A brand whose tokens cannot be rendered leaves the published files as they
 // were and says why on its status: a typo in a colour must not take every
 // page's styling away.
-//
-// +kubebuilder:rbac:groups=gentianos.io,resources=brandings,verbs=get;list;watch
-// +kubebuilder:rbac:groups=gentianos.io,resources=brandings/status,verbs=get;update;patch
 type BrandingReconciler struct {
 	client.Client
 }
+
+// The markers are a free-floating block: controller-gen ignores a block that
+// is part of a declaration's doc comment, and the operator then cannot list
+// the kind it watches and never starts.
+//
+// +kubebuilder:rbac:groups=gentianos.io,resources=brandings,verbs=get;list;watch
+// +kubebuilder:rbac:groups=gentianos.io,resources=brandings/status,verbs=get;update;patch
 
 var brandingRequest = reconcile.Request{NamespacedName: types.NamespacedName{Name: gentianov1alpha1.BrandingName}}
 

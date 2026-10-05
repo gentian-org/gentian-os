@@ -886,8 +886,22 @@ func (s *Server) clusterTiles(w http.ResponseWriter, r *http.Request, c call) {
 		s.fail(w, r, http.StatusServiceUnavailable, "the tile catalogue cannot be read")
 		return
 	}
+	// The zone the asking desktop is in, when it says. A tenant's consoles
+	// are opened from that tenant's own desktop: they sit behind its zone's
+	// session, so on another zone's desktop the tile would lead to a sign-in
+	// the person has no account for. A platform administrator holds the
+	// relation on every tenant, which is exactly why holding it cannot be
+	// what decides this.
+	zone := r.URL.Query().Get("tenant")
+	if zone != "" && !gitops.ValidName(zone) {
+		s.fail(w, r, http.StatusBadRequest, "tenant is not a tenant name")
+		return
+	}
 	out := []tileOut{}
 	for _, t := range catalogue {
+		if zone != "" && strings.HasPrefix(t.Object, "tenant:") && t.Object != "tenant:"+zone {
+			continue
+		}
 		shown := false
 		for _, rel := range t.AnyOf {
 			ok, err := s.cfg.Authz.Check(ctx, reqID(ctx), c.user, rel, t.Object)
