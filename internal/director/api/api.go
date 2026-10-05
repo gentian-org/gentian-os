@@ -233,6 +233,7 @@ type Identity interface {
 	FindUser(ctx context.Context, r identity.Realm, username string) (identity.Person, error)
 	ActivateAccount(ctx context.Context, r identity.Realm, id, email string, requireMFA bool, clientID, redirectURI string) (identity.Activation, error)
 	GroupMembers(ctx context.Context, r identity.Realm, path string) ([]identity.Person, error)
+	UserCount(ctx context.Context, r identity.Realm) (int, error)
 }
 
 // StoreConfig is what the entitlement write needs.
@@ -731,6 +732,10 @@ func (s *Server) routes() {
 		// Handing a tenant's administrator account to its holder: whoever may
 		// bring tenants on (can_configure on the cluster) issues the link.
 		s.action("POST /v1/clusters/{c}/tenants/{t}/actions/activate-admin", "can_configure", s.clusterObject, s.activateAdmin)
+
+		// How many people hold an account on this cluster. A count and no
+		// names, so it is can_audit like every other read of the cluster.
+		s.guarded("GET /v1/clusters/{c}/people/count", "can_audit", s.clusterObject, s.clusterUserCount)
 	}
 }
 

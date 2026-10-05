@@ -838,7 +838,7 @@ are in [design/multi-tenancy.md](design/multi-tenancy.md#roles).
 | One brand on every page: tokens, identity, publishing | [design/branding.md](design/branding.md) |
 | AppProfile schema, IntegrationBindings, contracts, deployment flow | [design/app-catalogue.md](design/app-catalogue.md) |
 | Catalogue tiers, sidecars, admission and CI policy | [design/app-catalogue.md](design/app-catalogue.md) |
-| Commercial model & Odoo integration | [design/business-logic-plan.md](design/business-logic-plan.md) |
+| What the cluster accepts from an App Store | [design/store-contract.md](design/store-contract.md) |
 | OpenBao, ESO, TLS, deterministic seeding, rotation | [design/security.md](design/security.md) |
 | Identity and Access Management (IAM) and Roles | [design/iam.md](design/iam.md) |
 | OIDC paths (catalogue apps) | [app-profile-guide.md](../../gentian-apps/docs/app-profile-guide.md) §8, [design/iam.md](design/iam.md) |

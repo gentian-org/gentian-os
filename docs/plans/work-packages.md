@@ -835,12 +835,10 @@ person's token, or with a statement it signed.
       store screen renders the director's index — name, version, install —
       when the store is unreachable or not configured, and the store's
       listings on top of it when it is.
-- [ ] **Account tier and terms.** Sign-up records the tier (individual,
-      organisation under the threshold, corporate or MSP) and the terms
-      version accepted; a grant is refused without a current acceptance and
-      records the tier and version it was issued under. Listings carry the
-      upstream license and "distributed under the store terms"; GTC-authored
-      components carry "commercial license". The desktop shows it per entry.
+- [ ] **The license, per entry.** A listing carries the license it is
+      distributed under and the desktop shows it per entry. What a store
+      asks of an account before it signs a grant is the store's own business
+      and is tracked with the store.
 - [ ] **Not in the cluster, ever.** The `app-store-me` profile and its dead
       install paths are retired with WP-5; the cluster keeps the director's
       endpoint and, per tenant, only the installed profiles.

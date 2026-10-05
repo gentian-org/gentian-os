@@ -34,7 +34,7 @@ plans are what the code was supposed to become.
 
 ## AD-15 — multi-language
 
-The market is German-speaking, so this is not polish.
+A person who cannot read the console cannot use it, so this is not polish.
 
 | Surface | State |
 | --- | --- |

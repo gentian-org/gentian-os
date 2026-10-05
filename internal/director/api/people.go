@@ -139,6 +139,63 @@ func (s *Server) listPeople(w http.ResponseWriter, r *http.Request, _ call) {
 	s.json(w, http.StatusOK, map[string]any{"tenant": r.PathValue("t"), "people": people})
 }
 
+// realmUserCount is one realm's line in the cluster's count.
+type realmUserCount struct {
+	Realm   string   `json:"realm"`
+	Tenants []string `json:"tenants"`
+	// Users is absent when the realm could not be counted.
+	Users *int `json:"users,omitempty"`
+}
+
+// clusterUserCount answers how many people hold an account on this cluster.
+//
+// Counted per realm, because a realm is where an account exists: tenants that
+// share a realm share its people, and adding up per tenant would count those
+// people once for every tenant. A realm that could not be counted is listed
+// without a number and the answer says it is incomplete, rather than passing
+// a smaller total off as the whole.
+func (s *Server) clusterUserCount(w http.ResponseWriter, r *http.Request, _ call) {
+	tenants, err := s.cfg.Repo.TenantDetails(r.Context())
+	if err != nil {
+		s.repoError(w, r, err)
+		return
+	}
+	realms := []*realmUserCount{}
+	byName := map[string]*realmUserCount{}
+	for _, t := range tenants {
+		name, err := s.cfg.Repo.TenantRealm(r.Context(), t.Name)
+		if err != nil {
+			s.repoError(w, r, err)
+			return
+		}
+		entry, ok := byName[name]
+		if !ok {
+			entry = &realmUserCount{Realm: name, Tenants: []string{}}
+			byName[name] = entry
+			realms = append(realms, entry)
+		}
+		entry.Tenants = append(entry.Tenants, t.Name)
+	}
+	total, complete := 0, true
+	for _, entry := range realms {
+		realm, err := s.cfg.Identity.Realm(entry.Realm)
+		if err == nil {
+			var n int
+			if n, err = s.cfg.Identity.UserCount(identityContext(r), realm); err == nil {
+				entry.Users = &n
+				total += n
+				continue
+			}
+		}
+		complete = false
+		s.cfg.Log.WarnContext(r.Context(), "realm not counted",
+			"request_id", reqID(r.Context()), "realm", entry.Realm, "error", err.Error())
+	}
+	s.json(w, http.StatusOK, map[string]any{
+		"cluster": s.cfg.Cluster, "users": total, "complete": complete, "realms": realms,
+	})
+}
+
 // getPerson answers one person and the groups they hold.
 func (s *Server) getPerson(w http.ResponseWriter, r *http.Request, _ call) {
 	realm, ok := s.realmFor(w, r)

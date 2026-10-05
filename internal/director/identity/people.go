@@ -140,6 +140,17 @@ func (c *Client) People(ctx context.Context, r Realm, search string, limit int) 
 	return people, nil
 }
 
+// UserCount answers how many enabled accounts a realm holds, as Keycloak
+// counts them. It is a number and nothing about anybody: no name leaves the
+// realm to produce it.
+func (c *Client) UserCount(ctx context.Context, r Realm) (int, error) {
+	var n int
+	if err := c.call(ctx, r, http.MethodGet, "/users/count", url.Values{"enabled": {"true"}}, nil, &n); err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
 // Person reads one person, with the groups they hold.
 func (c *Client) Person(ctx context.Context, r Realm, id string) (Person, error) {
 	if !plainID(id) {

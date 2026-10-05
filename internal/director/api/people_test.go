@@ -487,6 +487,11 @@ func (f *fakeIdentity) RequireTOTP(ctx context.Context, r identity.Realm, _ stri
 	return nil
 }
 
+func (f *fakeIdentity) UserCount(ctx context.Context, r identity.Realm) (int, error) {
+	f.note(ctx, r)
+	return 7, nil
+}
+
 func (f *fakeIdentity) RemoveTOTP(ctx context.Context, r identity.Realm, _ string) error {
 	f.note(ctx, r)
 	return nil
@@ -674,5 +679,32 @@ func TestActivatingATenantAdministrator(t *testing.T) {
 
 	if status, _ := h.do(t, http.MethodPost, path, h.token(t, "tenant-demo", "tom"), ""); status != http.StatusForbidden {
 		t.Fatalf("a tenant administrator issuing it: %d, want 403", status)
+	}
+}
+
+// The cluster's count is per realm, and a realm the director cannot reach
+// makes the total incomplete instead of smaller.
+func TestTheClusterCountsItsPeoplePerRealm(t *testing.T) {
+	f := newFakeIdentity("demo", "solo") // other deliberately absent
+	h := startWithIdentity(t, f)
+	path := "/v1/clusters/" + dt.Cluster + "/people/count"
+
+	status, body := h.do(t, http.MethodGet, path, h.token(t, "gentian", "alice"), "")
+	if status != http.StatusOK {
+		t.Fatalf("count: %d %v", status, body)
+	}
+	if body["users"] != float64(14) || body["complete"] != false {
+		t.Fatalf("two realms of seven and one unreachable: %v", body)
+	}
+	for _, raw := range body["realms"].([]any) {
+		realm := raw.(map[string]any)
+		_, counted := realm["users"]
+		if want := realm["realm"] != "other"; counted != want {
+			t.Errorf("realm %v counted=%v, want %v", realm["realm"], counted, want)
+		}
+	}
+
+	if status, _ := h.do(t, http.MethodGet, path, h.token(t, "tenant-demo", "tom"), ""); status != http.StatusForbidden {
+		t.Fatalf("a tenant administrator counting the cluster: %d, want 403", status)
 	}
 }

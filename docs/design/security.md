@@ -733,7 +733,7 @@ not sufficient. See [multi-tenancy.md](multi-tenancy.md) §3.
 - **Apache 2.0 (ideal):** Keycloak, OpenFGA, SpiceDB, Ory core, OPA, NetBox, Cilium, SPIRE.
 - **AGPL-3.0 (copyleft — disclose service-side modifications):** Zitadel v3+, Permify, Snipe-IT.
 - **GPL:** GLPI.
-- **Recommendation:** the Keycloak + OpenFGA core is fully Apache 2.0 — the cleanest fit for an open-core commercial product where you may ship a *modified* IdP/authZ engine as part of a managed Gentian offering. Self-host on EU/Swiss infrastructure for full vendor independence. Zitadel remains the strong sovereignty-branded alternative if native multi-tenancy outweighs the AGPL constraint and you don't need to *consume* upstream SAML.
+- **Recommendation:** the Keycloak + OpenFGA core is fully Apache 2.0, so a *modified* IdP/authZ engine can be shipped and operated without a copyleft obligation on the modifications. Both are self-hosted, which keeps the identity layer independent of any vendor. Zitadel remains the strong sovereignty-branded alternative if native multi-tenancy outweighs the AGPL constraint and you don't need to *consume* upstream SAML.
 
 ---
 
