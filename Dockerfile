@@ -9,6 +9,9 @@ WORKDIR /workspace
 
 # Cache module downloads
 COPY go.mod go.sum ./
+# The API is a module of its own that this one replaces with ./api, so its
+# go.mod has to be here before anything can be resolved.
+COPY api/go.mod api/go.sum api/
 RUN go mod download
 
 # Copy source

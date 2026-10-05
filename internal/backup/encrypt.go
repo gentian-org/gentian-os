@@ -18,6 +18,7 @@ package backup
 
 import (
 	"fmt"
+	"github.com/gentian-org/gentian-os/api/bundle"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
@@ -174,23 +175,9 @@ for tool in %[2]s; do
 done`, packages, required)
 }
 
-// BundleInfo is the one file in a bundle that is not encrypted.
-//
-// It says what the bundle is and how to open it, and nothing about what is
-// inside. Without it a recipient facing a directory of .age files has to guess
-// which identity applies; with it, the manifest — which carries the tenant's
-// spec and app inventory — can stay encrypted like everything else.
-type BundleInfo struct {
-	SchemaVersion int      `json:"schemaVersion"`
-	Tenant        string   `json:"tenant"`
-	Export        string   `json:"export"`
-	CreatedAt     string   `json:"createdAt"`
-	Encryption    string   `json:"encryption"`
-	Recipients    []string `json:"recipients,omitempty"`
-	// HowToDecrypt is a literal command, because the person reading this is
-	// having a bad day and should not have to look anything up.
-	HowToDecrypt string `json:"howToDecrypt"`
-}
+// BundleInfo is the one file in a bundle that is not encrypted; its format
+// is part of the API.
+type BundleInfo = bundle.Info
 
 // NewBundleInfo builds the unencrypted header for a bundle.
 func NewBundleInfo(tenant, export, createdAt string, e Encryption) *BundleInfo {

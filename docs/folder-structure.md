@@ -18,6 +18,14 @@ them:
 
 ## 1. Operator source
 
+### `api/`
+
+A Go module of its own (`api/go.mod`), licensed separately (`api/LICENSE`):
+the resource types, the bundle index (`api/bundle`) and the entitlement
+statement (`api/statement`). The root module reaches it through a `replace`,
+and `go.work` joins the two for commands run from the root. `./...` does not
+cross into it, which is why the Makefile and CI name `./api/...` as well.
+
 ### `api/v1alpha1/`
 The **syscall API**. One `*_types.go` per CRD kind — `Tenant`, `AppProfile`,
 `AppCatalogue`, `AppPackage`, `AppGrant`, `Customization`, `IntegrationBinding`,

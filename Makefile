@@ -56,7 +56,7 @@ uninstall-plugin:
 # internal/controller uses envtest whose watch goroutines conflict with -race;
 # all other packages are tested with the race detector enabled.
 test:
-	go test $$(go list ./... | grep -v 'internal/controller') -race
+	go test $$(go list ./... ./api/... | grep -v 'internal/controller') -race
 	# -timeout, because envtest waits are bounded at 3 minutes each: enough
 	# simultaneous failures would exceed Go's 10-minute default and replace
 	# readable per-test failures with a whole-package panic dump.
@@ -136,7 +136,7 @@ verify: verify-gen lint validate-steps test test-unit
 
 ## Run golangci-lint (install from https://golangci-lint.run/usage/install/)
 lint-go:
-	golangci-lint run ./...
+	golangci-lint run ./... ./api/...
 
 ## Run yamllint over the repo, as .github/workflows/ci.yaml does
 lint-yaml:

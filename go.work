@@ -1,0 +1,8 @@
+// The core and its API are two modules: the API is the part other programs
+// import, and it carries its own license.
+go 1.25.7
+
+use (
+	.
+	./api
+)
