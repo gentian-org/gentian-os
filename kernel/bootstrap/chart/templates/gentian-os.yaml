@@ -86,6 +86,15 @@ spec:
           {{- range .Values.namespaces.kernel }}
           {{ .function }}: {{ .name }}
           {{- end }}
+        {{- with .Values.tenantDNS01ClusterIssuer }}
+        # The issuer tenant certificates are requested from: the one this
+        # install created, by the rule that named it (ACME_ENV and the DNS
+        # provider). Stated here because a stage profile names one too, and
+        # a profile that says staging on a cluster whose issuers are
+        # production asks for an issuer that does not exist -- no tenant
+        # certificate is ever issued, and no tenant host ever answers.
+        tenantDNS01ClusterIssuer: {{ . | quote }}
+        {{- end }}
         # The Gateway, its routes and its reference grants live at the edge.
         servicesNamespace: {{ include "ns" (list . "edge") }}
         # Where Argo CD runs. The operator chart's default is "argocd", which

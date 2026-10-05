@@ -37,7 +37,13 @@ func (r *TenantReconciler) buildTenantEdgeObjects(ctx context.Context, tenant *g
 	if err != nil {
 		return nil, err
 	}
-	if len(intents) == 0 {
+	// A tenant with a zone of its own needs its listener's certificate and
+	// the grants that let the Gateway use it whether or not it has catalogue
+	// apps: its desktop and its consoles are components, routed on that same
+	// listener. Gating this on app routes left a tenant with no apps with an
+	// invalid listener, every one of its hosts unroutable, and its console
+	// answering 502.
+	if len(intents) == 0 && !r.tenantHasOwnZone(tenant) {
 		return nil, nil
 	}
 
@@ -76,6 +82,14 @@ func (r *TenantReconciler) buildTenantEdgeObjects(ctx context.Context, tenant *g
 	// live in the same namespace as the Gateway it targets.
 
 	return objects, nil
+}
+
+// tenantHasOwnZone reports a tenant whose hosts are served on a listener of
+// its own: every tenant but the one that adopts the kernel realm, whose
+// components are in the kernel zone, and one on the kernel domain itself.
+func (r *TenantReconciler) tenantHasOwnZone(tenant *gentianov1alpha1.Tenant) bool {
+	domain := r.tenantEffectiveDomain(tenant)
+	return domain != "" && !r.adoptsKernelRealm(tenant) && !servedByKernelEdge(domain, r.KernelDomain)
 }
 
 // waitForTenantEdgeResources reports whether Crossplane-provisioned edge resources

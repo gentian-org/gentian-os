@@ -101,6 +101,11 @@ operator:
   # itself.
   tag: ""
 
+# The ClusterIssuer tenant wildcard certificates are requested from. The
+# installer sets it to the issuer it created; empty leaves the stage
+# profile's, or the operator chart's default.
+tenantDNS01ClusterIssuer: ""
+
 # Which mail stack this cluster runs, from the Cluster claim
 # (spec.mail.serviceMode). `system` deploys Postfix and Dovecot into the system
 # tier; `external` relays through a provider and deploys neither.

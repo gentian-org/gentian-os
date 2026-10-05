@@ -238,7 +238,7 @@ func (r *GatewayPlatformReconciler) ensureEdgeGateways(ctx context.Context) erro
 	}
 	ann := edgeDNSAnnotations(r.Ingress)
 	for _, desired := range []*gatewayv1.Gateway{
-		buildAuthenticatedGateway(r.KernelDomain, r.TenancyMode, tenantList.Items),
+		buildAuthenticatedGateway(r.KernelDomain, r.TenancyMode, zonedTenants(tenantList.Items, r.kernelRealm())),
 		buildPerimeterGateway(r.KernelDomain, r.TenancyMode, tenantList.Items),
 	} {
 		if len(ann) > 0 {
@@ -355,6 +355,22 @@ func perimeterListenerName(host string) string {
 	}
 	sum := sha256.Sum256([]byte(host))
 	return "perimeter-" + hex.EncodeToString(sum[:])[:16]
+}
+
+// zonedTenants are the tenants that get a listener of their own on the
+// authenticated Gateway. A tenant that adopts the kernel realm and installs
+// no catalogue apps has nothing to serve there: its components are in the
+// kernel zone, on the catch-all listener, and a listener for it would only
+// sit invalid, waiting for a certificate nobody requests.
+func zonedTenants(tenants []gentianov1alpha1.Tenant, kernelRealm string) []gentianov1alpha1.Tenant {
+	out := make([]gentianov1alpha1.Tenant, 0, len(tenants))
+	for i := range tenants {
+		if tenantAdoptsKernelRealm(&tenants[i], kernelRealm) && len(tenants[i].Spec.Apps) == 0 {
+			continue
+		}
+		out = append(out, tenants[i])
+	}
+	return out
 }
 
 func buildAuthenticatedGateway(kernelDomain, tenancyMode string, tenants []gentianov1alpha1.Tenant) *gatewayv1.Gateway {

@@ -17,6 +17,7 @@ limitations under the License.
 package controller
 
 import (
+	"context"
 	"maps"
 	"slices"
 	"strings"
@@ -911,5 +912,77 @@ func TestTheApexLandsOnTheSignInRouterWhenThereAreManyWorkspaces(t *testing.T) {
 	}
 	if !signInRouterFor("multi") || !signInRouterFor("") || signInRouterFor("single") {
 		t.Fatal("signInRouterFor does not follow the tenancy mode")
+	}
+}
+
+// The tenant that adopts the kernel realm and has no catalogue apps gets no
+// listener: its components are in the kernel zone. Every other tenant does,
+// apps or not, because its desktop and consoles are served on it.
+func TestOnlyTenantsWithAZoneGetAListener(t *testing.T) {
+	t.Parallel()
+	platform := *platformTenantFixture()
+	acme := *acmeTenantFixture()
+	gw := buildAuthenticatedGateway("k.example", "multi", zonedTenants([]gentianov1alpha1.Tenant{platform, acme}, "kernel"))
+	names := map[string]bool{}
+	for _, l := range gw.Spec.Listeners {
+		names[string(l.Name)] = true
+	}
+	if names[tenantGatewayListenerName("platform")] {
+		t.Fatal("the platform tenant got a listener nothing is served on")
+	}
+	if !names[tenantGatewayListenerName("acme")] {
+		t.Fatal("a tenant with no catalogue apps lost its listener")
+	}
+}
+
+// A tenant with a zone of its own has one whether or not it installs
+// catalogue apps; the tenant in the kernel zone and one on the kernel domain
+// do not.
+func TestATenantWithoutAppsStillHasItsZone(t *testing.T) {
+	t.Parallel()
+	r := &TenantReconciler{KernelDomain: "k.example", KernelRealm: "kernel", TenancyMode: "multi"}
+	if !r.tenantHasOwnZone(acmeTenantFixture()) {
+		t.Fatal("a tenant with no apps has no zone")
+	}
+	if r.tenantHasOwnZone(platformTenantFixture()) {
+		t.Fatal("the kernel realm's tenant has a zone of its own")
+	}
+	single := &TenantReconciler{KernelDomain: "k.example", KernelRealm: "kernel", TenancyMode: "single"}
+	if single.tenantHasOwnZone(acmeTenantFixture()) {
+		t.Fatal("a tenant on the kernel domain has a zone of its own")
+	}
+}
+
+// A tenant with no catalogue apps still gets what its listener needs: the
+// wildcard certificate and the grants that let the Gateway use it. They were
+// composed only beside app routes, so a tenant with a desktop and no apps
+// had an invalid listener and a console that answered 502.
+func TestATenantWithoutAppsGetsItsCertificateAndGrants(t *testing.T) {
+	s := componentDatabaseScheme(t)
+	r := &TenantReconciler{
+		Client: fake.NewClientBuilder().WithScheme(s).Build(), Scheme: s,
+		KernelDomain: "k.example", KernelRealm: "kernel", TenancyMode: "multi", RoutingMode: RoutingModeGateway,
+	}
+	objects, err := r.buildTenantEdgeObjects(context.Background(), acmeTenantFixture())
+	if err != nil {
+		t.Fatal(err)
+	}
+	kinds := map[string]int{}
+	for _, o := range objects {
+		kinds[o.GetObjectKind().GroupVersionKind().Kind]++
+		if o.GetObjectKind().GroupVersionKind().Kind == "Certificate" {
+			u := o.(*unstructured.Unstructured)
+			names, _, _ := unstructured.NestedStringSlice(u.Object, "spec", "dnsNames")
+			if len(names) != 1 || names[0] != "*.acme.k.example" {
+				t.Fatalf("certificate names = %v", names)
+			}
+		}
+	}
+	if kinds["Certificate"] != 1 || kinds["ReferenceGrant"] < 2 || kinds["HTTPRoute"] != 0 {
+		t.Fatalf("composed %v", kinds)
+	}
+	// The kernel realm's tenant has no zone of its own, so nothing is composed.
+	if objects, err := r.buildTenantEdgeObjects(context.Background(), platformTenantFixture()); err != nil || len(objects) != 0 {
+		t.Fatalf("platform: %d objects, %v", len(objects), err)
 	}
 }

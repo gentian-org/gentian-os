@@ -157,6 +157,7 @@ _v5_render() {
         --set-string "llmEnabled=${LLM_SUPPORT:-false}" \
         --set-string "tenancyMode=${TENANCY_MODE:-multi}" \
         --set-string "acmeStaging=${acme_staging}" \
+        --set-string "tenantDNS01ClusterIssuer=$(gentian_dns01_cluster_issuer_name)" \
         --set-string "smtpHost=${EXTERNAL_SMTP_HOST:-}" \
         --set-string "mailServiceMode=$(gentian_mail_service_mode)" \
         --set-string "mailEgressHost=${MAIL_EGRESS_HOST:-}" \

@@ -51,6 +51,15 @@ func (r *TenantReconciler) ensureGateway(ctx context.Context, tenant *gentianov1
 		if err := r.deleteTenantHTTPRoutes(ctx, tenant, nsName); err != nil {
 			return ctrl.Result{}, err
 		}
+		// No app routes is not no zone. The tenant's components are served
+		// on its listener, so its grants stay and its hosts are published;
+		// deleting the grants here is what left that listener invalid.
+		if r.tenantHasOwnZone(tenant) {
+			r.ensureTenantEdgeRoutes(ctx, tenant, r.tenantEffectiveDomain(tenant))
+			r.setCondition(tenant, conditionGatewayReady, metav1.ConditionTrue,
+				"ZoneServed", "The tenant's zone is served; no apps require routes of their own")
+			return ctrl.Result{}, nil
+		}
 		if err := deleteTenantReferenceGrants(ctx, r.Client, tenant); err != nil {
 			return ctrl.Result{}, fmt.Errorf("delete tenant ReferenceGrants: %w", err)
 		}
