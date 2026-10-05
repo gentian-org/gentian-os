@@ -53,9 +53,10 @@ from other workspace products — is an add-on that calls those functions. A
 tenant can always leave without it.
 
 **Today's state.** The repository's `LICENSE` file is AGPL-3.0 and its Go
-source headers say Apache-2.0; the desktop, the Admin Console and the app
-template are Apache-2.0. Adopting this proposal changes the core to MPL 2.0,
-which needs the agreement of everyone who has contributed to it.
+source headers say Apache-2.0; the app template is Apache-2.0; the desktop
+and the Admin Console are moving to MPL 2.0. Adopting this proposal changes
+the core to MPL 2.0, which needs the agreement of everyone who has
+contributed to it.
 
 ## Excluded Licenses
 
@@ -151,6 +152,5 @@ files there are published.
 | Decision | Options | Trade-off |
 |---|---|---|
 | Core license | MPL 2.0 / Apache 2.0 | Visible modifications vs. maximum acceptance |
-| Desktop and console license | MPL 2.0 / Apache 2.0 (today) | Changes to the product's face flow back vs. no obligation on whoever serves a modified one |
 | Default object store | Replace MinIO / make it an install-time choice | One less service to choose vs. a default install free of AGPLv3 |
 | Conformance scope | Minimal API set / APIs plus data formats | Ease of certification vs. strength of the portability guarantee |
