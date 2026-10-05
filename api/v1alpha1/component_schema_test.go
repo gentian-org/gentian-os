@@ -333,12 +333,21 @@ func component(spec string) string {
 
 func TestComponentRules(t *testing.T) {
 	v := loadCRD(t, "gentianos.io_components.yaml")
-	enabled := func(owner, expires string) string {
+	// reviewed is an enablement with its review date, and an expiry when one
+	// is given: what is public is always looked at again and ends only if
+	// somebody said so.
+	reviewed := func(owner, review, expires string) string {
 		s := "  class: app\n  exposures:\n  - exposureName: share\n    owner: " + owner + "\n"
+		if review != "" {
+			s += "    reviewAt: \"" + review + "\"\n"
+		}
 		if expires != "" {
 			s += "    expiresAt: \"" + expires + "\"\n"
 		}
 		return s
+	}
+	enabled := func(owner, expires string) string {
+		return reviewed(owner, "2026-11-01T00:00:00Z", expires)
 	}
 	granted := func(approver string) string {
 		return "  class: app\n  privileges:\n  - privilege: egress/smtp-relay\n    approver: " + approver +
@@ -351,9 +360,10 @@ func TestComponentRules(t *testing.T) {
 		{"fulfilment is a tenant's choice", component("  class: shared-app\n  fulfilment: dedicated\n"), "", "applies to class app only"},
 
 		{"an exposure with an end", component(enabled("u-pat", "2026-12-01T00:00:00Z")), "", ""},
-		{"an exposure without one", component(enabled("u-pat", "")), "", "expiresAt"},
+		{"an exposure meant to stay", component(enabled("u-pat", "")), "", ""},
+		{"an exposure nobody will look at again", component(reviewed("u-pat", "", "2026-12-01T00:00:00Z")), "", "reviewAt"},
 		{"an exposure nobody owns", component("  class: app\n  exposures:\n  - {exposureName: share, expiresAt: \"2026-12-01T00:00:00Z\"}\n"), "", "owner"},
-		{"review after expiry", component(enabled("u-pat", "2026-12-01T00:00:00Z") + "    reviewAt: \"2027-01-01T00:00:00Z\"\n"), "", "reviewAt must not be later"},
+		{"review after expiry", component(reviewed("u-pat", "2027-01-01T00:00:00Z", "2026-12-01T00:00:00Z")), "", "reviewAt must not be later"},
 		{"a service on the perimeter", component("  class: service\n  exposures:\n  - {exposureName: share, owner: u, expiresAt: \"2026-12-01T00:00:00Z\"}\n"), "", "a service switches on no perimeter entry"},
 
 		{"renewed by its owner", component(enabled("u-pat", "2027-03-01T00:00:00Z")), component(enabled("u-pat", "2026-12-01T00:00:00Z")), ""},

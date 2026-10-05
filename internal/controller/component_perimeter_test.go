@@ -56,7 +56,7 @@ func enabledShares(expiry time.Time) []gentianov1alpha1.ExposureEnablement {
 	return []gentianov1alpha1.ExposureEnablement{{
 		ExposureName: "shares",
 		Owner:        "u-tom",
-		ExpiresAt:    metav1.NewTime(expiry),
+		ExpiresAt:    exposureEnds(expiry),
 	}}
 }
 
@@ -293,7 +293,7 @@ func TestAnEnablementWithoutADeclarationPublishesNothing(t *testing.T) {
 	comp := componentFor("nextcloud-base-ce", tenantNamespaceName(tenant))
 	comp.Spec.Exposures = []gentianov1alpha1.ExposureEnablement{{
 		ExposureName: "invented", Owner: "u-tom",
-		ExpiresAt: metav1.NewTime(time.Now().Add(time.Hour)),
+		ExpiresAt: exposureEnds(time.Now().Add(time.Hour)),
 	}}
 	live := livePerimeterExposures(comp, nextcloudWithPerimeter(), edgeZone{domain: "acme.k.example"}, time.Now())
 	if len(live) != 0 {
@@ -308,7 +308,7 @@ func TestAGatewayEntryCannotBePublishedOnThePerimeter(t *testing.T) {
 	comp := componentFor("nextcloud-base-ce", tenantNamespaceName(tenant))
 	comp.Spec.Exposures = []gentianov1alpha1.ExposureEnablement{{
 		ExposureName: "web", Owner: "u-tom", // "web" is the gateway entry
-		ExpiresAt: metav1.NewTime(time.Now().Add(time.Hour)),
+		ExpiresAt: exposureEnds(time.Now().Add(time.Hour)),
 	}}
 	live := livePerimeterExposures(comp, nextcloudWithPerimeter(), edgeZone{domain: "acme.k.example"}, time.Now())
 	if len(live) != 0 {
@@ -327,7 +327,7 @@ func TestAPublishedHostGetsAListenerOnThePerimeterGateway(t *testing.T) {
 	tenant := acmeTenantFixture()
 	tenant.Spec.Exposures = []gentianov1alpha1.TenantExposure{{
 		Install: "nextcloud-base-ce", ExposureName: "shares", Owner: "u-tom",
-		ExpiresAt: metav1.NewTime(time.Now().Add(24 * time.Hour)),
+		ExpiresAt: exposureEnds(time.Now().Add(24 * time.Hour)),
 	}}
 	gw := buildPerimeterGateway("k.example", "", []gentianov1alpha1.Tenant{*tenant})
 
@@ -355,7 +355,7 @@ func TestThePerimeterDoesNotClaimTheTenantsWildcard(t *testing.T) {
 	tenant := acmeTenantFixture()
 	tenant.Spec.Exposures = []gentianov1alpha1.TenantExposure{{
 		Install: "nextcloud-base-ce", ExposureName: "shares", Owner: "u-tom",
-		ExpiresAt: metav1.NewTime(time.Now().Add(24 * time.Hour)),
+		ExpiresAt: exposureEnds(time.Now().Add(24 * time.Hour)),
 	}}
 	gw := buildPerimeterGateway("k.example", "", []gentianov1alpha1.Tenant{*tenant})
 	for _, l := range gw.Spec.Listeners {
@@ -372,7 +372,7 @@ func TestACustomDomainTenantPublishesUnderItsDomain(t *testing.T) {
 	tenant.Status.Domain = "acme.example"
 	tenant.Spec.Exposures = []gentianov1alpha1.TenantExposure{{
 		Install: "nextcloud-base-ce", ExposureName: "shares", Owner: "u-tom",
-		ExpiresAt: metav1.NewTime(time.Now().Add(24 * time.Hour)),
+		ExpiresAt: exposureEnds(time.Now().Add(24 * time.Hour)),
 	}}
 	gw := buildPerimeterGateway("k.example", "", []gentianov1alpha1.Tenant{*tenant})
 	var hosts []string
@@ -403,4 +403,10 @@ func containsString(all []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// exposureEnds is an expiry, for an exposure published for a while.
+func exposureEnds(at time.Time) *metav1.Time {
+	t := metav1.NewTime(at)
+	return &t
 }

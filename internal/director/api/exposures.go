@@ -28,27 +28,29 @@ import (
 // Publishing a surface to the internet (AD-6).
 //
 // A profile declares that it COULD publish something; a perimeter approver
-// decides that it DOES, for a host, until a date. These are that decision,
+// decides that it DOES, and when it is looked at again. These are that decision,
 // and the read is the registry of everything this tenant has on the internet.
 
-// maxExposure is how long one enablement may run before somebody has to look
-// at it again.
+// maxReview is the longest anything public goes without somebody looking at
+// it again.
 //
-// A year, and not "no expiry", because the failure this bounds is the one
-// nobody notices: a surface published for a reason that stopped being true,
-// still answering because removing it was never anybody's task. An expiry
-// makes forgetting the safe outcome instead of the dangerous one.
-const maxExposure = 365 * 24 * time.Hour
+// A year. What this bounds is the surface nobody remembers: published for a
+// reason that stopped being true, still answering because removing it was
+// never anybody's task. The answer to that is knowing what is public and
+// revisiting it -- not an expiry, which makes the forgotten surface go away
+// and takes a tenant's website with it the day nobody renewed.
+const maxReview = 365 * 24 * time.Hour
 
-// defaultExposure is what a caller gets for saying nothing. Short enough that
-// an experiment expires on its own, long enough to be useful.
-const defaultExposure = 90 * 24 * time.Hour
+// defaultReview is the review date a caller gets for naming none: half a year.
+const defaultReview = 182 * 24 * time.Hour
 
 type publishExposureRequest struct {
-	// ExpiresAt bounds it, RFC 3339. Empty means the default.
-	ExpiresAt string `json:"expiresAt,omitempty"`
-	// ReviewAt is when to ask again, before expiry.
+	// ReviewAt is when it is looked at again, RFC 3339. Empty means the
+	// default; never later than a year from now.
 	ReviewAt string `json:"reviewAt,omitempty"`
+	// ExpiresAt ends it, RFC 3339, for a surface published for a while.
+	// Empty means it stays until somebody withdraws it.
+	ExpiresAt string `json:"expiresAt,omitempty"`
 	// Reason is why this is public, in the approver's words.
 	Reason string `json:"reason,omitempty"`
 }
@@ -65,22 +67,33 @@ func (s *Server) tenantExposures(w http.ResponseWriter, r *http.Request, _ call)
 	}
 	// Live and expired are different answers, and a screen that showed them
 	// the same would report a tenant as publishing something it no longer is.
-	now := time.Now()
-	live := make([]gitops.Exposure, 0, len(published))
-	expired := make([]gitops.Exposure, 0)
+	// reviewDue is the live ones whose review date has passed: still
+	// published, and somebody owes them a look.
+	live, expired, due := sortExposures(published, time.Now())
+	s.json(w, http.StatusOK, map[string]any{
+		"tenant":    r.PathValue("t"),
+		"live":      live,
+		"expired":   expired,
+		"reviewDue": due,
+	})
+}
+
+// sortExposures splits a tenant's registry by what is true of each entry now.
+func sortExposures(published []gitops.Exposure, now time.Time) (live, expired, reviewDue []gitops.Exposure) {
+	live, expired, reviewDue = []gitops.Exposure{}, []gitops.Exposure{}, []gitops.Exposure{}
 	for _, e := range published {
-		at, err := time.Parse(time.RFC3339, e.ExpiresAt)
-		if err == nil && !now.Before(at) {
-			expired = append(expired, e)
-			continue
+		if e.ExpiresAt != "" {
+			if at, err := time.Parse(time.RFC3339, e.ExpiresAt); err == nil && !now.Before(at) {
+				expired = append(expired, e)
+				continue
+			}
 		}
 		live = append(live, e)
+		if at, err := time.Parse(time.RFC3339, e.ReviewAt); err != nil || !now.Before(at) {
+			reviewDue = append(reviewDue, e)
+		}
 	}
-	s.json(w, http.StatusOK, map[string]any{
-		"tenant":  r.PathValue("t"),
-		"live":    live,
-		"expired": expired,
-	})
+	return live, expired, reviewDue
 }
 
 // publishExposure records that a perimeter approver put one surface on the
@@ -94,29 +107,46 @@ func (s *Server) publishExposure(w http.ResponseWriter, r *http.Request, c call)
 	var body publishExposureRequest
 	if err := decode(r, &body); err != nil {
 		s.fail(w, r, http.StatusBadRequest,
-			`body must be {"expiresAt": "<RFC 3339>", "reason": "...", "host": "..."}`)
+			`body must be {"reviewAt": "<RFC 3339>", "expiresAt": "<RFC 3339>", "reason": "..."}; all optional`)
 		return
 	}
 
-	expires := time.Now().Add(defaultExposure)
-	if body.ExpiresAt != "" {
-		at, err := time.Parse(time.RFC3339, body.ExpiresAt)
+	now := time.Now()
+	review := now.Add(defaultReview)
+	if v := strings.TrimSpace(body.ReviewAt); v != "" {
+		at, err := time.Parse(time.RFC3339, v)
+		if err != nil {
+			s.fail(w, r, http.StatusBadRequest, "reviewAt must be an RFC 3339 timestamp")
+			return
+		}
+		if !at.After(now) {
+			s.fail(w, r, http.StatusBadRequest, "reviewAt is in the past; a review date is when to look again")
+			return
+		}
+		if at.After(now.Add(maxReview)) {
+			// Refused rather than clamped: somebody asking for ten years
+			// should be told no, not quietly given one.
+			s.fail(w, r, http.StatusBadRequest, "a public surface is reviewed at least once a year")
+			return
+		}
+		review = at
+	}
+	expires := ""
+	if v := strings.TrimSpace(body.ExpiresAt); v != "" {
+		at, err := time.Parse(time.RFC3339, v)
 		if err != nil {
 			s.fail(w, r, http.StatusBadRequest, "expiresAt must be an RFC 3339 timestamp")
 			return
 		}
-		if !at.After(time.Now()) {
+		if !at.After(now) {
 			s.fail(w, r, http.StatusBadRequest, "expiresAt is in the past; that publishes nothing")
 			return
 		}
-		if at.After(time.Now().Add(maxExposure)) {
-			// Refused rather than clamped: somebody asking for ten years
-			// should be told no, not quietly given one.
-			s.fail(w, r, http.StatusBadRequest,
-				"a surface may be published for at most a year at a time; renew it instead")
-			return
+		// Something that ends before its review is reviewed by ending.
+		if at.Before(review) {
+			review = at
 		}
-		expires = at
+		expires = at.UTC().Format(time.RFC3339)
 	}
 
 	e := gitops.Exposure{
@@ -125,8 +155,8 @@ func (s *Server) publishExposure(w http.ResponseWriter, r *http.Request, c call)
 		// From the token, never the body: an enablement that could name its
 		// own owner records nobody.
 		Owner:     c.meta.Subject,
-		ExpiresAt: expires.UTC().Format(time.RFC3339),
-		ReviewAt:  strings.TrimSpace(body.ReviewAt),
+		ReviewAt:  review.UTC().Format(time.RFC3339),
+		ExpiresAt: expires,
 		Reason:    strings.TrimSpace(body.Reason),
 	}
 	res, err := s.cfg.Repo.PublishExposure(r.Context(), r.PathValue("t"), e, c.meta)

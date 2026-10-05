@@ -122,7 +122,7 @@ type ProfileRef struct {
 // enablement cannot weaken it.
 //
 // +kubebuilder:validation:XValidation:rule="self.owner == oldSelf.owner",message="owner is immutable: a renewal by someone else is a new enablement"
-// +kubebuilder:validation:XValidation:rule="!has(self.reviewAt) || self.reviewAt <= self.expiresAt",message="reviewAt must not be later than expiresAt"
+// +kubebuilder:validation:XValidation:rule="!has(self.expiresAt) || self.reviewAt <= self.expiresAt",message="reviewAt must not be later than expiresAt"
 type ExposureEnablement struct {
 	// ExposureName names an entry of the profile's expose list whose surface is
 	// "perimeter".
@@ -136,15 +136,19 @@ type ExposureEnablement struct {
 	// +kubebuilder:validation:MaxLength=256
 	Owner string `json:"owner"`
 
-	// ExpiresAt bounds the exposure, and is always set: a public surface with
-	// no end is not something anybody decided. At expiry the operator treats
-	// the enablement as absent; the entry stays in git as history.
-	ExpiresAt metav1.Time `json:"expiresAt"`
-
-	// ReviewAt is when the owner and the perimeter approver are asked to renew
-	// or revoke.
+	// ExpiresAt ends the exposure, for one that was published for a while:
+	// at expiry the operator treats the enablement as absent, and the entry
+	// stays in git as history. Optional. A surface meant to stay -- a
+	// tenant's website -- has none, because an expiry nobody renewed takes
+	// a production site off the internet with no decision behind it.
 	// +optional
-	ReviewAt *metav1.Time `json:"reviewAt,omitempty"`
+	ExpiresAt *metav1.Time `json:"expiresAt,omitempty"`
+
+	// ReviewAt is when the owner and the perimeter approver look at it again,
+	// and it is always set: what is public is known and revisited, whether or
+	// not it ends. A review that is overdue is reported; it takes nothing
+	// down.
+	ReviewAt metav1.Time `json:"reviewAt"`
 }
 
 // PrivilegeGrant answers one entry of the profile's privilege request.

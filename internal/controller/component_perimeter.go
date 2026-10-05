@@ -95,7 +95,7 @@ func livePerimeterExposures(
 			// wrote down.
 			continue
 		}
-		if !now.Before(on.ExpiresAt.Time) {
+		if on.ExpiresAt != nil && !now.Before(on.ExpiresAt.Time) {
 			continue
 		}
 		out = append(out, perimeterEnablement{spec: spec, on: on, host: exposureHost(zone, comp, spec)})

@@ -68,33 +68,50 @@ func TestAPerimeterApproverPublishesASurface(t *testing.T) {
 	}
 }
 
-// A public surface with no end is not a decision somebody made, so there is
-// no way to ask for one.
-func TestAPublishedSurfaceIsAlwaysBounded(t *testing.T) {
+// What is public is looked at again, whether or not it ends. A surface gets a
+// review date for saying nothing and may stay without an expiry -- a tenant's
+// website is not taken down the day nobody renewed it -- but nobody may put
+// the review off past a year, and an overdue review is reported, not acted on.
+func TestAPublishedSurfaceIsAlwaysReviewedAndEndsOnlyIfAsked(t *testing.T) {
 	h := start(t, false)
 	tom := h.token(t, "tenant-demo", "tom")
 
-	// Saying nothing still produces an expiry.
+	// Saying nothing: a review date, and no expiry.
 	if code, _ := h.do(t, "PUT", sharesPath, tom, `{"reason":"shared calendars"}`); code != http.StatusAccepted {
-		t.Fatalf("PUT with no expiry = %d", code)
+		t.Fatalf("PUT with nothing said = %d", code)
 	}
 	code, body := h.do(t, "GET", "/v1/tenants/demo/exposures", tom, "")
 	live, _ := body["live"].([]any)
 	entry, _ := live[0].(map[string]any)
-	if entry["expiresAt"] == "" || entry["expiresAt"] == nil {
-		t.Fatalf("no expiry was recorded: %v (code %d)", entry, code)
+	if entry["reviewAt"] == nil || entry["reviewAt"] == "" {
+		t.Fatalf("no review date was recorded: %v (code %d)", entry, code)
+	}
+	if _, has := entry["expiresAt"]; has {
+		t.Fatalf("an expiry nobody asked for: %v", entry)
+	}
+	if due, _ := body["reviewDue"].([]any); len(due) != 0 {
+		t.Fatalf("a review not yet due is reported: %v", due)
 	}
 
-	// Ten years is refused rather than quietly clamped: somebody asking for
-	// it should be told no.
-	long := publishBody(time.Now().Add(10 * 365 * 24 * time.Hour))
-	if code, out := h.do(t, "PUT", sharesPath, tom, long); code != http.StatusBadRequest {
-		t.Fatalf("a ten-year exposure = %d %v, want 400", code, out)
+	// A review put off ten years is refused rather than quietly clamped.
+	late := `{"reason":"x","reviewAt":"` + time.Now().Add(10*365*24*time.Hour).UTC().Format(time.RFC3339) + `"}`
+	if code, out := h.do(t, "PUT", sharesPath, tom, late); code != http.StatusBadRequest {
+		t.Fatalf("a review in ten years = %d %v, want 400", code, out)
 	}
-	// And one already over grants nothing.
+	// An expiry already over publishes nothing.
 	past := publishBody(time.Now().Add(-time.Hour))
 	if code, _ := h.do(t, "PUT", sharesPath, tom, past); code != http.StatusBadRequest {
 		t.Fatalf("an expiry in the past = %d, want 400", code)
+	}
+	// One that ends before its review is reviewed by ending.
+	soon := time.Now().Add(24 * time.Hour)
+	if code, _ := h.do(t, "PUT", sharesPath, tom, publishBody(soon)); code != http.StatusAccepted {
+		t.Fatalf("a day-long exposure = %d", code)
+	}
+	_, body = h.do(t, "GET", "/v1/tenants/demo/exposures", tom, "")
+	entry, _ = body["live"].([]any)[0].(map[string]any)
+	if entry["expiresAt"] != entry["reviewAt"] || entry["expiresAt"] == nil {
+		t.Fatalf("expiry and review of a short exposure: %v", entry)
 	}
 }
 

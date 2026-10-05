@@ -113,9 +113,11 @@ spec:
                   properties:
                     expiresAt:
                       description: |-
-                        ExpiresAt bounds the exposure, and is always set: a public surface with
-                        no end is not something anybody decided. At expiry the operator treats
-                        the enablement as absent; the entry stays in git as history.
+                        ExpiresAt ends the exposure, for one that was published for a while:
+                        at expiry the operator treats the enablement as absent, and the entry
+                        stays in git as history. Optional. A surface meant to stay -- a
+                        tenant's website -- has none, because an expiry nobody renewed takes
+                        a production site off the internet with no decision behind it.
                       format: date-time
                       type: string
                     exposureName:
@@ -134,21 +136,23 @@ spec:
                       type: string
                     reviewAt:
                       description: |-
-                        ReviewAt is when the owner and the perimeter approver are asked to renew
-                        or revoke.
+                        ReviewAt is when the owner and the perimeter approver look at it again,
+                        and it is always set: what is public is known and revisited, whether or
+                        not it ends. A review that is overdue is reported; it takes nothing
+                        down.
                       format: date-time
                       type: string
                   required:
-                  - expiresAt
                   - exposureName
                   - owner
+                  - reviewAt
                   type: object
                   x-kubernetes-validations:
                   - message: 'owner is immutable: a renewal by someone else is a new
                       enablement'
                     rule: self.owner == oldSelf.owner
                   - message: reviewAt must not be later than expiresAt
-                    rule: '!has(self.reviewAt) || self.reviewAt <= self.expiresAt'
+                    rule: '!has(self.expiresAt) || self.reviewAt <= self.expiresAt'
                 maxItems: 32
                 type: array
                 x-kubernetes-list-map-keys:

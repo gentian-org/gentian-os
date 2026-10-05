@@ -1362,14 +1362,24 @@ spec:
                 # Nobody self-registers into a tenant realm; membership comes from
                 # the kernel realm through the broker.
                 registrationAllowed: false
-                {{- /* These four were written by UpdateRealmBrowserSecurityHeaders
-                     on every authz-bridge sync, which made it a third writer of
-                     realm state beside the realm Job and the SMTP Job. They are
-                     declared because they are NOT the provider's defaults —
-                     Keycloak ships 5m access tokens and a 30m idle timeout, so a
-                     managed realm that did not name them would quietly cut every
-                     tenant session from twelve hours to thirty minutes. */}}
-                accessTokenLifespan: 12h0m0s
+                {{- /* Five minutes, the kernel realm's own. A person stays
+                     signed in for the session's twelve hours below because
+                     the edge refreshes this token against the session; and
+                     that refresh is what ends access. Signing out, an
+                     administrator ending the session, a disabled account:
+                     each ends the session at Keycloak, the next refresh
+                     fails, and every host stops within this lifetime.
+
+                     It was twelve hours, to keep people signed in -- which
+                     the session already does. What it bought instead was a
+                     token every host kept honouring for twelve hours after
+                     the session it came from had ended: signed out on one
+                     host and still in on the next, removed by an
+                     administrator and still working till evening.
+
+                     Declared because the provider's default is not ours to
+                     rely on staying five minutes. */}}
+                accessTokenLifespan: 5m0s
                 {{- /* Twelve hours unless the tenant says otherwise. The
                      default is not the provider's -- Keycloak ships a 30m idle
                      timeout, so a managed realm that named nothing would cut

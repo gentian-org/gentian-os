@@ -264,8 +264,8 @@ spec:
                   properties:
                     expiresAt:
                       description: |-
-                        ExpiresAt is when it stops answering, and it is required. A public
-                        surface with no end is not something anybody decided.
+                        ExpiresAt is when it stops answering, for a surface published for a
+                        while. Optional: one meant to stay has none.
                       format: date-time
                       type: string
                     exposureName:
@@ -295,15 +295,16 @@ spec:
                       maxLength: 2000
                       type: string
                     reviewAt:
-                      description: ReviewAt is when the owner and the approver are
-                        asked to renew.
+                      description: |-
+                        ReviewAt is when the owner and the approver look at it again. Always
+                        set; overdue is reported and takes nothing down.
                       format: date-time
                       type: string
                   required:
-                  - expiresAt
                   - exposureName
                   - install
                   - owner
+                  - reviewAt
                   type: object
                 maxItems: 256
                 type: array

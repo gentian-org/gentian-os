@@ -715,7 +715,7 @@ metadata:
 spec:
   deletionPolicy: Orphan
   forProvider:
-    accessTokenLifespan: 12h0m0s
+    accessTokenLifespan: 5m0s
     attributes:
       frontendUrl: https://id.platform.example.test/auth
     browserFlow: browser

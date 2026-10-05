@@ -191,13 +191,14 @@ type TenantExposure struct {
 	// +kubebuilder:validation:MaxLength=256
 	Owner string `json:"owner"`
 
-	// ExpiresAt is when it stops answering, and it is required. A public
-	// surface with no end is not something anybody decided.
-	ExpiresAt metav1.Time `json:"expiresAt"`
-
-	// ReviewAt is when the owner and the approver are asked to renew.
+	// ExpiresAt is when it stops answering, for a surface published for a
+	// while. Optional: one meant to stay has none.
 	// +optional
-	ReviewAt *metav1.Time `json:"reviewAt,omitempty"`
+	ExpiresAt *metav1.Time `json:"expiresAt,omitempty"`
+
+	// ReviewAt is when the owner and the approver look at it again. Always
+	// set; overdue is reported and takes nothing down.
+	ReviewAt metav1.Time `json:"reviewAt"`
 
 	// Reason is why this is public, in the approver's words.
 	// +optional

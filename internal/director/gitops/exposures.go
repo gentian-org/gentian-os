@@ -59,10 +59,12 @@ type Exposure struct {
 	ExposureName string `json:"exposureName"`
 	// Owner is the subject that enabled it, from the caller's token.
 	Owner string `json:"owner"`
-	// ExpiresAt is when it stops answering, RFC 3339. Always set.
-	ExpiresAt string `json:"expiresAt"`
-	// ReviewAt is when the owner and the approver are asked to renew.
-	ReviewAt string `json:"reviewAt,omitempty"`
+	// ExpiresAt is when it stops answering, RFC 3339. Empty for a surface
+	// meant to stay.
+	ExpiresAt string `json:"expiresAt,omitempty"`
+	// ReviewAt is when the owner and the approver look at it again, RFC 3339.
+	// Always set.
+	ReviewAt string `json:"reviewAt"`
 	// Reason is why this is public, in the approver's words.
 	Reason string `json:"reason,omitempty"`
 }
@@ -125,11 +127,16 @@ func (g *GitOps) PublishExposure(ctx context.Context, tenant string, e Exposure,
 	if e.Owner == "" {
 		return Result{}, fmt.Errorf("an exposure needs an owner")
 	}
-	if e.ExpiresAt == "" {
-		return Result{}, fmt.Errorf("an exposure needs an expiry: a public surface with no end is not a decision")
+	if e.ReviewAt == "" {
+		return Result{}, fmt.Errorf("an exposure needs a review date: what is public is looked at again")
 	}
-	if _, err := time.Parse(time.RFC3339, e.ExpiresAt); err != nil {
-		return Result{}, fmt.Errorf("expiresAt must be an RFC 3339 timestamp")
+	if _, err := time.Parse(time.RFC3339, e.ReviewAt); err != nil {
+		return Result{}, fmt.Errorf("reviewAt must be an RFC 3339 timestamp")
+	}
+	if e.ExpiresAt != "" {
+		if _, err := time.Parse(time.RFC3339, e.ExpiresAt); err != nil {
+			return Result{}, fmt.Errorf("expiresAt must be an RFC 3339 timestamp")
+		}
 	}
 
 	g.mu.Lock()
@@ -214,9 +221,9 @@ func renderExposures(tenant string, exposures []Exposure) string {
 		b.WriteString("    - install: " + e.Install + "\n")
 		b.WriteString("      exposureName: " + e.ExposureName + "\n")
 		b.WriteString("      owner: " + e.Owner + "\n")
-		b.WriteString("      expiresAt: " + e.ExpiresAt + "\n")
-		if e.ReviewAt != "" {
-			b.WriteString("      reviewAt: " + e.ReviewAt + "\n")
+		b.WriteString("      reviewAt: " + e.ReviewAt + "\n")
+		if e.ExpiresAt != "" {
+			b.WriteString("      expiresAt: " + e.ExpiresAt + "\n")
 		}
 		if e.Reason != "" {
 			b.WriteString("      reason: " + yamlScalar(e.Reason) + "\n")
