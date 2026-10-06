@@ -82,8 +82,8 @@ says of itself: *"these verbs are the console's, not any admin's."*
 
 Two things it already does right and keeps: it verifies the user's token
 (`backend/app/core/auth.py`, JWKS, issuer and audience) and it forwards that
-token to the credential manager rather than holding an OpenBao token
-(`credential_manager.py`). That is the pattern for everything else.
+token to the custodian rather than holding an OpenBao token
+(`custodian.py`). That is the pattern for everything else.
 
 **Target.** Two deployments, one behaviour.
 
@@ -106,7 +106,7 @@ token to the credential manager rather than holding an OpenBao token
   is that tenant's desktop in `tenant-platform`: the same image and profile,
   with the platform screens unlocked by `admin from cluster`. A UI with
   no authority does not belong in `kernel-control`; what stays there is what
-  has authority — the operator, the director, the credential manager. The
+  has authority — the operator, the director, the custodian. The
   platform tenant is undeletable and its realm is adopted, never created or
   disabled, which is the one change the identity reconciler needs.
 - **Per tenant, not shared, until certified.** The BFF holds one tenant's UI
@@ -139,7 +139,7 @@ token to the credential manager rather than holding an OpenBao token
   screen across tenants. Approving writes a `PrivilegeGrant` through the
   director carrying the approver, the reason in their own words and an
   expiry — the console records nothing itself (target-component-structure.md §4.3).
-- Credentials keep going to the credential manager, as today.
+- Credentials keep going to the custodian, as today.
 - Audit is not a console feature. An admin action is a Keycloak event, an
   FGA decision and a commit joined by one request id (principle 7); the
   console shows that record, it does not keep one.
@@ -184,7 +184,7 @@ What the store is:
   | --- | --- | --- |
   | `(tenant, app, version, digest, expires_at, key_id, signature)` | a fact | git, committed by the director; the tuple |
   | fetch token for the bundle | a single-use secret | the director's memory during one request; never written |
-  | pull credential for chart and images | a durable secret | OpenBao under `gentian-os/tenants/{t}/apps/{A}/pull`, written **as the tenant admin** through the credential manager; ESO materialises the pull Secret in `tenant-{t}` while the tuple lives |
+  | pull credential for chart and images | a durable secret | OpenBao under `gentian-os/tenants/{t}/apps/{A}/pull`, written **as the tenant admin** through the custodian; ESO materialises the pull Secret in `tenant-{t}` while the tuple lives |
 
   The signature covers the fact only, so the record in git verifies without
   any secret, and no secret ever enters git — public or private. That is
@@ -225,7 +225,7 @@ director:
      (the entitled tuple exists from a grant committed earlier, or from this one)
   4. fetch the profile bundle A@digest from the catalogue source — with the
      fetch token if the source is private — check the digest, discard the token
-  5. credential manager ──► OpenBao  gentian-os/tenants/{t}/apps/{A}/pull
+  5. custodian ──► OpenBao  gentian-os/tenants/{t}/apps/{A}/pull
      written as the tenant admin (the caller's token, exchanged); nothing in git
   6. materialise ComponentProfile A@digest in the cluster
      (the only profiles the cluster holds are the installed ones)

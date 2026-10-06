@@ -292,7 +292,7 @@ spec:
               {{- else }}
               credentialMessage: >-
                 requirement {{ $name }} is unsatisfied: no value at
-                {{ $cred.vaultPath }}. Supply it through the credential manager,
+                {{ $cred.vaultPath }}. Supply it through the custodian,
                 or with the installer for phase: bootstrap.
               artefacts:
                 - credreq-{{ $name }}

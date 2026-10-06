@@ -34,13 +34,8 @@ import (
 
 // tenantAuthRoleName is the JWT role on a tenant's own auth mount. It does not
 // need the tenant in its name: the mount already scopes it to one realm, and the
-// credential manager finds it by mount rather than by role.
+// custodian finds it by mount rather than by role.
 const tenantAuthRoleName = "tenant-admin"
-
-// tenantClaimName is the claim the tenant realm stamps and the role maps into
-// metadata. It matches CREDENTIAL_TENANT_CLAIM, which the credential manager
-// reads the metadata under — one name, so the two cannot disagree.
-const tenantClaimName = "tenant"
 
 // ensureTenantOpenBaoAuth gives a tenant's realm its own JWT auth mount in
 // OpenBao, so a tenant administrator's portal token can be exchanged at all.
@@ -86,7 +81,7 @@ func (r *TenantReconciler) ensureTenantOpenBaoAuth(ctx context.Context, tenant *
 		// director's is the one that matters: every component behind the edge
 		// presents the zone's token, and that token is minted for the
 		// director (AD-13), so a role that does not accept it cannot exchange
-		// a token at all -- the credential manager then refuses every tenant
+		// a token at all -- the custodian then refuses every tenant
 		// administrator. The cluster's own roles accept it for the same
 		// reason (cluster-default). "openbao" stays for a token minted for
 		// OpenBao directly. The audience admits nobody by itself: the group
@@ -102,15 +97,10 @@ func (r *TenantReconciler) ensureTenantOpenBaoAuth(ctx context.Context, tenant *
 		// values, which is why copying one into the other silently matches
 		// nothing. This value must follow the mapper in THIS realm.
 		BoundGroup: keycloak.TenantAdminsGroup(tenant.Name),
-		// The tenant, carried from a verified claim into token metadata. The
-		// credential manager reads it to decide scope, and without it a tenant
-		// admin's writes land at cluster paths — which is what happened.
-		//
-		// The claim is stamped on the tenant realm's portal client with the
-		// tenant NAME, not the realm: the two are the same by default but a
-		// claim may set isolation.keycloakRealm to something else, and every
-		// path downstream is keyed by the tenant.
-		ClaimMappings: map[string]string{tenantClaimName: tenantClaimName},
+		// No claim is mapped into the token's metadata. The custodian used to
+		// read the tenant from there; it now takes it from the realm that
+		// issued the caller's token and asks the authorization store what the
+		// caller may do in it, so nothing downstream reads a mapped claim.
 		// The policy the tenant Composition already emits, scoped to this
 		// tenant's paths. Nothing here grants a path; it names one that exists.
 		TokenPolicies: []string{"tenant-" + tenant.Name},

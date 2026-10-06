@@ -98,7 +98,7 @@ type ExportCredentialSource string
 
 const (
 	// ExportCredentialManaged authenticates with the workspace's own backup
-	// destination credential, the one the Credential Manager holds and the
+	// destination credential, the one the custodian holds and the
 	// schedule uses. The Secret is already where the capture Jobs read it.
 	ExportCredentialManaged ExportCredentialSource = "managed"
 
@@ -163,7 +163,7 @@ type ExportDestination struct {
 
 	// CredentialSource decides where mode: custom gets its keys.
 	//
-	// managed reuses what the Credential Manager already holds for this
+	// managed reuses what the custodian already holds for this
 	// workspace's backups — the same keys the nightly schedule authenticates
 	// with — so a one-off backup to a different bucket on the same provider
 	// needs nobody to retype a secret. Nothing is copied: those keys are

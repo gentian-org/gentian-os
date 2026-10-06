@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package credentialmgr
+package custodian
 
 import (
 	"context"
@@ -35,7 +35,7 @@ import (
 // adds its own private app repository alongside the cluster's, or points its
 // deployments at somewhere else entirely.
 //
-// This lives beside the credential manager rather than in the app-lifecycle API
+// This lives beside the custodian rather than in the app-lifecycle API
 // because it needs an identity. That API takes its tenant from the request path
 // and its actor from a header, which is safe only while every caller is already
 // trusted. Declaring a repository is not that: replacing a tenant's deployments
@@ -132,7 +132,13 @@ func (s *Server) listRepositories(ctx context.Context, v Viewer) ([]RepositoryVi
 
 		// A tenant sees its own and the cluster's; the cluster's are read-only
 		// for them. Another tenant's are not shown at all.
-		if !v.ClusterAdmin && tenant != "" && tenant != v.Tenant {
+		if tenant != "" && !v.canSee(scopeTenant, tenant) {
+			continue
+		}
+		// The cluster's own are shown to whoever may read the cluster's
+		// credentials, and to a tenant's administrator, for whom they are
+		// what the tenant installs from.
+		if tenant == "" && !v.canSee(scopeCluster, "") && v.Tenant == "" {
 			continue
 		}
 		out = append(out, s.repositoryView(item, tenant, v))
@@ -161,7 +167,7 @@ func (s *Server) repositoryView(item *unstructured.Unstructured, tenant string, 
 		URL:            url,
 		Branch:         branch,
 		Writable:       writable,
-		Owned:          v.ClusterAdmin || (tenant != "" && tenant == v.Tenant),
+		Owned:          v.canWriteRepository(tenant),
 		CredentialName: "repository-" + item.GetName(),
 	}
 }
@@ -328,13 +334,14 @@ func (s *Server) handleDeleteRepository(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, map[string]any{"name": name, "deleted": true})
 }
 
-// canWriteRepository — a tenant admin may change its own tenant's repositories
-// and nothing else. A cluster admin may change any.
+// canWriteRepository reports whether the caller may change a repository: the
+// cluster's, for whoever may set the cluster's credentials; a tenant's, for
+// whoever may set that tenant's.
 func (v Viewer) canWriteRepository(tenant string) bool {
-	if v.ClusterAdmin {
-		return true
+	if tenant == "" {
+		return v.canWrite(scopeCluster, "")
 	}
-	return tenant != "" && tenant == v.Tenant
+	return v.canWrite(scopeTenant, tenant)
 }
 
 // repositoryNeedsConfirmation returns why an operation is dangerous, or "".

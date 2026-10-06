@@ -677,7 +677,7 @@ validate_config() {
     if [[ "${MAIL_SERVICE_MODE}" == "external" ]]; then
         _opt_from EXTERNAL_SMTP_HOST "relay address — mail.host on the Cluster claim" "claims/cluster.yaml"
         _opt_from EXTERNAL_SMTP_PORT "relay port, default 587 — mail.port on the claim" "claims/cluster.yaml"
-        echo "  [OK]       SMTP relay credentials  (runtime: supplied to the credential manager after install)"
+        echo "  [OK]       SMTP relay credentials  (runtime: supplied to the custodian after install)"
     else
         echo "  [OK]       SMTP relay  (not used for MAIL_SERVICE_MODE=${MAIL_SERVICE_MODE})"
     fi
@@ -1378,7 +1378,7 @@ prompt_mail_mode() {
             echo ""
             info "  The relay's ADDRESS only — its hostname, e.g. smtp.gmail.com."
             info "  The username and password are supplied after the install, through"
-            info "  the credential manager. They are not asked for here and are not"
+            info "  the custodian. They are not asked for here and are not"
             info "  written to Git."
             while true; do
                 read -rp "  mail.host [blank to set later]: " EXTERNAL_SMTP_HOST
@@ -1389,7 +1389,7 @@ prompt_mail_mode() {
                 if [[ "${EXTERNAL_SMTP_HOST}" == *"@"* ]]; then
                     warn "That looks like an account, not a hostname."
                     warn "  The relay for user@gmail.com is smtp.gmail.com."
-                    warn "  The username goes to the credential manager after the install."
+                    warn "  The username goes to the custodian after the install."
                     continue
                 fi
                 if [[ "${EXTERNAL_SMTP_HOST}" != *.* ]]; then
@@ -1903,7 +1903,7 @@ check_prereqs() {
             else
                 info "SMTP relay credentials not supplied — mail will not send until they are."
                 info "  They are a runtime credential: supply them after the install with"
-                info "  the credential manager. 'make check-credentials' lists what is open."
+                info "  the custodian. 'make check-credentials' lists what is open."
             fi
         else
             info "MAIL_SERVICE_MODE=${MAIL_SERVICE_MODE}: relay credentials not used (in-cluster Postfix)"

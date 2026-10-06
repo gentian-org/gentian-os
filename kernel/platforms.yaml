@@ -175,7 +175,7 @@ dnsProviders:
       # validators to curl and openssl, so a provider whose API needs request
       # signing — Route 53's SigV4, Cloud DNS's OAuth2, Azure's AAD — cannot
       # have one and is phase: runtime instead. That is not a lesser status:
-      # it means the credential manager collects it after install, and C-01
+      # it means the custodian collects it after install, and C-01
       # issues the wildcard on the next pass.
       phase: bootstrap
       description: >

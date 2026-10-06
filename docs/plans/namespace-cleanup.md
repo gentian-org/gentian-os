@@ -55,7 +55,7 @@ the catalogue.
 | Keycloak, `keycloak-idp` config (theme, SMTP ExternalSecret), realm script | `platform-kernel` | `kernel-authentication` | Suze claim `idpNamespace`; apart from OpenFGA because it has a public route and different credential holders |
 | Keycloak event listener (SPI provider pushing signed membership events to the director) | — | `kernel-authentication` | new; the director is its only receiver; holds only its signing key |
 | OpenFGA | `platform-kernel` | `kernel-authorization` | reachable from enforcement points only |
-| gentian-os operator, credential manager, `job-gc` CronJob | `gentian-system` | `kernel-control` | the director joins here |
+| gentian-os operator, custodian, `job-gc` CronJob | `gentian-system` | `kernel-control` | the director joins here |
 | Director API endpoint (called by the external App Store) | — | `kernel-control`, route on the kernel gateway, bearer only | the App Store runs outside the cluster, operated by Gentian Technologies |
 | `kernel-admin` admin credentials | `platform-kernel` | `kernel-control` | |
 | `kernel-admin` `portal-shell` database | `platform-kernel` | `kernel-data` | |
@@ -118,7 +118,7 @@ listener on them is created by the operator, not by the tenant.
 **`tenant-platform` is one of these.** The platform is a tenant whose realm
 is the kernel realm (`Tenant/platform`, `isolation.keycloakRealm: kernel`,
 AD-10): its desktop is the platform-admin console, its tiles are the admin
-apps (console, credential-manager UI, Headlamp when opted in), its members
+apps (console, custodian UI, Headlamp when opted in), its members
 are the platform admins. It runs under the same quota, policy and authority
 model as any tenant and holds nothing the others do not — a compromised
 platform desktop yields platform-admin *sessions*, bounded by OpenFGA and

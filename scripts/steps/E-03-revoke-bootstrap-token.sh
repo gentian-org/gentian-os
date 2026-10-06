@@ -59,7 +59,7 @@ _revoke_export_layout() {
 # one; the recovery is re-initialising OpenBao.
 #
 # A shell script cannot perform an interactive login, so it cannot produce the
-# proof. But it does not have to: the credential manager performs exactly this
+# proof. But it does not have to: the custodian performs exactly this
 # exchange on every request it serves, and records the first cluster-admin
 # success in the gentian-handover ConfigMap. That record IS the proof, made by
 # the component that was going to do it anyway, and this step reads it.
@@ -71,7 +71,7 @@ _revoke_export_layout() {
 # _handover_proven — has anyone actually authenticated and been given the
 # cluster-admin policy?
 #
-# Written by the credential manager on the first successful exchange. Read from
+# Written by the custodian on the first successful exchange. Read from
 # Kubernetes, not from OpenBao, so --status can answer it with no token — which
 # is the whole reason it is a ConfigMap and not a fact only OpenBao knows.
 _handover_proven() {
@@ -188,15 +188,15 @@ _token_is_root() {
     grep -qx "root" <<<"${policies}"
 }
 
-# _credential_manager_ready — is the thing that records the proof actually there?
+# _custodian_ready — is the thing that records the proof actually there?
 #
-# The proof this step waits for is written by the credential manager, on the
+# The proof this step waits for is written by the custodian, on the
 # first cluster-admin exchange it performs (e80a2193). It holds no token of its
 # own: it takes the caller's Keycloak token and exchanges it for a short-lived
 # OpenBao one. So if it is not deployed, no sign-in can be recorded, and no
 # amount of waiting will produce the record.
 #
-# That is not hypothetical. credentialManager.enabled defaults to false, and a
+# That is not hypothetical. custodian.enabled defaults to false, and a
 # cluster installed without overriding it reaches this step with the whole write
 # path absent — no Service on the credential port, no OIDC discovery URL, no
 # Keycloak client. The operator was asked to sign in, did, and watched a silent
@@ -207,7 +207,7 @@ _token_is_root() {
 # endpoint behind it, and /healthz answers through the API server's proxy. The
 # last one is what distinguishes "deployed" from "working", and it needs no
 # in-cluster pod and no credential.
-_credential_manager_ready() {
+_custodian_ready() {
     local ns="${GENTIAN_SYSTEM_NAMESPACE:-gentian-system}"
     local svc port
 
@@ -237,8 +237,8 @@ _oidc_write_path_ready() {
 
     # First, because every other link is pointless without it: the component
     # that performs the exchange and records it.
-    _credential_manager_ready ||
-        missing+=("the credential manager is not running (credentialManager.enabled)")
+    _custodian_ready ||
+        missing+=("the custodian is not running (custodian.enabled)")
 
     local discovery
     discovery="$(kubectl get cluster.gentianos.io -n "$(ns_kernel provisioning)" \
@@ -487,19 +487,19 @@ _wait_for_sign_in() {
     # The loop checks two different things, and the difference matters.
     #
     # _handover_proven is the proof, and the only thing that unlocks the revoke:
-    # the credential manager recorded a cluster-admin exchange, which means a
+    # the custodian recorded a cluster-admin exchange, which means a
     # human signed in AND the write path carried them. Nothing weaker is
     # accepted, because revoking on weaker evidence is changing the locks and
     # posting the old key through the letterbox without trying the new one.
     #
-    # _credential_manager_ready asks whether that proof can arrive at all. It
+    # _custodian_ready asks whether that proof can arrive at all. It
     # never unlocks anything; it decides what this screen says while it waits.
     # Waiting for a human who has not got to it yet is the normal case, and the
     # loop keeps going. Waiting for a recorder that does not exist is not
     # waiting, it is hanging, and an operator deserves to be told which of the
     # two they are in rather than watching a silent counter.
     #
-    # Re-checked every minute rather than once up front, so a credential manager
+    # Re-checked every minute rather than once up front, so a custodian
     # enabled part-way through the wait is picked up without restarting the step.
     local announced=0
     while (( waited < timeout )); do
@@ -510,9 +510,9 @@ _wait_for_sign_in() {
         fi
 
         if (( waited % 60 == 0 )); then
-            if _credential_manager_ready; then
+            if _custodian_ready; then
                 if (( announced == 1 )); then
-                    success "  The credential manager is answering again — a sign-in will record now."
+                    success "  The custodian is answering again — a sign-in will record now."
                     announced=0
                 fi
                 (( waited > 0 )) && info "  still waiting for the sign-in ($(( waited / 60 ))m of $(( timeout / 60 ))m)..."
@@ -533,7 +533,7 @@ _wait_for_sign_in() {
                     warn ""
                     warn "  Ctrl-C is safe. The cluster is installed and stays as it"
                     warn "  is; only the installer's own credential is left live."
-                    warn "  To finish, enable the credential manager and re-run:"
+                    warn "  To finish, enable the custodian and re-run:"
                     warn "    ./install.sh --only E-03"
                     echo ""
                     announced=1

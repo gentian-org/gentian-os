@@ -9,7 +9,7 @@
 #
 # Scope is deliberately small and fixed. These validators cover the
 # `phase: bootstrap` set only; every `phase: runtime` credential is validated by
-# the on-cluster credential manager, which has SDKs and a real HTTP client.
+# the on-cluster custodian, which has SDKs and a real HTTP client.
 #
 # The rule that keeps this file from growing: **every validator here is
 # expressible in curl or openssl.** A credential needing request signing (s3) or

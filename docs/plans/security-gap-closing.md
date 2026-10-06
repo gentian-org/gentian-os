@@ -39,7 +39,7 @@ namespace-wide ingress+egress object with an empty `podSelector`
 and with the holes G18 names; every other tier is G28. Pod-security
 admission, which is cluster-wide (`gentian-baseline.yaml`: privileged, host
 namespaces, non-root, hostPath, capabilities, privilege escalation); the
-credential manager's token exchange (the reference implementation of
+custodian's token exchange (the reference implementation of
 principle 1); console admin-action audit.
 The Keycloak-group → OpenFGA sync is present but not carried forward: AD-12
 replaces the 5-minute admin-credential poll with an event-fed projection.

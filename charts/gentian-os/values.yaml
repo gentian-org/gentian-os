@@ -30,7 +30,7 @@ routingMode: gateway
 # handover controls the gate that keeps a cluster's recovery cheap until its
 # administrator has been seen to write a credential through the login path.
 #
-# The proof is recorded by the credential manager on the first successful
+# The proof is recorded by the custodian on the first successful
 # cluster-admin token exchange — a normal portal sign-in produces it. Until
 # then, creating a Tenant is refused with an explanation, because the recovery
 # from a broken write path is re-initialising OpenBao: an inconvenience on an
@@ -167,7 +167,7 @@ director:
   # Where keys are fetched from inside the cluster. Empty derives it from the
   # layout's authentication namespace.
   jwksBaseURL: ""
-  # Empty uses credentialManager.openfgaURL, which is the same service.
+  # Empty uses custodian.openfgaURL, which is the same service.
   openfgaURL: ""
   # The operator's app-lifecycle API, which the director reads a tenant's
   # resources from and validates a plan choice against. Empty derives it from
@@ -513,7 +513,7 @@ metrics:
     additionalLabels: {}
 
 # App lifecycle HTTP API (install/uninstall/purge — shared by App Store and kubectl-gentian).
-# The credential manager: a view over the CredentialRequirement catalogue and
+# The custodian: a view over the CredentialRequirement catalogue and
 # ESO's satisfaction status, plus a write path that writes AS THE CALLER —
 # it holds no OpenBao token of its own and exchanges the user's OIDC token.
 #
@@ -530,7 +530,7 @@ metrics:
 # passes it, so it is not a second place to keep in sync by hand.
 trustAnchorSecret: ""
 
-credentialManager:
+custodian:
   # On by default, because the install cannot finish without it.
   #
   # E-03 revokes the installer's bootstrap token, and refuses to until something
@@ -543,9 +543,9 @@ credentialManager:
   # operator was asked to sign in, did, and watched a timer run out.
   #
   # Turning it on costs nothing on a cluster that does not use it. The Service is
-  # ClusterIP-only by deliberate design (see credentialmanager-service.yaml), and
+  # ClusterIP-only by deliberate design (see custodian-service.yaml), and
   # the write path authorises the CALLER's OIDC token rather than holding one, so
-  # a running-but-unused credential manager grants nobody anything.
+  # a running-but-unused custodian grants nobody anything.
   enabled: true
   port: 9444
   # Where the JWT/OIDC auth backend is enabled. Not "jwt": the installer enables
@@ -575,7 +575,7 @@ credentialManager:
   # and where the catalogue step writes them.
   #
   # It said "gentian-system", which is v4's control namespace. On v5 the
-  # probes are in kernel-control, so the credential manager looked in a
+  # probes are in kernel-control, so the custodian looked in a
   # namespace that does not exist and reported every credential missing --
   # including one that had just been supplied and that ESO was reporting
   # Ready two commands away. `make check-credentials` said satisfied and the
@@ -594,14 +594,10 @@ credentialManager:
   # Last resort for a cluster whose CA cannot be read at all. Prefer fixing the
   # Secret reference: this turns off verification for every exchange.
   tlsSkipVerify: false
-  # The OpenBao policy whose presence on an exchanged token means the caller may
-  # see cluster-scoped requirements. Read from the policies OpenBao attached
-  # rather than from a Keycloak group name, so the two cannot drift apart.
-  clusterAdminPolicy: cluster-admin
-  # The auth.metadata key the OIDC role maps the tenant into. A role that maps
-  # nothing here yields a caller who sees no tenant-scoped requirement, which is
-  # the safe direction.
-  tenantClaim: tenant
+  # Who may read or set a credential is not configured here. The custodian
+  # verifies the caller's token and asks the authorization store
+  # (can_read_credential, can_write_credential, on the cluster or the tenant
+  # a credential belongs to); nothing OpenBao reports about the token decides.
 
 # Resource plans and usage history — the Admin Console's Resources tab, the
 # `kubectl gentian resources` CLI, and the invoiceable record behind both.

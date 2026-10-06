@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package credentialmgr
+package custodian
 
 import (
 	"context"
@@ -309,7 +309,7 @@ func (v *EndpointValidator) cloudflareZoneProbe(ctx context.Context, token strin
 		return fmt.Errorf("api-token is required")
 	}
 	if v.KernelDomain == "" {
-		return fmt.Errorf("cannot check the token: this cluster's kernel domain is not known to the credential manager")
+		return fmt.Errorf("cannot check the token: this cluster's kernel domain is not known to the custodian")
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet,

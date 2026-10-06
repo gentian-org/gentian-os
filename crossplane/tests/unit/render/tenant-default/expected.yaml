@@ -7,7 +7,7 @@ status:
   conditions:
   - lastTransitionTime: "2024-01-01T00:00:00Z"
     message: 'Unready resources: keycloak-broker-client, keycloak-broker-client-id,
-      keycloak-dovecot-oidc-client, and 20 more'
+      keycloak-dovecot-oidc-client, and 19 more'
     reason: Creating
     status: "False"
     type: Ready
@@ -382,43 +382,6 @@ spec:
     name: director-audience
     protocol: openid-connect
     protocolMapper: oidc-audience-mapper
-    realmId: render-fixture
-  providerConfigRef:
-    name: keycloak
----
-apiVersion: client.keycloak.crossplane.io/v1alpha1
-kind: ProtocolMapper
-metadata:
-  annotations:
-    crossplane.io/composition-resource-name: keycloak-edge-zone-tenant-claim
-  labels:
-    crossplane.io/composite: render-fixture
-  name: render-fixture-edge-zone-tenant-claim
-  ownerReferences:
-  - apiVersion: gentianos.io/v1alpha1
-    blockOwnerDeletion: true
-    controller: true
-    kind: XTenant
-    name: render-fixture
-    uid: ""
-spec:
-  deletionPolicy: Orphan
-  forProvider:
-    clientIdRef:
-      name: render-fixture-edge-zone-client
-      policy:
-        resolve: Always
-    config:
-      access.token.claim: "true"
-      claim.name: tenant
-      claim.value: render-fixture
-      id.token.claim: "false"
-      introspection.token.claim: "true"
-      jsonType.label: String
-      userinfo.token.claim: "false"
-    name: tenant
-    protocol: openid-connect
-    protocolMapper: oidc-hardcoded-claim-mapper
     realmId: render-fixture
   providerConfigRef:
     name: keycloak

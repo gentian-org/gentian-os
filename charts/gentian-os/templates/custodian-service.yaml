@@ -1,4 +1,4 @@
-{{- if .Values.credentialManager.enabled }}
+{{- if .Values.custodian.enabled }}
 # ClusterIP only, and deliberately so: this service writes credentials, and the
 # write path authorises the CALLER's OIDC token rather than holding one. Reaching
 # it from outside the cluster is a routing decision an operator makes explicitly,
@@ -6,7 +6,7 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "gentian-os.fullname" . }}-credentials
+  name: {{ include "gentian-os.fullname" . }}-custodian
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "gentian-os.labels" . | nindent 4 }}
@@ -14,8 +14,8 @@ spec:
   selector:
     {{- include "gentian-os.selectorLabels" . | nindent 4 }}
   ports:
-    - name: credentials
-      port: {{ .Values.credentialManager.port }}
-      targetPort: credentials
+    - name: custodian
+      port: {{ .Values.custodian.port }}
+      targetPort: custodian
       protocol: TCP
 {{- end }}

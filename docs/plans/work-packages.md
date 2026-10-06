@@ -115,7 +115,7 @@ Specified in [operator-split-plan.md](operator-split-plan.md) §3, §5, §6.
       account (roles §1).
 - [ ] Entitlements: verify the store's signed grant, commit the fact, write
       `catalogue_entry#entitled` with `expires_at`; pull credentials go to
-      OpenBao through the credential manager, never git (ui-restructure §3).
+      OpenBao through the custodian, never git (ui-restructure §3).
 - [ ] OpenFGA projection: receive Keycloak membership events (WP-3), write
       `group#member` tuples, run the reconcile with a `view-users` client;
       create the store and model on first start; rebuild tuples from Keycloak
@@ -221,7 +221,7 @@ Specified in [authorization-model.md](authorization-model.md) and
       *addon* groups and not its own, and an admin account sees admin tiles
       only. The access review becomes honest as a consequence, not as the
       goal.
-- [ ] `app#can_write_credential` (modelled and tested) and the credential manager's `Check` before
+- [ ] `app#can_write_credential` (modelled and tested) and the custodian's `Check` before
       any OpenBao write; OpenBao policy bounds the path, not the decision.
 - [x] `shared_instance` with `offered_to`/`can_bind`, so a shared install is
       offered to a tenant and still invisible until that tenant installs it.
@@ -432,10 +432,10 @@ Specified in [ui-restructure.md](ui-restructure.md) §3 and
       removed in the order that fails towards less access. Contract-tested
       with OpenFGA evaluating `grant_valid`.
 - [ ] Store side: signing (`entitlement_grant`, `signing_key`); single-use
-      fetch token; pull credential handed to the credential manager as the
+      fetch token; pull credential handed to the custodian as the
       tenant admin.
 - [x] **Revocation on the same path** (cluster side; the pull credential's
-      removal waits for the credential manager): a signed record with `granted: false`
+      removal waits for the custodian): a signed record with `granted: false`
       to `POST /v1/tenants/{t}/entitlements`. The director verifies, commits
       the fact and deletes the tuple in one operation, so a later commit
       overrides an earlier `expires_at` (operator-split-plan §3.8). The pull
@@ -814,7 +814,7 @@ person's token, or with a statement it signed.
       from the director's reads — never from its own tables.
 - [ ] **Private catalogue sources** (paid apps): a single-use fetch token
       issued with the grant, for the director to fetch the bundle at the
-      digest; the pull credential handed to the credential manager as the
+      digest; the pull credential handed to the custodian as the
       tenant administrator. Lands with WP-5's materialise-on-reference, not
       before.
 - [x] **Flow test**, runnable without a cluster — `tests/test_flow.py` in the

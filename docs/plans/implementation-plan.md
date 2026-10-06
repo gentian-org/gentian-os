@@ -359,7 +359,7 @@ worklist, and a screen leaves it by getting real routes.
 | Notifications | the desktop's own table, read by the operator | publishing is an action | ✅ |
 | Platform security: MAC waivers | git, joined with what the catalogue asks | director → `kernel/claims/platform-security-policy.yaml` | ✅ `can_set_admission` is break-glass |
 | Customization debt | `Customization` CRs | — | ✅ |
-| Credentials | credential manager, as the caller | the same | ✅ |
+| Credentials | custodian, as the caller | the same | ✅ |
 | Authorization view | OpenFGA, read-only | — | ☐ S7A.8 |
 | People and groups | **not here** — Keycloak's own console, embedded | | ✅ |
 
@@ -374,9 +374,9 @@ change *lands* on the Tenant, with the chooser carried in an annotation. What
 is billed is then what the cluster enforced, and it still names who chose it.
 
 **Credentials needed one thing first**, and it landed: a
-`credentialManagerUrlKey` on the profile's platform mapping, the way
+`custodianUrlKey` on the profile's platform mapping, the way
 `directorUrlKey` works. Without it the component does not know where the
-credential manager is and cannot relay to it.
+custodian is and cannot relay to it.
 
 **No write has succeeded on this cluster yet.** The director mounts
 `deployments-git-credentials` optionally and that Secret does not exist, so a

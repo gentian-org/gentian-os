@@ -144,7 +144,7 @@ collaboration stays federation or public links (networking.md §5).
 
 The director verifies the token, makes the OpenFGA check, writes the tuples
 that check reads, signs the commit, holds a Keycloak identity that can manage
-users, and drives the credential manager. Decision point, tuple writer and
+users, and drives the custodian. Decision point, tuple writer and
 enforcement point are one process, so a compromised director can grant itself
 a relation and then sign a commit Argo applies — cluster-wide execution
 through provider-helm. AD-2 makes git the audited source, and AD-12 has the

@@ -430,7 +430,7 @@ spec:
     port: 587
     ssl: false
     starttls: true
-    # username/password go through the credential manager, not the claim —
+    # username/password go through the custodian, not the claim —
     # see the "smtp-relay" CredentialRequirement (credentials.yaml)
 ```
 
@@ -714,7 +714,7 @@ kubectl get backuppolicies
 operator creates a `CredentialRequirement` — `backup-destination` for the
 cluster, `backup-destination-<tenant>` for a tenant — and the policy reports
 `Accepted=False` with `CredentialUnsatisfied` until the keys are supplied
-through the credential manager. That is deliberate: the gap shows when the
+through the custodian. That is deliberate: the gap shows when the
 destination is set, not at 03:00 when the first export fails.
 
 ```bash

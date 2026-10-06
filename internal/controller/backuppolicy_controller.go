@@ -59,7 +59,7 @@ const (
 )
 
 // externalSecretGVK is used unstructured rather than through ESO's Go types,
-// for the reason the credential manager already records: adding external-secrets
+// for the reason the custodian already records: adding external-secrets
 // to go.mod for a handful of fields couples this build to an API version that
 // has already moved once.
 var externalSecretGVK = schema.GroupVersionKind{
@@ -93,7 +93,7 @@ func (r *BackupPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Request
 
 	// The credential comes first: a destination whose keys are missing is a
 	// policy that will fail at 03:00, and the whole point of routing it
-	// through the credential manager is that the failure surfaces now.
+	// through the custodian is that the failure surfaces now.
 	if err := r.ensureDestinationCredential(ctx, policy); err != nil {
 		if apierrors.IsConflict(err) {
 			// Someone wrote the same object between our read and our write.
@@ -127,7 +127,7 @@ func (r *BackupPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Request
 			// supply keys. Reported as a false condition so the console can
 			// show a field to fill rather than a failure to debug.
 			setPolicyCondition(policy, metav1.ConditionFalse, "CredentialUnsatisfied",
-				fmt.Sprintf("supply %s in the credential manager: %s", eff.CredentialName, why))
+				fmt.Sprintf("supply %s in the custodian: %s", eff.CredentialName, why))
 			logger.Info("policy awaiting its credential", "policy", policy.Name, "requirement", eff.CredentialName)
 			return ctrl.Result{}, r.persistPolicy(ctx, policy)
 		}
@@ -412,7 +412,7 @@ func (r *BackupPolicyReconciler) deleteDestinationCredential(ctx context.Context
 
 // ensureProbe creates the satisfaction probe: an ExternalSecret that creates
 // no Secret and exists only so ESO's Ready condition answers "has this been
-// supplied". The credential manager reads exactly this object.
+// supplied". The custodian reads exactly this object.
 func (r *BackupPolicyReconciler) ensureProbe(ctx context.Context, name, vaultPath, scope string) error {
 	return r.applyExternalSecret(ctx, credentialProbePrefix+name, meta.OperatorNamespace, vaultPath, "None", map[string]string{
 		"gentianos.io/credential-requirement": name,
@@ -495,7 +495,7 @@ func (r *BackupPolicyReconciler) applyExternalSecret(
 }
 
 // credentialSatisfied reads ESO's verdict from the probe, the same way the
-// credential manager does.
+// custodian does.
 func (r *BackupPolicyReconciler) credentialSatisfied(ctx context.Context, name string) (bool, string) {
 	es := &unstructured.Unstructured{}
 	es.SetGroupVersionKind(externalSecretGVK)

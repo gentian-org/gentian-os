@@ -48,7 +48,7 @@ import (
 // that was lost is repaired by the next statement about the same user.
 //
 // Not a reconciler, because there is nothing to poll: Keycloak tells us. It
-// rides the manager as a Runnable, the way the credential manager does, rather
+// rides the manager as a Runnable, the way the custodian does, rather
 // than being a second Deployment with a second identity to provision.
 
 // MembershipListener serves the endpoint Keycloak's event listener posts to.

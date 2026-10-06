@@ -62,9 +62,9 @@ type ComponentReconciler struct {
 	// UsherURL is where a desktop asks what a person may open; empty derives
 	// it from the edge namespace.
 	UsherURL string
-	// CredentialManagerURL overrides where a component is told the credential
+	// CustodianURL overrides where a component is told the credential
 	// manager is. Empty derives it from the layout.
-	CredentialManagerURL string
+	CustodianURL string
 	// Seeder holds the credentials of the databases this reconciler makes
 	// for tenant components. Nil leaves those requirements waiting.
 	Seeder *secrets.Seeder
@@ -922,21 +922,21 @@ func (r *ComponentReconciler) usherURL() string {
 	return fmt.Sprintf("http://gentian-os-usher.%s.svc.cluster.local:8080", layout.Namespace(layout.Edge))
 }
 
-// credentialManagerPort is charts/gentian-os/values.yaml's
-// credentialManager.port. Named rather than repeated, because a component
+// custodianPort is charts/gentian-os/values.yaml's
+// custodian.port. Named rather than repeated, because a component
 // told the wrong port fails at the first credential write with a connection
 // refused that names nothing.
-const credentialManagerPort = 9444
+const custodianPort = 9444
 
-// credentialManagerURL is where a component relays a person's credential
+// custodianURL is where a component relays a person's credential
 // writes. In the control namespace beside the director, and for the same
 // reason: it holds the OpenBao connection and no authority of its own.
-func (r *ComponentReconciler) credentialManagerURL() string {
-	if r.CredentialManagerURL != "" {
-		return r.CredentialManagerURL
+func (r *ComponentReconciler) custodianURL() string {
+	if r.CustodianURL != "" {
+		return r.CustodianURL
 	}
-	return fmt.Sprintf("http://gentian-os-credentials.%s.svc.cluster.local:%d",
-		layout.Namespace(layout.Control), credentialManagerPort)
+	return fmt.Sprintf("http://gentian-os-custodian.%s.svc.cluster.local:%d",
+		layout.Namespace(layout.Control), custodianPort)
 }
 
 func mergeValues(dst, src map[string]interface{}) {

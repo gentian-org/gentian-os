@@ -121,6 +121,23 @@ tests:
       - {user: user:alice, object: app:solo/wiki,      assertions: {can_write_credential: false}}
       - {user: user:mia,   object: app:demo/nextcloud, assertions: {can_write_credential: false}}
 
+  - name: a credential is written by whoever administers its scope and read by whoever may audit it
+    check:
+      # The cluster's own: its administrator writes, its auditor reads.
+      - {user: user:alice,  object: cluster:main, assertions: {can_write_credential: true,  can_read_credential: true}}
+      - {user: user:audrey, object: cluster:main, assertions: {can_write_credential: false, can_read_credential: true}}
+      - {user: user:tom,    object: cluster:main, assertions: {can_write_credential: false, can_read_credential: false}}
+      # A tenant's: its administrator, and the platform's through the consent
+      # tuple; the cluster's auditor reads; a member does neither.
+      - {user: user:tom,    object: tenant:demo, assertions: {can_write_credential: true,  can_read_credential: true}}
+      - {user: user:alice,  object: tenant:demo, assertions: {can_write_credential: true,  can_read_credential: true}}
+      - {user: user:audrey, object: tenant:demo, assertions: {can_write_credential: false, can_read_credential: true}}
+      - {user: user:mia,    object: tenant:demo, assertions: {can_write_credential: false, can_read_credential: false}}
+      # A component's follow its tenant's.
+      - {user: user:tom,    object: app:demo/nextcloud, assertions: {can_read_credential: true}}
+      - {user: user:audrey, object: app:demo/nextcloud, assertions: {can_read_credential: true, can_write_credential: false}}
+      - {user: user:mia,    object: app:demo/nextcloud, assertions: {can_read_credential: false}}
+
   - name: an entry of a source the platform administrator opened to a tenant needs no grant
     tuples:
       - {user: catalogue_source:store,   relation: source, object: catalogue_entry:store/odoo}

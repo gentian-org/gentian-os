@@ -1138,7 +1138,7 @@ spec:
               # and this realm had none — so the attach below found nothing, did
               # nothing, and said nothing. The portal's tokens then carried no groups
               # claim, OpenBao refused every one, and it surfaced three layers away as
-              # a 401 from the credential manager.
+              # a 401 from the custodian.
               #
               # full.path is what OpenBao matches: its roles bind /group-name with a
               # leading slash, and the bare name matches nothing.

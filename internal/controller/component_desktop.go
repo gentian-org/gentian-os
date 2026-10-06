@@ -94,7 +94,7 @@ func (r *ComponentReconciler) platformValues(profile *gentianov1alpha1.Component
 		m.AudienceKey:             directorAudience,
 		m.DirectorURLKey:          r.directorURL(),
 		m.UsherURLKey:             r.usherURL(),
-		m.CredentialManagerURLKey: r.credentialManagerURL(),
+		m.CustodianURLKey: r.custodianURL(),
 		m.ClusterKey:              r.Cluster,
 		m.TenantKey:               tenant.Name,
 		m.KernelDomainKey:         r.KernelDomain,
@@ -127,11 +127,11 @@ func wantsUsher(profile *gentianov1alpha1.ComponentProfile) bool {
 	return platformMapping(profile) != nil && platformMapping(profile).UsherURLKey != ""
 }
 
-// wantsCredentialManager reports the same for the credential manager, and has
+// wantsCustodian reports the same for the custodian, and has
 // the same consequence: both live in the control namespace, and a component
 // that relays to either is allowed to reach it.
-func wantsCredentialManager(profile *gentianov1alpha1.ComponentProfile) bool {
-	return platformMapping(profile) != nil && platformMapping(profile).CredentialManagerURLKey != ""
+func wantsCustodian(profile *gentianov1alpha1.ComponentProfile) bool {
+	return platformMapping(profile) != nil && platformMapping(profile).CustodianURLKey != ""
 }
 
 func platformMapping(profile *gentianov1alpha1.ComponentProfile) *gentianov1alpha1.PlatformValueMapping {

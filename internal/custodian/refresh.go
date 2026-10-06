@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package credentialmgr
+package custodian
 
 import (
 	"context"
@@ -52,7 +52,7 @@ const forceSyncAnnotation = "force-sync"
 // write as failed because the nudge failed would turn a slow success into a
 // visible error and invite someone to store it twice.
 func (s *Server) refreshConsumers(ctx context.Context, vaultPath string) {
-	log := ctrl.Log.WithName("credentialmgr")
+	log := ctrl.Log.WithName("custodian")
 	if s.Client == nil || vaultPath == "" {
 		return
 	}

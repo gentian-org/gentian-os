@@ -350,7 +350,7 @@ spec:
                  additionalAudiences: every component behind the edge presents
                  the zone's token, whose audience is the director's, so a
                  cluster whose roles do not accept it cannot exchange a token
-                 at all -- which is the credential manager refusing every
+                 at all -- which is the custodian refusing every
                  caller and the install's last step waiting for a proof nobody
                  can produce.
                  
@@ -515,7 +515,7 @@ spec:
                 userClaim: preferred_username
                 # claimMappings puts the caller's NAME into the token's alias
                 # metadata. user_claim already decides the alias itself, but the
-                # credential manager reads auth.metadata — so without this it saw
+                # custodian reads auth.metadata — so without this it saw
                 # an empty name, wrote credentials with no set_by, and recorded
                 # the handover proof against nobody. An audit trail that cannot
                 # say who is most of the reason writes go through a human
@@ -550,7 +550,7 @@ spec:
 
                  claimMappings is the load-bearing line. It copies the verified
                  `tenant` claim into the alias metadata that the tenant-admin
-                 policy templates its path from, and that the credential manager
+                 policy templates its path from, and that the custodian
                  reads to decide which tenant's requirements to show. Both the
                  write path and the read path therefore agree by construction,
                  because they read the same value.
@@ -595,11 +595,11 @@ spec:
               providerConfigRef:
                 name: openbao
 
-            {{- /* ── The JWT-typed roles the credential manager exchanges against ─
+            {{- /* ── The JWT-typed roles the custodian exchanges against ─
                  The two roles above are role_type oidc: they serve the browser
                  flow into OpenBao's own UI, and the JWT plugin refuses a direct
                  token exchange against them ("role with oidc role_type is not
-                 allowed"). The credential manager does exactly that exchange —
+                 allowed"). The custodian does exactly that exchange —
                  it presents the caller's portal token — so it needs roles of
                  role_type jwt, or it authenticates nobody at all.
 
@@ -627,7 +627,7 @@ spec:
                 userClaim: preferred_username
                 # claimMappings puts the caller's NAME into the token's alias
                 # metadata. user_claim already decides the alias itself, but the
-                # credential manager reads auth.metadata — so without this it saw
+                # custodian reads auth.metadata — so without this it saw
                 # an empty name, wrote credentials with no set_by, and recorded
                 # the handover proof against nobody. An audit trail that cannot
                 # say who is most of the reason writes go through a human
@@ -772,7 +772,7 @@ spec:
 
             {{- /* The tenant claim, from a user attribute. This is the value the
                  tenant-admin role maps into alias metadata, which the policy
-                 templates its path from and the credential manager filters by.
+                 templates its path from and the custodian filters by.
                  A user without the attribute gets no claim, so they reach no
                  tenant — absent means nothing, never everything. */}}
             ---

@@ -42,7 +42,7 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/applifecycle"
 	"github.com/gentian-org/gentian-os/internal/controller"
-	"github.com/gentian-org/gentian-os/internal/credentialmgr"
+	"github.com/gentian-org/gentian-os/internal/custodian"
 	"github.com/gentian-org/gentian-os/internal/director/authz"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"github.com/gentian-org/gentian-os/internal/layout"
@@ -445,7 +445,8 @@ func main() {
 	// service that only has to READ the graph to make a decision is the part
 	// that was wrong. Off entirely when no OpenFGA address is configured,
 	// which is what a cluster with no authorization service runs.
-	if graph := authorizationGraph(setupLog); graph != nil {
+	graph := authorizationGraph(setupLog)
+	if graph != nil {
 		if err := (&controller.AuthzProjectionReconciler{
 			Client:  mgr.GetClient(),
 			Cluster: os.Getenv("GENTIAN_DEPLOYMENTS_CLUSTER_ID"),
@@ -520,21 +521,29 @@ func main() {
 		setupLog.Info("app lifecycle API enabled", "addr", lifecycle.Server.Addr)
 	}
 
-	// Credential Manager — a view over the CredentialRequirement catalogue and
+	// The custodian — a view over the CredentialRequirement catalogue and
 	// ESO's satisfaction status, plus a write path that writes as the CALLER.
 	// It rides this manager rather than being a second Deployment, and holds no
 	// OpenBao token of its own: every write exchanges the user's OIDC token.
-	if os.Getenv("CREDENTIAL_MANAGER_ENABLED") == "true" {
-		credmgr, err := credentialmgr.NewRunnableFromEnv(mgr, credentialmgr.NewEndpointValidator())
+	//
+	// Who may read or set a credential is the authorization store's answer,
+	// so the custodian is given the store. With none configured it does not
+	// start, and says so: letting anything else decide is what it must not do.
+	if os.Getenv("CUSTODIAN_ENABLED") == "true" {
+		var store authz.Checker
+		if graph != nil {
+			store = graph
+		}
+		keeper, err := custodian.NewRunnableFromEnv(mgr, custodian.NewEndpointValidator(), store)
 		if err != nil {
-			setupLog.Error(err, "unable to create the credential manager")
+			setupLog.Error(err, "unable to create the custodian")
 			os.Exit(1)
 		}
-		if err := mgr.Add(credmgr); err != nil {
-			setupLog.Error(err, "unable to add the credential manager")
+		if err := mgr.Add(keeper); err != nil {
+			setupLog.Error(err, "unable to add the custodian")
 			os.Exit(1)
 		}
-		setupLog.Info("credential manager API enabled", "addr", credmgr.Addr)
+		setupLog.Info("custodian API enabled", "addr", keeper.Addr)
 	}
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {

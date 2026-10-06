@@ -692,7 +692,7 @@ spec:
                       description: >
                         Further client IDs whose tokens OpenBao accepts, beyond
                         clientId. A console relaying a person's own token to the
-                        credential manager presents whatever audience that token
+                        custodian presents whatever audience that token
                         carries; without it listed here every such request fails
                         the exchange, with "the token's audience is not one this
                         cluster's roles accept". Group membership still gates
@@ -731,7 +731,7 @@ spec:
                         Token claim naming the tenant a user administers. It is
                         mapped into OpenBao alias metadata, which is both what
                         the tenant-admin policy templates its path from and what
-                        the credential manager filters the catalogue by — so the
+                        the custodian filters the catalogue by — so the
                         write path and the read path cannot disagree.
                       default: tenant
 

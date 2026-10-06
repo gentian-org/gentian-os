@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package credentialmgr
+package custodian
 
 import (
 	"context"
@@ -36,6 +36,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 
+	"github.com/gentian-org/gentian-os/internal/director/authn"
+	"github.com/gentian-org/gentian-os/internal/director/authz"
 	"github.com/gentian-org/gentian-os/internal/handover"
 	"github.com/gentian-org/gentian-os/internal/layout"
 )
@@ -46,7 +48,7 @@ var externalSecretGVK = schema.GroupVersionKind{
 	Kind:    "ExternalSecret",
 }
 
-// Server exposes the Credential Manager API.
+// Server exposes the custodian API.
 //
 // It has no token field. That is not an oversight: every write takes the
 // caller's token, so there is no service authority for a bug to reach for.
@@ -56,11 +58,10 @@ type Server struct {
 	Bao       *OpenBao
 	Validator Validator
 
-	// ClusterAdminPolicy is the OpenBao policy whose presence on an exchanged
-	// token means the caller may see cluster-scoped requirements.
-	ClusterAdminPolicy string
-	// TenantClaimKey is the auth.metadata key the role maps the tenant into.
-	TenantClaimKey string
+	// Authz verifies the caller and asks the authorization store what they
+	// may do. Required: without it every request is refused, because there is
+	// then nobody to ask and nothing else may answer.
+	Authz Authorizer
 
 	// Client and HandoverNamespace are how a successful exchange becomes a
 	// fact the rest of the cluster can read. See internal/handover: this
@@ -126,11 +127,44 @@ func (s *Server) Start(ctx context.Context) error {
 }
 
 // NewRunnableFromEnv wires the server from the operator's environment.
-func NewRunnableFromEnv(mgr manager.Manager, validator Validator) (*Server, error) {
-	addr := envOr("CREDENTIAL_MANAGER_ADDR", ":9444")
+//
+// graph is the authorization store the operator already holds a client for.
+// It is required, like the identity provider's address: the custodian asks
+// the store before every read and write, and a custodian with no store to
+// ask would have to either refuse everybody or let something else decide.
+func NewRunnableFromEnv(mgr manager.Manager, validator Validator, graph authz.Checker) (*Server, error) {
+	addr := envOr("CUSTODIAN_ADDR", ":9444")
+	if graph == nil {
+		return nil, fmt.Errorf("the custodian needs the authorization store (OPENFGA_API_URL): it decides who may touch a credential")
+	}
+	cluster := os.Getenv("GENTIAN_DEPLOYMENTS_CLUSTER_ID")
+	if cluster == "" {
+		return nil, fmt.Errorf("the custodian needs GENTIAN_DEPLOYMENTS_CLUSTER_ID: the cluster is what kernel credentials are asked about")
+	}
+	issuer := os.Getenv("CUSTODIAN_ISSUER_BASE_URL")
+	if issuer == "" {
+		return nil, fmt.Errorf("the custodian needs CUSTODIAN_ISSUER_BASE_URL to verify a caller's token")
+	}
+	verifier, err := authn.NewVerifier(authn.Config{
+		IssuerBase: issuer,
+		JWKSBase:   os.Getenv("CUSTODIAN_JWKS_BASE_URL"),
+		// The zone's token, minted for the director and relayed here by a
+		// console as it is relayed to the director.
+		Audience: envOr("CUSTODIAN_AUDIENCE", "gentian-director"),
+	})
+	if err != nil {
+		return nil, err
+	}
+	authorizer := &GraphAuthorizer{
+		Verifier:    verifier,
+		Graph:       graph,
+		Cluster:     cluster,
+		KernelRealm: envOr("KERNEL_REALM", "kernel"),
+		Client:      mgr.GetClient(),
+	}
 	baoAddr := os.Getenv("BAO_ADDR")
 	if baoAddr == "" {
-		return nil, fmt.Errorf("BAO_ADDR is required for the credential manager")
+		return nil, fmt.Errorf("BAO_ADDR is required for the custodian")
 	}
 	if validator == nil {
 		return nil, fmt.Errorf("a validator is required: storing an unvalidated credential is what this service exists to prevent")
@@ -150,7 +184,7 @@ func NewRunnableFromEnv(mgr manager.Manager, validator Validator) (*Server, erro
 		Addr: addr,
 		Catalogue: &Catalogue{
 			Client:         mgr.GetClient(),
-			ProbeNamespace: envOr("CREDENTIAL_PROBE_NAMESPACE", layout.Namespace(layout.Control)),
+			ProbeNamespace: envOr("CUSTODIAN_PROBE_NAMESPACE", layout.Namespace(layout.Control)),
 		},
 		Bao: NewOpenBao(
 			baoAddr,
@@ -174,10 +208,9 @@ func NewRunnableFromEnv(mgr manager.Manager, validator Validator) (*Server, erro
 			loadBaoCA(mgr),
 			os.Getenv("BAO_TLS_SKIP_VERIFY") == "true",
 		),
-		Validator:          validator,
-		ClusterAdminPolicy: envOr("CREDENTIAL_CLUSTER_ADMIN_POLICY", "cluster-admin"),
-		TenantClaimKey:     envOr("CREDENTIAL_TENANT_CLAIM", "tenant"),
-		Client:             mgr.GetClient(),
+		Validator: validator,
+		Authz:     authorizer,
+		Client:    mgr.GetClient(),
 		// The operator's own namespace by default: the record belongs beside
 		// the thing that gates on it, not beside the credentials.
 		HandoverNamespace: envOr("HANDOVER_NAMESPACE", envOr("OPERATOR_NAMESPACE", layout.Namespace(layout.Control))),
@@ -244,7 +277,7 @@ func clusterRelayResolver(mgr manager.Manager) RelayResolver {
 // that gave OpenBao a publicly trusted certificate needs no CA here, and
 // failing startup over a missing one would break it.
 func loadBaoCA(mgr manager.Manager) []byte {
-	log := ctrl.Log.WithName("credentialmgr")
+	log := ctrl.Log.WithName("custodian")
 	if path := os.Getenv("BAO_CACERT"); path != "" {
 		pem, err := os.ReadFile(path)
 		if err != nil {
@@ -269,7 +302,7 @@ func loadBaoCA(mgr manager.Manager) []byte {
 			strings.Contains(addr, ".svc") {
 			log.Error(err, "OpenBao's CA was not found, so every token exchange will fail: "+
 				"nothing in the cluster can verify an in-cluster certificate against the public roots. "+
-				"Set credentialManager.caSecretNamespace to the namespace the vault runs in "+
+				"Set custodian.caSecretNamespace to the namespace the vault runs in "+
 				"(it follows openbaoNamespace by default), or BAO_CACERT to a file.",
 				"secret", namespace+"/"+name, "address", addr)
 			return nil
@@ -341,28 +374,36 @@ func bearer(r *http.Request) (string, error) {
 	return tok, nil
 }
 
-// identify establishes who the caller is by asking OpenBao.
+// identify establishes who the caller is and what they may do.
 //
-// Scope and tenant used to be read from a query parameter and a header, which
-// made them claims the caller made about itself: appending ?scope=cluster
-// widened the listing, and X-Gentian-User named whoever you liked in the audit
-// metadata. That was survivable only while every caller was already a cluster
-// admin. A tenant admin holding a token makes it a disclosure.
+// Scope and tenant were once read from a query parameter and a header, which
+// made them claims the caller made about itself. Then they were OpenBao's
+// verdict on the caller's token: a policy meant cluster administrator, a
+// mapped claim meant a tenant. That was verified, but it was a second place
+// rights were decided, from a group in a token.
 //
-// So identity is now OpenBao's verdict. The exchange verifies the JWT's
-// signature, issuer and audience and applies the role's bound claims; this
-// service reads the result and never parses the token itself. Being a second
-// identity authority is precisely how the two come to disagree.
-//
-// The cost is that a listing now requires OpenBao to be reachable, where before
-// it degraded to a catalogue with no metadata. That is the right trade: an
-// unauthorised listing is not a degraded listing.
+// Now the token is verified here and the authorization store is asked, as at
+// every other enforcement point. Only then is the token exchanged at OpenBao
+// -- for the token the write is made with, whose policy bounds the paths it
+// reaches. What OpenBao says about the caller is used for nothing but the
+// name under which a credential is recorded as set.
 //
 // The token is never logged and never stored. It lives for the duration of one
-// request, which is the longest a credential that can write every secret in the
-// cluster should exist anywhere in this process.
+// request, which is the longest a credential that can write secrets should
+// exist anywhere in this process.
 func (s *Server) identify(ctx context.Context, r *http.Request) (caller, error) {
 	tok, err := bearer(r)
+	if err != nil {
+		return caller{}, err
+	}
+	if s.Authz == nil {
+		return caller{}, fmt.Errorf("%w: none is configured", ErrAuthorizationUnavailable)
+	}
+	who, err := s.Authz.Identify(ctx, tok)
+	if err != nil {
+		return caller{}, err
+	}
+	view, err := s.viewOf(ctx, who)
 	if err != nil {
 		return caller{}, err
 	}
@@ -371,10 +412,10 @@ func (s *Server) identify(ctx context.Context, r *http.Request) (caller, error) 
 		return caller{}, err
 	}
 
-	c := caller{bao: id, view: s.viewerFor(id)}
-	// The username comes from the role's user_claim, so it is the verified
-	// subject rather than a header. Falling back to the claim-mapped name keeps
-	// this working across OpenBao versions that report it differently.
+	c := caller{bao: id, view: view, name: who.Name}
+	// The username from the role's user_claim, where OpenBao reports one: it
+	// is the name the person signs in with, which is what a record of who set
+	// a credential should say.
 	for _, k := range []string{"username", "preferred_username", "user"} {
 		if v := id.Metadata[k]; v != "" {
 			c.name = v
@@ -412,25 +453,8 @@ func (s *Server) recordHandover(ctx context.Context, c caller) {
 		now = s.now
 	}
 	if err := handover.RecordWritePathProven(ctx, s.Client, s.HandoverNamespace, c.name, now()); err != nil {
-		ctrl.Log.WithName("credentialmgr").Error(err, "recording the handover proof")
+		ctrl.Log.WithName("custodian").Error(err, "recording the handover proof")
 	}
-}
-
-// viewerFor turns OpenBao's verdict into a visibility decision.
-//
-// Cluster admin is recognised by the policy OpenBao attached, not by a group
-// name this service would have to keep in step with Keycloak. The tenant comes
-// from the role's claim mappings, so a role that maps no tenant yields a viewer
-// that sees no tenant-scoped requirement — closed by default.
-func (s *Server) viewerFor(id Identity) Viewer {
-	v := Viewer{Tenant: id.Metadata[s.TenantClaimKey]}
-	for _, p := range id.Policies {
-		if p == s.ClusterAdminPolicy {
-			v.ClusterAdmin = true
-			break
-		}
-	}
-	return v
 }
 
 // writeIdentityErr maps an identify() failure onto a status an operator can act on.
@@ -447,9 +471,17 @@ func (s *Server) viewerFor(id Identity) Viewer {
 // operator has nothing at all to work from.
 func (s *Server) writeIdentityErr(w http.ResponseWriter, err error) {
 	if errors.Is(err, ErrUpstream) {
-		ctrl.Log.WithName("credentialmgr").Error(err, "cannot reach OpenBao to authorise this request")
+		ctrl.Log.WithName("custodian").Error(err, "cannot reach OpenBao to authorise this request")
 		writeErr(w, http.StatusBadGateway,
-			fmt.Errorf("the credential manager cannot reach OpenBao; this is not a problem with your account"))
+			fmt.Errorf("the custodian cannot reach OpenBao; this is not a problem with your account"))
+		return
+	}
+	if errors.Is(err, ErrAuthorizationUnavailable) {
+		// Nothing is assumed in the store's place, and the caller is told it
+		// is not about them.
+		ctrl.Log.WithName("custodian").Error(err, "cannot ask the authorization store about this request")
+		writeErr(w, http.StatusServiceUnavailable,
+			fmt.Errorf("the custodian cannot ask the authorization store; this is not a problem with your account"))
 		return
 	}
 	writeErr(w, http.StatusUnauthorized, err)
@@ -523,6 +555,14 @@ func (s *Server) handleSet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Seeing a credential is not being allowed to set it: an auditor reads the
+	// list and writes nothing.
+	if !c.view.canWrite(req.Scope, req.Tenant) {
+		writeErr(w, http.StatusForbidden,
+			fmt.Errorf("you may see %s and may not set it", name))
+		return
+	}
+
 	var body setRequest
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&body); err != nil {
 		writeErr(w, http.StatusBadRequest, fmt.Errorf("malformed body: %w", err))
@@ -548,7 +588,7 @@ func (s *Server) handleSet(w http.ResponseWriter, r *http.Request) {
 			// git-https probe and names no host.
 			if errors.Is(err, ErrNoEndpoint) {
 				unvalidated = err.Error()
-				ctrl.Log.WithName("credentialmgr").Info(
+				ctrl.Log.WithName("custodian").Info(
 					"storing a credential that could not be validated",
 					"requirement", req.Name, "validator", req.Validator, "reason", unvalidated)
 			} else {
@@ -569,11 +609,11 @@ func (s *Server) handleSet(w http.ResponseWriter, r *http.Request) {
 	// a policy that was already correct. The same collapse cost an afternoon
 	// one layer up, in identify.
 	if err := s.Bao.Write(r.Context(), c.bao.Token, req.VaultPath, body.Fields, c.name); err != nil {
-		log := ctrl.Log.WithName("credentialmgr")
+		log := ctrl.Log.WithName("custodian")
 		if errors.Is(err, ErrUpstream) {
 			log.Error(err, "cannot reach OpenBao to store this credential", "path", req.VaultPath)
 			writeErr(w, http.StatusBadGateway,
-				fmt.Errorf("the credential manager cannot reach OpenBao; the credential was not stored"))
+				fmt.Errorf("the custodian cannot reach OpenBao; the credential was not stored"))
 			return
 		}
 		log.Error(err, "OpenBao refused the write", "path", req.VaultPath, "setBy", c.name)
@@ -652,7 +692,7 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	if err := json.NewEncoder(w).Encode(v); err != nil {
-		ctrl.Log.WithName("credentialmgr").Error(err, "encoding response")
+		ctrl.Log.WithName("custodian").Error(err, "encoding response")
 	}
 }
 

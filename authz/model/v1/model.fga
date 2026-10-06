@@ -57,6 +57,14 @@ type cluster
     define can_edit_raw: break_glass          # /v1/files
     define can_audit: auditor or security_officer or admin
 
+    # Kernel and system credentials, asked by the custodian before OpenBao
+    # sees the request. Writing one is administering the cluster. Reading is
+    # never reading the VALUE -- the custodian returns none -- it is seeing
+    # that a credential is required, whether it is set, and who set it, which
+    # is what an auditor is for.
+    define can_write_credential: admin
+    define can_read_credential: can_write_credential or can_audit
+
 type tenant
   relations
     define cluster: [cluster]
@@ -99,6 +107,13 @@ type tenant
     # admin accounts by design, so an admin account can reach no app object —
     # which in tenant-platform would be every tile the console has.
     define can_administer: admin
+
+    # The tenant's own credentials, asked by the custodian. A platform
+    # administrator writes them only through `admin from operated_by`, so a
+    # tenant that withdraws that consent withdraws this with it; the cluster's
+    # auditors still see that they exist and who set them, never what they are.
+    define can_write_credential: admin
+    define can_read_credential: can_write_credential or can_audit from cluster
 
 # A catalogue source is a repository of profile bundles named on the Cluster
 # claim: the store's, or one a platform administrator added. Opening a source
@@ -148,10 +163,12 @@ type app
                                                   # admin tiles are tenant#can_administer
     define can_administer: admin
 
-    # Secret writes for this component, checked by the credential manager
-    # before OpenBao sees the request: OpenBao's policy then bounds the PATH,
-    # it does not make the decision (principle 2).
+    # Secret writes for this component, asked by the custodian before OpenBao
+    # sees the request: OpenBao's policy then bounds the PATH, it does not
+    # make the decision (principle 2). Reads follow the tenant's, and are of
+    # a credential's state, never its value.
     define can_write_credential: admin from tenant
+    define can_read_credential: can_read_credential from tenant
 
 type contract
   relations

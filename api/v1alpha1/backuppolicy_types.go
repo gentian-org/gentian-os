@@ -29,7 +29,7 @@ import (
 //
 // There is deliberately no credential field. The keys for an endpoint are a
 // CredentialRequirement, which the operator derives from this policy and the
-// credential manager fills: the requirement validates the keys before anything
+// custodian fills: the requirement validates the keys before anything
 // depends on them, rotation is one write at one path, and ESO's sync status is
 // the satisfaction probe. A Secret reference here would have been a second,
 // hand-managed way to hold the same credential with none of that.

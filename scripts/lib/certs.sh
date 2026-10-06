@@ -122,7 +122,7 @@ gentian_dns_credential_vault_path() {
 # Whether this cluster has been given the credential its DNS provider needs.
 #
 # OpenBao is the record, because that is where every other consumer reads it
-# from — the ESO ClusterSecretStore, the credential manager, external-dns.
+# from — the ESO ClusterSecretStore, the custodian, external-dns.
 # Asking the installer's own environment instead is what tied the wildcard to
 # CF_API_TOKEN being exported in the shell that happened to run the install.
 gentian_dns_credential_present() {
@@ -688,7 +688,7 @@ install_kernel_wildcard() {
     fi
     if ! gentian_dns_credential_present; then
         info "No credential for DNS provider ${dns_provider}; skipping wildcard ISSUANCE."
-        info "  Supply it to the credential manager and re-run: ./install.sh --only C-01"
+        info "  Supply it to the custodian and re-run: ./install.sh --only C-01"
         # Distribution is not issuance and does not need the credential. A
         # certificate cert-manager has already renewed still has to reach the
         # namespaces that serve it, and this is the step that owns that copy --

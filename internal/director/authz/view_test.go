@@ -57,10 +57,12 @@ func TestTheViewResolvesWhoHoldsWhatAndWhatItCarries(t *testing.T) {
 	if len(admin.Groups) != 1 || admin.Groups[0] != "gentian:platform:admins" {
 		t.Fatalf("admin groups = %v", admin.Groups)
 	}
-	if strings.Join(admin.Grants, ",") != "can_audit,can_configure,can_deploy_tenant" {
+	// Setting a kernel credential is administering the cluster; seeing that one
+	// is required, and who set it, is also the auditor's.
+	if strings.Join(admin.Grants, ",") != "can_audit,can_configure,can_deploy_tenant,can_read_credential,can_write_credential" {
 		t.Fatalf("admin grants = %v", admin.Grants)
 	}
-	if strings.Join(by["auditor"].Grants, ",") != "can_audit" {
+	if strings.Join(by["auditor"].Grants, ",") != "can_audit,can_read_credential" {
 		t.Fatalf("auditor grants = %v", by["auditor"].Grants)
 	}
 }

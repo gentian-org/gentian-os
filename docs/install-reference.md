@@ -185,7 +185,7 @@ asks for it:
 | `phase` | Asked by | Why |
 |---|---|---|
 | `bootstrap` | The installer, at the prompt | The cluster does not exist yet, so nothing on it can |
-| `runtime` | The credential manager, once the cluster runs | It can validate, record who set it, and gate the claims that need it |
+| `runtime` | The custodian, once the cluster runs | It can validate, record who set it, and gate the claims that need it |
 
 The bootstrap set is deliberately small and every member is validatable with
 `curl` or `openssl` alone. A credential needing an SDK or a signing algorithm is

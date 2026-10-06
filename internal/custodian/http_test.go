@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package credentialmgr
+package custodian
 
 import (
 	"context"
@@ -152,13 +152,72 @@ func newServerAs(t *testing.T, policies []string, meta map[string]string, objs .
 	t.Cleanup(bao.Close)
 
 	s := &Server{
-		Catalogue:          &Catalogue{Client: c, ProbeNamespace: "gentian-system"},
-		Bao:                NewOpenBao(bao.URL, "secret", "oidc", "kernel", []string{"cluster-admin-jwt"}, nil, false),
-		Validator:          stubValidator{},
-		ClusterAdminPolicy: "cluster-admin",
-		TenantClaimKey:     "tenant",
+		Catalogue: &Catalogue{Client: c, ProbeNamespace: "gentian-system"},
+		Bao:       NewOpenBao(bao.URL, "secret", "oidc", "kernel", []string{"cluster-admin-jwt"}, nil, false),
+		Validator: stubValidator{},
+		Authz:     storeFor(policies, meta),
 	}
 	return s, bao
+}
+
+// fakeStore stands in for the identity provider and the authorization store:
+// it says who the caller is and what they hold. The harness still describes a
+// caller by the policy and claim OpenBao used to report, because that is how
+// every test here names its caller -- but nothing reads them from OpenBao any
+// more. They are turned into the store's answers, which is the only place the
+// custodian now takes a right from.
+type fakeStore struct {
+	who Principal
+	// held is "relation object" for everything the caller holds.
+	held map[string]bool
+	// everyTenant grants both relations on any tenant, as a platform
+	// administrator holds them through the store's derivation.
+	everyTenant bool
+	err         error
+	asked       []string
+}
+
+func storeFor(policies []string, meta map[string]string) *fakeStore {
+	f := &fakeStore{who: Principal{User: "user:caller", Name: meta["username"], Tenant: meta["tenant"]}, held: map[string]bool{}}
+	for _, p := range policies {
+		if p == "cluster-admin" {
+			f.held[relationRead+" cluster:test"], f.held[relationWrite+" cluster:test"] = true, true
+			f.everyTenant = true
+		}
+	}
+	if t := meta["tenant"]; t != "" {
+		f.held[relationRead+" tenant:"+t], f.held[relationWrite+" tenant:"+t] = true, true
+	}
+	return f
+}
+
+func (f *fakeStore) Identify(context.Context, string) (Principal, error) { return f.who, nil }
+
+func (f *fakeStore) Check(_ context.Context, _, relation, object string) (bool, error) {
+	f.asked = append(f.asked, relation+" "+object)
+	if f.err != nil {
+		return false, f.err
+	}
+	if f.everyTenant && strings.HasPrefix(object, "tenant:") {
+		return true, nil
+	}
+	return f.held[relation+" "+object], nil
+}
+
+func (f *fakeStore) Object(scope, tenant string) (string, bool) {
+	switch scope {
+	case scopeCluster:
+		return "cluster:test", true
+	case scopeTenant:
+		return "tenant:" + tenant, tenant != ""
+	}
+	return "", false
+}
+
+// allowAll is a view that may read and set everything, for the tests that are
+// about the catalogue rather than about who is looking at it.
+func allowAll() Viewer {
+	return Viewer{ClusterAdmin: true, check: func(string, string, string) bool { return true }}
 }
 
 func do(t *testing.T, s *Server, method, target, body string) *httptest.ResponseRecorder {
@@ -752,7 +811,7 @@ func TestValidateHostReachesTheCatalogue(t *testing.T) {
 	req.Spec.Validate.Host = "https://registry.example.test"
 
 	c := &Catalogue{Client: fake.NewClientBuilder().WithScheme(testScheme(t)).WithRuntimeObjects(req).Build()}
-	items, err := c.List(context.Background(), Viewer{ClusterAdmin: true})
+	items, err := c.List(context.Background(), allowAll())
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}

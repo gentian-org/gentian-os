@@ -96,7 +96,7 @@ OPERATOR_ONLY = {
         "could become a Secret would be readable by whoever takes the cluster, "
         "which is the one thing escrow must not come to mean.",
     "gentian-os/tenants/+/backup/identity":
-        "one tenant's escrowed backup key (credentialmgr/backupidentity.go). "
+        "one tenant's escrowed backup key (custodian/backupidentity.go). "
         "Same reasoning one subtree down, and the reason the sibling grant on "
         "tenants/+/backup/* is not enough: the destination credential there "
         "exists to become a Secret, and this must never.",

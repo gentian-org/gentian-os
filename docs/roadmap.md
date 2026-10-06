@@ -521,7 +521,7 @@ does not exist yet that something cannot be the Composition.
   It is silently unreachable today only because the sole `type: smtp` credential in
   `credentials.yaml` (`smtp-relay`) is `phase: runtime` and never reaches this dispatch; a future
   bootstrap-phase smtp credential would hard-fail every install needing it with "Unknown validator
-  type". `internal/credentialmgr/validator.go`'s `smtpProbe` (the on-cluster, `phase: runtime`
+  type". `internal/custodian/validator.go`'s `smtpProbe` (the on-cluster, `phase: runtime`
   validator) already implements the real thing and its own comment claims to "mirror the shell
   validator" — which does not exist to mirror.
 
@@ -534,7 +534,7 @@ does not exist yet that something cannot be the Composition.
   on `PATH`, asserts return codes against it, needs no cluster, and runs under `make lint-shell` —
   which is the shape a validator test wants, and it did not exist when this item was written. The
   other checks in this class (`scripts/tools/verify-openbao-policies.sh`, the Go `fakeRelay` in
-  `internal/credentialmgr/validator_smtp_test.go`) stand up a real throwaway service instead. Both
+  `internal/custodian/validator_smtp_test.go`) stand up a real throwaway service instead. Both
   patterns are available; which suits a given validator depends on whether the protocol can be
   faked by a stub or has to be spoken.
 * **Proposed Solution**: Write `validate_smtp` for the shell validator library, and build a

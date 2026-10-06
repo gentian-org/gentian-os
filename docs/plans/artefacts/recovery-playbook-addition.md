@@ -66,7 +66,7 @@ Both are rotated after every use (step 6).
   restore the host from its own backup. Argo CD keeps applying the last
   fetched state.
 - **OpenBao** sealed or lost: that is the existing playbook. The director
-  needs OpenBao only to hand a pull credential to the credential manager;
+  needs OpenBao only to hand a pull credential to the custodian;
   configuration writes do not.
 - A **compromised director**: rotate its push credential and signing key
   first (step 6, before step 3), then proceed. The commits it made are in

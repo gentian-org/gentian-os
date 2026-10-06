@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-// Package credentialmgr serves the Credential Manager: a view over the
+// Package custodian serves the custodian: a view over the
 // CredentialRequirement catalogue and ESO's satisfaction status, plus a write
 // path that writes as the requesting user.
 //
@@ -43,7 +43,7 @@ limitations under the License.
 //
 // Enforced by [Status] having no field capable of carrying a value, and by a
 // test that enumerates every route and asserts none returns one.
-package credentialmgr
+package custodian
 
 import (
 	"bytes"
@@ -121,7 +121,7 @@ func NewOpenBao(addr, kvMount, authMount, kernelRealm string, oidcRoles []string
 		if pool.AppendCertsFromPEM(caCert) {
 			tlsConf.RootCAs = pool
 		} else {
-			ctrl.Log.WithName("credentialmgr").Info(
+			ctrl.Log.WithName("custodian").Info(
 				"the configured OpenBao CA is not valid PEM; falling back to the system roots")
 		}
 	}
@@ -208,7 +208,7 @@ func refusalReason(status int, body string) string {
 	case strings.Contains(b, "signature"), strings.Contains(b, "expired"), strings.Contains(b, "validating token"):
 		return "the token did not validate — signature, issuer or expiry"
 	default:
-		return "OpenBao refused it and the reason is in the credential manager's log"
+		return "OpenBao refused it and the reason is in the custodian's log"
 	}
 }
 
@@ -469,7 +469,7 @@ func (b *OpenBao) Write(ctx context.Context, token, path string, fields map[stri
 // that reading it never touches the private one.
 func (b *OpenBao) WriteWithMetadata(ctx context.Context, token, path string, fields map[string]string, setBy string, extra map[string]string) error {
 	if token == "" {
-		return fmt.Errorf("no caller token: the credential manager cannot write on its own authority")
+		return fmt.Errorf("no caller token: the custodian cannot write on its own authority")
 	}
 	// No options block, and specifically no check-and-set.
 	//
@@ -480,7 +480,7 @@ func (b *OpenBao) WriteWithMetadata(ctx context.Context, token, path string, fie
 	// fails the moment the path already has a version.
 	//
 	// Every path here has one. The installer seeds this mount at bootstrap,
-	// so supplying a credential through the credential manager is always an
+	// so supplying a credential through the custodian is always an
 	// UPDATE of a path that exists, never a create — which made the one
 	// operation this service exists to perform the one it could never do.
 	//

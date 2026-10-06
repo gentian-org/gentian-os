@@ -62,7 +62,7 @@ def provider_requirements(platforms):
 The catalogue ships twice from one source. credentials.yaml travels with the
 installer, because the installer needs to know what to prompt for before the
 cluster exists; the generated CRs travel in the platform Configuration package,
-because the on-cluster credential manager reads them from the API rather than
+because the on-cluster custodian reads them from the API rather than
 from a file it has no access to.
 
 Two carriers is a drift hazard, so the second is generated and `make verify-gen`
@@ -96,7 +96,7 @@ HEADER = """# GENERATED FILE — DO NOT EDIT.
 # Rendered by scripts/gen/gen-credential-requirements.py from credentials.yaml.
 # To change a requirement, edit credentials.yaml and run `make gen-all`.
 #
-# These are the catalogue's on-cluster carrier: the credential manager reads
+# These are the catalogue's on-cluster carrier: the custodian reads
 # CredentialRequirement objects from the API, while the installer reads
 # credentials.yaml from disk before any cluster exists. Same content, two
 # carriers, one source.
@@ -120,7 +120,7 @@ def build_probe(req):
 
     This is what makes "no controller" possible. Satisfaction is a Kubernetes
     condition that ESO maintains, so function-extra-resources can gate a
-    Composition on it and the credential manager can read it, without anything
+    Composition on it and the custodian can read it, without anything
     bespoke holding an OpenBao token to poll with.
     """
     return {
@@ -251,12 +251,12 @@ def build_documents(catalogue):
                 "metadata": {
                     "name": name,
                     "labels": {
-                        # Lets the credential manager and any gating Composition
+                        # Lets the custodian and any gating Composition
                         # select by phase and scope without parsing the spec.
                         "gentianos.io/credential-phase": req["phase"],
                         "gentianos.io/credential-scope": req["scope"],
                         **({"gentianos.io/tenant": req["tenant"]} if req.get("tenant") else {}),
-                        # Who issues the credential, so the credential manager
+                        # Who issues the credential, so the custodian
                         # can group one vendor's tokens together. A label, not
                         # spec: it describes the requirement, it asks nothing.
                         **({"gentianos.io/credential-provider": req["provider"]} if req.get("provider") else {}),

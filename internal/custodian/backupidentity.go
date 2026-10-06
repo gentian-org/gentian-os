@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package credentialmgr
+package custodian
 
 import (
 	"encoding/json"
@@ -129,11 +129,11 @@ func (s *Server) handleSetBackupIdentity(w http.ResponseWriter, r *http.Request)
 	fields := map[string]string{backupIdentityField: identity}
 	meta := map[string]string{"recipient": recipient}
 	if err := s.Bao.WriteWithMetadata(r.Context(), c.bao.Token, path, fields, c.name, meta); err != nil {
-		log := ctrl.Log.WithName("credentialmgr")
+		log := ctrl.Log.WithName("custodian")
 		if errors.Is(err, ErrUpstream) {
 			log.Error(err, "cannot reach OpenBao to escrow this backup key", "tenant", tenant)
 			writeErr(w, http.StatusBadGateway,
-				errors.New("the credential manager cannot reach OpenBao; the key was not escrowed"))
+				errors.New("the custodian cannot reach OpenBao; the key was not escrowed"))
 			return
 		}
 		log.Error(err, "OpenBao refused the escrow write", "path", path, "setBy", c.name)
@@ -179,7 +179,7 @@ func (s *Server) handleGetBackupIdentity(w http.ResponseWriter, r *http.Request)
 	md, err := s.Bao.Metadata(r.Context(), c.bao.Token, BackupIdentityPath(tenant))
 	if err != nil {
 		writeErr(w, http.StatusBadGateway,
-			errors.New("the credential manager cannot reach OpenBao"))
+			errors.New("the custodian cannot reach OpenBao"))
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{

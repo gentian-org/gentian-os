@@ -18,7 +18,7 @@
 #      B-10 deletes it — see "Bootstrap credential cache" below.
 #
 #   2. Only `phase: bootstrap` credentials are collected. Everything else is
-#      `phase: runtime` and belongs to the on-cluster credential manager, which
+#      `phase: runtime` and belongs to the on-cluster custodian, which
 #      has SDKs and a real HTTP client. Keeping the shell half small is what
 #      stops the two implementations drifting.
 # =============================================================================
@@ -528,7 +528,7 @@ _validate_requirement() {
         *)
             error "Requirement '${name}' declares validator '${vtype}', which the installer does not implement."
             error "  Bootstrap validators are curl/openssl only. A validator that needs more"
-            error "  belongs to phase: runtime, where the credential manager checks it in Go —"
+            error "  belongs to phase: runtime, where the custodian checks it in Go —"
             error "  which is where 'smtp' went, and why nothing here implements it."
             return 1
             ;;

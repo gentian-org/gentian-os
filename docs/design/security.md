@@ -106,7 +106,7 @@ changes only when the code does.
 | Gateway JWT / ext-auth / rate limit | **Target** | `BackendTrafficPolicy` carries timeouts only |
 | Service mesh, SPIFFE/SPIRE, workload identity | **Target** | — |
 | Agent identities, RFC 8693 exchange, `agent`/`task` types | **Target** | model v0 has no such types |
-| Human-identified secret writes (token exchange, no service token) | Implemented | `internal/credentialmgr/` |
+| Human-identified secret writes (token exchange, no service token) | Implemented | `internal/custodian/` |
 | Human-identified configuration writes | **Target** | lifecycle API trusts `X-Gentian-Actor`; director planned |
 | OpenBao policy per tenant | Implemented | `tenant-default.yaml` |
 | OpenBao policy per (tenant, app) | **Target** | `app-default.yaml` composes none |
@@ -125,7 +125,7 @@ changes only when the code does.
 | **Director** | The store's only writer (AD-2, AD-12). Membership arrives on Keycloak's event-listener feed and is written as `group#member` tuples, a projection reconciled toward Keycloak by a read-only client and never edited in place; structure — role-to-group assignments, installs, grants, entitlements — is written from the CRs in the same operation as the commit it reflects. Keycloak decides no permission; OpenFGA changes no identity. | **Target** (the director does not exist yet) |
 | **Provisioning bridge** | What does this today: reconciles `IntegrationBinding` credentials and `AppGrant` into the graph, and polls Keycloak on a timer with an admin credential for group membership. The poll is **retired by AD-12** in favour of the event feed; the credential is why. | **Partial**, and superseded |
 | **MAC backbone** | K8s namespaces per tenant, NetworkPolicy default-deny egress in those namespaces, Kyverno pod-security admission (implemented); the same default-deny in the platform tiers, service mesh + SPIFFE/SPIRE (target). | Apache 2.0 / OSS |
-| **PEP** | Named enforcement points — Envoy Gateway ext-auth, the director, the credential manager, the MCP gateway — calling OpenFGA `Check`, ideally over the OpenID **AuthZEN** Authorization API so PDPs stay swappable. Target: no PEP calls `Check` today (§3.0). | OSS |
+| **PEP** | Named enforcement points — Envoy Gateway ext-auth, the director, the custodian, the MCP gateway — calling OpenFGA `Check`, ideally over the OpenID **AuthZEN** Authorization API so PDPs stay swappable. Target: no PEP calls `Check` today (§3.0). | OSS |
 | **ITAM source of truth (optional)** | NetBox (best license fit) / GLPI / Snipe-IT feeding device & asset objects into the graph. | Apache 2.0 / GPL / AGPL |
 
 ### 3.2 Design rationale
@@ -484,7 +484,7 @@ app-install time without requiring the operator to be present.
 > and it already provisions every requirement. It derives the one credential
 > an install needs, writes it to that app's own OpenBao path, and the Job
 > receives it through its own `ExternalSecret` like any other secret: exactly
-> that credential and nothing else. The credential manager is deliberately
+> that credential and nothing else. The custodian is deliberately
 > *not* the place: its defining property is that it holds no credential of its
 > own and only exchanges a human caller's token, and serving workloads from the
 > master password would end that. The master password keeps one reader, and

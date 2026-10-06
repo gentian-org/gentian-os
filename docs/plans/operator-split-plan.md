@@ -47,7 +47,7 @@ rather than code organisation:
    deployment shape. No handler added later can bypass it, because no other
    process can write.
 2. **Blast radius.** Today one pod ([cmd/main.go](../../cmd/main.go)) runs the
-   controllers, the admission webhook, the credential manager and the
+   controllers, the admission webhook, the custodian and the
    lifecycle API, under one ServiceAccount whose ClusterRole grants
    `pods/exec` and cluster-wide `secrets` CRUD
    ([clusterrole.yaml](../../charts/gentian-os/templates/clusterrole.yaml)),
@@ -331,7 +331,7 @@ repository with the cluster's read credential, or a private one with the
 single-use fetch token that arrived with the entitlement grant, discarded
 after the fetch; never from the App Store's own database, which is
 reference data outside the cluster (AD-3) — hands any pull credential to the
-credential manager to be written as the caller (no secret enters git;
+custodian to be written as the caller (no secret enters git;
 [ui-restructure.md](ui-restructure.md) §3), applies the `AppProfile` CR
 (label `gentianos.io/profile-name`, digest annotation), **then** commits.
 Apply-then-commit is the only ordering that fails safe: a failed commit
@@ -451,11 +451,15 @@ the third is new, and is what the director's read routes become.
 | **Concierge** | Sends a person who has no session yet to the sign-in of the zone their address belongs to. | the platform tenant's DMZ (`tenant-platform-dmz`), as a perimeter surface of a platform-tenant component | nothing | `sign-in`, beside Keycloak |
 | **Bouncer** | Asks, for every request on the authenticated Gateway, whether this session may enter this host, and refuses when the answer is not yes. | `kernel-edge` | nothing; reads the route table and asks OpenFGA | `edge-authz`, "the shim" |
 | **Usher** | Tells a signed-in person what is here and what they may open. | `kernel-edge` | nothing; reads the operator's projections and asks OpenFGA | the director's `tiles`, `me` and status reads |
+| **Custodian** | Takes a credential from the person entitled to set it and puts it in the vault, without anyone being able to take one back out. | `kernel-control`, inside the operator's process | no vault token of its own; asks OpenFGA, then writes with the caller's own exchanged token | `credential manager` |
 
 The names are a cast on purpose: the concierge points you to the right
-door, the bouncer checks you at it, the usher shows you round inside, and
-the director decides what the house runs. Only the last one changes
-anything.
+door, the bouncer checks you at it, the usher shows you round inside, the
+custodian keeps the keys, and the director decides what the house runs. Only
+the last two change anything, and they change different things: the director
+changes what git declares, the custodian what the vault holds. A secret is
+the one thing that must never be a commit, which is why it has a keeper of
+its own.
 
 **What each must not do** — the contract, stated as the failure it rules out.
 
@@ -474,6 +478,18 @@ anything.
 - *The usher decides nothing either,* and changes nothing. Every answer is a
   projection the operator wrote, filtered by a question put to the store. It
   holds no git credential, no signing key and no Kubernetes write.
+- *The custodian hands nothing back and decides nothing.* No route returns
+  a credential's value, to anybody. Who may see that a credential is required
+  and who may set it are the store's answers -- `can_read_credential` and
+  `can_write_credential`, on the cluster for kernel and system credentials
+  and on the tenant for a tenant's -- asked after the custodian has verified
+  the caller's token itself, and before the vault is reached. It once took
+  OpenBao's verdict on the token instead: a policy meant "cluster
+  administrator", a claim mapped into metadata meant "this tenant". That was
+  a second place rights were decided, from a group written into a token.
+  OpenBao is still given the caller's own token for the write, and its
+  policy still bounds the paths that token reaches; it can refuse what the
+  store allowed and can widen nothing.
 - *The director does not answer for the cluster.* It keeps the reads of
   declared state, for the people who may change it.
 
@@ -524,11 +540,21 @@ not mistaken for the controls.
    history and in the edge's access logs. It also depends on the format of
    `state`, which is the edge's own; when that changes the form is simply
    not filled.
-7. *Four processes are not four controls.* The concierge is a convenience
+7. *Five processes are not five controls.* The concierge is a convenience
    and could be removed without weakening anything; the usher is a
    separation of privilege, not an enforcement point. The controls are the
    edge session, the bouncer, the publishing proxies, and the director's
    check before a commit.
+8. *The vault still judges the token a second time.* The custodian writes
+   with a token OpenBao issues in exchange for the caller's, and OpenBao
+   issues it only to a member of the group its role is bound to. The store
+   is asked first and is the only thing that grants; but the two can
+   disagree in one direction -- the store says yes and the vault says no --
+   and when they do the person is refused by the lock nobody reviews. The
+   alternative is a custodian with a vault identity of its own, bounded by
+   policy to credential paths, so that the store alone decides. That puts a
+   standing credential for every secret into a kernel process, which is the
+   thing the present shape was built to avoid; it is an open decision (§8).
 
 **What moves, and in what order.**
 
@@ -539,6 +565,7 @@ not mistaken for the controls.
 | Usher, the rest | `me` (the relations a person holds on a tenant and on the cluster), then status reads. Each leaves the director when its last caller has moved. The director's `GET /v1/clusters/{c}/tiles` — reachable only with a cluster relation, which is why a tenant's own people saw an empty desktop — goes with the first. |
 | Launch rights ✅ | Tiles of installed catalogue apps need `can_launch` on `app:<t>/<p>`. The operator's projection writes `app#tenant` and `app#entitled` from `Tenant.spec.apps`, by the rule the portal applied: an app's own group entitles it, and a base with activated addons is entitled by the addons' groups. Every entry of `spec.apps`, and every addon activated inside one, is a `Component` the tenant reconciler creates and removes; the Component writes the App claim the app Composition answers, routes the app's exposures behind the zone's session, and asks `can_use` on the app at them. |
 | Concierge to the DMZ ✅ | A component of the platform tenant with one perimeter surface, `authMode: none`, published from `tenant-platform-dmz` with an owner and a review date. The brand files it serves today move with the branding work, not with this. |
+| Custodian ✅ | `credential manager` → `custodian` (package, Service, values, environment, the profile key `custodianUrlKey`, the consoles that call it). It verifies the caller's token and asks the store `can_read_credential` or `can_write_credential` on the cluster or the tenant before it reaches the vault; what OpenBao reports about the token decides nothing. The tenant a caller stands in comes from the realm that issued their token, not from a claim. |
 
 ## 4. Bootstrap: writing configuration before Keycloak exists
 
@@ -567,7 +594,7 @@ and proven by [internal/handover](../../internal/handover/handover.go):
 
 1. The director performs one real signed commit as the installing platform
    admin (`administrator@<KERNEL_DOMAIN>`, obtained by the same browser login
-   the credential-manager handover already requires) — a no-op "handover"
+   the custodian handover already requires) — a no-op "handover"
    commit. That commit *is* the proof the write path works, recorded in the
    `gentian-handover` ConfigMap as `configWritePathProven`.
 2. The git host is configured so only the director's identity may push
@@ -598,9 +625,9 @@ catastrophic on one with tenants.
 | `applifecycle/wait.go`, `reconcile.go` (Argo refresh) | delete; Argo syncs on host webhook + polling | — |
 | `applifecycle/purge.go` | stays, moves out of the request path into a reconciler | operator |
 | `applifecycle/service.go` — `provisionAppGroupUsers` | stays; becomes desired-state reconcile of `Tenant.spec.apps` → Keycloak group | operator (`app_privilege_reconciler` already exists) |
-| `credentialmgr/` | later, optional: same class of human-identified write, holds no token of its own, needs no controller-runtime | director, after D |
+| `custodian/` | later, optional: same class of human-identified write, holds no token of its own, needs no controller-runtime | director, after D |
 | `kubectl-gentian` `git_commit_push` + `kubectl apply` fallback | replaced by director API calls with the user's token (`kubectl gentian login` via device flow) | CLI |
-| Console direct writes (§2.2, desired-state rows) | replaced by director calls with the user's token, as `credential_manager.py` already forwards it; reads become director reads too — the console keeps no Kubernetes identity (G7, [ui-restructure.md](ui-restructure.md) §2) | tenant desktop BFF (`tenant-<t>`) and the platform tenant's in `tenant-platform`, AD-10 |
+| Console direct writes (§2.2, desired-state rows) | replaced by director calls with the user's token, as `custodian.py` already forwards it; reads become director reads too — the console keeps no Kubernetes identity (G7, [ui-restructure.md](ui-restructure.md) §2) | tenant desktop BFF (`tenant-<t>`) and the platform tenant's in `tenant-platform`, AD-10 |
 | Console direct writes (§2.2, request rows) | director creates the request CR; secrets stay ESO/OpenBao references — settled by G7: all writes move | director, narrow RBAC on those kinds |
 | `catalogue-<repo>` ApplicationSet (every AppProfile synced to every cluster) | retired; the director materialises on reference (§3.6) | — |
 | App Store (`app-store-me` profile, per tenant) | leaves the cluster (AD-3); the director is its ingestion endpoint | external |
@@ -616,7 +643,7 @@ The order you proposed is right. Refinements are marked.
 Before any of A–D: bearer verification on `internal/applifecycle/http.go`
 against the kernel and tenant realms, the `X-Gentian-Actor` header ignored,
 the BFF and CLI sending the user's token (the BFF already holds it for the
-credential manager). No FGA check yet — that waits for the director — but
+custodian). No FGA check yet — that waits for the director — but
 "anyone on the network can push config" ends here, in one change to a live
 endpoint, independent of everything below.
 
@@ -780,7 +807,7 @@ against the Cluster claim, which already carries every axis the shell reads:
 Two steps, in this order:
 
 1. **List-time filtering.** `appliesWhen` is generated into the CR spec; the
-   credential manager evaluates it against the Cluster claim when it lists,
+   custodian evaluates it against the Cluster claim when it lists,
    and the installer's `_requirement_applies()` is regenerated from the same
    field so the two carriers cannot disagree (`make verify-gen` already
    asserts this for the rest of the content). The console shows only what
@@ -802,10 +829,18 @@ Cluster claim — in git, written through the director. The values never are.
 | --- | --- |
 | `PlatformSecurityPolicy` via director; `clusters/<c>/kernel/security/` Application | B, step 4 (console desired-state writes) |
 | `Cluster.spec.network`, `Tenant.spec.network`, merge in `BuildDesired` | after B — a CRD change, independent of the split, sequenced here so the new fields never get a console direct-write path |
-| `appliesWhen`, list-time filtering | A — the credential manager is the first consumer of the Cluster claim the director reads anyway |
+| `appliesWhen`, list-time filtering | A — the custodian is the first consumer of the Cluster claim the director reads anyway |
 | Composition-emitted requirements, C-06 retired | C, with the credential split (§3.3) |
 
 ## 8. Open decisions
+
+- **Whether the custodian keeps exchanging the caller's token at the vault.**
+  Today the store decides and the vault bounds paths per person, by a role
+  bound to a Keycloak group (§3.10, weakness 8). Giving the custodian its own
+  vault identity would make the store the only judge and retire the tenant
+  mounts' group binding, the `groups` scope on the zone clients and the
+  director's audience on the vault's roles -- at the price of a kernel
+  process that can write every credential by itself.
 
 - **Signing key format.** GPG is what Argo verifies today; SSH signing is
   simpler to hold in OpenBao. Pick GPG unless Argo's SSH verification lands
@@ -838,5 +873,5 @@ Cluster claim — in git, written through the director. The values never are.
   kernel domain's apex itself. The apex is what people type; a perimeter
   surface on it means the apex is served from the DMZ rather than redirected
   from the authenticated Gateway.
-- **Whether `credentialmgr` moves in the same milestone.** Recommended no —
+- **Whether `custodian` moves in the same milestone.** Recommended no —
   it is correct today and the move is mechanical once the director exists.

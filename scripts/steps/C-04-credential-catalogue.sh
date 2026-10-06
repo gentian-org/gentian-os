@@ -7,7 +7,7 @@
 
 # The on-cluster half of the catalogue. credential-requirements.yaml travels
 # with the installer; these are the same content as API objects, so the
-# credential manager and any gating Composition can read them.
+# custodian and any gating Composition can read them.
 #
 # Each requirement gets an ExternalSecret with creationPolicy: None. ESO
 # resolves the remote reference and reports SecretSynced without creating a
@@ -53,7 +53,7 @@ _cc_render() {
 #
 # The catalogue describes the platform -- every DNS provider, every source
 # repository, every LLM provider -- and applying all of it filled the
-# credential manager with forms nothing on the cluster would ever read: six
+# custodian with forms nothing on the cluster would ever read: six
 # DNS providers on a Cloudflare cluster, NOT SET under each. An entry is
 # applied when _requirement_applies says this cluster uses it (the same gate
 # the installer's prompts use), and not when a composed requirement -- a

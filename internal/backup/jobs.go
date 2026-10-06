@@ -581,7 +581,7 @@ func needsWorkDir(groups ...[]corev1.Container) bool {
 // that asymmetry is the point. The platform's own MinIO records its address
 // alongside its keys, so all three read from one Secret. A destination the
 // operator configured has its address in the policy — a fact, not a
-// credential — while only the keys come from the credential manager. Reading
+// credential — while only the keys come from the custodian. Reading
 // the endpoint from the credential Secret in that case would mean an admin
 // could change where every tenant's backups go by editing a secret.
 func bundleEnv(p JobParams) []corev1.EnvVar {

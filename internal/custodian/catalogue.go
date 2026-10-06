@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package credentialmgr
+package custodian
 
 import (
 	"context"
@@ -75,7 +75,7 @@ type Status struct {
 	UpdatedAt string `json:"updatedAt,omitempty"`
 }
 
-// The credential manager reads the catalogue and ESO's verdict on it. Read-only
+// The custodian reads the catalogue and ESO's verdict on it. Read-only
 // on both: it never creates a requirement, and it never touches the Secret an
 // ExternalSecret would produce.
 //
@@ -89,30 +89,32 @@ type Catalogue struct {
 	ProbeNamespace string
 }
 
-// Viewer is the verified identity a listing is filtered against.
+// Viewer is what one verified caller may see and set.
 //
-// It is produced from OpenBao's verdict on the caller's token, never from
-// anything the caller states about itself — see identify in http.go.
+// It is the authorization store's answer about the caller, never anything the
+// caller states about itself and never OpenBao's opinion of their token -- see
+// viewOf in authorize.go.
 type Viewer struct {
-	// ClusterAdmin widens the listing to cluster-scoped requirements.
+	// ClusterAdmin is can_write_credential on the cluster.
 	ClusterAdmin bool
-	// Tenant is the single tenant whose requirements this caller may see. Empty
-	// for a caller with no tenant, who therefore sees no tenant-scoped entry.
+	// Tenant is the tenant whose realm signed the caller in, when they may
+	// write its credentials. Empty for everybody else, who therefore have no
+	// tenant to act for.
 	Tenant string
+	// check asks the store about one scope, remembered for the request. Nil
+	// allows nothing.
+	check func(relation, scope, tenant string) bool
 }
 
 // List returns the requirements visible to one viewer.
 //
-// Filtering is a visibility decision, not an authorisation one — OpenBao still
-// refuses a write the caller's policy forbids. But the asymmetry matters:
-// showing a tenant admin a cluster-scoped form is an annoyance, while the
-// inverse is a breach. So visibility is granted, never assumed.
-//
-// Tenant scope is matched on IDENTITY, not on class. A tenant-scoped
-// requirement is visible only to its own tenant, because "every tenant admin
-// can see every tenant's repository credential" is the failure this exists to
-// prevent. A cluster admin sees everything, which is what makes the admin panel
-// useful.
+// Each requirement is shown to whoever holds can_read_credential on the scope
+// it belongs to -- the cluster, or its one tenant -- and to nobody else.
+// Tenant scope is matched on the tenant itself, not on being a tenant
+// administrator somewhere: "every tenant admin can see every tenant's
+// repository credential" is the failure this exists to prevent. A platform
+// administrator sees a tenant's through the store's own derivation, for as
+// long as the tenant consents to being operated.
 func (c *Catalogue) List(ctx context.Context, v Viewer) ([]Status, error) {
 	var reqs gentianv1alpha1.CredentialRequirementList
 	if err := c.Client.List(ctx, &reqs); err != nil {
@@ -156,27 +158,19 @@ func (c *Catalogue) List(ctx context.Context, v Viewer) ([]Status, error) {
 	return out, nil
 }
 
-// canSee decides whether one requirement is visible to this viewer.
+// canSee reports whether the caller may read the credentials of a scope:
+// that one is required, whether it is set, and who set it. Never its value.
 //
-// Written as an explicit allow-list rather than a set of exclusions: a scope
-// value this function does not recognise is invisible, so adding a scope to the
-// enum without teaching this function about it hides requirements rather than
-// exposing them.
+// A tenant-scoped requirement with no tenant is visible to nobody. The CRD's
+// CEL rule rejects that combination at admission; this is the second line,
+// for objects that predate the rule.
 func (v Viewer) canSee(scope, tenant string) bool {
-	switch scope {
-	case "cluster":
-		return v.ClusterAdmin
-	case "tenant":
-		if v.ClusterAdmin {
-			return true
-		}
-		// A requirement with no tenant is visible to nobody. The CRD's CEL rule
-		// rejects that combination at admission; this is the second line, for
-		// objects that predate the rule.
-		return tenant != "" && tenant == v.Tenant
-	default:
-		return false
-	}
+	return v.check != nil && v.check(relationRead, scope, tenant)
+}
+
+// canWrite reports whether the caller may set the credentials of a scope.
+func (v Viewer) canWrite(scope, tenant string) bool {
+	return v.check != nil && v.check(relationWrite, scope, tenant)
 }
 
 // Get returns one requirement, or an error the handler maps to 404.

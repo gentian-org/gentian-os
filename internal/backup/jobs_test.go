@@ -594,7 +594,7 @@ func TestExternalDestinationDoesNotAdministerSomeoneElsesBucket(t *testing.T) {
 // credential. Reading the endpoint from the credential Secret would mean
 // whoever can edit that Secret can redirect every tenant's backups — so a
 // configured destination carries its address as a literal, and only the keys
-// come from the credential manager.
+// come from the custodian.
 func TestConfiguredEndpointIsNotReadFromTheCredential(t *testing.T) {
 	p := params()
 	p.Endpoint = "https://sos-ch-gva-2.exo.io"

@@ -1335,7 +1335,7 @@ _claim_cluster_fields() {
     printf '\n'
     printf '  # Where mail goes.\n'
     printf '  #   external  relay through an SMTP provider; supply the smtp-relay\n'
-    printf '  #             credential to the credential manager after install\n'
+    printf '  #             credential to the custodian after install\n'
     printf '  #   system    in-cluster Postfix/Dovecot; requires networkMode static-ip\n'
     printf '  mail:\n'
     printf '    serviceMode: %s\n' "${mm}"
@@ -1847,7 +1847,7 @@ EOF
     # Public by default, and that is a real shape rather than a degenerate
     # one: spec.credential is optional precisely so a public repository does
     # not have to name a vault path for a secret that does not exist, which
-    # would then sit in the credential manager as a requirement nobody can
+    # would then sit in the custodian as a requirement nobody can
     # satisfy. A mirror sets the matching AUTH and gets the credential block.
     local _repo_role _repo_url _repo_branch _repo_auth _repo_file _repo_xrd_role _repo_auth_var
     for _repo_role in gentian-os gentian-apps gentian-ui; do

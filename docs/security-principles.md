@@ -20,7 +20,7 @@ tokens; workloads hold audience-bound service-account tokens (SPIFFE when
 needed); agents hold RFC 8693 exchanged tokens carrying `act`. A component
 that accepts `X-Whoever: alice` has no identity, it has an opinion.
 
-*Pattern:* the credential manager — forwards the caller's token, never parses
+*Pattern:* the custodian — forwards the caller's token, never parses
 it, lets the issuer's verdict stand.
 
 ## 2. Three questions, three answerers, no overlap
@@ -39,7 +39,7 @@ separates is authority, not copies.
 
 The gateway (browser and API traffic), the **publishing proxy** (everything
 anonymous or protocol-authenticated, in a DMZ namespace), the director
-(configuration writes), the credential manager (secret writes), the MCP
+(configuration writes), the custodian (secret writes), the MCP
 gateway (agent tool calls). The proxy is one of these because it decides:
 `none`, `basic` and `signature` are verified there and nowhere else, and it
 is the only component both kinds of perimeter entry pass through. Being a PEP
