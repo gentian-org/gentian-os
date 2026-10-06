@@ -1065,6 +1065,22 @@ print_summary_cp() {
         print_portal_login_summary
     fi
     echo ""
+    # The first tenant, when the install created one: where its people sign
+    # in, and that the bare domain leads there rather than to the console
+    # above. Said here because it is the one thing about this cluster's
+    # addresses that a person would otherwise find out by being surprised.
+    local first_tenant
+    first_tenant="$(gentian_first_tenant)"
+    if [[ -n "${first_tenant}" ]]; then
+        echo -e "${GREEN}  First tenant (this cluster's users):${NC}"
+        echo -e "${GREEN}    URL      : https://console.${first_tenant}.${KERNEL_DOMAIN:-<kernel-domain>}/${NC}"
+        echo -e "${GREEN}    User     : admin@${first_tenant}.${KERNEL_DOMAIN:-<kernel-domain>} — activated through its own link; a new one:${NC}"
+        echo -e "${GREEN}               kubectl gentian tenants activate-admin ${first_tenant}${NC}"
+        echo -e "${GREEN}    Bare domain: while ${first_tenant} is the only tenant, https://${KERNEL_DOMAIN:-<kernel-domain>}/ leads${NC}"
+        echo -e "${GREEN}               to its sign-in. Cluster administrators sign in at the platform${NC}"
+        echo -e "${GREEN}               console above, by its own address.${NC}"
+        echo ""
+    fi
     # Where tenants come from next. Named here rather than left to the docs:
     # this is the screen an operator has in front of them when they go
     # looking for what to do next. Both are clients of the director.
@@ -2129,6 +2145,12 @@ EOF
         generated=1
     fi
 
+    # The first user tenant, when the install is told one: beside the
+    # platform tenant, committed with it.
+    if scaffold_first_tenant "${cluster}"; then
+        generated=1
+    fi
+
     # No cluster-settings.env is written. Everything it carried that describes
     # the cluster is a field on claims/cluster.yaml, emitted above by
     # _claim_cluster_fields and read back by claim_setting before Crossplane
@@ -2254,6 +2276,225 @@ _claims_this_checkout_cannot_apply() {
 # never arrive.
 _cluster_scaffold_paths() {
     printf '%s\n' "clusters/$1/kernel" "clusters/$1/tenants/platform" "clusters/$1/catalogue"
+    # And the first user tenant, when this install wrote one. Only then: a
+    # path that does not exist fails `git add` for all of them, and a tenant
+    # the director wrote is not this step's to commit.
+    local first
+    first="$(gentian_first_tenant)"
+    if [[ -n "${first}" ]]; then
+        printf '%s\n' "clusters/$1/tenants/${first}"
+    fi
+}
+
+# =============================================================================
+# The first user tenant.
+#
+# A cluster's users live in a tenant of their own; the platform tenant holds
+# the administrators and takes no apps (docs/design/multi-tenancy.md §3).
+# Every later tenant is created through the director. The first one cannot
+# be: before the cluster exists there is no director, which is the case the
+# platform tenant's scaffold is already written for. So when the install is
+# told a name (GENTIAN_FIRST_TENANT, asked in step 0 or set in install.env),
+# step 0 writes that tenant beside the platform's and commits both, E-01
+# waits for it, and the handover issues its administrator's activation link.
+# With no name, none of this does anything.
+# =============================================================================
+
+# Why the first tenant is admitted before the administrator has signed in,
+# as the annotation the tenant webhook asks for. It is also how a later run
+# recognises the tenant an earlier one wrote: the answer to step 0's question
+# is in the deployments tree, like every other answer, and not in a state
+# file beside the installer.
+FIRST_TENANT_OVERRIDE_REASON="created by the install as this cluster's first tenant, before the administrator's first sign-in"
+
+# first_tenant_name_problem <name> — what is wrong with <name> as a tenant's
+# name, or nothing when it is fine. The first rule is the director's
+# (gitops.ValidName); the names refused beside it are ones the cluster
+# already uses for something else.
+first_tenant_name_problem() {
+    local name="$1" realm="${KERNEL_REALM:-kernel}"
+    if [[ ! "${name}" =~ ^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$ ]]; then
+        echo "a tenant name is a DNS label: lower-case letters, digits and hyphens, starting and ending with a letter or digit"
+        return 0
+    fi
+    case "${name}" in
+        platform)
+            echo "platform is the platform tenant, which every cluster has already" ;;
+        default)
+            echo "default is reserved for the cluster-wide backup policy" ;;
+        master|"${realm}")
+            echo "a tenant's realm carries its name, and ${name} is a realm the identity provider already has" ;;
+    esac
+    return 0
+}
+
+# _first_tenant_written_by_install <tenant.yaml> — does this manifest carry
+# the install's own reason?
+_first_tenant_written_by_install() {
+    [[ -f "$1" ]] && grep -qF "${FIRST_TENANT_OVERRIDE_REASON}" "$1"
+}
+
+# gentian_first_tenant — the tenant this install wrote as the cluster's
+# first, or nothing.
+#
+# The one named for this run when its manifest is the install's; otherwise
+# whichever manifest in this cluster's definition is. A name whose manifest
+# is absent, or was written by the director, answers nothing: there is then
+# no tenant for the install to wait for or hand over, and saying otherwise
+# would have a step wait fifteen minutes for a tenant nobody declared.
+gentian_first_tenant() {
+    local tenants_dir="${GENTIAN_DEPLOYMENTS_PATH:-}/clusters/${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-}/tenants"
+    local name="${GENTIAN_FIRST_TENANT:-}" f
+    [[ -d "${tenants_dir}" ]] || return 0
+    if [[ -n "${name}" ]] && _first_tenant_written_by_install "${tenants_dir}/${name}/tenant.yaml"; then
+        printf '%s\n' "${name}"
+        return 0
+    fi
+    for f in "${tenants_dir}"/*/tenant.yaml; do
+        if _first_tenant_written_by_install "${f}"; then
+            basename "$(dirname "${f}")"
+            return 0
+        fi
+    done
+    return 0
+}
+
+# resolve_first_tenant — refuse a first tenant that cannot be, before
+# anything is written. Nothing to do when none is named.
+resolve_first_tenant() {
+    local name="${GENTIAN_FIRST_TENANT:-}" problem
+    if [[ -z "${name}" ]]; then
+        return 0
+    fi
+    problem="$(first_tenant_name_problem "${name}")"
+    if [[ -n "${problem}" ]]; then
+        error "GENTIAN_FIRST_TENANT=${name} cannot be this cluster's first tenant:"
+        error "  ${problem}."
+        return 1
+    fi
+    if [[ "${TENANCY_MODE:-multi}" == "single" ]]; then
+        error "GENTIAN_FIRST_TENANT=${name}, and this cluster's tenancyMode is single."
+        error "  Under that mode the platform tenant is the only tenant and the cluster"
+        error "  refuses every other, so the tenant would be committed and never arrive."
+        error "  A cluster for one organisation is tenancyMode multi with one tenant:"
+        error "  set tenancyMode: multi in claims/cluster.yaml, or name no first tenant."
+        return 1
+    fi
+    export GENTIAN_FIRST_TENANT
+    return 0
+}
+
+# scaffold_first_tenant <cluster> — write the first tenant's manifest when it
+# is named and may be written. Returns 0 when it wrote something.
+#
+# The manifest is the one the director writes for a new tenant (tenantManifest
+# in internal/director/gitops/tenants.go), plus the annotation that admits it
+# before the handover. Three cases write nothing, and each says why:
+#
+#   - The tenant has a manifest already. Never rewritten: a second run finds
+#     the first one's work, and a tenant the director made is the director's.
+#   - The cluster's definition already holds another tenant for users. Then
+#     this is not the first, and tenants after the first are created through
+#     the director, which checks who is asking and commits as that person.
+#   - The tenant was in this cluster's definition before and was removed. A
+#     retired tenant keeps its data unless it was purged, and an install run
+#     must not quietly attach a new tenant to it.
+scaffold_first_tenant() {
+    local cluster="$1" name="${GENTIAN_FIRST_TENANT:-}"
+    [[ -n "${name}" ]] || return 1
+    local tenants_dir="${GENTIAN_DEPLOYMENTS_PATH}/clusters/${cluster}/tenants"
+    local dir="${tenants_dir}/${name}" rel="clusters/${cluster}/tenants/${name}/tenant.yaml"
+    local f other others=""
+
+    if [[ -f "${dir}/tenant.yaml" ]]; then
+        if ! _first_tenant_written_by_install "${dir}/tenant.yaml"; then
+            info "clusters/${cluster}/tenants/${name} exists and was not written by the install: left as it is."
+            info "  Hand its administrator over with: kubectl gentian tenants activate-admin ${name}"
+        fi
+        return 1
+    fi
+    for f in "${tenants_dir}"/*/tenant.yaml; do
+        [[ -f "${f}" ]] || continue
+        other="$(basename "$(dirname "${f}")")"
+        [[ "${other}" == "platform" ]] && continue
+        others="${others:+${others}, }${other}"
+    done
+    if [[ -n "${others}" ]]; then
+        warn "GENTIAN_FIRST_TENANT=${name} was not written: this cluster's definition already"
+        warn "  holds ${others}, so ${name} would not be its first tenant. Create it"
+        warn "  through the director once the cluster is up:"
+        warn "    kubectl gentian tenants create ${name}"
+        return 1
+    fi
+    if [[ -n "$(git -C "${GENTIAN_DEPLOYMENTS_PATH}" log -1 --format=%H -- "${rel}" 2>/dev/null || true)" ]]; then
+        warn "GENTIAN_FIRST_TENANT=${name} was not written: clusters/${cluster}/tenants/${name}"
+        warn "  was part of this cluster's definition before and was removed. A retired"
+        warn "  tenant keeps its data unless it was purged, so the install does not bring"
+        warn "  the name back by itself. Create it through the director, or name another:"
+        warn "    kubectl gentian tenants create ${name}"
+        return 1
+    fi
+
+    # A YAML double-quoted scalar: what a person typed, on one line.
+    local display="${GENTIAN_FIRST_TENANT_DISPLAY_NAME:-${name}}"
+    display="$(printf '%s' "${display}" | tr -d '\r\n' | sed 's/[\\"]/\\&/g')"
+
+    mkdir -p "${dir}"
+    cat > "${dir}/tenant.yaml" <<EOF
+# Tenant ${name}: this cluster's first tenant, written by the install.
+#
+# The cluster's users live here, in a realm of their own. The platform tenant
+# beside it holds the cluster's administrators and takes no apps. Argo CD
+# syncs this file and the operator does the rest: the Keycloak realm, the
+# namespaces, the database, and the desktop at console.${name}.<kernel>.
+# While this is the only tenant for users, the cluster's bare domain leads
+# to that console.
+apiVersion: gentianos.io/v1alpha1
+kind: Tenant
+metadata:
+  name: ${name}
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+    # The cluster holds tenants back until its administrator has signed in
+    # once. This one is created before anybody could have, and holds nothing
+    # yet; the value is the reason, which the tenant webhook requires.
+    gentianos.io/handover-override: "${FIRST_TENANT_OVERRIDE_REASON}"
+spec:
+  displayName: "${display}"
+  # The administrator account has no password until its holder sets one,
+  # through a single-use link the handover issues (afterwards:
+  # kubectl gentian tenants activate-admin).
+  admin:
+    requireMFA: true
+  isolation:
+    # A namespace per tenant and a realm of its own. The realm is what keeps
+    # this tenant's people apart from the cluster's administrators.
+    mode: namespace
+    keycloakRealm: ${name}
+    databasePrefix: ${name}_
+    s3Prefix: ${name}-
+  # Retain, so retiring the tenant does not take its data with it. Changing
+  # this to Delete is a deliberate, reviewable edit.
+  deletionPolicy: Retain
+  # The base plan's capacity, which is what every tenant starts on.
+  quotas:
+    requestsCpu: "4"
+    requestsMemory: 16Gi
+    cpu: "16"
+    memory: 32Gi
+    storage: 50Gi
+    maxApps: 20
+  # Apps are installed through the director, which appends to this list.
+  apps: []
+EOF
+    cat > "${dir}/kustomization.yaml" <<EOF
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+- tenant.yaml
+EOF
+    info "Scaffolded clusters/${cluster}/tenants/${name} (the first tenant)"
+    return 0
 }
 
 # _scaffold_default_profiles <cluster> -- the Gentian Corp entries a vanilla

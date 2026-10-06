@@ -345,6 +345,41 @@ check() {
     esac
 }
 
+# _e03_hand_over_first_tenant — the first tenant's administrator account,
+# handed over beside the cluster administrator's and the same way.
+#
+# Only for a tenant the install itself created (gentian_first_tenant), and
+# only once it is Ready: before that its realm or its administrator account
+# may not exist, and E-01 has already said what the tenant is waiting for.
+# The account is another person's, in another realm. Activating it proves
+# nothing about the cluster's write path, so it does not finish the handover,
+# and the screen says so: the tenant was admitted ahead of that proof on the
+# strength of holding nothing, which stops being true once somebody uses it.
+#
+# Assumes portal-login-bootstrap.sh is sourced, as its one caller has done.
+_e03_hand_over_first_tenant() {
+    local tenant
+    tenant="$(gentian_first_tenant)"
+    [[ -n "${tenant}" ]] || return 0
+    echo ""
+    warn "  This cluster's first tenant, ${tenant} — its users sign in here, not above:"
+    warn "  https://console.${tenant}.${KERNEL_DOMAIN:-<kernel-domain>}/"
+    if [[ "$(kubectl get tenant "${tenant}" -o jsonpath='{.status.phase}' 2>/dev/null)" != "Ready" ]]; then
+        warn "  Tenant/${tenant} is not Ready yet, so its administrator account cannot be"
+        warn "  handed over from here. Once it is:"
+        warn "    kubectl gentian tenants activate-admin ${tenant}"
+        return 0
+    fi
+    issue_tenant_admin_activation "${tenant}" "${GENTIAN_FIRST_TENANT_RECOVERY_EMAIL:-}" ||
+        warn "  No activation link could be issued for ${tenant}'s administrator; later: kubectl gentian tenants activate-admin ${tenant}"
+    info "  That is the tenant's administrator, in the tenant's own realm. The sign-in"
+    info "  this install waits for is the cluster administrator's, above: do that one"
+    info "  first, before the tenant is given anything to keep."
+    info "  https://${KERNEL_DOMAIN:-<kernel-domain>}/ leads to ${tenant}'s sign-in while it is the"
+    info "  only tenant; the cluster administrator's console is reached by its own name."
+    return 0
+}
+
 # _wait_for_sign_in — hold the install open while a human signs in.
 #
 # This is the whole reason handover used to take three commands. Everything
@@ -429,6 +464,7 @@ _wait_for_sign_in() {
         source "${SCRIPT_DIR}/scripts/lib/portal-login-bootstrap.sh"
         issue_platform_admin_activation ||
             warn "  No activation link could be issued; re-run ./install.sh to try again."
+        _e03_hand_over_first_tenant
     fi
     echo ""
 

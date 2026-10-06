@@ -428,7 +428,11 @@ ensure_cluster_deployment() {
         explain_issuer_mode
         prompt_mail_mode
         prompt_cluster_settings
+        prompt_first_tenant
     fi
+    # A first tenant named in install.env is acted on whether or not anything
+    # was asked: a cluster whose claim exists already is not interviewed.
+    resolve_first_tenant || return 1
     scaffold_cluster_deployment
 }
 

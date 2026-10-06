@@ -1768,34 +1768,44 @@ install_portal_login() {
     info "  user: admin@${KERNEL_DOMAIN} — activated through the link the handover issues"
 }
 
-# platform_admin_requires_mfa — whether the platform administrator must enrol
-# a second factor: the platform tenant's spec.admin.requireMFA, true unless it
-# says false. The same setting, in the same place, as every tenant's.
-platform_admin_requires_mfa() {
-    local file="${GENTIAN_DEPLOYMENTS_PATH:-}/clusters/${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-}/tenants/platform/tenant.yaml"
+# tenant_admin_requires_mfa <tenant> — whether that tenant's administrator
+# must enrol a second factor: its manifest's spec.admin.requireMFA, true
+# unless it says false. The same setting, in the same place, for the platform
+# tenant and for every other.
+tenant_admin_requires_mfa() {
+    local file="${GENTIAN_DEPLOYMENTS_PATH:-}/clusters/${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-}/tenants/$1/tenant.yaml"
     local v=""
     [[ -f "${file}" ]] && v="$(yq eval '.spec.admin.requireMFA' "${file}" 2>/dev/null || true)"
     [[ "${v}" == "false" ]] && echo false || echo true
 }
 
-# issue_platform_admin_activation — hand the platform administrator account
-# to its holder, once, at the handover.
+# platform_admin_requires_mfa — the platform administrator's.
+platform_admin_requires_mfa() {
+    tenant_admin_requires_mfa platform
+}
+
+# issue_admin_activation <realm> <username> <require-mfa> <recovery-email> <again>
+# — hand one administrator account to its holder, once.
 #
-# An account that already has a password is left alone: it has been
-# activated, and its holder signs in with what they chose. Otherwise a
-# single-use, expiring link is issued -- set a password, and enrol a second
-# factor unless the platform tenant opts out -- and mailed to a recovery
-# address when there is one (CLUSTER_ADMIN_RECOVERY_EMAIL, or asked for here),
-# or shown here, once, when there is not, or when the mail cannot go yet
-# (a relay credential is supplied after this sign-in on an external-mail
-# cluster). The link comes straight from Keycloak to this terminal over a
-# Service address or port-forward; it is never written to a pod's log.
+# The account of a realm's administrator: the cluster's, in the kernel realm,
+# or a tenant's, in the tenant's own. One function for both, because the
+# practice is one: an account that already has a password is left alone -- it
+# has been activated, and its holder signs in with what they chose. Otherwise
+# a single-use, expiring link is issued -- set a password, and enrol a second
+# factor when <require-mfa> is true -- and mailed to <recovery-email> when
+# there is one (or to the address asked for here), or shown here, once, when
+# there is not, or when the realm cannot send mail yet (a relay credential is
+# supplied after the administrator's sign-in on an external-mail cluster).
+# The link comes straight from Keycloak to this terminal over a Service
+# address or port-forward; it is never written to a pod's log.
+#
+# <again> is the command that issues a new link later, named where the
+# account turns out to be activated already.
 #
 # Prints what to do; returns 0 when the account is usable or a link was handed
 # over, 1 when nothing could be issued.
-issue_platform_admin_activation() {
-    local kernel_domain="${KERNEL_DOMAIN:?}" realm="${KERNEL_REALM:-kernel}"
-    local username="admin@${kernel_domain}" ns
+issue_admin_activation() {
+    local realm="$1" username="$2" require_mfa="$3" email="${4:-}" again="${5:-}" ns
     ns="$(_pl_identity_ns)"
     local kc_user kc_pass base token uid creds has_pw
     kc_user="$(kubectl get secret keycloak-admin -n "${ns}" -o jsonpath='{.data.username}' 2>/dev/null | base64 -d 2>/dev/null || true)"
@@ -1820,13 +1830,17 @@ issue_platform_admin_activation() {
     # that has a password, which is how a holder who lost it gets back in.
     if [[ "${has_pw}" == "true" && "${GENTIAN_ACTIVATE_FORCE:-0}" != "1" ]]; then
         info "  ${username} is activated: sign in with the password its holder chose."
-        info "  Lost it? A new link: ./install.sh --activate-admin"
+        if [[ -n "${again}" ]]; then
+            info "  Lost it? A new link: ${again}"
+        fi
         return 0
     fi
 
     local actions='["UPDATE_PASSWORD"]'
-    [[ "$(platform_admin_requires_mfa)" == "true" ]] && actions='["UPDATE_PASSWORD","CONFIGURE_TOTP"]'
-    local email="${CLUSTER_ADMIN_RECOVERY_EMAIL:-}" can_mail=false
+    if [[ "${require_mfa}" == "true" ]]; then
+        actions='["UPDATE_PASSWORD","CONFIGURE_TOTP"]'
+    fi
+    local can_mail=false
     # Whether this realm can send mail now. With an external relay the
     # credential arrives through the console, after this sign-in -- so a
     # tunnel cluster, or any cluster whose relay is not supplied yet, cannot
@@ -1837,8 +1851,8 @@ issue_platform_admin_activation() {
         can_mail=true
     fi
     if [[ "${can_mail}" != "true" ]]; then
-        info "  The realm has no mail server yet (the relay is supplied after this"
-        info "  sign-in), so the link is shown here rather than mailed."
+        info "  Realm ${realm} has no mail server yet (the relay is supplied after the"
+        info "  administrator's sign-in), so the link is shown here rather than mailed."
     fi
     if [[ "${can_mail}" == "true" && -z "${email}" && -t 0 && "${GENTIAN_NONINTERACTIVE:-0}" != "1" ]]; then
         printf '  Recovery email for %s (Enter to show the link here instead): ' "${username}"
@@ -1852,8 +1866,8 @@ issue_platform_admin_activation() {
         | jq -r '.[0].rootUrl // .[0].baseUrl // empty' 2>/dev/null)"
     [[ -n "${redirect}" ]] && redirect="${redirect%/}/"
     if [[ -n "${email}" && "${can_mail}" != "true" ]]; then
-        # Given ahead of time (CLUSTER_ADMIN_RECOVERY_EMAIL): kept as the
-        # recovery address for later resets, not mailed to now.
+        # Given ahead of time (in install.env): kept as the recovery address
+        # for later resets, not mailed to now.
         local cur0 upd0
         cur0="$(curl -sS --max-time 15 -H "${auth}" "${base}/admin/realms/${realm}/users/${uid}")"
         upd0="$(printf '%s' "${cur0}" | jq --arg e "${email}" '.email = $e | .attributes["gentian.inviteEmail"] = [$e]')"
@@ -1895,6 +1909,36 @@ issue_platform_admin_activation() {
     [[ -n "${expires}" ]] && info "  Valid until $(date -d "@${expires}" 2>/dev/null || date -r "${expires}" 2>/dev/null || echo "${expires}")."
     info "  It sets the password$( [[ "${actions}" == *TOTP* ]] && echo ' and a second factor'); nobody else ever knows either."
     return 0
+}
+
+# issue_platform_admin_activation — the cluster administrator's account, in
+# the kernel realm (CLUSTER_ADMIN_RECOVERY_EMAIL, or asked for).
+issue_platform_admin_activation() {
+    local kernel_domain="${KERNEL_DOMAIN:?}" realm="${KERNEL_REALM:-kernel}"
+    issue_admin_activation "${realm}" "admin@${kernel_domain}" "$(platform_admin_requires_mfa)" \
+        "${CLUSTER_ADMIN_RECOVERY_EMAIL:-}" "./install.sh --activate-admin"
+}
+
+# issue_tenant_admin_activation <tenant> [recovery-email] — a tenant
+# administrator's account, in the tenant's own realm.
+#
+# For the first tenant, which the install created: after that, and for every
+# other tenant, the registrar issues these (kubectl gentian tenants
+# activate-admin), as the person who asked. The realm and the login are the
+# operator's: a tenant's realm carries its name unless its manifest says
+# otherwise, and its administrator's login is the address the operator reports
+# on the tenant's status, which is on the tenant's custom domain when it has
+# one.
+issue_tenant_admin_activation() {
+    local tenant="$1" email="${2:-}" realm username
+    realm="$(kubectl get tenant "${tenant}" -o jsonpath='{.spec.isolation.keycloakRealm}' 2>/dev/null || true)"
+    realm="${realm:-${tenant}}"
+    username="$(kubectl get tenant "${tenant}" -o jsonpath='{.status.adminEmail}' 2>/dev/null || true)"
+    case "${username}" in
+        ""|*.invalid) username="admin@${tenant}.${KERNEL_DOMAIN:?}" ;;
+    esac
+    issue_admin_activation "${realm}" "${username}" "$(tenant_admin_requires_mfa "${tenant}")" \
+        "${email}" "kubectl gentian tenants activate-admin ${tenant}"
 }
 
 print_portal_login_summary() {

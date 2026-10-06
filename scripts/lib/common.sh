@@ -1536,6 +1536,40 @@ prompt_cluster_settings() {
     return 0
 }
 
+# prompt_first_tenant — whether the install creates a tenant for this
+# cluster's users, and what it is called. Interview only.
+#
+# No default: a cluster with no first tenant is what an install has always
+# produced, and Enter keeps it that way. An environment value answers without
+# a question, as for every other setting; an unattended run that sets none
+# gets none. A name typed here that cannot be a tenant's is asked again, and
+# one given in the environment is refused by resolve_first_tenant instead.
+prompt_first_tenant() {
+    local given="${GENTIAN_FIRST_TENANT:-}" problem
+    echo ""
+    info "First tenant — where this cluster's users live."
+    info "  The platform tenant holds the cluster's administrators and takes no apps."
+    info "  Name a tenant and the install creates it; while it is the only one, the"
+    info "  cluster's bare domain leads straight to its sign-in. Enter for none:"
+    info "  tenants are then created after the install, through the console."
+    prompt_claim_value GENTIAN_FIRST_TENANT "first tenant (a name; blank = none)" ""
+    while [[ -z "${given}" && -n "${GENTIAN_FIRST_TENANT:-}" ]]; do
+        problem="$(first_tenant_name_problem "${GENTIAN_FIRST_TENANT}")"
+        [[ -n "${problem}" ]] || break
+        warn "'${GENTIAN_FIRST_TENANT}': ${problem}."
+        GENTIAN_FIRST_TENANT=""
+        prompt_claim_value GENTIAN_FIRST_TENANT "first tenant (a name; blank = none)" ""
+    done
+    if [[ -z "${GENTIAN_FIRST_TENANT:-}" ]]; then
+        _decided "no first tenant: create tenants after the install (kubectl gentian tenants create)."
+        return 0
+    fi
+    prompt_claim_value GENTIAN_FIRST_TENANT_DISPLAY_NAME "its display name" "${GENTIAN_FIRST_TENANT}"
+    _decided "the cluster's administrators sign in at console.${KERNEL_DOMAIN:-<kernel-domain>}, this tenant's"
+    _decided "  people at console.${GENTIAN_FIRST_TENANT}.${KERNEL_DOMAIN:-<kernel-domain>}."
+    return 0
+}
+
 
 prompt_network_mode() {
     if [[ -n "${NETWORK_MODE:-}" ]]; then
