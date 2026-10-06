@@ -222,7 +222,7 @@ func (r *TenantReconciler) syncKernelMailDNS(ctx context.Context, dkimPublicKey 
 
 	// SPF and DMARC for the kernel domain, on the same terms as every tenant's.
 	//
-	// Skipped when a Tenant already owns the domain — single-tenant clusters give
+	// Skipped when a Tenant already owns the domain — TENANCY_MODE=single gives
 	// the tenant the kernel domain itself, and two endpoints writing one name is
 	// how external-dns ends up flapping between two owners' ideas of it.
 	ownedByTenant, err := r.kernelDomainOwnedByTenant(ctx)
@@ -359,7 +359,7 @@ func (r *TenantReconciler) kernelMailAddress(ctx context.Context) string {
 }
 
 // kernelDomainOwnedByTenant reports whether some Tenant's mail domain IS the
-// kernel domain, which is the normal arrangement on a single-tenant cluster.
+// kernel domain, which is the arrangement under TENANCY_MODE=single.
 //
 // The per-tenant endpoint then already publishes the MX, SPF and DMARC for that
 // name, and publishing them here as well would give one name two owners with no

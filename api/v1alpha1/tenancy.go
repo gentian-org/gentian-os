@@ -25,8 +25,10 @@ const (
 	// {sub}.{tenant}.{kernelDomain} unless a TenantDomain binds a custom domain.
 	TenancyModeMulti = "multi"
 
-	// TenancyModeSingle is for dedicated single-tenant clusters: the platform
-	// tenant is the only one, flat app URLs on {sub}.{kernelDomain}.
+	// TenancyModeSingle is an older arrangement: the platform tenant is the
+	// only tenant, with flat URLs on {sub}.{kernelDomain}. It is not what a
+	// single-tenant cluster is -- that is the platform tenant plus exactly one
+	// user tenant, under TenancyModeMulti, and nothing selects it.
 	TenancyModeSingle = "single"
 
 	// SingleTenantName is the one Tenant a single-tenancy cluster carries: the

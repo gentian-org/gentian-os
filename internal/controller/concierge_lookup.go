@@ -38,13 +38,15 @@ import (
 // concierge runs: a component of the platform tenant, published from its DMZ.
 const conciergeLookupConfigMap = "concierge-lookup"
 
-// conciergeSingleKey is the one file that is not a domain's: on a cluster
-// with one tenant it names that tenant's console, and the page sends
-// everybody there without asking for an address.
+// conciergeSingleKey is the one file that is not a domain's: while the
+// cluster has exactly one user tenant it names that tenant's console, and the
+// page sends everybody there without asking for an address.
 const conciergeSingleKey = "_single.json"
 
-// ConciergeLookupReconciler projects the tenants' custom domains into that
-// ConfigMap. Every tenant event re-derives the whole of it, under one key.
+// ConciergeLookupReconciler projects the tenants' custom domains, and the
+// fact that there is exactly one user tenant, into that ConfigMap. Every
+// tenant event re-derives the whole of it, under one key, so the forward
+// starts and stops with the tenants and nobody switches it.
 type ConciergeLookupReconciler struct {
 	client.Client
 	KernelDomain string
@@ -74,8 +76,35 @@ func conciergeLookupKey(domain string) string {
 	return hex.EncodeToString(sum[:]) + ".json"
 }
 
+// soleUserTenant is the one tenant a single-tenant cluster's users live in,
+// or nil when the cluster is not one.
+//
+// Single-tenant is a property of what exists: the platform tenant and
+// exactly one user tenant. The platform tenant -- the one that adopts the
+// kernel realm -- is never counted: its people are the cluster's
+// administrators and it runs no apps. A tenant being deleted is not counted
+// either; it is on its way out, and counting it would keep a cluster of two
+// from becoming a cluster of one until the last finalizer cleared.
+func soleUserTenant(tenants []gentianov1alpha1.Tenant, kernelRealm string) *gentianov1alpha1.Tenant {
+	if kernelRealm == "" {
+		kernelRealm = "kernel"
+	}
+	var sole *gentianov1alpha1.Tenant
+	for i := range tenants {
+		t := &tenants[i]
+		if t.DeletionTimestamp != nil || tenantAdoptsKernelRealm(t, kernelRealm) {
+			continue
+		}
+		if sole != nil {
+			return nil
+		}
+		sole = t
+	}
+	return sole
+}
+
 // conciergeLookupData is the ConfigMap's contents for these tenants.
-func conciergeLookupData(tenants []gentianov1alpha1.Tenant, kernelDomain, tenancyMode string) map[string]string {
+func conciergeLookupData(tenants []gentianov1alpha1.Tenant, kernelDomain, kernelRealm, tenancyMode string) map[string]string {
 	data := map[string]string{}
 	for i := range tenants {
 		t := &tenants[i]
@@ -85,9 +114,16 @@ func conciergeLookupData(tenants []gentianov1alpha1.Tenant, kernelDomain, tenanc
 		body, _ := json.Marshal(map[string]string{"url": "https://" + consoleHost(t.EffectiveDomain(kernelDomain, tenancyMode)) + "/"})
 		data[conciergeLookupKey(t.Status.Domain)] = string(body)
 	}
-	if gentianov1alpha1.NormalizeTenancyMode(tenancyMode) == gentianov1alpha1.TenancyModeSingle && kernelDomain != "" {
-		body, _ := json.Marshal(map[string]string{"url": "https://" + consoleHost(kernelDomain) + "/"})
-		data[conciergeSingleKey] = string(body)
+	// The forward of a single-tenant cluster. Only once the tenant is Ready:
+	// before that its console does not answer, and a browser sent to a name
+	// that is not published yet remembers that it is missing. And never to
+	// the kernel's own console, which is the administrators': a tenant whose
+	// domain is the kernel domain has no console of its own to be sent to.
+	if sole := soleUserTenant(tenants, kernelRealm); sole != nil && sole.Status.Phase == gentianov1alpha1.TenantPhaseReady {
+		if domain := sole.EffectiveDomain(kernelDomain, tenancyMode); domain != "" && !servedByKernelEdge(domain, kernelDomain) {
+			body, _ := json.Marshal(map[string]string{"url": "https://" + consoleHost(domain) + "/"})
+			data[conciergeSingleKey] = string(body)
+		}
 	}
 	return data
 }
@@ -97,7 +133,7 @@ func (r *ConciergeLookupReconciler) Reconcile(ctx context.Context, _ ctrl.Reques
 	if err := r.List(ctx, tenants); err != nil {
 		return ctrl.Result{}, err
 	}
-	data := conciergeLookupData(tenants.Items, r.KernelDomain, r.TenancyMode)
+	data := conciergeLookupData(tenants.Items, r.KernelDomain, r.KernelRealm, r.TenancyMode)
 	namespace := platformTenantNamespace(tenants.Items, r.KernelRealm)
 	if namespace == "" {
 		// No platform tenant yet, so nowhere the concierge could run. Its

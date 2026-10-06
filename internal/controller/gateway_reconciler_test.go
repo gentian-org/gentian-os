@@ -749,7 +749,7 @@ func TestTheKeycloakConsoleKeepsItsOwnBearer(t *testing.T) {
 	t.Fatal("the admin console route is missing")
 }
 
-// On a single-tenant cluster the one tenant is on the kernel domain, which the
+// Under TENANCY_MODE=single the one tenant is on the kernel domain, which the
 // kernel's catch-all listener already serves. A *.<kernel> tenant listener
 // beside it would be the more specific match for argocd.<kernel> and every
 // other kernel host, and route them nowhere.

@@ -447,7 +447,7 @@ const (
 // own certificate for its subdomains. There is no apex variant: the tenant apex
 // is covered by the kernel certificate and served by the catch-all listener.
 // servedByKernelEdge reports a tenant whose domain is the kernel domain: the
-// single tenant of a single-tenant cluster. The kernel's catch-all listener,
+// platform tenant under TENANCY_MODE=single. The kernel's catch-all listener,
 // certificate and DNS already cover every name under it, so the tenant gets
 // none of its own -- a *.<kernel> tenant listener would be the more specific
 // match for kernel hosts too, and route them nowhere.
