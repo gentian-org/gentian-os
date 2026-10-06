@@ -639,6 +639,43 @@ does not exist yet that something cannot be the Composition.
   - `[ ]` Decide whether the plaintext echo is wanted at all.
   - `[ ]` Pass the password by reference rather than by value.
 
+### 1.34 Investigate Token Exchange Between Platform Services (**) — optional
+* **Target Domain**: Identity & Authorization
+* **Context**: A console's backend relays the person's one zone token to
+  whichever platform service it calls — the director, the custodian, the
+  usher. Every one of them accepts the same audience, so a token taken from
+  any of them, or from the backend, is good at all of them for its lifetime.
+  Exchanging it per service (RFC 8693) would give each call a token only its
+  recipient accepts. It does not protect against a stolen administrator
+  token as such: whoever holds the original can exchange it too. What it
+  buys is that a service which is compromised or logs a token carelessly
+  cannot replay it at its neighbours.
+* **Proposed Solution**: Not decided. Investigate whether the narrower
+  replay window is worth an exchange on every relayed call and a client
+  credential in every backend, and whether the same mechanism should extend
+  to the apps a tenant installs.
+* **Backlog Items**:
+  - `[ ]` Measure what an exchange per relayed call costs, and where a cached exchanged token would have to live.
+  - `[ ]` Decide per service whether an audience of its own is wanted.
+  - `[ ]` Decide whether user-facing apps take part or stay on their own clients.
+
+### 1.35 A Credential per Client at the Authorization Store (**) — when available
+* **Target Domain**: Authorization
+* **Context**: OpenFGA is configured with preshared keys, and a preshared
+  key is all or nothing: every holder may read and write every relation.
+  The bouncer, the usher, the custodian and the director only ever ask
+  questions, yet each holds a key that could rewrite the store, so the claim
+  that only the operator writes rights rests on what their code does and not
+  on what their credential allows. OpenFGA's per-client access control, which
+  would let a key be limited to checks, is not a stable feature.
+* **Proposed Solution**: Once it is stable, give each process a credential
+  of its own, limited to what it does: check for the four readers, write for
+  the operator's projection alone.
+* **Backlog Items**:
+  - `[ ]` Track OpenFGA's access control until it is released as stable.
+  - `[ ]` Issue one credential per process, check-only for every reader.
+  - `[ ]` Prove with a test that a reader's credential is refused a write.
+
 ## 2. Platform, Infrastructure & Lifecycle
 
 ### 2.1 Keycloak Provider & Crossplane Consolidation (*)

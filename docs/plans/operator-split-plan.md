@@ -168,8 +168,9 @@ with a status URL, and status is served from the read-only client.
 ### 3.2 Operator
 
 Unchanged in role, smaller in surface. After decommissioning (§6 D) it has:
-no git clone init container, no `.git-credentials` mount, no lifecycle HTTP
-listener, no `GENTIAN_DEPLOYMENTS_*` env. It keeps `pods/exec` because purge
+no git clone init container, no `.git-credentials` mount, no
+`GENTIAN_DEPLOYMENTS_*` env, and an HTTP listener that only the director may
+call and that carries a short, closed list of commands (§3.11). It keeps `pods/exec` because purge
 needs it — but purge becomes a reconcile of desired state (app absent from
 `Tenant.spec.apps` and the App claim gone → teardown converges), which also
 fixes the current failure mode where a request that dies mid-purge leaves
@@ -563,6 +564,67 @@ not mistaken for the controls.
 | Launch rights ✅ | Tiles of installed catalogue apps need `can_launch` on `app:<t>/<p>`. The operator's projection writes `app#tenant` and `app#entitled` from `Tenant.spec.apps`, by the rule the portal applied: an app's own group entitles it, and a base with activated addons is entitled by the addons' groups. Every entry of `spec.apps`, and every addon activated inside one, is a `Component` the tenant reconciler creates and removes; the Component writes the App claim the app Composition answers, routes the app's exposures behind the zone's session, and asks `can_use` on the app at them. |
 | Concierge to the DMZ ✅ | A component of the platform tenant with one perimeter surface, `authMode: none`, published from `tenant-platform-dmz` with an owner and a review date. The brand files it serves today move with the branding work, not with this. |
 | Custodian ✅ | `credential manager` → `custodian` (package, executable, Deployment and ServiceAccount, Service, values, environment, the profile key `custodianUrlKey`, the consoles that call it). It left the operator's process for one of its own. It verifies the caller's token, asks the store `can_read_credential` or `can_write_credential` on the cluster or the tenant, and writes as itself with a vault role that cannot read a value. The exchange of a caller's token at the vault is gone, and with it what existed only for it: the vault's JWT role for cluster administrators, the per-tenant auth mounts and their group-bound roles, the director's audience on the vault's roles, and the `groups` scope on the zone clients. |
+
+### 3.11 The operator's command door
+
+The operator's input is git. That is the rule, and this section is the
+exception to it, kept on purpose and kept small.
+
+Some things a person asks for are not a state to declare but an act to
+perform once: take a backup now, delete that backup, restore from this
+bundle, send this notification, tear down what an uninstalled app left
+behind. Writing each as a commit would fill the deployments repository with
+entries that describe nothing the cluster should converge on, and a restore
+or a backup carries or produces material that must not be in git at all. So
+the operator keeps an HTTP listener for them, and the director is its only
+caller.
+
+**What goes through it.** The commands, all `POST …/actions/<verb>`:
+
+| Command | The director asks the store | What the operator does |
+| --- | --- | --- |
+| `backup` | `can_administer` on the tenant | creates the export request |
+| `delete-backup` | `can_administer` on the tenant | deletes one export and its bundle |
+| `bundles`, `bundles/inspect` | `can_configure` on the cluster | takes an uploaded bundle, or says what one contains |
+| `restore` | `can_configure` on the cluster | creates the restore request from an uploaded bundle |
+| `notify` | `can_administer` on the tenant | publishes one notification to the tenant's people |
+| `purge-app` | `can_install_app` on the tenant | removes the data of an app that is no longer installed |
+| `provision-app` | `can_grant` on the tenant | puts the tenant's people in an app's group again |
+
+and the reads of live state the director relays for the consoles (backups,
+schedules, resource usage, integrations, notifications, app status), which
+move to the usher (§3.10).
+
+**The rules of the door.**
+
+- *One caller.* The listener accepts the director's token and nothing else,
+  compared in constant time, and refuses every request when no token is
+  configured. It verifies no person and asks the store nothing: by the time
+  a command arrives the director has verified the caller and asked the
+  question in the table above. The name recorded against the act is the one
+  the director passes, and is worth something only because nobody else can
+  pass one.
+- *A closed list.* A command is added here by a change to this table and
+  to the director's route table together. Anything that can be expressed as
+  desired state is a commit instead and does not belong here. Installing an
+  app, removing one and setting its addons are the director's commits now;
+  the three routes that did them here are still registered, called by
+  nothing, and are to be deleted with the operator's git clone (§6 D).
+- *Nothing that changes who may do what.* No command writes a relation, a
+  group that carries a right, or a policy. Those are projections of what git
+  declares.
+- *An act, not a state.* Each command answers what was started. Whether it
+  finished is read from the object it created.
+
+**What this costs.** The director's token is a second standing credential
+in the director's process, beside the push credential, and it is a shared
+secret rather than an identity: whoever holds it can issue every command in
+the table for any tenant and name anybody as the actor. The commands are
+bounded — none reads a secret or grants a right — but `delete-backup` and
+`purge-app` destroy data. Two things would narrow this and neither is built:
+the operator verifying the director's ServiceAccount token instead of a
+shared string, and the operator re-asking the store with the person's
+subject rather than taking the director's word.
 
 ## 4. Bootstrap: writing configuration before Keycloak exists
 
