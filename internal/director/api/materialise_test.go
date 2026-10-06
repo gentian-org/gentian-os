@@ -229,27 +229,101 @@ func TestMaterialisingNeedsTheDigest(t *testing.T) {
 	}
 }
 
-// A catalogue this cluster has no source for is left alone: a cluster may
-// name a source for one and sync another wholesale.
-func TestAnUnknownCatalogueInstallsAsBefore(t *testing.T) {
+// An install comes from a catalogue source the cluster declares. A coordinate
+// in any other catalogue is refused before anything is written: it used to
+// proceed with no fetch, and the digest beside it was recorded unverified.
+func TestACoordinateFromAnUndeclaredCatalogueIsRefused(t *testing.T) {
+	src := catalogueSource(t, elementProfile)
+	h := startWithCatalogue(t, src, map[string]string{"main": src.URL})
+	tom := h.token(t, "tenant-demo", "tom")
+	before := h.tip(t)
+
+	for name, body := range map[string]string{
+		"with a digest":    fmt.Sprintf(`{"coordinate":"elsewhere/element","digest":%q}`, sha(elementProfile)),
+		"without a digest": `{"coordinate":"elsewhere/element"}`,
+		"for everyone":     fmt.Sprintf(`{"coordinate":"elsewhere/element","digest":%q,"defaultGrant":true}`, sha(elementProfile)),
+	} {
+		code, out := h.do(t, "POST", "/v1/tenants/demo/apps/element", tom, body)
+		if code != http.StatusUnprocessableEntity {
+			t.Fatalf("%s: install = %d %v, want 422", name, code, out)
+		}
+		// The refusal names the catalogue asked for and the ones there are.
+		said := fmt.Sprint(out["error"])
+		if !strings.Contains(said, `"elsewhere"`) || !strings.Contains(said, "catalogue sources: main.") {
+			t.Fatalf("%s: the refusal does not say what is declared: %q", name, said)
+		}
+	}
+	if h.tip(t) != before {
+		t.Fatal("a refused install moved the repository")
+	}
+}
+
+// A cluster that declares no source at all refuses every coordinate, and says
+// that it has none.
+func TestACoordinateIsRefusedWhereNoSourceIsDeclared(t *testing.T) {
+	h := start(t)
+	tom := h.token(t, "tenant-demo", "tom")
+	before := h.tip(t)
+
+	code, out := h.do(t, "POST", "/v1/tenants/demo/apps/element", tom,
+		fmt.Sprintf(`{"coordinate":"main/element","digest":%q}`, sha(elementProfile)))
+	if code != http.StatusUnprocessableEntity || !strings.Contains(fmt.Sprint(out["error"]), "declares no catalogue source") {
+		t.Fatalf("install = %d %v, want 422 saying no source is declared", code, out)
+	}
+	if h.tip(t) != before {
+		t.Fatal("a refused install moved the repository")
+	}
+}
+
+// A digest with no coordinate is a digest nothing can verify: there is no
+// source to fetch the bytes from. It is refused, on a new install and on one
+// that is there already.
+func TestADigestWithoutACoordinateIsRefused(t *testing.T) {
 	src := catalogueSource(t, elementProfile)
 	h := startWithCatalogue(t, src, map[string]string{"main": src.URL})
 	tom := h.token(t, "tenant-demo", "tom")
 
-	code, out := h.do(t, "POST", "/v1/tenants/demo/apps/element", tom,
-		`{"coordinate":"elsewhere/element"}`)
-	if code != http.StatusAccepted {
+	if code, out := h.do(t, "POST", "/v1/tenants/demo/apps/element", tom, ""); code != http.StatusAccepted {
 		t.Fatalf("install = %d %v", code, out)
 	}
-	// Nothing was materialised for a catalogue with no source.
-	log := dt.Git(t, "", "--git-dir", h.remote, "log", "--format=%s", "-5", "main")
-	if strings.Contains(log, "materialise") {
-		t.Fatalf("it materialised from a source it does not have:\n%s", log)
+	before := h.tip(t)
+	for _, app := range []string{"element", "wiki"} {
+		code, out := h.do(t, "POST", "/v1/tenants/demo/apps/"+app, tom, fmt.Sprintf(`{"digest":%q}`, sha(elementProfile)))
+		if code != http.StatusUnprocessableEntity || !strings.Contains(fmt.Sprint(out["error"]), "coordinate") {
+			t.Fatalf("%s: install = %d %v, want 422 asking for the coordinate", app, code, out)
+		}
 	}
-	// And a catalogue the caller only named is not written down as where the
-	// app came from.
-	if tenant := dt.RemoteFile(t, h.remote, dt.TenantPath("demo")); strings.Contains(tenant, "catalogue:") {
-		t.Fatalf("a catalogue nothing was fetched from was recorded:\n%s", tenant)
+	if h.tip(t) != before {
+		t.Fatal("a refused install moved the repository")
+	}
+	if tenant := dt.RemoteFile(t, h.remote, dt.TenantPath("demo")); strings.Contains(tenant, "digest:") {
+		t.Fatalf("an unverified digest was recorded:\n%s", tenant)
+	}
+}
+
+// A request with neither coordinate nor digest is not a pin and keeps working:
+// it installs a profile the cluster already holds, and on an installed app it
+// states who the app is for and nothing else.
+func TestAnInstallWithNeitherCoordinateNorDigestStillWorks(t *testing.T) {
+	src := catalogueSource(t, elementProfile)
+	h := startWithCatalogue(t, src, map[string]string{"main": src.URL})
+	tom := h.token(t, "tenant-demo", "tom")
+	digest := sha(elementProfile)
+
+	if code, out := h.do(t, "POST", "/v1/tenants/demo/apps/wiki", tom, ""); code != http.StatusAccepted || out["status"] != "installed" {
+		t.Fatalf("a bare install = %d %v", code, out)
+	}
+	if code, out := h.do(t, "POST", "/v1/tenants/demo/apps/element", tom,
+		fmt.Sprintf(`{"coordinate":"main/element","digest":%q}`, digest)); code != http.StatusAccepted {
+		t.Fatalf("a pinned install = %d %v", code, out)
+	}
+	// The access switch: defaultGrant alone, on a pinned app. The pin stays.
+	if code, out := h.do(t, "POST", "/v1/tenants/demo/apps/element", tom, `{"defaultGrant":true}`); code != http.StatusAccepted || out["status"] != "updated" {
+		t.Fatalf("stating who the app is for = %d %v", code, out)
+	}
+	tenant := dt.RemoteFile(t, h.remote, dt.TenantPath("demo"))
+	if !strings.Contains(tenant, "    digest: "+digest+"\n    catalogue: main\n    defaultGrant: true\n") {
+		t.Fatalf("the pin did not survive the access switch:\n%s", tenant)
 	}
 }
 

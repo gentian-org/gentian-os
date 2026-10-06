@@ -24,6 +24,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -673,8 +674,9 @@ func (s *Server) getAddons(w http.ResponseWriter, r *http.Request, _ call) {
 
 type installRequest struct {
 	// Coordinate is <catalogue>/<app>: which catalogue the profile comes
-	// from. It is what materialising fetches; without it the install is of a
-	// profile the cluster already has.
+	// from. It is what materialising fetches, and its catalogue must be a
+	// source the cluster declares; without it the install is of a profile
+	// the cluster already has, and carries no digest.
 	Coordinate string `json:"coordinate,omitempty"`
 	// Digest is the content digest of the profile bundle, "sha256:<hex>":
 	// the exact build being installed.
@@ -724,6 +726,19 @@ func (s *Server) install(w http.ResponseWriter, r *http.Request, c call) {
 		}
 		body.Digest = digest
 	}
+	// Where the build comes from, settled before anything is asked, fetched
+	// or written: a pin is recorded only for a bundle this director fetched
+	// from a source the cluster declares and saw hash to the digest.
+	catalogueName, entry, ok := s.pinOrigin(w, r, body.Coordinate, body.Digest)
+	if !ok {
+		return
+	}
+	if catalogueName != "" && entry != profile {
+		// The bundle fetched is the coordinate's and the entry written is the
+		// path's. Two names would commit one profile and install another.
+		s.fail(w, r, http.StatusBadRequest, "the coordinate names a different app than the one being installed")
+		return
+	}
 	if body.DefaultGrant != nil && *body.DefaultGrant {
 		target := authz.Tenant(tenant)
 		ok, err := s.cfg.Authz.Check(ctx, reqID(ctx), c.user, "can_grant", target)
@@ -739,23 +754,21 @@ func (s *Server) install(w http.ResponseWriter, r *http.Request, c call) {
 		}
 		c.meta.Decision += " and can_grant " + target
 	}
-	// The profile itself, if this cluster materialises on reference (AD-3).
+	// The profile itself (AD-3).
 	//
 	// Before the app entry, not after: an entry naming a profile the cluster
 	// does not have is a tenant whose app never appears, with the composition
 	// failing on a ComponentProfile that is not there. Fetching first means an
 	// install either has everything it needs or changed nothing.
 	//
-	// The catalogue is recorded with the install only here, where the bundle
-	// was fetched from that catalogue's source and hashed to the digest. A
-	// coordinate the caller merely states is not written down as a fact.
-	catalogueName := ""
-	if s.cfg.Catalogue != nil && body.Coordinate != "" {
-		res, from, ok := s.materialise(w, r, c, body)
+	// A request with neither coordinate nor digest fetches nothing and pins
+	// nothing: it installs a profile the cluster already holds, or states
+	// who an installed app is for.
+	if catalogueName != "" {
+		res, ok := s.materialise(w, r, c, body.Coordinate, body.Digest)
 		if !ok {
 			return
 		}
-		catalogueName = from
 		if res.Changed {
 			s.cfg.Log.InfoContext(ctx, "materialised a catalogue entry",
 				"request_id", reqID(ctx), "coordinate", body.Coordinate, "commit", res.Commit)
@@ -766,71 +779,128 @@ func (s *Server) install(w http.ResponseWriter, r *http.Request, c call) {
 	s.written(w, r, res, err)
 }
 
-// materialise fetches the entry being installed and commits it, so the
+// pinOrigin answers which declared catalogue source a coordinate names, and
+// refuses a request whose build nothing here could verify.
+//
+// An install comes from a catalogue source the cluster declares. So:
+//
+//   - A coordinate whose catalogue is not a declared source is refused. It
+//     used to proceed with no fetch, and the digest beside it was then
+//     recorded on nobody's word but the caller's.
+//   - A digest with no coordinate is refused for the same reason: there is
+//     nowhere to fetch the bytes it is the digest of.
+//   - A coordinate with no digest is refused, because a fetch from a source
+//     is pinned to the build the request names.
+//   - Neither is not a pin at all, and answers an empty catalogue.
+//
+// It writes the refusal itself and answers false.
+func (s *Server) pinOrigin(
+	w http.ResponseWriter, r *http.Request, coordinate, digest string,
+) (catalogueName, name string, ok bool) {
+	if coordinate == "" {
+		if digest != "" {
+			s.fail(w, r, http.StatusUnprocessableEntity,
+				"a digest is checked against the bundle its coordinate names, and this request names none: "+
+					"state the coordinate, <catalogue>/<app>, with the digest. "+s.declaredSources())
+			return "", "", false
+		}
+		return "", "", true
+	}
+	catalogueName, name, cut := strings.Cut(coordinate, "/")
+	if !cut || catalogueName == "" || name == "" {
+		s.fail(w, r, http.StatusBadRequest, "coordinate must be <catalogue>/<app>")
+		return "", "", false
+	}
+	if !s.cfg.Catalogue.Known(catalogueName) {
+		s.fail(w, r, http.StatusUnprocessableEntity, fmt.Sprintf(
+			"%q is not a catalogue source of this cluster, so nothing can be fetched from it or verified; "+
+				"nothing was installed. %s", catalogueName, s.declaredSources()))
+		return "", "", false
+	}
+	if digest == "" {
+		s.fail(w, r, http.StatusBadRequest,
+			"installing from a catalogue source needs the entry's digest: sha256:<hex>")
+		return "", "", false
+	}
+	return catalogueName, name, true
+}
+
+// declaredSources says which catalogue sources the Cluster claim names, for a
+// refusal that has to tell the caller what it could have asked for.
+func (s *Server) declaredSources() string {
+	names := make([]string, 0, len(s.cfg.CatalogueSources))
+	for _, src := range s.cfg.CatalogueSources {
+		if s.cfg.Catalogue.Known(src.Name) {
+			names = append(names, src.Name)
+		}
+	}
+	if len(names) == 0 {
+		return "This cluster declares no catalogue source."
+	}
+	return "This cluster's catalogue sources: " + strings.Join(names, ", ") + "."
+}
+
+// materialise fetches the entry a coordinate names and commits it, so the
 // cluster has the profile the tenant's manifest is about to name.
 //
 // The digest comes with the REQUEST. The bytes come from the SOURCE, which is
-// not trusted: if they do not hash to that digest the install is refused and
+// not trusted: if they do not hash to that digest the request is refused and
 // nothing is written. The request says WHAT, the source says the bytes, and
 // only agreement produces an install.
 //
-// It also answers the catalogue the bundle was fetched from, which is empty
-// when nothing was fetched: that is the one case in which the install may
-// record where its build came from.
+// The caller has settled, with pinOrigin, that the coordinate's catalogue is
+// a declared source and that a digest was stated.
 func (s *Server) materialise(
-	w http.ResponseWriter, r *http.Request, c call, body installRequest,
-) (gitops.Result, string, bool) {
+	w http.ResponseWriter, r *http.Request, c call, coordinate, digest string,
+) (gitops.Result, bool) {
+	profile, ok := s.fetchEntry(w, r, coordinate, digest)
+	if !ok {
+		return gitops.Result{}, false
+	}
+	return s.commitEntry(w, r, c, profile)
+}
+
+// fetchEntry reads one bundle from its source and checks it against the
+// digest. It writes nothing.
+func (s *Server) fetchEntry(w http.ResponseWriter, r *http.Request, coordinate, digest string) (*catalogue.Profile, bool) {
 	ctx := r.Context()
-	cat, name, _ := strings.Cut(body.Coordinate, "/")
-	if !s.cfg.Catalogue.Known(cat) {
-		// A catalogue this cluster has no source for. Not an error: a cluster
-		// may name a source for one catalogue and sync another wholesale, and
-		// the install proceeds against whatever is already there.
-		return gitops.Result{}, "", true
-	}
-	if name != r.PathValue("p") {
-		// The bundle fetched is the coordinate's and the entry written is the
-		// path's. Two names would commit one profile and install another.
-		s.fail(w, r, http.StatusBadRequest, "the coordinate names a different app than the one being installed")
-		return gitops.Result{}, "", false
-	}
-	if body.Digest == "" {
-		s.fail(w, r, http.StatusBadRequest,
-			"installing from a catalogue source needs the entry's digest: sha256:<hex>")
-		return gitops.Result{}, "", false
-	}
-	profile, err := s.cfg.Catalogue.Fetch(ctx, body.Coordinate, body.Digest)
+	profile, err := s.cfg.Catalogue.Fetch(ctx, coordinate, digest)
 	switch {
 	case errors.Is(err, catalogue.ErrDigestMismatch):
 		// Said plainly and logged, because this is the one failure here that
 		// is not a mistake: the source served something other than the build
 		// that was asked for.
 		s.cfg.Log.ErrorContext(ctx, "a catalogue source served a bundle that is not the build requested",
-			"request_id", reqID(ctx), "coordinate", body.Coordinate)
+			"request_id", reqID(ctx), "coordinate", coordinate)
 		s.fail(w, r, http.StatusBadGateway,
-			"the catalogue source served a bundle that is not this entry; nothing was installed")
-		return gitops.Result{}, "", false
+			"the catalogue source served a bundle for "+coordinate+" that is not this entry; nothing was installed")
+		return nil, false
 	case errors.Is(err, catalogue.ErrNotFound):
-		s.fail(w, r, http.StatusNotFound, "the catalogue source does not serve this entry")
-		return gitops.Result{}, "", false
+		s.fail(w, r, http.StatusNotFound, "the catalogue source does not serve "+coordinate)
+		return nil, false
 	case err != nil:
 		s.fail(w, r, http.StatusBadGateway, "the catalogue entry could not be read: "+err.Error())
-		return gitops.Result{}, "", false
+		return nil, false
 	}
-	res, err := s.cfg.Repo.MaterialiseProfile(ctx, profile.Name, profile.Digest, profile.Body, c.meta)
+	return profile, true
+}
+
+// commitEntry commits a fetched and verified bundle beside its profile.
+func (s *Server) commitEntry(w http.ResponseWriter, r *http.Request, c call, profile *catalogue.Profile) (gitops.Result, bool) {
+	res, err := s.cfg.Repo.MaterialiseProfile(r.Context(), profile.Name, profile.Digest, profile.Body, c.meta)
 	if errors.Is(err, gitops.ErrBundleTooLarge) {
 		// Refused rather than installed unverifiable: the operator checks a
 		// pinned install against the bundle, and one it cannot be given
 		// would be held at rollout for good.
 		s.fail(w, r, http.StatusUnprocessableEntity,
-			"the catalogue entry is too large to be installed at a digest; nothing was installed")
-		return gitops.Result{}, "", false
+			"the catalogue entry "+profile.Name+" is too large to be installed at a digest; nothing was installed")
+		return gitops.Result{}, false
 	}
 	if err != nil {
 		s.repoError(w, r, err)
-		return gitops.Result{}, "", false
+		return gitops.Result{}, false
 	}
-	return res, cat, true
+	return res, true
 }
 
 func (s *Server) uninstall(w http.ResponseWriter, r *http.Request, c call) {

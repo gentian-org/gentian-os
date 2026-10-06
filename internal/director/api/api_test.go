@@ -316,7 +316,7 @@ func TestInstallAsksOnlyWhetherThePersonMayInstallInTheTenant(t *testing.T) {
 	h := start(t)
 	tom := h.token(t, "tenant-demo", "tom")
 	h.asked.reset()
-	code, body := h.do(t, "POST", "/v1/tenants/demo/apps/odoo", tom, `{"coordinate":"main/odoo"}`)
+	code, body := h.do(t, "POST", "/v1/tenants/demo/apps/odoo", tom, "")
 	if code != http.StatusAccepted {
 		t.Fatalf("install by the tenant's administrator: %d %v", code, body)
 	}
@@ -351,9 +351,20 @@ func TestThereIsNoEntitlementRoute(t *testing.T) {
 // The digest an install asks for is recorded with it: as a field of the
 // tenant's app entry, not as part of the app's name.
 func TestAnInstallRecordsTheDigestItAskedFor(t *testing.T) {
-	h := start(t)
+	// A source whose one entry can be republished, which is what a new build
+	// of it is.
+	served := elementProfile
+	src := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasSuffix(r.URL.Path, "/profiles/element.yaml") {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		_, _ = w.Write([]byte(served))
+	}))
+	t.Cleanup(src.Close)
+	h := startWithCatalogue(t, src, map[string]string{"main": src.URL})
 	tom := h.token(t, "tenant-demo", "tom")
-	digest := "sha256:" + strings.Repeat("ab", 32)
+	digest := sha(elementProfile)
 
 	// Stated in capitals and recorded in the one spelling the schema admits.
 	code, body := h.do(t, "POST", "/v1/tenants/demo/apps/element", tom,
@@ -379,7 +390,7 @@ func TestAnInstallRecordsTheDigestItAskedFor(t *testing.T) {
 	if len(doc.Spec.Apps) == 0 || doc.Spec.Apps[0].Profile != "element" || doc.Spec.Apps[0].Digest != digest {
 		t.Fatalf("apps = %+v", doc.Spec.Apps)
 	}
-	if subject := dt.Git(t, "", "--git-dir", h.remote, "log", "--format=%s", "-1", "main"); !strings.Contains(subject, "install element at sha256:abababababab") {
+	if subject := dt.Git(t, "", "--git-dir", h.remote, "log", "--format=%s", "-1", "main"); !strings.Contains(subject, "install element at "+digest[:19]) {
 		t.Fatalf("the commit does not say which build: %q", subject)
 	}
 
@@ -391,11 +402,14 @@ func TestAnInstallRecordsTheDigestItAskedFor(t *testing.T) {
 
 	// The same build again changes nothing; another build moves the pin and
 	// leaves one entry.
-	if code, body := h.do(t, "POST", "/v1/tenants/demo/apps/element", tom, fmt.Sprintf(`{"digest":%q}`, digest)); code != http.StatusOK || body["status"] != "already_installed" {
+	if code, body := h.do(t, "POST", "/v1/tenants/demo/apps/element", tom,
+		fmt.Sprintf(`{"coordinate":"main/element","digest":%q}`, digest)); code != http.StatusOK || body["status"] != "already_installed" {
 		t.Fatalf("the same build again: %d %v", code, body)
 	}
-	next := "sha256:" + strings.Repeat("cd", 32)
-	if code, body := h.do(t, "POST", "/v1/tenants/demo/apps/element", tom, fmt.Sprintf(`{"digest":%q}`, next)); code != http.StatusAccepted || body["status"] != "updated" {
+	served = strings.Replace(elementProfile, `version: "1.0.0"`, `version: "1.0.1"`, 1)
+	next := sha(served)
+	if code, body := h.do(t, "POST", "/v1/tenants/demo/apps/element", tom,
+		fmt.Sprintf(`{"coordinate":"main/element","digest":%q}`, next)); code != http.StatusAccepted || body["status"] != "updated" {
 		t.Fatalf("another build: %d %v", code, body)
 	}
 	file = dt.RemoteFile(t, h.remote, dt.TenantPath("demo"))

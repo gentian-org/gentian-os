@@ -133,19 +133,31 @@ realm is taken to be the tenant's name on this path, as it is for
 
 | Field | Rule |
 |---|---|
-| `coordinate` | `<catalogue>/<app>`, optional. When the catalogue is one of the cluster's sources (§9), the profile bundle is fetched from it and committed before the install; the app named must be the `{profile}` in the path |
-| `digest` | optional, except when the bundle is fetched from a source: then it is required. Stated with or without capitals; recorded as `sha256:<lowercase hex>` |
+| `coordinate` | `<catalogue>/<app>`, optional. The catalogue must be one of the cluster's sources (§9): the profile bundle is fetched from it and committed before the install. A coordinate in any other catalogue is refused. The app named must be the `{profile}` in the path |
+| `digest` | travels with a `coordinate`, and only with one: required beside it, refused without it. Stated with or without capitals; recorded as `sha256:<lowercase hex>` |
 | `defaultGrant` | optional boolean. `true` installs for everyone and needs `can_grant` as well; `false` states that access is given per person and removes the key from an entry that had it; absent leaves an installed app's entry as it is, so moving a pin does not change who may open the app |
+
+**An install comes from a catalogue source the cluster declares.** A pin is
+recorded only for a bundle the director fetched from such a source and saw
+hash to the digest, so the two fields travel together or not at all:
+
+| The request carries | What happens |
+|---|---|
+| `coordinate` and `digest`, the catalogue a declared source | the bundle is fetched, checked, committed, and the install pinned to it |
+| `coordinate` in a catalogue the cluster declares no source for | refused with `422`, naming the catalogue and the sources there are. Nothing is fetched or written |
+| `digest` and no `coordinate` | refused with `422`: there is nowhere to fetch the bytes it is the digest of |
+| `coordinate` and no `digest` | refused with `400` |
+| neither | nothing is fetched and nothing pinned. It installs a profile the cluster already holds, and on an installed app it states `defaultGrant` and leaves the pin as it is |
 
 | Answer | Meaning |
 |---|---|
 | `202 {"status":"installed","commit":…}` | committed to `gentian-deployments` |
 | `202 {"status":"updated","commit":…}` | the app was installed already, and the pin moved or `defaultGrant` was stated with another value than the entry had |
 | `200 {"status":"already_installed"}` | nothing to change |
-| `400` | the digest is not a sha256 digest, a source install carries none, or the coordinate names another app |
+| `400` | the digest is not a sha256 digest, a coordinate comes with none, the coordinate is not `<catalogue>/<app>`, or it names another app |
 | `403` | the caller may not install in this tenant, or asked to install for everyone and may not grant in it |
 | `404` | the source does not serve this entry |
-| `422` | the entry is larger than the bundle the cluster carries beside a profile (180 KiB), so its digest could not be checked at rollout. Nothing was installed |
+| `422` | the coordinate's catalogue is not a source this cluster declares, or a digest came with no coordinate: the build could not be verified. Or the entry is larger than the bundle the cluster carries beside a profile (180 KiB), so its digest could not be checked at rollout. Nothing was installed |
 | `502` | the source could not be read, or served bytes that do not hash to the digest. Nothing was installed |
 
 ## 4. The digest
@@ -505,10 +517,10 @@ not from what the App Store app is expected to do.
   serves, or the install is refused with `502` and nothing is written. The
   same holds for the digest of an older build the source no longer serves.
 * **Install something from a place of its choosing.** A coordinate in a
-  catalogue the cluster names no source for fetches nothing. The install
-  then refers to a profile the cluster must already hold, and with a digest
-  pinned the operator rolls nothing out unless that profile's own bundle
-  hashes to it.
+  catalogue the cluster names no source for is refused by the director
+  (§3), and so is a digest with no coordinate. No digest is recorded that
+  the director did not check against bytes it fetched from a declared
+  source.
 * **Supply a profile through the repository.** The App Store app declares
   what a store names as an OCI registry with role `apps`, and refuses any
   other type. This matters: on a cluster, a *git* repository with role
