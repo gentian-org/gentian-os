@@ -100,14 +100,14 @@ changes only when the code does.
 | `AppGrant` → tuples | Implemented | `app_grant_reconciler.go`; grants are structure and stay stored. AD-12 would have made the director the store's only writer; as built the operator writes the store and the director only asks it |
 | Any PEP calling OpenFGA `Check` | **Target** | console client exists, no caller; no gateway ext-auth |
 | Tenant namespace + NetworkPolicy default-deny egress | Implemented | `internal/kernel/netpolicy/` — tenant namespaces only |
-| NetworkPolicy in kernel, system and shared namespaces | **Target** | every builder is tenant-scoped; the only policies in the tree are two vendored Bitnami templates (gap G28) |
+| NetworkPolicy in kernel, system and shared namespaces | **Target**, with one exception | every builder is tenant-scoped. The exception is one policy in the operator chart, on the operator's pods: its app-lifecycle port admits the director's and the usher's pods only, and its other ports stay open. No other pod in a kernel namespace is selected by a policy (gap G28) |
 | Approval path for profile-declared egress | **Target** | `security.egress` reaches the NetworkPolicy uninspected; `PlatformSecurityPolicy` allowlists MAC waivers only (gap G27) |
 | Pod-security admission (privileged, host ns, non-root, hostPath, caps, priv-esc) | Implemented | `kernel/security/kyverno/policies/` |
 | Gateway JWT / ext-auth / rate limit | **Target** | `BackendTrafficPolicy` carries timeouts only |
-| Service mesh, SPIFFE/SPIRE, workload identity | **Target** | — |
+| Service mesh, SPIFFE/SPIRE, workload identity | **Target**, with one exception | The operator's app-lifecycle listener admits its two callers, the director and the usher, by ServiceAccount: each presents a projected token for the audience `gentian-os-operator` and the operator asks the API server whose it is (`internal/applifecycle/auth.go`). Every other call between platform services still rests on a shared key or on the person's token |
 | Agent identities, RFC 8693 exchange, `agent`/`task` types | **Target** | model v0 has no such types |
 | Human-identified secret writes (token exchange, no service token) | Implemented | `internal/custodian/` |
-| Human-identified configuration writes | **Target** | lifecycle API trusts `X-Gentian-Actor`; director planned |
+| Human-identified configuration writes | **Target** | the director verifies the person and commits; the operator's lifecycle API admits only the director's ServiceAccount to its commands and still trusts the `X-Gentian-Actor` name it passes |
 | OpenBao policy per tenant | Implemented | `tenant-default.yaml` |
 | OpenBao policy per (tenant, app) | **Target** | `app-default.yaml` composes none |
 | Console admin-action audit | Implemented | BFF `audit_log.py` |
