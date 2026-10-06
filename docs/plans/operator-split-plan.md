@@ -185,11 +185,16 @@ set of reads for the usher, each admitted by its own ServiceAccount (§3.11). Th
 operator's ServiceAccount can still read every Secret, so the repository's
 credential is within its reach as any other Secret is; what changed is that
 nothing hands it over. It keeps `pods/exec` because purge
-needs it — but purge becomes a reconcile of desired state (app absent from
-`Tenant.spec.apps` and the App claim gone → teardown converges), which also
-fixes the current failure mode where a request that dies mid-purge leaves
-half-deleted state with nothing to resume it. After AD-9 its exec targets are
-the `system-<engine>` namespaces, never `kernel-data`.
+needs it, to drop a database on the PostgreSQL primary. Purge stays a
+one-shot command, by decision: it is not a reconcile of desired state, and
+nothing continues it in the background. Destroying data is something a person
+asks for once and is answered about once. What a request that died mid-purge
+used to leave behind is dealt with inside that rule instead: every step is
+safe to repeat, the first step that fails ends the purge with an answer that
+names it, what was already destroyed and what was not attempted, the operator
+bounds the whole purge below its caller's deadline so the answer always
+arrives, and the remedy is to ask again (§3.11). After AD-9 its exec targets
+are the `system-<engine>` namespaces, never `kernel-data`.
 
 ### 3.3 Argo CD
 
@@ -714,11 +719,11 @@ for the director and for the usher.
 | `bundles`, `bundles/inspect` | `can_configure` on the cluster | takes an uploaded bundle, or says what one contains |
 | `restore` | `can_configure` on the cluster | creates the restore request from an uploaded bundle |
 | `notify` | `can_administer` on the tenant | publishes one notification to the tenant's people |
-| `purge-app` | `can_install_app` on the tenant | removes the data of an app that is no longer installed |
+| `purge-app` | `can_install_app` on the tenant | destroys the data of an app that is no longer installed: database, object storage, cache user, files, stored credentials, access group |
 | `provision-app` | `can_grant` on the tenant | puts the tenant's people in an app's group again |
 
-and reads of live state. The ones a person asks for -- app status,
-resources, plans, usage, backups and their schedules, the policy in force,
+and reads of live state. The ones a person asks for -- app status, which
+uninstalled apps still hold data, resources, plans, usage, backups and their schedules, the policy in force,
 integrations, notices, platform security, customisations -- are the usher's
 to relay (§3.10): it verifies the person and asks the store, and is admitted
 here as itself. They are worked out inside the operator, some from
@@ -729,6 +734,19 @@ a second copy of each computation. The reads
 the director's own work depends on stay the director's: the plans a choice
 is validated against, a restore's progress, what the cluster still holds of
 a tenant being purged, and the stream of a backup's bundle.
+
+`purge-app` differs from the rest in one way: its answer is the end of the
+work, not the start of it. The operator destroys kind by kind and answers
+when it is over -- `200` with what was destroyed, `409` having destroyed
+nothing while the app is still the tenant's or still being taken down, `500`
+naming the step that failed, what was already destroyed and what was not
+attempted. It gives itself 4 min 30 s for all of it and the director waits
+5 min for this one action (30 s for every other), so a purge is never cut
+off by the request that asked for it. It is and stays a one-shot command:
+nothing reconciles towards "purged" and nothing resumes one; a purge that
+did not complete is asked for again, and every step is safe to repeat. What
+uninstalling keeps and a purge destroys, kind by kind, is in
+[store-contract.md](../design/store-contract.md) §8.
 
 **The rules of the door.**
 
@@ -863,7 +881,7 @@ catastrophic on one with tenants.
 | `applifecycle/service.go` — `validateProfile` | copy → `ensureProfile` (§3.6) | director |
 | `applifecycle/service.go` — `Install`/`Uninstall` orchestration | rewrite as commit + 202 | director |
 | `applifecycle/wait.go`, `reconcile.go` (Argo refresh) | delete; Argo syncs on host webhook + polling | — |
-| `applifecycle/purge.go` | stays, moves out of the request path into a reconciler | operator |
+| `applifecycle/purge.go` | stays, and stays in the request path: a one-shot command that answers when it is over (§3.2, §3.11) | operator |
 | `applifecycle/service.go` — `provisionAppGroupUsers` | stays; becomes desired-state reconcile of `Tenant.spec.apps` → Keycloak group | operator (`app_privilege_reconciler` already exists) |
 | `custodian/` | later, optional: same class of human-identified write, holds no token of its own, needs no controller-runtime | director, after D |
 | `kubectl-gentian` `git_commit_push` + `kubectl apply` fallback | replaced by director API calls with the user's token (`kubectl gentian login` via device flow) | CLI |

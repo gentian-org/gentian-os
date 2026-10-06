@@ -637,6 +637,7 @@ may open it are facts the cluster holds.
 director   GET /v1/tenants/{t}/apps                  installed profiles, their digests, their addons and each addon's pin
 director   GET /v1/tenants/{t}/apps/{p}/addons       one app's addons, and addonPins: {name, digest, catalogue} for each that is pinned
 usher      GET /v1/tenants/{t}/apps/status           what the cluster made of them
+usher      GET /v1/tenants/{t}/apps/retained         which uninstalled apps still hold data
 usher      GET /v1/tenants/{t}/resources             the plan, and what is used of it
 ```
 
@@ -657,15 +658,105 @@ that reason.
 ```
 DELETE /v1/tenants/{t}/apps/{p}                                        can_install_app
 POST   /v1/tenants/{t}/actions/purge-app       {"profile": "<name>"}   can_install_app
+usher  GET /v1/tenants/{t}/apps/retained                               can_view
 ```
 
-*Uninstalling* removes the app and **keeps its data**: databases, object
-storage and secrets stay, and installing the app again finds them. It is a
-commit. *Purging* **destroys the data** of an app that is no longer
-installed, and cannot be undone. It is refused with `409` while the tenant
-still has the app or while the cluster is still taking it down, so removing
-an app never takes its data with it by accident, and no single act does
-both.
+*Uninstalling* removes the app and **keeps its data**. It is a commit: the
+app leaves the tenant's manifest, and the cluster takes its workloads and its
+sign-in client away. Everything the app stored stays, and installing the app
+again in the same tenant finds it. *Purging* **destroys the data** of an app
+that is no longer installed, and cannot be undone. No single act does both,
+so removing an app never takes its data with it by accident.
+
+| Kind of data | Uninstall | Purge |
+| --- | --- | --- |
+| Files — the volumes the app's chart creates | **kept**: every volume claim of the release is marked for Helm to leave in place, and the release has one name per tenant and app, so the next install takes the claims over | **destroyed**: the claims are deleted, with any finished pod still holding one, and the purge waits until they are gone |
+| Database | **kept**, with its role and its password | **destroyed**: the database, every database the app's role created, and the role |
+| Object storage | **kept**: the bucket, its user and its policy | **destroyed**: the bucket with its contents, the user and the policy |
+| Cache | **kept**: the app's user in the shared instance | the app's user is **removed**; the keys it wrote are not (see the limits below) |
+| Stored credentials — the app's vault paths, and its extensions' | **kept** | **destroyed**, every version |
+| Sign-in (OIDC) client | **removed** | — (already gone) |
+| Access group, and who is in it | **kept**: the app installed again is open to the people it was open to | **destroyed**: the group, and with it every membership; likewise the group of each extension |
+
+An app that is uninstalled and still holds data is **retained**. `GET
+/apps/retained` lists the tenant's retained apps, relayed by the usher from
+the operator:
+
+```json
+{
+  "tenant": "demo",
+  "apps": [{
+    "profile": "odoo-base-ce",
+    "state": "retained",
+    "profileAvailable": true,
+    "kinds": {
+      "database": "present", "files": "present", "credentials": "present",
+      "accessGroup": "present", "objectStorage": "unknown", "cache": "absent"
+    },
+    "volumes": ["odoo-base-ce-release-data"]
+  }],
+  "unknown": { "objectStorage": "…why…", "cache": "…why…", "database": "…why…" }
+}
+```
+
+Each kind is `present`, `absent` or `unknown`, and an app is listed when at
+least one is `present`. The read uses the names and the matching the purge
+uses, so what it reports for an app is what a purge of that app would destroy.
+It only reads, and runs nothing: a bucket and a cache user can be asked only
+of the store itself, so they are `unknown` for an app whose profile declares
+them, as is a MariaDB database; a PostgreSQL database is known from the record
+the cluster keeps of it. `unknown` at the top says why, including when the
+vault or the identity provider could not be asked this time. An app that is
+installed, or still being taken down, is never listed.
+
+**A purge is one request, and it fails loudly.** The operator does all of it
+before it answers and continues nothing afterwards. It is refused with `409`,
+having destroyed nothing, while the tenant still has the app (or has it
+switched on as an add-on), while the cluster is still taking it down — until
+Helm has finished uninstalling its release, not merely until its Component is
+gone — or while another purge of the same app is running. Once admitted, it
+destroys kind by kind in the order of the table (database, object storage,
+cache, files, credentials, access group, then the provisioning records). The
+first step that fails ends it: the answer is `500` and says which step failed,
+what had already been destroyed and what was not attempted. Nothing is rolled
+back; every step is safe to repeat, and asking again continues with what is
+left. The operator gives a purge 4 min 30 s in all and the director waits
+5 min for it, so the answer always arrives; a purge that runs out of its time
+says at which step, in the same way.
+
+The answer of a purge that completed:
+
+```json
+{ "status": "purged", "purged": true, "complete": true,
+  "destroyed": ["database", "objectStorage", "cache", "files", "credentials", "accessGroup", "provisioningRecords"] }
+```
+
+Limits that remain:
+
+- **Cache keys.** The cache is one shared instance. A purge removes the app's
+  user; the keys the app wrote carry no owner and stay until they expire.
+- **A profile that is gone.** Which stores an app had is declared by its
+  profile. When the profile is no longer on the cluster, a purge assumes a
+  PostgreSQL database and destroys it, the app's own vault path, its files,
+  its access group and its records, and answers `"status":
+  "partially-purged"`, `"complete": false` and `notExamined` — object storage,
+  a cache user, a MariaDB database, the credentials and access groups of the
+  app's extensions and volumes that carry only the chart's name are not
+  looked at. Such an app is no longer listed as retained afterwards, although
+  a bucket may remain; what an extension left is listed under the
+  extension's own key (`<app>-<extension>`), which is the name a purge of it
+  has to be asked for.
+- **Names that overlap.** An extension's stores are kept under
+  `<app>-<extension>`. If the tenant has an app of exactly that name, what is
+  under it is that app's and a purge of the first leaves it alone. A volume
+  that records a Helm release is destroyed only with the app whose release it
+  is; one that records none is matched by its labels and its name.
+- **Contracts.** A credential shared through an integration contract belongs
+  to neither side and is not removed with either.
+- **The realm.** The access group is looked for in the realm named after the
+  tenant, as everywhere on this path. Were a tenant's people in a realm of
+  another name, the purge would fail at the access-group step, with the app's
+  data already destroyed and the answer saying so.
 
 Uninstalling tells the store nothing. The acquisition stays the tenant's;
 ending it is between the tenant and the store.

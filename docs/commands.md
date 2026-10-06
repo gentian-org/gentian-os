@@ -157,8 +157,8 @@ kubectl gentian apps install xwiki-ce --tenant demo                  # the build
 kubectl gentian apps install xwiki-ce --tenant demo --from in-house  # when several sources serve the name
 kubectl gentian apps install xwiki-ce --tenant demo --digest sha256:<64 hex>   # a build you name yourself
 kubectl gentian apps install xwiki-ce --tenant demo --for-everyone   # and grants it to every member
-kubectl gentian apps uninstall xwiki-ce --tenant demo            # keeps its data
-kubectl gentian apps uninstall xwiki-ce --tenant demo --purge    # destroys the data of an app already uninstalled
+kubectl gentian apps uninstall xwiki-ce --tenant demo            # removes the app, keeps its data
+kubectl gentian apps uninstall xwiki-ce --tenant demo --purge    # removes the app, then destroys its data
 ```
 
 **The command line installs a pinned build.** An app is installed from one
@@ -194,10 +194,30 @@ The director verifies the bundle against the digest before it commits, and
 the operator verifies it again at rollout
 ([design/store-contract.md](design/store-contract.md) §3, §4).
 
-Uninstalling and purging are two different acts. Uninstalling removes the app
-and keeps its data. `--purge` sends only the purge, which destroys the data
-of an app that is no longer installed and is refused while it still is; it
-cannot be undone.
+Uninstalling and purging are two different acts, and the CLI says which one it
+did.
+
+**Uninstalling** removes the app from the tenant: its workloads and its
+sign-in client go, and everything it stored stays — its database, its object
+storage, its cache user, its files, its stored credentials, and the access
+group with everybody who is in it. The app is then *retained*: uninstalled,
+data retained. Installing it again in the same tenant finds all of it.
+
+**Purging** destroys what uninstalling kept, and cannot be undone. It is
+refused while the app is still the tenant's. `--purge` therefore does both, in
+order: it uninstalls the app (or finds it already uninstalled), waits until
+the app is gone from the cluster, and then purges it. "Gone" is the platform's
+own answer — the tenant no longer names the app, its Component is gone, and
+Helm has finished uninstalling its release. The wait is bounded by
+`GENTIAN_UNINSTALL_WAIT` seconds (default 900); when it runs out the command
+says so, nothing has been purged, and the same command can be run again.
+
+The purge itself is one request that is answered when it is over. If a step
+fails, the command ends with which step failed, what had already been
+destroyed and what was not attempted; nothing is rolled back, every step is
+safe to repeat, and running the command again continues with what is left.
+What each act keeps and destroys, kind by kind, is in
+[design/store-contract.md](design/store-contract.md) §8.
 
 `--for-everyone` writes `defaultGrant: true` on the app's entry in the same
 commit. Every member of the tenant then has the app by default: the people who

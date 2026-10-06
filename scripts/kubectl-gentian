@@ -724,6 +724,51 @@ _apps_install() {
     esac
 }
 
+# _purge_app_when_gone <tenant> <app> — destroy the data of an uninstalled
+# app, once the cluster has finished removing the app itself.
+#
+# The purge is refused with 409 for as long as anything of the app is still
+# there: the tenant's manifest on the cluster still names it, its Component
+# exists, or Helm has not finished uninstalling its release. So it is asked
+# for until it is admitted, for at most GENTIAN_UNINSTALL_WAIT seconds
+# (default 900). Once admitted it is one request, answered when it is over;
+# anything but success ends the command with the platform's own account of
+# what was and was not destroyed.
+_purge_app_when_gone() {
+    local t="$1" app="$2" wait="${GENTIAN_UNINSTALL_WAIT:-900}"
+    local deadline token out status msg body
+    need curl jq
+    _connect
+    deadline=$(( $(date +%s) + wait ))
+    out="$(mktemp)"
+    body="$(jq -n --arg p "${app}" '{profile:$p}')"
+    echo "Purging ${app} from ${t}: waiting for the app to be gone from the cluster first (up to ${wait}s) ..."
+    while :; do
+        token="$(_access_token)"
+        status="$(curl -sS -o "${out}" -w '%{http_code}' -X POST \
+            -H "Authorization: Bearer ${token}" -H "Content-Type: application/json" \
+            -d "${body}" "${_DIR_BASE}/v1/tenants/${t}/actions/purge-app")"
+        [[ "${status}" -lt 300 ]] && break
+        msg="$(jq -r '.error // .message // .detail // empty' "${out}" 2>/dev/null || true)"
+        if [[ "${status}" != "409" ]]; then
+            rm -f "${out}"
+            die "the purge of ${app} did not complete (the director answered ${status}): ${msg:-no detail}"
+        fi
+        if [[ "$(date +%s)" -ge "${deadline}" ]]; then
+            rm -f "${out}"
+            die "${app} was still not gone from the cluster after ${wait}s, so nothing was purged and its data is retained: ${msg:-no detail}. Run the same command again once it is gone."
+        fi
+        sleep 10
+    done
+    if [[ "$(jq -r '.complete' "${out}" 2>/dev/null || true)" == "false" ]]; then
+        echo "Purged ${app} from ${t}, incompletely: $(jq -r '.message // empty' "${out}")"
+        echo "Destroyed: $(jq -r '(.destroyed // []) | join(", ")' "${out}"). Not examined: $(jq -r '(.notExamined // []) | join(", ")' "${out}")."
+    else
+        echo "Purged ${app} from ${t}: its data is destroyed ($(jq -r '(.destroyed // []) | join(", ")' "${out}")). This cannot be undone."
+    fi
+    rm -f "${out}"
+}
+
 cmd_apps() {
     local sub="${1:-}"
     shift || true
@@ -746,11 +791,21 @@ cmd_apps() {
                 # exists.
                 _apps_install "${app}" "${t}" "${everyone}" "$@"
             elif [[ "${purge}" == "true" ]]; then
-                _call POST "/v1/tenants/${t}/actions/purge-app" "$(jq -n --arg p "${app}" '{profile:$p}')" >/dev/null
-                echo "Purging ${app} from ${t}: removed with its data."
+                # Two acts, in order: uninstall, which keeps the data, and
+                # then the purge, which destroys it and is refused until the
+                # app is gone from the cluster.
+                local answer
+                answer="$(_call DELETE "/v1/tenants/${t}/apps/${app}")"
+                if [[ -n "$(jq -r '.commit // empty' <<<"${answer}" 2>/dev/null || true)" ]]; then
+                    echo "Uninstalling ${app} from ${t}: committed; the platform removes it. Its data is still there."
+                else
+                    echo "${app} is not installed in ${t}: nothing to uninstall."
+                fi
+                _purge_app_when_gone "${t}" "${app}"
             else
                 _call DELETE "/v1/tenants/${t}/apps/${app}" >/dev/null
-                echo "Uninstalling ${app} from ${t}: committed; its data is kept."
+                echo "Uninstalling ${app} from ${t}: committed; the platform removes it. Its data is retained:"
+                echo "installing ${app} again finds it, and 'kubectl gentian apps uninstall ${app} --tenant ${t} --purge' destroys it."
             fi
             ;;
         *) die "usage: kubectl gentian apps list|install|uninstall ..." ;;
