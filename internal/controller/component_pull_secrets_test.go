@@ -12,6 +12,7 @@ package controller
 
 import (
 	"context"
+	corev1 "k8s.io/api/core/v1"
 	"reflect"
 	"strings"
 	"testing"
@@ -237,6 +238,7 @@ func TestTheReleaseNamesTheChartsPullSecretInItsOwnNamespace(t *testing.T) {
 	ctx := context.Background()
 	scheme := runtime.NewScheme()
 	_ = gentianov1alpha1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
 	c := fake.NewClientBuilder().WithScheme(scheme).Build()
 	r := &ComponentReconciler{Client: c, Scheme: scheme}
 

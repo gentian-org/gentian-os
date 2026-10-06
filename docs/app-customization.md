@@ -269,7 +269,8 @@ selection enabled forever.
 Deselection is not uninstallation. Nextcloud's `occ app:disable` keeps the app's data, so
 deselecting is reversible. Odoo's `-i` has no safe inverse — uninstalling a module drops its
 tables — so an Odoo addon stops being activated but is not removed. Purging data is always a
-separate, explicit path.
+separate, explicit path: uninstalling an app keeps everything it stored, and only a purge of the
+uninstalled app destroys it ([design/store-contract.md](design/store-contract.md) §8).
 
 **Multi-tenancy is the sharp edge here.** An addon loaded into a shared runtime affects every
 tenant on that runtime. The existing Odoo pattern is the right precedent — per-tenant addon sets
@@ -922,6 +923,13 @@ versioning policy.
 * `extraObjects`, `extraEnv`, `extraVolumeMounts`, `podAnnotations` — the standard L4-lite hooks, so
   packaging changes rarely need a chart fork.
 * A declared `conf.d` mount wired to a ConfigMap the composition can populate — L1 with no chart edit.
+* Volumes need nothing from the chart to survive an uninstall. The platform installs an app as the
+  Helm release `<profile>-release` in the tenant's namespace — the same name on every install — and
+  marks every PersistentVolumeClaim the chart renders `helm.sh/resource-policy: keep`. Uninstalling
+  leaves the claims in place and the next install of the app in that tenant takes them over; only a
+  purge deletes them. So: do not set the annotation yourself to mean something else, do not delete
+  claims from a hook, and keep a claim's immutable fields (storage class, access modes) stable
+  across chart versions, because a reinstall updates the kept claim rather than creating one.
 
 ### 7.5 Docs the template must ship
 

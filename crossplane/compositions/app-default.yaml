@@ -111,10 +111,29 @@ spec:
             {{- $observed := .observed }}
             {{- $spec   := $xr.spec }}
             {{- $xrName := $xr.metadata.name }}
-            {{- /* App claim name (e.g. "demo-app"). Used as the Helm release name
-                 and ExternalSecret name so both resources are discoverable by
-                 app label without needing to know the generated XR name. */}}
+            {{- /* App claim name (e.g. "demo-app"). The Helm release and the
+                 ExternalSecret are named from it, so both are found by the app's
+                 name without knowing the generated XR name. */}}
             {{- $app    := $spec.claimRef.name }}
+            {{- /* The Helm release of this app in this tenant: one name for as
+                 long as the app is the tenant's, across every install of it.
+
+                 It was the Release object's own name, which carries the
+                 composite's generated suffix, so each install was a different
+                 Helm release. Everything a chart names after its release --
+                 workloads, Services, and the volume claims it templates --
+                 was renamed by a reinstall, and a volume kept from the install
+                 before could not be found again, nor taken over: Helm adopts an
+                 existing object only when it records the same release name and
+                 namespace.
+
+                 The namespace is the tenant's, so the app's name is enough to
+                 make it unique. The Release OBJECT keeps the composite's name:
+                 it is cluster-scoped and has to differ between tenants. */}}
+            {{- $release := printf "%s-release" $app }}
+            {{- /* What makes uninstalling keep the app's files: see the
+                 ConfigMap emitted beside the Release. */}}
+            {{- $keepVolumes := printf "%s-keep-volumes" $release }}
             {{- $ns     := $spec.tenantNamespace }}
             {{- /* Derive tenant name from namespace convention "tenant-{name}". */}}
             {{- $tenant := trimPrefix "tenant-" $ns }}
@@ -1269,12 +1288,69 @@ spec:
             {{- $extraVals = $extraVals | toJson | fromJson }}
 
             {{- /* ── Emit Helm Release ────────────────────────────────────────── */}}
+            {{- /* ── Uninstalling keeps the app's files ───────────────────────── */}}
+            {{- /* A chart that templates a PersistentVolumeClaim has it deleted by
+                 `helm uninstall` with everything else in the release, and with it
+                 the files the app wrote. Uninstalling an app takes its workloads
+                 away and keeps its data; destroying the data is a purge, a
+                 separate act. So every claim a release renders is marked for Helm
+                 to leave in place.
+
+                 Done here, for every chart, as a patch the provider applies to
+                 what the chart rendered (forProvider.patchesFrom, a Kustomize
+                 patch run as Helm's post-renderer). The annotation is therefore
+                 part of the manifest Helm records, which is what `helm uninstall`
+                 reads to decide what to leave. No chart has to carry it, and one
+                 that already does is unchanged.
+
+                 A claim kept this way still names this release, which is why the
+                 release name above is stable: the next install of the app in this
+                 tenant takes the claim over instead of failing on it.
+
+                 The target names no object, so it matches every claim; the name
+                 inside the patch is required by the format and is not applied. A
+                 chart that renders no claim is rendered unchanged. Claims made
+                 from a StatefulSet's volumeClaimTemplates are not in the release
+                 at all and were always left behind. */}}
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-keep-volumes
+              name: {{ $xrName }}-keep-volumes
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: v1
+                  kind: ConfigMap
+                  metadata:
+                    name: {{ $keepVolumes }}
+                    namespace: {{ $ns }}
+                  data:
+                    patch.yaml: |
+                      patches:
+                        - target:
+                            version: v1
+                            kind: PersistentVolumeClaim
+                          patch: |-
+                            apiVersion: v1
+                            kind: PersistentVolumeClaim
+                            metadata:
+                              name: every-claim-of-the-release
+                              annotations:
+                                helm.sh/resource-policy: keep
+              providerConfigRef:
+                name: kubernetes
             ---
             apiVersion: helm.crossplane.io/v1beta1
             kind: Release
             metadata:
               annotations:
                 gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-release
+                # The Helm release name. Without it the provider uses this
+                # object's name, generated suffix and all.
+                crossplane.io/external-name: {{ $release }}
               name: {{ $xrName }}-release
             spec:
               rollbackLimit: 3
@@ -1317,6 +1393,14 @@ spec:
                 wait: true
                 waitTimeout: "10m"
                 skipCRDs: true
+                # Not optional: a release that could not read the rule would be
+                # installed without it, and uninstalling it would delete files.
+                patchesFrom:
+                  - configMapKeyRef:
+                      name: {{ $keepVolumes }}
+                      namespace: {{ $ns }}
+                      key: patch.yaml
+                      optional: false
                 {{- if gt (len $extraVals) 0 }}
                 values:
                   {{ toYaml $extraVals | nindent 18 }}
@@ -1329,7 +1413,7 @@ spec:
                 name: kubernetes
 
             {{- /* ── Emit stable service alias ─────────────────────────────────── */}}
-            {{- /* The chart creates services named <xrName>-release-<component>.   */}}
+            {{- /* The chart creates services named <app>-release-<component>.      */}}
             {{- /* We emit a stable ClusterIP Service with the declared name so the */}}
             {{- /* tenant operator ingress backend always resolves correctly.        */}}
             {{- /* Skip when fullnameOverride == serviceName: the chart already      */}}
@@ -1371,7 +1455,7 @@ spec:
                     namespace: {{ $ns }}
                   spec:
                     selector:
-                      app.kubernetes.io/instance: {{ $xrName }}-release
+                      app.kubernetes.io/instance: {{ $release }}
                       app.kubernetes.io/component: {{ $component }}
                     ports:
                     - name: http
@@ -1400,7 +1484,7 @@ spec:
                     namespace: {{ $ns }}
                   spec:
                     selector:
-                      app.kubernetes.io/instance: {{ $xrName }}-release
+                      app.kubernetes.io/instance: {{ $release }}
                       app.kubernetes.io/component: api
                     ports:
                     - name: http
@@ -1794,6 +1878,8 @@ spec:
             metadata:
               annotations:
                 gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-{{ $sc.name }}-release
+                # Stable for the same reason as the app's own release name.
+                crossplane.io/external-name: {{ $app }}-{{ $sc.name }}-release
               name: {{ $xrName }}-{{ $sc.name }}-release
             spec:
               rollbackLimit: 3
@@ -1833,6 +1919,14 @@ spec:
                 wait: true
                 waitTimeout: "10m"
                 skipCRDs: true
+                # The app's rule, for the sidecar's release as well: its files
+                # are the app's and are kept on uninstall like the rest.
+                patchesFrom:
+                  - configMapKeyRef:
+                      name: {{ $keepVolumes }}
+                      namespace: {{ $ns }}
+                      key: patch.yaml
+                      optional: false
                 {{- if gt (len $scExtraVals) 0 }}
                 values:
                   {{ toYaml $scExtraVals | nindent 18 }}
@@ -1863,7 +1957,7 @@ spec:
                     namespace: {{ $ns }}
                   spec:
                     selector:
-                      app.kubernetes.io/instance: {{ $xrName }}-{{ $sc.name }}-release
+                      app.kubernetes.io/instance: {{ $app }}-{{ $sc.name }}-release
                     ports:
                     - name: http
                       port: {{ $scSvcPort }}

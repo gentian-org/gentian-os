@@ -42,7 +42,7 @@ const (
 	// address it. The tenant reconciler no longer provisions it: the desktop
 	// is a component, and its database is that component's granted
 	// requirement (ui-restructure.md §1), fulfilled where the component is.
-	portalShellAppName = "shell"
+	portalShellAppName = backup.DesktopStore
 )
 
 // cnpgClusterName is the shared CloudNativePG Cluster in platform-kernel.

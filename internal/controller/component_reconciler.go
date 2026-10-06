@@ -20,6 +20,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -128,6 +129,17 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 	if !comp.DeletionTimestamp.IsZero() {
 		if controllerutil.ContainsFinalizer(comp, componentFinalizer) {
+			// The release first, and the component stays until it is gone:
+			// "the component is gone" is what a purge waits for before it
+			// drops a database, and it must not be true while the chart's
+			// pods are still running.
+			gone, err := r.deleteDirectRelease(ctx, comp)
+			if err != nil {
+				return ctrl.Result{}, err
+			}
+			if !gone {
+				return ctrl.Result{RequeueAfter: componentRequeue}, nil
+			}
 			if err := r.deleteZoneGrant(ctx, comp); err != nil {
 				return ctrl.Result{}, err
 			}
@@ -644,15 +656,31 @@ func (r *ComponentReconciler) ensureRelease(ctx context.Context, comp *gentianov
 	if c := pull.chart(chart.Repository); c != nil {
 		chartSpec["pullSecretRef"] = map[string]interface{}{"name": c.secretName, "namespace": comp.Namespace}
 	}
+	// Uninstalling keeps the files: the rule the release is rendered with,
+	// before the release that names it.
+	if err := r.ensureKeepVolumes(ctx, comp); err != nil {
+		return false, "", err
+	}
 	spec := map[string]interface{}{
 		"rollbackLimit": int64(3),
 		"forProvider": map[string]interface{}{
-			"chart": chartSpec,
+			"chart":       chartSpec,
 			"namespace":   comp.Namespace,
 			"wait":        true,
 			"waitTimeout": "10m",
 			"skipCRDs":    true,
 			"values":      values,
+			"patchesFrom": []interface{}{map[string]interface{}{
+				"configMapKeyRef": map[string]interface{}{
+					"name":      keepVolumesName(comp),
+					"namespace": comp.Namespace,
+					"key":       keepVolumesKey,
+					// Not optional: a release that could not read the rule
+					// would be installed without it, and uninstalling it
+					// would delete files.
+					"optional": false,
+				},
+			}},
 		},
 		"providerConfigRef": map[string]interface{}{"name": "kubernetes"},
 	}
@@ -702,6 +730,110 @@ func (r *ComponentReconciler) ensureRelease(ctx context.Context, comp *gentianov
 // cluster-scoped, so it carries both.
 func releaseName(comp *gentianov1alpha1.Component) string {
 	return comp.Namespace + "-" + comp.Name
+}
+
+// keepVolumesPatch marks every PersistentVolumeClaim a release renders for
+// Helm to leave in place when the release is uninstalled.
+//
+// Uninstalling an app takes its workloads away and keeps its data; destroying
+// the data is a purge, a separate act. A chart that templates a claim has it
+// deleted by `helm uninstall` with everything else unless the claim carries
+// helm.sh/resource-policy: keep, and no chart can be relied on to. So the
+// provider applies this to what the chart rendered (forProvider.patchesFrom,
+// a Kustomize patch run as Helm's post-renderer): the annotation is then in
+// the manifest Helm records, which is what an uninstall reads.
+//
+// The target names no object and so matches every claim; the name inside the
+// patch is required by the format and is not applied. The app Composition
+// carries the same text for the releases it renders.
+const keepVolumesPatch = `patches:
+  - target:
+      version: v1
+      kind: PersistentVolumeClaim
+    patch: |-
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
+        name: every-claim-of-the-release
+        annotations:
+          helm.sh/resource-policy: keep
+`
+
+const keepVolumesKey = "patch.yaml"
+
+func keepVolumesName(comp *gentianov1alpha1.Component) string {
+	return comp.Name + "-keep-volumes"
+}
+
+// ensureKeepVolumes keeps the ConfigMap a component's release reads the keep
+// rule from: in the component's namespace, owned by it.
+func (r *ComponentReconciler) ensureKeepVolumes(ctx context.Context, comp *gentianov1alpha1.Component) error {
+	desired := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      keepVolumesName(comp),
+			Namespace: comp.Namespace,
+			Labels:    componentLabels(comp),
+		},
+		Data: map[string]string{keepVolumesKey: keepVolumesPatch},
+	}
+	if err := controllerutil.SetControllerReference(comp, desired, r.Scheme); err != nil {
+		return err
+	}
+	existing := &corev1.ConfigMap{}
+	err := r.Get(ctx, types.NamespacedName{Name: desired.Name, Namespace: desired.Namespace}, existing)
+	if errors.IsNotFound(err) {
+		return r.Create(ctx, desired)
+	}
+	if err != nil {
+		return err
+	}
+	if equality.Semantic.DeepEqual(existing.Data, desired.Data) && ownedBy(existing, comp) {
+		return nil
+	}
+	patch := client.MergeFrom(existing.DeepCopy())
+	existing.Data = desired.Data
+	existing.Labels = desired.Labels
+	existing.OwnerReferences = desired.OwnerReferences
+	return r.Patch(ctx, existing, patch)
+}
+
+// deleteDirectRelease removes the Release this reconciler wrote for a
+// component, and reports whether it is gone.
+//
+// A Release is cluster-scoped, so nothing deletes it with the component's
+// namespace and it cannot be owned by a namespaced Component: left alone it
+// outlived the component, and provider-helm kept the chart's workloads
+// running in a tenant that had uninstalled them. A component delivered
+// through the app Composition has no Release of this name; its claim is
+// owned by the component and takes its own Release with it.
+//
+// Workloads only. What the release leaves behind is decided by the keep rule
+// it was rendered with, and nothing here touches a volume, a database or a
+// secret.
+func (r *ComponentReconciler) deleteDirectRelease(ctx context.Context, comp *gentianov1alpha1.Component) (bool, error) {
+	release := &unstructured.Unstructured{}
+	release.SetGroupVersionKind(helmReleaseGVK)
+	err := r.Get(ctx, types.NamespacedName{Name: releaseName(comp)}, release)
+	if errors.IsNotFound(err) || apimeta.IsNoMatchError(err) {
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	// Only the one this reconciler made for this component. The name is
+	// deterministic, but a Release is not namespaced and a name is a weak
+	// reason to delete one.
+	labels := release.GetLabels()
+	if labels[componentLabel] != comp.Name || labels[tenantLabel] != componentLabels(comp)[tenantLabel] ||
+		labels[managedByLabel] != managedByValue {
+		return true, nil
+	}
+	if release.GetDeletionTimestamp().IsZero() {
+		if err := r.Delete(ctx, release); err != nil && !errors.IsNotFound(err) {
+			return false, err
+		}
+	}
+	return false, nil
 }
 
 func releaseMessageOf(obj *unstructured.Unstructured) string {

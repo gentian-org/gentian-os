@@ -7,7 +7,7 @@ status:
   conditions:
   - lastTransitionTime: "2024-01-01T00:00:00Z"
     message: 'Unready resources: demo-app-client-role, demo-app-entitlement-group,
-      demo-app-externalsecret, and 6 more'
+      demo-app-externalsecret, and 7 more'
     reason: Creating
     status: "False"
     type: Ready
@@ -134,6 +134,45 @@ spec:
     - name: demo-demo-app-client-role
   providerConfigRef:
     name: keycloak
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: demo-app-keep-volumes
+  labels:
+    crossplane.io/composite: render-demo-app-fixture
+  name: render-demo-app-fixture-keep-volumes
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XApp
+    name: render-demo-app-fixture
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: v1
+      data:
+        patch.yaml: |
+          patches:
+            - target:
+                version: v1
+                kind: PersistentVolumeClaim
+              patch: |-
+                apiVersion: v1
+                kind: PersistentVolumeClaim
+                metadata:
+                  name: every-claim-of-the-release
+                  annotations:
+                    helm.sh/resource-policy: keep
+      kind: ConfigMap
+      metadata:
+        name: demo-app-release-keep-volumes
+        namespace: tenant-demo
+  providerConfigRef:
+    name: kubernetes
 ---
 apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
 kind: Client
@@ -283,6 +322,7 @@ kind: Release
 metadata:
   annotations:
     crossplane.io/composition-resource-name: demo-app-release
+    crossplane.io/external-name: demo-app-release
   labels:
     crossplane.io/composite: render-demo-app-fixture
   name: render-demo-app-fixture-release
@@ -300,6 +340,12 @@ spec:
       repository: oci://example.invalid/demo-app
       version: 1.0.0
     namespace: tenant-demo
+    patchesFrom:
+    - configMapKeyRef:
+        key: patch.yaml
+        name: demo-app-release-keep-volumes
+        namespace: tenant-demo
+        optional: false
     set:
     - name: demo-app.oidc.secret
       valueFrom:
