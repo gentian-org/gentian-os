@@ -54,6 +54,7 @@ type Repository interface {
 	Uninstall(ctx context.Context, tenant, profile string, meta gitops.Meta) (gitops.Result, error)
 	SetAddonsPinned(ctx context.Context, tenant, profile string, addons []string, pins []gitops.AddonPin, meta gitops.Meta) (gitops.Result, error)
 	Apps(ctx context.Context, tenant string) ([]gitops.App, error)
+	IsPlatformTenant(ctx context.Context, tenant string) (bool, error)
 	KernelDomain(ctx context.Context) (string, error)
 	ClusterSettingValues(ctx context.Context) (map[string]string, error)
 	SetClusterSettings(ctx context.Context, values map[string]string, meta gitops.Meta) (gitops.Result, error)
@@ -718,6 +719,9 @@ type installRequest struct {
 func (s *Server) install(w http.ResponseWriter, r *http.Request, c call) {
 	ctx := r.Context()
 	tenant, profile := r.PathValue("t"), r.PathValue("p")
+	if s.refusedInPlatformTenant(w, r, tenant) {
+		return
+	}
 	// Read once: decoding twice would read an empty body the second time.
 	var body installRequest
 	if r.ContentLength != 0 {
@@ -785,6 +789,28 @@ func (s *Server) install(w http.ResponseWriter, r *http.Request, c call) {
 
 	res, err := s.cfg.Repo.InstallFrom(ctx, tenant, profile, body.Digest, catalogueName, body.DefaultGrant, c.meta)
 	s.written(w, r, res, err)
+}
+
+// refusedInPlatformTenant answers an app or an add-on asked for in the
+// platform tenant, and reports that it did.
+//
+// Asked first, before the request is read any further: nothing is fetched
+// from a catalogue and no profile is committed for an install that will not
+// happen. The caller is already known to hold can_install_app on the tenant,
+// so this is not a question of who is asking -- the platform tenant takes
+// apps from nobody -- and the answer is 409 with the reason, the same
+// sentence whichever client shows it.
+func (s *Server) refusedInPlatformTenant(w http.ResponseWriter, r *http.Request, tenant string) bool {
+	platform, err := s.cfg.Repo.IsPlatformTenant(r.Context(), tenant)
+	if err != nil {
+		s.repoError(w, r, err)
+		return true
+	}
+	if platform {
+		s.fail(w, r, http.StatusConflict, gitops.ErrPlatformTenant.Error())
+		return true
+	}
+	return false
 }
 
 // pinOrigin answers which declared catalogue source a coordinate names, and
@@ -963,6 +989,9 @@ func (a *addonEntry) UnmarshalJSON(raw []byte) error {
 func (s *Server) setAddons(w http.ResponseWriter, r *http.Request, c call) {
 	ctx := r.Context()
 	tenant, profile := r.PathValue("t"), r.PathValue("p")
+	if s.refusedInPlatformTenant(w, r, tenant) {
+		return
+	}
 	var body addonsRequest
 	if err := decode(r, &body); err != nil || body.Addons == nil {
 		s.fail(w, r, http.StatusBadRequest,
@@ -1249,6 +1278,8 @@ func (s *Server) repoError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, gitops.ErrTenantNotFound):
 		s.fail(w, r, http.StatusNotFound, "tenant not found")
+	case errors.Is(err, gitops.ErrPlatformTenant):
+		s.fail(w, r, http.StatusConflict, gitops.ErrPlatformTenant.Error())
 	case errors.Is(err, gitops.ErrNoClusterClaim):
 		s.fail(w, r, http.StatusNotFound, "this cluster has no Cluster claim in the repository")
 	case errors.Is(err, gitops.ErrInvalidName):

@@ -103,6 +103,10 @@ func (g *GitOps) SetAddonsPinned(
 			tenant, profile, strings.Join(said, ", "), meta.actor())
 	}
 	return g.apply(ctx, tenant, msg, meta, func(text string) (string, string, bool, error) {
+		// As an install is: the platform tenant takes no add-ons.
+		if adoptsAnotherRealm(text, tenant) {
+			return "", "", false, ErrPlatformTenant
+		}
 		had, err := addonsOf(text, profile)
 		if err != nil {
 			return "", "", false, err

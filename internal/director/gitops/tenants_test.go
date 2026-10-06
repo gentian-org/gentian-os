@@ -14,7 +14,10 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"reflect"
+	goruntime "runtime"
 	"strings"
 	"testing"
 	"time"
@@ -472,5 +475,125 @@ func TestACarryingClusterIsNotMadeSingleTenant(t *testing.T) {
 	}
 	if res, err := g.SetClusterSettings(ctx, map[string]string{"tenancyMode": "single"}, tenantMeta()); err != nil || !res.Changed {
 		t.Fatalf("after retiring: %+v %v", res, err)
+	}
+}
+
+// The platform tenant takes no apps and no add-ons, by whichever route the
+// write arrives: the manifest about to be edited is what refuses, so a caller
+// that did not ask first is refused all the same, and nothing is committed.
+// A tenant is the platform's by the realm it adopts, not by its name.
+func TestThePlatformTenantsManifestRefusesAppsAndAddons(t *testing.T) {
+	remote := dt.Remote(t, "demo", "ops")
+	seed := dt.Clone(t, remote)
+	manifest := "apiVersion: gentianos.io/v1alpha1\nkind: Tenant\nmetadata:\n  name: ops\nspec:\n  displayName: Platform\n" +
+		"  isolation:\n    mode: namespace\n    keycloakRealm: kernel\n  apps:\n  - profile: nextcloud\n"
+	if err := os.WriteFile(filepath.Join(seed, dt.TenantPath("ops")), []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dt.Git(t, seed, "-c", "user.name=seed", "-c", "user.email=seed@example.com", "commit", "-am", "ops adopts the kernel realm")
+	dt.Git(t, seed, "push", "origin", "HEAD:main")
+	g := gitops.NewGitOps(dt.Clone(t, remote), remote, dt.Cluster, director)
+	ctx := context.Background()
+	before := dt.Git(t, "", "--git-dir", remote, "rev-parse", "main")
+
+	if platform, err := g.IsPlatformTenant(ctx, "ops"); err != nil || !platform {
+		t.Fatalf("a tenant adopting the kernel realm: platform=%v err=%v", platform, err)
+	}
+	if platform, err := g.IsPlatformTenant(ctx, "demo"); err != nil || platform {
+		t.Fatalf("a tenant naming no realm: platform=%v err=%v", platform, err)
+	}
+	if _, err := g.IsPlatformTenant(ctx, "nobody"); !errors.Is(err, gitops.ErrTenantNotFound) {
+		t.Fatalf("a tenant that does not exist: %v", err)
+	}
+	if _, err := g.Install(ctx, "ops", "wiki", "", tenantMeta()); !errors.Is(err, gitops.ErrPlatformTenant) {
+		t.Fatalf("an install in the platform tenant: %v", err)
+	}
+	if _, err := g.SetAddons(ctx, "ops", "nextcloud", []string{"calendar"}, tenantMeta()); !errors.Is(err, gitops.ErrPlatformTenant) {
+		t.Fatalf("addons in the platform tenant: %v", err)
+	}
+	if after := dt.Git(t, "", "--git-dir", remote, "rev-parse", "main"); after != before {
+		t.Fatal("a refused write committed something")
+	}
+
+	// A tenant the director creates names its own realm, and installs.
+	if _, err := g.CreateTenant(ctx, gitops.NewTenant{Name: "acme"}, tenantMeta()); err != nil {
+		t.Fatal(err)
+	}
+	if platform, err := g.IsPlatformTenant(ctx, "acme"); err != nil || platform {
+		t.Fatalf("a tenant naming its own realm: platform=%v err=%v", platform, err)
+	}
+	if res, err := g.Install(ctx, "acme", "wiki", "", tenantMeta()); err != nil || res.Status != "installed" {
+		t.Fatalf("an install in a user tenant: %+v %v", res, err)
+	}
+}
+
+// The install writes one tenant itself: the first, before there is a
+// director to ask (scripts/lib/bootstrap.sh, scaffold_first_tenant). What it
+// writes is the manifest CreateTenant writes, plus the annotation that admits
+// the tenant before the handover. Two templates in two languages would drift
+// apart silently, so the shell's output is produced here and compared with
+// the director's as data.
+func TestTheInstallsFirstTenantIsTheManifestTheDirectorWrites(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("no bash to run the install's scaffold with")
+	}
+	_, file, _, ok := goruntime.Caller(0)
+	if !ok {
+		t.Fatal("cannot locate the repository")
+	}
+	root := filepath.Join(filepath.Dir(file), "..", "..", "..")
+
+	// The install's, into a deployments checkout of its own.
+	checkout := t.TempDir()
+	dt.Git(t, checkout, "init", "--initial-branch=main")
+	cmd := exec.Command(bash, "-c",
+		`set -u; source scripts/lib/load.sh >/dev/null 2>&1; trap - ERR; set +e; scaffold_first_tenant `+dt.Cluster)
+	cmd.Dir = root
+	cmd.Env = []string{
+		"HOME=" + t.TempDir(), "PATH=" + os.Getenv("PATH"), "SCRIPT_DIR=" + root,
+		"GENTIAN_DEPLOYMENTS_PATH=" + checkout, "GENTIAN_DEPLOYMENTS_CLUSTER_ID=" + dt.Cluster,
+		"GENTIAN_FIRST_TENANT=acme", "GENTIAN_FIRST_TENANT_DISPLAY_NAME=Acme Ltd",
+	}
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("the install's scaffold: %v\n%s", err, out)
+	}
+	installed, err := os.ReadFile(filepath.Join(checkout, dt.TenantPath("acme")))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The director's.
+	remote := dt.Remote(t, "demo")
+	g := gitops.NewGitOps(dt.Clone(t, remote), remote, dt.Cluster, director)
+	if _, err := g.CreateTenant(context.Background(), gitops.NewTenant{Name: "acme", DisplayName: "Acme Ltd"}, tenantMeta()); err != nil {
+		t.Fatal(err)
+	}
+
+	var theirs, ours map[string]any
+	if err := yaml.Unmarshal(installed, &theirs); err != nil {
+		t.Fatalf("the install's manifest does not parse: %v\n%s", err, installed)
+	}
+	if err := yaml.Unmarshal([]byte(dt.RemoteFile(t, remote, dt.TenantPath("acme"))), &ours); err != nil {
+		t.Fatal(err)
+	}
+	annotations, _ := theirs["metadata"].(map[string]any)["annotations"].(map[string]any)
+	const override = "gentianos.io/handover-override"
+	if reason, _ := annotations[override].(string); reason == "" {
+		t.Fatalf("the install's first tenant carries no reason under %s, and the tenant webhook admits it on nothing else", override)
+	}
+	delete(annotations, override)
+	if !reflect.DeepEqual(theirs, ours) {
+		t.Fatalf("the install's first tenant is not the manifest the director writes.\ninstall:\n%s\ndirector:\n%s",
+			installed, dt.RemoteFile(t, remote, dt.TenantPath("acme")))
+	}
+	for _, name := range []string{"kustomization.yaml"} {
+		theirs, err := os.ReadFile(filepath.Join(checkout, filepath.Dir(dt.TenantPath("acme")), name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ours := dt.RemoteFile(t, remote, filepath.Dir(dt.TenantPath("acme"))+"/"+name); strings.TrimSpace(string(theirs)) != ours {
+			t.Fatalf("%s differs.\ninstall:\n%s\ndirector:\n%s", name, theirs, ours)
+		}
 	}
 }

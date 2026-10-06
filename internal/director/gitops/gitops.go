@@ -449,6 +449,12 @@ func (g *GitOps) InstallFrom(
 		msg = strings.Replace(msg, " (via ", " for everyone (via ", 1)
 	}
 	return g.apply(ctx, tenant, msg, meta, func(text string) (string, string, bool, error) {
+		// The platform tenant takes no apps, whoever asks and by whichever
+		// route: refused on the manifest about to be edited, so no caller
+		// can forget to ask first.
+		if adoptsAnotherRealm(text, tenant) {
+			return "", "", false, ErrPlatformTenant
+		}
 		lines := strings.Split(text, "\n")
 		if _, _, _, installed := appEntryExtent(lines, profile); !installed {
 			out, ok := insertAppProfile(text, profile, digest, catalogue, forEveryone)

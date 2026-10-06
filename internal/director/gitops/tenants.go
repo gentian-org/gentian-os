@@ -42,9 +42,9 @@ var ErrTenantExists = errors.New("tenant already exists")
 
 // ErrSingleTenancy is a new tenant on a cluster whose tenancy mode is single:
 // its one tenant is the platform tenant, which the install already made.
-var ErrSingleTenancy = errors.New("this cluster is single-tenant; its one tenant is the platform tenant")
+var ErrSingleTenancy = errors.New("this cluster's tenancyMode is single: the platform tenant is its only tenant, and it admits no other")
 
-// refuseInSingleTenancy answers ErrSingleTenancy on a single-tenant cluster,
+// refuseInSingleTenancy answers ErrSingleTenancy under tenancyMode single,
 // before anything is committed: the operator would refuse the tenant too,
 // but only once git already held it.
 func (g *GitOps) refuseInSingleTenancy(ctx context.Context) error {
@@ -56,6 +56,63 @@ func (g *GitOps) refuseInSingleTenancy(ctx context.Context) error {
 		return ErrSingleTenancy
 	}
 	return nil
+}
+
+// ErrPlatformTenant is an app or an add-on asked for in the platform tenant.
+//
+// The platform tenant holds the cluster's administrators and the platform's
+// own components, which are installed with the cluster. A catalogue app does
+// not belong there, and could not run there either: an app's composition
+// takes the tenant's name as its realm, and this tenant's realm is the
+// kernel's. That used to be how the install failed, some minutes after it was
+// committed. It is refused here instead, with the reason, and the message is
+// what a person reads: the API hands it on unchanged.
+var ErrPlatformTenant = errors.New(
+	"this is the platform tenant: it holds the cluster's administrators and the platform's own components, " +
+		"which are installed with the cluster, and it takes no apps or add-ons. " +
+		"Install the app in the tenant its users sign in to")
+
+// adoptsAnotherRealm reports whether a tenant's manifest names a Keycloak
+// realm that is not the tenant's own.
+//
+// That is what makes a tenant the platform tenant, by the field and not by
+// its name: the operator adopts the realm it names instead of creating one
+// (the kernel realm, in every cluster the install scaffolds), and everything
+// that follows -- its people being the administrators, its zone being the
+// kernel's -- follows from that line. A manifest that names no realm, or its
+// own name, is a user tenant. TenantLoginDomain reads the same field for the
+// same reason.
+func adoptsAnotherRealm(manifest, tenant string) bool {
+	var doc struct {
+		Spec struct {
+			Isolation struct {
+				KeycloakRealm string `json:"keycloakRealm"`
+			} `json:"isolation"`
+		} `json:"spec"`
+	}
+	if err := yaml.Unmarshal([]byte(manifest), &doc); err != nil {
+		return false
+	}
+	realm := doc.Spec.Isolation.KeycloakRealm
+	return realm != "" && realm != tenant
+}
+
+// IsPlatformTenant reports whether a tenant is the platform's own: one whose
+// manifest adopts another realm. A caller asks before it fetches or commits
+// anything for an install; the writes themselves refuse as well.
+func (g *GitOps) IsPlatformTenant(ctx context.Context, tenant string) (bool, error) {
+	if !ValidName(tenant) {
+		return false, fmt.Errorf("%w: tenant %q", ErrInvalidName, tenant)
+	}
+	file, err := g.TenantFile(ctx, tenant)
+	if err != nil {
+		return false, err
+	}
+	b, err := os.ReadFile(file)
+	if err != nil {
+		return false, err
+	}
+	return adoptsAnotherRealm(string(b), tenant), nil
 }
 
 // ErrTenantProtected is a retire against a tenant that must not be retired.
