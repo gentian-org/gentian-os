@@ -11,7 +11,6 @@ says which is which, what each asks of you, and how a file tells you its own.
 | everything not listed below | **MPL-2.0** — [LICENSE](LICENSE) | the operator, the director, the installer, the system services' configuration, the documentation |
 | `api/` | **Apache-2.0** — [api/LICENSE](api/LICENSE) | the resource types and the bundle format: what another program imports |
 | `gentianos.io_*.yaml` in `config/crd/` and `charts/gentian-os/crds/` | **Apache-2.0** | generated from `api/`, and installed into clusters by anyone. The other CRDs beside them belong to the projects they come from |
-| `docs/design/store-contract.md` | **Apache-2.0** | a specification others implement |
 | `charts/infra/` | each chart's own | third-party charts carried here unchanged or with noted changes; see the `UPSTREAM.md` in each |
 
 A file's own notice wins over this table. Go files carry one at the top, ending
@@ -41,9 +40,8 @@ repository says who they are.
 
 ## What Apache 2.0 on the API means
 
-You can import the types, generate clients from the CRDs, read and write
-bundles, and implement the store contract, in software under
-any license, with attribution and nothing else. That is deliberate: it is what
+You can import the types, generate clients from the CRDs, and read and write
+bundles, in software under any license, with attribution and nothing else. That is deliberate: it is what
 lets a tenant's data and a cluster's integrations outlive any one
 implementation.
 

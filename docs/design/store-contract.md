@@ -21,9 +21,9 @@ trusted with. The format of every request and answer is in
 | [store-api.md](../plans/artefacts/store-api.md) | The same in prose, field by field, with examples. It can be handed to whoever builds a store |
 | [licence-report.openapi.yaml](../plans/artefacts/licence-report.openapi.yaml) | The report a cluster sends about itself, which a store depends on (§6.2). It is spelled out in [operations.md §6.2](operations.md) |
 
-This specification is licensed under Apache-2.0, so that anyone may implement
-it; see [LICENSING.md](../../LICENSING.md). The three format files in
-`plans/artefacts/` carry their own notice and are under MPL-2.0.
+This specification and the three format files in `plans/artefacts/` are under
+MPL-2.0, like the rest of the repository; see
+[LICENSING.md](../../LICENSING.md).
 
 ## 1. Direction
 
