@@ -30,13 +30,10 @@ func NewRunnableFromEnv(mgr manager.Manager) (*Runnable, error) {
 		addr = ":8082"
 	}
 	svc, err := NewService(mgr.GetClient(), mgr.GetConfig(), Options{
-		OpenBaoNamespace:   envOrDefault("OPENBAO_NAMESPACE", "openbao"),
-		OperatorNamespace:  envOrDefault("POD_NAMESPACE", layout.Namespace(layout.Control)),
-		OperatorSA:         envOrDefault("OPERATOR_SA", "gentian-os"),
-		DeploymentsPath:    os.Getenv("GENTIAN_DEPLOYMENTS_PATH"),
-		DeploymentsRepo:    os.Getenv("GENTIAN_DEPLOYMENTS_REPO"),
-		DeploymentsCluster: envOrDefault("GENTIAN_DEPLOYMENTS_CLUSTER_ID", "default-cluster"),
-		MetricsEnabled:     os.Getenv("METRICS_SERVER_ENABLED") == "true",
+		OpenBaoNamespace:  envOrDefault("OPENBAO_NAMESPACE", "openbao"),
+		OperatorNamespace: envOrDefault("POD_NAMESPACE", layout.Namespace(layout.Control)),
+		OperatorSA:        envOrDefault("OPERATOR_SA", "gentian-os"),
+		MetricsEnabled:    os.Getenv("METRICS_SERVER_ENABLED") == "true",
 	})
 	if err != nil {
 		return nil, err

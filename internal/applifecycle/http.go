@@ -15,7 +15,6 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -46,18 +45,16 @@ type HTTPServer struct {
 	// /healthz must carry it as a bearer.
 	//
 	// This API used to authenticate nobody: it is reachable by anything that
-	// can reach the Service, it has writes -- installing an app, setting
-	// addons, taking and deleting a backup -- and each took the actor's name
-	// from an X-Gentian-Actor header, which is a claim and not a proof. Any
-	// pod in any namespace could take a backup and have somebody else's name
-	// recorded against it.
+	// can reach the Service, it takes and deletes backups and purges an app's
+	// data, and each took the actor's name from an X-Gentian-Actor header,
+	// which is a claim and not a proof. Any pod in any namespace could take a
+	// backup and have somebody else's name recorded against it.
 	//
 	// A shared token rather than the caller's own: verifying that would mean
 	// the operator holding the issuer's keys and the authorization graph,
-	// which is the director's job and not this process's. The honest end
-	// state is that there is no HTTP write here at all, only the director's;
-	// until then this is what makes the actor header worth the paper it is
-	// written on, because only the director can set it.
+	// which is the director's job and not this process's. The token is what
+	// makes the actor header worth the paper it is written on, because only
+	// the director can set it.
 	//
 	// Empty refuses everything rather than admitting everything. A
 	// misconfigured deployment that drops the secret must not quietly become
@@ -84,11 +81,14 @@ func (h *HTTPServer) authenticated(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-// Start runs the HTTP server until ctx is cancelled.
-func (h *HTTPServer) Start(ctx context.Context) error {
-	if h.Service == nil {
-		return errors.New("applifecycle service is nil")
-	}
+// routes is everything this listener serves.
+//
+// Installing an app, removing one and choosing its addons are not here. They
+// are changes to what a tenant is meant to have, the director makes them as
+// commits, and the operator learns of them from git like everything else. The
+// routes that once did them here, and the checkout and push credential they
+// needed, are gone.
+func (h *HTTPServer) routes() *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -98,9 +98,6 @@ func (h *HTTPServer) Start(ctx context.Context) error {
 	// installed apps, its usage and its backups are its own business.
 	guarded := &guardedMux{mux: mux, auth: h.authenticated}
 	guarded.HandleFunc("GET /v1/tenants/{tenant}/apps", h.handleList)
-	guarded.HandleFunc("POST /v1/tenants/{tenant}/apps/{profile}", h.handleInstall)
-	guarded.HandleFunc("DELETE /v1/tenants/{tenant}/apps/{profile}", h.handleUninstall)
-	guarded.HandleFunc("PUT /v1/tenants/{tenant}/apps/{profile}/addons", h.handleSetAddons)
 	h.registerAppRoutes(guarded)
 	h.registerResourceRoutes(guarded)
 	h.registerBackupRoutes(guarded)
@@ -108,6 +105,15 @@ func (h *HTTPServer) Start(ctx context.Context) error {
 	h.registerNotificationRoutes(guarded)
 	h.registerTenantRoutes(guarded)
 	h.registerImportRoutes(guarded)
+	return mux
+}
+
+// Start runs the HTTP server until ctx is cancelled.
+func (h *HTTPServer) Start(ctx context.Context) error {
+	if h.Service == nil {
+		return errors.New("applifecycle service is nil")
+	}
+	mux := h.routes()
 
 	srv := &http.Server{Addr: h.Addr, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 	errCh := make(chan error, 1)
@@ -136,92 +142,6 @@ func (h *HTTPServer) handleList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"tenant": tenant, "apps": apps})
-}
-
-func (h *HTTPServer) handleInstall(w http.ResponseWriter, r *http.Request) {
-	tenant := r.PathValue("tenant")
-	profile := r.PathValue("profile")
-	actor := r.Header.Get("X-Gentian-Actor")
-	if actor == "" {
-		actor = "app-lifecycle-api"
-	}
-	wait := r.URL.Query().Get("wait") == "true" || r.URL.Query().Get("wait") == "1"
-	provision := r.URL.Query().Get("provision") == "true" || r.URL.Query().Get("provision") == "1"
-	result, err := h.Service.Install(r.Context(), InstallRequest{
-		Tenant:    tenant,
-		Profile:   profile,
-		Actor:     actor,
-		Wait:      wait,
-		Provision: provision,
-	})
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, result)
-}
-
-func (h *HTTPServer) handleUninstall(w http.ResponseWriter, r *http.Request) {
-	tenant := r.PathValue("tenant")
-	profile := r.PathValue("profile")
-	purge := r.URL.Query().Get("purge") == "true" || r.URL.Query().Get("purge") == "1"
-	actor := r.Header.Get("X-Gentian-Actor")
-	if actor == "" {
-		actor = "app-lifecycle-api"
-	}
-	result, err := h.Service.Uninstall(r.Context(), UninstallRequest{
-		Tenant:  tenant,
-		Profile: profile,
-		Purge:   purge,
-		Actor:   actor,
-	})
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, result)
-}
-
-func (h *HTTPServer) handleSetAddons(w http.ResponseWriter, r *http.Request) {
-	tenant := r.PathValue("tenant")
-	profile := r.PathValue("profile")
-	actor := r.Header.Get("X-Gentian-Actor")
-	if actor == "" {
-		actor = "app-lifecycle-api"
-	}
-
-	// PUT, not PATCH: the body is the complete selection. A partial "add these"
-	// verb would make deselection unexpressible, and deselecting to nothing is a
-	// selection the activation script has to see.
-	var body struct {
-		Addons []string `json:"addons"`
-		// Provision mirrors the app-level flag: install and grant access to all
-		// existing tenant users, rather than install and leave access to group
-		// assignment. It applies to every addon in the request.
-		Provision bool `json:"provision"`
-		// ProvisionFor is the same choice made per addon, which is how the store
-		// asks it — Install and Provision are separate buttons on each row. Given
-		// both, this one decides; an addon it omits is installed and not granted.
-		ProvisionFor []string `json:"provisionFor"`
-	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&body); err != nil {
-		writeErr(w, http.StatusBadRequest, fmt.Errorf("invalid request body: %w", err))
-		return
-	}
-
-	result, err := h.Service.SetAddons(r.Context(), SetAddonsRequest{
-		Tenant:       tenant,
-		Profile:      profile,
-		Addons:       body.Addons,
-		Provision:    body.Provision,
-		ProvisionFor: body.ProvisionFor,
-		Actor:        actor,
-	})
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, result)
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {

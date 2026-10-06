@@ -746,13 +746,14 @@ appLifecycle:
   # Empty name disables the Secret; the API then has no token and refuses
   # every request, which is the safe direction for a misconfiguration.
   tokenSecretName: gentian-os-lifecycle-token
+  # Where the cluster is declared. The director clones and pushes it; the
+  # operator, the custodian and the registrar read only `cluster`, the id the
+  # cluster's own relations are asked about. The operator holds no checkout
+  # and no credential for the repository.
   deployments:
-    enabled: false
-    path: /data/gentian-deployments
     repo: https://git.example.domain/gentian-deployments
     cluster: default-cluster
-    stage: dev
-    # The Secret the operator authenticates to the repository with, and what
+    # The Secret the director authenticates to the repository with, and what
     # it holds. Under basic it has one key, .git-credentials: the repository's
     # URL with the login in it. Under bearer it has one key, token, which git
     # sends as an Authorization header. The Repository claim writes the Secret

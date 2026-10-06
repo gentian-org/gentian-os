@@ -6,19 +6,6 @@ kind: Deployment
 {{- $imageDigest := .Values.image.digest | default "" }}
 {{- $imageTag := .Values.image.tag | default .Chart.AppVersion }}
 {{- $lifecycleDeployments := .Values.appLifecycle.deployments | default dict }}
-{{- $lifecycleDeploymentsEnabled := $lifecycleDeployments.enabled | default false }}
-{{- $lifecycleGitCredsSecret := $lifecycleDeployments.gitCredentialsSecret | default "" }}
-{{- /*
-     How the operator authenticates to the deployments repository. The Secret
-     comes from the Repository claim and holds one of two things:
-
-       basic   one line, the repository's URL with the login in it. The init
-               container mounts it and clones from that line.
-       bearer  the token, under the key `token`. Nothing is mounted: git is
-               told through its environment to send it as a header.
-*/}}
-{{- $gitBearer := and $lifecycleGitCredsSecret (eq ($lifecycleDeployments.authType | default "basic") "bearer") }}
-{{- $gitLoginFile := and $lifecycleGitCredsSecret (not $gitBearer) }}
 {{- $usage := .Values.usage | default dict }}
 {{- $usageSampler := $usage.sampler | default dict }}
 {{- $metricsServer := $usage.metricsServer | default dict }}
@@ -46,7 +33,6 @@ metadata:
     secret.reloader.stakater.com/reload: >-
       {{ .Values.authzBridge.openfgaTokenSecretRef.name | default "gentian-os-openfga-token" }}
       {{- with .Values.cloudflare.apiTokenSecretRef }}{{- if .name }},{{ .name }}{{- end }}{{- end }}
-      {{- if $lifecycleGitCredsSecret }},{{ $lifecycleGitCredsSecret }}{{- end }}
 spec:
   replicas: {{ .Values.replicaCount }}
   selector:
@@ -370,8 +356,6 @@ spec:
               value: {{ .Values.tenantProvisioning.crossplaneOnly | default false | quote }}
             - name: APP_LIFECYCLE_BIND_ADDRESS
               value: {{ printf ":%v" .Values.appLifecycle.port | quote }}
-            - name: GENTIAN_DEPLOYMENTS_PATH
-              value: {{ $lifecycleDeployments.path | default "/data/gentian-deployments" | quote }}
             {{- with (.Values.appLifecycle).tokenSecretName }}
             # The shared token this API requires. Optional on the ref so a pod
             # still starts while the Secret is being created; the server then
@@ -383,12 +367,8 @@ spec:
                   key: token
                   optional: true
             {{- end }}
-            - name: GENTIAN_DEPLOYMENTS_REPO
-              value: {{ $lifecycleDeployments.repo | default "https://git.example.domain/gentian-deployments" | quote }}
             - name: GENTIAN_DEPLOYMENTS_CLUSTER_ID
               value: {{ $lifecycleDeployments.cluster | default "default-cluster" | quote }}
-            - name: GENTIAN_DEPLOYMENTS_STAGE
-              value: {{ $lifecycleDeployments.stage | default (.Values.stage | default "dev") | quote }}
             - name: USAGE_SAMPLER_ENABLED
               value: {{ $usageSampler.enabled | default false | quote }}
             - name: USAGE_SAMPLE_INTERVAL
@@ -397,31 +377,6 @@ spec:
               value: {{ $usageSampler.retention | default "9600h" | quote }}
             - name: METRICS_SERVER_ENABLED
               value: {{ $metricsServer.enabled | default false | quote }}
-            {{- if $lifecycleGitCredsSecret }}
-            - name: HOME
-              value: /tmp
-            {{- /* safe.directory is always the first setting. A bearer
-                 token adds the header as a second; a basic login adds
-                 nothing, because the init container cloned from a URL that
-                 carries it, so it is in this checkout's origin and every
-                 fetch and push reads it from there. git's credential store
-                 is not used for it: the store takes a lock beside its file
-                 even to read, and that file would be a read-only mount. */}}
-            - name: GIT_CONFIG_COUNT
-              value: {{ ternary "2" "1" $gitBearer | quote }}
-            {{- include "gentian-os.gitConfigEnv" (dict "index" 0 "key" "safe.directory" "value" ($lifecycleDeployments.path | default "/data/gentian-deployments")) | nindent 12 }}
-            {{- if $gitBearer }}
-            {{- include "gentian-os.gitBearerEnv" (dict "secret" $lifecycleGitCredsSecret "index" 1) | nindent 12 }}
-            {{- end }}
-            - name: GIT_AUTHOR_NAME
-              value: gentian-os
-            - name: GIT_AUTHOR_EMAIL
-              value: gentian-os@gentian.org
-            - name: GIT_COMMITTER_NAME
-              value: gentian-os
-            - name: GIT_COMMITTER_EMAIL
-              value: gentian-os@gentian.org
-            {{- end }}
             - name: KERNEL_NAMESPACE
               value: {{ .Values.infraNamespace | default "kernel-authentication" | quote }}
             - name: POD_NAMESPACE
@@ -473,7 +428,7 @@ spec:
             {{- else }}
             {}
             {{- end }}
-          {{- if or $webhookEnabled $lifecycleDeploymentsEnabled $lifecycleGitCredsSecret }}
+          {{- if or $webhookEnabled .Values.trustAnchorSecret }}
           volumeMounts:
             {{- with .Values.trustAnchorSecret }}
             - name: kernel-trust-anchor
@@ -485,12 +440,6 @@ spec:
               mountPath: /tmp/k8s-webhook-server/serving-certs
               readOnly: true
             {{- end }}
-            {{- if $lifecycleDeploymentsEnabled }}
-            - name: deployments-checkout
-              mountPath: {{ $lifecycleDeployments.path | default "/data/gentian-deployments" }}
-            {{- end }}
-            {{- /* The credential is not mounted into this container in
-                 either mode: see GIT_CONFIG_COUNT above. */}}
           {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
@@ -504,7 +453,7 @@ spec:
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- if or $webhookEnabled $lifecycleDeploymentsEnabled $lifecycleGitCredsSecret }}
+      {{- if or $webhookEnabled .Values.trustAnchorSecret }}
       volumes:
         {{- with .Values.trustAnchorSecret }}
         - name: kernel-trust-anchor
@@ -516,75 +465,5 @@ spec:
           secret:
             secretName: {{ include "gentian-os.fullname" . }}-webhook-server-cert
         {{- end }}
-        {{- if $lifecycleDeploymentsEnabled }}
-        - name: deployments-checkout
-          emptyDir: {}
-        {{- end }}
-        {{- if $gitLoginFile }}
-        - name: git-credentials
-          secret:
-            secretName: {{ $lifecycleGitCredsSecret | quote }}
-            optional: true
-        {{- end }}
-      {{- end }}
-      {{- if $lifecycleDeploymentsEnabled }}
-      initContainers:
-        - name: git-clone-deployments
-          image: alpine/git:2.45.2
-          command:
-            - sh
-            - -c
-            - |
-              set -e
-              # A basic login arrives as a file holding one line: the
-              # repository's URL with the login in it. Cloning from that line
-              # also leaves it as the checkout's origin, which is where the
-              # operator's later pushes find it. Without the file the clone
-              # is from the plain address, which is right for a repository
-              # that needs no login and for one that takes a bearer token.
-              origin="${GENTIAN_DEPLOYMENTS_REPO}"
-              {{- if $gitLoginFile }}
-              # The Secret is optional, and while it does not exist yet
-              # Kubernetes puts an empty directory where the file would be.
-              # A directory has a size too, so both tests are needed before
-              # the path is read as a login.
-              login=/etc/git/credentials
-              if [ -f "${login}" ] && [ -s "${login}" ]; then
-                origin="$(cat "${login}")"
-              fi
-              {{- end }}
-              for attempt in 1 2 3 4 5; do
-                if [ -d {{ $lifecycleDeployments.path | default "/data/gentian-deployments" }}/.git ]; then
-                  exit 0
-                fi
-                if git clone "${origin}" {{ $lifecycleDeployments.path | default "/data/gentian-deployments" }}; then
-                  exit 0
-                fi
-                echo "git clone attempt ${attempt} failed; retrying..."
-                sleep 15
-              done
-              exit 1
-          env:
-            - name: GENTIAN_DEPLOYMENTS_REPO
-              value: {{ $lifecycleDeployments.repo | default "https://git.example.domain/gentian-deployments" | quote }}
-            {{- if $gitBearer }}
-            {{- include "gentian-os.gitBearerEnv" (dict "secret" $lifecycleGitCredsSecret "index" 0 "alone" true) | nindent 12 }}
-            {{- end }}
-          securityContext:
-            runAsUser: 65532
-            runAsNonRoot: true
-            allowPrivilegeEscalation: false
-            capabilities:
-              drop:
-                - ALL
-          volumeMounts:
-            - name: deployments-checkout
-              mountPath: {{ $lifecycleDeployments.path | default "/data/gentian-deployments" }}
-            {{- if $gitLoginFile }}
-            - mountPath: /etc/git/credentials
-              name: git-credentials
-              readOnly: true
-              subPath: .git-credentials
-            {{- end }}
       {{- end }}
       terminationGracePeriodSeconds: 10
