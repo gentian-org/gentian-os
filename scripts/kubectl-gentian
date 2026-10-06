@@ -22,8 +22,8 @@
 #   kubectl gentian tenants import <file.gentian> [--identity-file <f> | --passphrase] [--name <n>]
 #   kubectl gentian tenants import --bucket <b> --prefix <p> [--endpoint <url>] (--identity-file <f> | --passphrase)
 #
-#   kubectl gentian apps list --tenant <tenant>
-#   kubectl gentian apps install <app> --tenant <tenant> [--for-everyone]
+#   kubectl gentian apps list --tenant <tenant> [--available]
+#   kubectl gentian apps install <app> --tenant <tenant> [--from <source>] [--digest sha256:<hex>] [--for-everyone]
 #   kubectl gentian apps uninstall <app> --tenant <tenant> [--purge]
 #
 #   kubectl gentian resources plans --tenant <tenant>
@@ -584,17 +584,151 @@ _tenant_flag() {
     echo "${t}"
 }
 
+# _apps_offers <tenant> — what the cluster's catalogue sources offer, as one
+# JSON document: {sources: [<name>…], unread: [<name>…], entries: [{source,
+# name, version, edition, digest}…]}. The director answers it from each
+# source's index; a source it could not read is named in unread and the rest
+# are still listed. A cluster that declares no source answers no sources.
+_apps_offers() {
+    local t="$1" answer names name listing entries="[]" unread="[]"
+    if ! answer="$( (_call GET "/v1/tenants/${t}/catalogues") 2>&1)"; then
+        # The catalogue routes exist only where the Cluster claim names a
+        # source; without one the director has no such route.
+        if [[ "${answer}" == *"answered 404"* ]]; then
+            echo '{"sources":[],"unread":[],"entries":[]}'
+            return 0
+        fi
+        die "${answer#error: }"
+    fi
+    names="$(printf '%s' "${answer}" | jq -r '.catalogues[].name')"
+    for name in ${names}; do
+        if listing="$( (_call GET "/v1/tenants/${t}/catalogues/${name}/entries") 2>/dev/null)"; then
+            entries="$(jq -n --argjson have "${entries}" --argjson got "${listing}" --arg s "${name}" \
+                '$have + [$got.entries[] | {source: $s, name, version: (.version // ""), edition: (.edition // ""), digest: (.digest // "")}]')"
+        else
+            unread="$(jq -n --argjson have "${unread}" --arg s "${name}" '$have + [$s]')"
+        fi
+    done
+    jq -n --arg names "${names}" --argjson unread "${unread}" --argjson entries "${entries}" \
+        '{sources: ($names | split("\n") | map(select(. != ""))), unread: $unread, entries: $entries}'
+}
+
+# apps list: what the tenant has installed; with --available, what the
+# cluster's catalogue sources offer and whether the tenant has it.
+cmd_apps_list() {
+    local t available="" a
+    t="$(_tenant_flag "$@")"
+    for a in "$@"; do
+        [[ "${a}" == "--available" ]] && available=1
+    done
+    if [[ -z "${available}" ]]; then
+        _call GET "/v1/tenants/${t}/apps" |
+            jq -r '(["APP","FOR","ADDONS"] | @tsv), (.apps[] | [.profile, (if .defaultGrant then "everyone" else "-" end), ((.addons // []) | join(","))] | @tsv)' |
+            column -t -s $'\t'
+        return 0
+    fi
+    need jq
+    _connect
+    local offers installed
+    offers="$(_apps_offers "${t}")" || exit 1
+    [[ "$(printf '%s' "${offers}" | jq -r '.sources | length')" != "0" ]] ||
+        die "this cluster declares no catalogue source, so it offers nothing to install: a platform administrator names one on the Cluster claim (spec.catalogue.sources)"
+    installed="$(_call GET "/v1/tenants/${t}/apps")" || exit 1
+    # INSTALLED: yes is this build; "other build" is the app at another digest;
+    # unpinned is the app installed with no digest.
+    jq -rn --argjson o "${offers}" --argjson i "${installed}" '
+        ($i.apps | map({key: .profile, value: (.digest // "")}) | from_entries) as $have
+        | (["SOURCE","APP","VERSION","EDITION","DIGEST","INSTALLED"] | @tsv),
+          ($o.entries[] | .name as $n | .digest as $d | [.source, $n,
+              (if .version == "" then "-" else .version end),
+              (if .edition == "" then "-" else .edition end),
+              (if $d == "" then "-" else $d[0:19] end),
+              (if ($have | has($n) | not) then "-"
+               elif $have[$n] == "" then "unpinned"
+               elif $have[$n] == $d then "yes"
+               else "other build" end)] | @tsv)' |
+        column -t -s $'\t'
+    local unread
+    unread="$(printf '%s' "${offers}" | jq -r '.unread | join(", ")')"
+    [[ -z "${unread}" ]] || echo "Not read, the director could not reach them: ${unread}." >&2
+}
+
+# apps install: a pinned build from one of the cluster's catalogue sources.
+#
+# The entry is looked up in what the director lists of the sources: the one
+# source that serves the name, or the one --from names when several do. The
+# digest is the one that listing states, unless --digest gives another; either
+# way the director fetches the bundle from the source and installs nothing
+# unless it hashes to the digest sent.
+_apps_install() {
+    local app="$1" t="$2" everyone="$3" from="" digest=""
+    shift 3
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --from) from="${2:?}"; shift 2 ;;
+            --digest) digest="${2:?}"; shift 2 ;;
+            *) shift ;;
+        esac
+    done
+    need jq
+    _connect
+    local offers sources serving count version listed
+    offers="$(_apps_offers "${t}")" || exit 1
+    sources="$(printf '%s' "${offers}" | jq -r '.sources | join(", ")')"
+    [[ -n "${sources}" ]] ||
+        die "this cluster declares no catalogue source, so there is nothing to install ${app} from: a platform administrator names one on the Cluster claim (spec.catalogue.sources)"
+    if [[ -n "${from}" ]]; then
+        printf '%s' "${offers}" | jq -e --arg s "${from}" '.sources | index($s) != null' >/dev/null ||
+            die "this cluster has no catalogue source named ${from}; its sources: ${sources}"
+    fi
+    serving="$(printf '%s' "${offers}" | jq -c --arg a "${app}" --arg s "${from}" \
+        '[.entries[] | select(.name == $a and ($s == "" or .source == $s))]')"
+    count="$(printf '%s' "${serving}" | jq -r 'length')"
+    if [[ "${count}" == "0" ]]; then
+        # A source need not publish an index, and one that does lists only
+        # what a cluster may list for itself. Named in full -- source and
+        # digest -- an entry can still be asked for: the director verifies it.
+        [[ -n "${from}" && -n "${digest}" ]] ||
+            die "${app} is not listed by ${from:-any catalogue source of this cluster} (sources: ${sources}); 'apps list --tenant ${t} --available' shows what is"
+    elif [[ "${count}" != "1" ]]; then
+        die "${app} is served by several sources ($(printf '%s' "${serving}" | jq -r 'map(.source) | join(", ")')): say which with --from <source>"
+    else
+        from="$(printf '%s' "${serving}" | jq -r '.[0].source')"
+    fi
+    version="$(printf '%s' "${serving}" | jq -r '.[0].version // ""')"
+    listed="$(printf '%s' "${serving}" | jq -r '.[0].digest // ""')"
+    [[ -n "${digest}" ]] || digest="${listed}"
+    [[ -n "${digest}" ]] ||
+        die "${from} lists ${app} without a digest, so there is nothing to pin the install to: state the build with --digest sha256:<hex>"
+    # The one spelling a manifest carries, so what is printed is what is recorded.
+    digest="$(printf '%s' "${digest}" | tr '[:upper:]' '[:lower:]')"
+    [[ "${digest}" == sha256:* ]] || digest="sha256:${digest}"
+    local body answer status commit
+    body="$(jq -n --arg c "${from}/${app}" --arg d "${digest}" --argjson e "${everyone}" \
+        '{coordinate: $c, digest: $d} + (if $e then {defaultGrant: true} else {} end)')"
+    answer="$(_call POST "/v1/tenants/${t}/apps/${app}" "${body}")" || exit 1
+    status="$(printf '%s' "${answer}" | jq -r '.status // ""')"
+    commit="$(printf '%s' "${answer}" | jq -r '.commit // "" | .[0:8]')"
+    echo "Pinned ${from}/${app}  version ${version:--}  ${digest:0:19}"
+    case "${status}" in
+        already_installed)
+            echo "${app} is already installed in ${t} at this build; nothing was committed." ;;
+        *)
+            if [[ "${everyone}" == "true" ]]; then
+                echo "Installing ${app} into ${t} for everyone: committed (${commit:-no commit id}); the platform installs it and grants it to every member."
+            elif [[ "${status}" == "updated" ]]; then
+                echo "Moving ${app} in ${t} to this build: committed (${commit:-no commit id}); the platform rolls it out."
+            else
+                echo "Installing ${app} into ${t}: committed (${commit:-no commit id}); the platform installs it."
+            fi ;;
+    esac
+}
+
 cmd_apps() {
     local sub="${1:-}"
     shift || true
     case "${sub}" in
-        list)
-            local t
-            t="$(_tenant_flag "$@")"
-            _call GET "/v1/tenants/${t}/apps" |
-                jq -r '(["APP","FOR","ADDONS"] | @tsv), (.apps[] | [.profile, (if .defaultGrant then "everyone" else "-" end), ((.addons // []) | join(","))] | @tsv)' |
-                column -t -s $'\t'
-            ;;
+        list) cmd_apps_list "$@" ;;
         install|uninstall)
             local app="${1:-}"
             [[ -n "${app}" && "${app}" != -* ]] || die "usage: kubectl gentian apps ${sub} <app> --tenant <tenant>"
@@ -606,14 +740,11 @@ cmd_apps() {
                 [[ "${a}" == "--for-everyone" ]] && everyone="true"
             done
             [[ "${everyone}" == "false" || "${sub}" == "install" ]] || die "--for-everyone goes with install"
-            if [[ "${sub}" == "install" && "${everyone}" == "true" ]]; then
-                # Part of the install, in the same commit: every member has the
-                # app by default, granted once its group exists.
-                _call POST "/v1/tenants/${t}/apps/${app}" '{"defaultGrant":true}' >/dev/null
-                echo "Installing ${app} into ${t} for everyone: committed; the platform installs it and grants it to every member."
-            elif [[ "${sub}" == "install" ]]; then
-                _call POST "/v1/tenants/${t}/apps/${app}" >/dev/null
-                echo "Installing ${app} into ${t}: committed; the platform installs it."
+            if [[ "${sub}" == "install" ]]; then
+                # --for-everyone is part of the install, in the same commit:
+                # every member has the app by default, granted once its group
+                # exists.
+                _apps_install "${app}" "${t}" "${everyone}" "$@"
             elif [[ "${purge}" == "true" ]]; then
                 _call POST "/v1/tenants/${t}/actions/purge-app" "$(jq -n --arg p "${app}" '{profile:$p}')" >/dev/null
                 echo "Purging ${app} from ${t}: removed with its data."

@@ -631,10 +631,16 @@ A cluster that names no store, or does not report, has no App Store app.
 **Apps are then installed by command only**:
 
 ```bash
-kubectl gentian apps install <app> --tenant <t>
+kubectl gentian apps list --tenant <t> --available
+kubectl gentian apps install <app> --tenant <t> [--from <source>] [--digest sha256:…] [--for-everyone]
 ```
 
 through the director, on the same route and under the same question as §3.
+The command looks the entry up in what the director lists of the cluster's
+sources, takes the digest that listing states unless `--digest` names
+another, and sends `{coordinate, digest, defaultGrant}` like every other
+caller. When several sources serve the name it asks for `--from`; on a
+cluster that declares no source it installs nothing.
 The cluster renders no catalogue of its own in any interface. A second,
 barer shop beside the one that is maintained would be worse at everything a
 shop is for, and an install action in an administrative screen is one more

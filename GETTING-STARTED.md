@@ -380,9 +380,14 @@ Apps are installed by the tenant's administrator from the App Store, or from
 here:
 
 ```bash
-kubectl gentian apps install nextcloud-base-ce --tenant acme
-kubectl gentian apps list --tenant acme
+kubectl gentian apps list --tenant acme --available           # what the cluster's catalogue sources offer
+kubectl gentian apps install nextcloud-base-ce --tenant acme  # the build the source lists, pinned by digest
+kubectl gentian apps list --tenant acme                       # what the tenant has
 ```
+
+`install` takes the entry from a catalogue source the Cluster claim names
+(`spec.catalogue.sources`) and pins it to the digest that source lists; see
+[docs/commands.md](docs/commands.md) §6 for `--from` and `--digest`.
 
 To remove a tenant, `kubectl gentian tenants retire acme` (or **Retire** in the
 console) — not `kubectl delete`: git is what the cluster reconciles towards, so

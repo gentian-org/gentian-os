@@ -127,8 +127,9 @@ state, access, integrations, privileges, uninstall and purge.
 ### CLI
 
 ```bash
-kubectl gentian apps list --tenant demo
-kubectl gentian apps install xwiki-ce --tenant demo
+kubectl gentian apps list --tenant demo               # what the tenant has installed
+kubectl gentian apps list --tenant demo --available   # what the cluster's catalogue sources offer
+kubectl gentian apps install xwiki-ce --tenant demo   # the build the source lists, pinned by digest
 kubectl gentian apps uninstall xwiki-ce --tenant demo
 ```
 
@@ -150,12 +151,48 @@ git, as the person who asked; the operator reconciles them. The tenant's
 administrator usually does this from the App Store app; the CLI does the same:
 
 ```bash
-kubectl gentian apps list --tenant demo
-kubectl gentian apps install xwiki-ce --tenant demo
+kubectl gentian apps list --tenant demo                              # what the tenant has installed
+kubectl gentian apps list --tenant demo --available                  # what the catalogue sources offer
+kubectl gentian apps install xwiki-ce --tenant demo                  # the build the source lists
+kubectl gentian apps install xwiki-ce --tenant demo --from in-house  # when several sources serve the name
+kubectl gentian apps install xwiki-ce --tenant demo --digest sha256:<64 hex>   # a build you name yourself
 kubectl gentian apps install xwiki-ce --tenant demo --for-everyone   # and grants it to every member
 kubectl gentian apps uninstall xwiki-ce --tenant demo            # keeps its data
 kubectl gentian apps uninstall xwiki-ce --tenant demo --purge    # destroys the data of an app already uninstalled
 ```
+
+**The command line installs a pinned build.** An app is installed from one
+of the cluster's catalogue sources (`spec.catalogue.sources` on the Cluster
+claim), and `install` sends the director the entry's coordinate and digest:
+
+```
+$ kubectl gentian apps list --tenant demo --available
+SOURCE    APP                VERSION  EDITION  DIGEST               INSTALLED
+gentian   nextcloud-base-ce  31.0.4   ce       sha256:2f1c0d9a77b3  yes
+gentian   xwiki-ce           16.4.0   ce       sha256:9b41e6c05d12  -
+in-house  xwiki-ce           16.5.0   pe       sha256:c07a1be4403f  -
+
+$ kubectl gentian apps install xwiki-ce --tenant demo --from in-house
+Pinned in-house/xwiki-ce  version 16.5.0  sha256:c07a1be4403f
+Installing xwiki-ce into demo: committed (4e1f9a2c); the platform installs it.
+```
+
+`INSTALLED` says `yes` for the build the tenant has, `other build` when the
+tenant has the app at another digest, and `unpinned` when it was installed
+with none. The listing is the director's reading of each source's index, the
+`ce` and `pe` entries only.
+
+| | |
+|---|---|
+| One source serves the name | it is used |
+| Several do | `--from <source>` says which; without it nothing is installed |
+| None does | nothing is installed, and the sources are listed. With both `--from` and `--digest` an entry the listing does not show can still be asked for |
+| `--digest` | the build to install instead of the one the listing states. The director fetches the bundle from the source and installs nothing unless it hashes to the digest sent |
+| The cluster declares no catalogue source | nothing can be installed by command; a platform administrator names a source on the Cluster claim |
+
+The director verifies the bundle against the digest before it commits, and
+the operator verifies it again at rollout
+([design/store-contract.md](design/store-contract.md) §3, §4).
 
 Uninstalling and purging are two different acts. Uninstalling removes the app
 and keeps its data. `--purge` sends only the purge, which destroys the data
