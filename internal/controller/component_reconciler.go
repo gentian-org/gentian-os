@@ -13,6 +13,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -177,6 +178,33 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			// No requeue: a change to the profile or to the pin re-runs this.
 			return r.status(ctx, comp, metav1.ConditionFalse, refusal.Reason, message, 0)
 		}
+	}
+	// The same for every addon this instance activates at a pinned build.
+	//
+	// An addon's own Component deploys nothing, so holding it would hold
+	// nothing: the addon takes effect in THIS component's release, through
+	// the list this component hands on. The check therefore sits here, on
+	// the base, and at the same point as the base's own -- before anything
+	// is rendered -- so an addon whose profile is not the pinned build never
+	// reaches the release values, by any path through what follows.
+	//
+	// The base is held whole rather than rolled out without the addon. The
+	// list reconciles: a release rendered without an addon that is already
+	// active switches it off, and "nothing already rolled out is removed"
+	// is the promise a pin makes.
+	refusal, err := r.unverifiedAddon(ctx, comp)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if refusal != nil {
+		message := refusal.Message + "; nothing is rolled out for " + comp.Name + " while it is activated, and what is running is left as it is"
+		if r.Recorder != nil && !componentReports(comp, refusal.Reason, message) {
+			r.Recorder.Event(comp, corev1.EventTypeWarning, refusal.Reason, message)
+		}
+		logger.Info("component held: an addon's profile is not the build it is pinned to",
+			"component", comp.Name, "namespace", comp.Namespace, "reason", refusal.Reason, "detail", refusal.Message)
+		// No requeue: a change to the addon's profile or to the pin re-runs this.
+		return r.status(ctx, comp, metav1.ConditionFalse, refusal.Reason, message, 0)
 	}
 	tenant, err := r.tenantOf(ctx, comp.Namespace)
 	if err != nil {
@@ -436,6 +464,30 @@ func (r *ComponentReconciler) addonBaseReady(
 		}
 	}
 	return false, fmt.Sprintf("%s is installed but not ready yet", base), nil
+}
+
+// unverifiedAddon answers the first addon this component activates at a
+// pinned build whose profile is not shown to be that build, or nil when
+// every pinned addon is. An addon with no pin is not checked, like an app
+// installed with no digest.
+func (r *ComponentReconciler) unverifiedAddon(ctx context.Context, comp *gentianov1alpha1.Component) (*profilebundle.Refusal, error) {
+	for _, pin := range comp.Spec.AddonPins {
+		if !slices.Contains(comp.Spec.Addons, pin.Name) {
+			continue
+		}
+		addon := &gentianov1alpha1.ComponentProfile{}
+		if err := r.Get(ctx, types.NamespacedName{Name: pin.Name}, addon); err != nil {
+			if !errors.IsNotFound(err) {
+				return nil, err
+			}
+			return &profilebundle.Refusal{Reason: profilebundle.ReasonUnverifiable, Message: fmt.Sprintf(
+				"addon %s is pinned to %s and its ComponentProfile is not installed", pin.Name, profilebundle.Short(pin.Digest))}, nil
+		}
+		if refusal := profilebundle.Verify(addon, pin.Digest); refusal != nil {
+			return &profilebundle.Refusal{Reason: refusal.Reason, Message: "addon " + pin.Name + ": " + refusal.Message}, nil
+		}
+	}
+	return nil, nil
 }
 
 // componentReports says whether the component's Ready condition already

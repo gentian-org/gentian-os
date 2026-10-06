@@ -19,6 +19,7 @@ SPDX-License-Identifier: MPL-2.0
 package api
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -51,7 +52,7 @@ type Authenticator interface {
 type Repository interface {
 	InstallFrom(ctx context.Context, tenant, profile, digest, catalogue string, defaultGrant *bool, meta gitops.Meta) (gitops.Result, error)
 	Uninstall(ctx context.Context, tenant, profile string, meta gitops.Meta) (gitops.Result, error)
-	SetAddons(ctx context.Context, tenant, profile string, addons []string, meta gitops.Meta) (gitops.Result, error)
+	SetAddonsPinned(ctx context.Context, tenant, profile string, addons []string, pins []gitops.AddonPin, meta gitops.Meta) (gitops.Result, error)
 	Apps(ctx context.Context, tenant string) ([]gitops.App, error)
 	KernelDomain(ctx context.Context) (string, error)
 	ClusterSettingValues(ctx context.Context) (map[string]string, error)
@@ -665,7 +666,14 @@ func (s *Server) getAddons(w http.ResponseWriter, r *http.Request, _ call) {
 			if addons == nil {
 				addons = []string{}
 			}
-			s.json(w, http.StatusOK, map[string]any{"profile": a.Profile, "addons": addons})
+			// The build each pinned addon is at, by name. Beside the list
+			// rather than in it, as the manifest has it: the list is names
+			// for every caller that reads it.
+			pins := a.AddonPins
+			if pins == nil {
+				pins = []gitops.AddonPin{}
+			}
+			s.json(w, http.StatusOK, map[string]any{"profile": a.Profile, "addons": addons, "addonPins": pins})
 			return
 		}
 	}
@@ -909,16 +917,133 @@ func (s *Server) uninstall(w http.ResponseWriter, r *http.Request, c call) {
 }
 
 type addonsRequest struct {
-	Addons []string `json:"addons"`
+	Addons []addonEntry `json:"addons"`
 }
 
+// addonEntry is one addon of the selection: a name, or the build to install
+// it at.
+//
+// A string is the addon's name, as it has always been. An object is
+// {"coordinate": "<catalogue>/<addon>", "digest": "sha256:<hex>"} -- an item
+// of the store's confirmation, sent on -- and the addon it names is the
+// second half of the coordinate.
+type addonEntry struct {
+	Name       string
+	Coordinate string
+	Digest     string
+}
+
+func (a *addonEntry) UnmarshalJSON(raw []byte) error {
+	if len(raw) > 0 && raw[0] == '"' {
+		return json.Unmarshal(raw, &a.Name)
+	}
+	var pinned struct {
+		Coordinate string `json:"coordinate"`
+		Digest     string `json:"digest"`
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&pinned); err != nil {
+		return err
+	}
+	a.Coordinate, a.Digest = pinned.Coordinate, pinned.Digest
+	return nil
+}
+
+// setAddons commits which addons are activated inside an installed app, and
+// the build of each that is pinned.
+//
+// A pinned addon is installed with the guarantees of a pinned app, by the
+// same steps: its coordinate must name a catalogue source the cluster
+// declares, its bundle is fetched from there and checked against the digest,
+// the verified bundle is committed beside the profile, and only then is the
+// pin written on the entry. Every bundle is fetched and checked before the
+// first is committed, so a selection one of whose builds does not verify
+// changes nothing.
 func (s *Server) setAddons(w http.ResponseWriter, r *http.Request, c call) {
+	ctx := r.Context()
+	tenant, profile := r.PathValue("t"), r.PathValue("p")
 	var body addonsRequest
 	if err := decode(r, &body); err != nil || body.Addons == nil {
-		s.fail(w, r, http.StatusBadRequest, `body must be {"addons": [...]}`)
+		s.fail(w, r, http.StatusBadRequest,
+			`body must be {"addons": [...]}, each a name or {"coordinate": "<catalogue>/<addon>", "digest": "sha256:<hex>"}`)
 		return
 	}
-	res, err := s.cfg.Repo.SetAddons(r.Context(), r.PathValue("t"), r.PathValue("p"), body.Addons, c.meta)
+	names := make([]string, 0, len(body.Addons))
+	seen := map[string]bool{}
+	var pinned []addonEntry
+	var pins []gitops.AddonPin
+	for _, entry := range body.Addons {
+		name := entry.Name
+		if entry.Coordinate != "" || entry.Digest != "" {
+			if entry.Digest != "" {
+				digest, err := catalogue.CanonicalDigest(entry.Digest)
+				if err != nil {
+					s.fail(w, r, http.StatusBadRequest, "digest must be sha256:<64 hex characters>")
+					return
+				}
+				entry.Digest = digest
+			}
+			// The rule an app's pin is under: a declared source, and a
+			// digest only beside the coordinate it is the digest of.
+			from, addon, ok := s.pinOrigin(w, r, entry.Coordinate, entry.Digest)
+			if !ok {
+				return
+			}
+			name = addon
+			pinned = append(pinned, entry)
+			pins = append(pins, gitops.AddonPin{Name: addon, Digest: entry.Digest, Catalogue: from})
+		}
+		if name == "" {
+			s.fail(w, r, http.StatusBadRequest,
+				`an addon is a name or {"coordinate": "<catalogue>/<addon>", "digest": "sha256:<hex>"}`)
+			return
+		}
+		if seen[name] {
+			s.fail(w, r, http.StatusBadRequest, "addon "+name+" is listed twice")
+			return
+		}
+		seen[name] = true
+		names = append(names, name)
+	}
+
+	if len(pinned) > 0 {
+		// Nothing is fetched or committed for an app the tenant does not
+		// have: the answer is the one the write itself would give.
+		apps, err := s.cfg.Repo.Apps(ctx, tenant)
+		if err != nil {
+			s.repoError(w, r, err)
+			return
+		}
+		installed := false
+		for _, a := range apps {
+			installed = installed || a.Profile == profile
+		}
+		if !installed {
+			s.written(w, r, gitops.Result{Status: "not_installed"}, nil)
+			return
+		}
+		bundles := make([]*catalogue.Profile, 0, len(pinned))
+		for _, entry := range pinned {
+			bundle, ok := s.fetchEntry(w, r, entry.Coordinate, entry.Digest)
+			if !ok {
+				return
+			}
+			bundles = append(bundles, bundle)
+		}
+		for i, bundle := range bundles {
+			res, ok := s.commitEntry(w, r, c, bundle)
+			if !ok {
+				return
+			}
+			if res.Changed {
+				s.cfg.Log.InfoContext(ctx, "materialised a catalogue entry",
+					"request_id", reqID(ctx), "coordinate", pinned[i].Coordinate, "commit", res.Commit)
+			}
+		}
+	}
+
+	res, err := s.cfg.Repo.SetAddonsPinned(ctx, tenant, profile, names, pins, c.meta)
 	s.written(w, r, res, err)
 }
 

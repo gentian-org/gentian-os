@@ -52,7 +52,12 @@ func TestEveryInstalledAppIsAComponent(t *testing.T) {
 	pinned := "sha256:" + strings.Repeat("ab", 32)
 	tenant.Spec.Apps = []gentianov1alpha1.TenantApp{
 		{Profile: "xwiki-ce", Digest: pinned, Config: &gentianov1alpha1.TenantAppConfig{Replicas: &replicas}},
-		{Profile: "odoo-base-ce", Addons: []string{"crm-ce", "sales-ce"}},
+		{Profile: "odoo-base-ce", Addons: []string{"crm-ce", "sales-ce"},
+			AddonPins: []gentianov1alpha1.AddonPin{
+				{Name: "sales-ce", Digest: pinned, Catalogue: "main"},
+				// A pin for an addon that is not activated pins nothing.
+				{Name: "website-ce", Digest: pinned},
+			}},
 	}
 	ns := tenantNamespaceName(tenant)
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
@@ -79,6 +84,22 @@ func TestEveryInstalledAppIsAComponent(t *testing.T) {
 	if strings.Join(base.Spec.Addons, " ") != "crm-ce sales-ce" || base.Spec.Class != gentianov1alpha1.ComponentClassApp ||
 		base.Labels[componentOriginLabel] != componentOriginInstall {
 		t.Fatalf("base = %+v labels %v", base.Spec, base.Labels)
+	}
+	// An addon pinned to a build carries the pin on its own Component, and
+	// the base carries it beside the list: the base's release is where the
+	// addon takes effect, so the base is what is held for it. An addon with
+	// no pin has none in either place.
+	if len(base.Spec.AddonPins) != 1 || base.Spec.AddonPins[0].Name != "sales-ce" || base.Spec.AddonPins[0].Digest != pinned {
+		t.Fatalf("the base's addon pins = %+v", base.Spec.AddonPins)
+	}
+	for addon, want := range map[string]string{"sales-ce": pinned, "crm-ce": ""} {
+		comp := &gentianov1alpha1.Component{}
+		if err := c.Get(ctx, types.NamespacedName{Name: addon, Namespace: ns}, comp); err != nil {
+			t.Fatal(err)
+		}
+		if comp.Spec.ProfileRef.Digest != want {
+			t.Fatalf("addon %s is pinned to %q, want %q", addon, comp.Spec.ProfileRef.Digest, want)
+		}
 	}
 	wiki := &gentianov1alpha1.Component{}
 	if err := c.Get(ctx, types.NamespacedName{Name: "xwiki-ce", Namespace: ns}, wiki); err != nil {
@@ -122,6 +143,9 @@ func TestEveryInstalledAppIsAComponent(t *testing.T) {
 	}
 	if strings.Join(base.Spec.Addons, " ") != "crm-ce" {
 		t.Fatalf("the base still lists %v", base.Spec.Addons)
+	}
+	if len(base.Spec.AddonPins) != 0 {
+		t.Fatalf("the base still carries the pin of an addon that is gone: %+v", base.Spec.AddonPins)
 	}
 
 	// Nothing installed at all.

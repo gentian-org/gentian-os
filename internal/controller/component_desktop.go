@@ -16,6 +16,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -439,6 +440,10 @@ func componentOfRelease() handler.EventHandler {
 // componentsOfProfile re-runs every Component of a profile when the profile
 // changes: a new chart version pinned on the profile reaches the Release
 // through the components, and nothing else would run them.
+//
+// And every Component that activates the profile as an addon: a base is held
+// while a pinned addon's profile is not the pinned build, and it is the
+// addon's profile changing that releases it.
 func componentsOfProfile(c client.Client) handler.EventHandler {
 	return handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, obj client.Object) []reconcile.Request {
 		return componentsReferencingProfile(ctx, c, obj.GetName())
@@ -452,7 +457,7 @@ func componentsReferencingProfile(ctx context.Context, c client.Reader, profile 
 	}
 	var out []reconcile.Request
 	for i := range list.Items {
-		if list.Items[i].Spec.ProfileRef.Name == profile {
+		if list.Items[i].Spec.ProfileRef.Name == profile || slices.Contains(list.Items[i].Spec.Addons, profile) {
 			out = append(out, reconcile.Request{NamespacedName: types.NamespacedName{Name: list.Items[i].Name, Namespace: list.Items[i].Namespace}})
 		}
 	}
@@ -512,7 +517,7 @@ func (r *TenantReconciler) ensureDefaultComponents(ctx context.Context, tenant *
 		if !wanted || !classIncludes(profile, gentianov1alpha1.ComponentClassApp) {
 			continue
 		}
-		if err := r.ensureComponent(ctx, tenant, profile.Name, componentOriginDefault, "", nil, nil); err != nil {
+		if err := r.ensureComponent(ctx, tenant, profile.Name, componentOriginDefault, "", nil, nil, nil); err != nil {
 			return err
 		}
 	}
@@ -533,6 +538,12 @@ func (r *TenantReconciler) ensureDefaultComponents(ctx context.Context, tenant *
 // its base, and the base's Component carries the list. Its own Component is
 // what makes it a thing that can be named, entitled and given a tile.
 //
+// An addon pinned to a build carries the pin twice. On its own Component, as
+// profileRef.digest, so that nothing of its own -- its tile's route -- is
+// rendered from another build. And on the base's, beside the list, because
+// the base's release is where an addon takes effect and the base is what has
+// to be held for it.
+//
 // A Component whose install has left spec.apps is deleted here, and only
 // those: the label says which ones are installs. Uninstalling is a commit
 // that removes the entry, and this is where the cluster follows it.
@@ -544,7 +555,7 @@ func (r *TenantReconciler) ensureAppComponents(ctx context.Context, tenant *gent
 			return err
 		}
 		wanted[profileName] = struct{}{}
-		if err := r.ensureComponent(ctx, tenant, profileName, componentOriginInstall, app.Digest, app.Addons, app.Config); err != nil {
+		if err := r.ensureComponent(ctx, tenant, profileName, componentOriginInstall, app.Digest, app.Addons, activePins(app), app.Config); err != nil {
 			return err
 		}
 		for _, addon := range app.Addons {
@@ -552,7 +563,7 @@ func (r *TenantReconciler) ensureAppComponents(ctx context.Context, tenant *gent
 				continue
 			}
 			wanted[addon] = struct{}{}
-			if err := r.ensureComponent(ctx, tenant, addon, componentOriginInstall, "", nil, nil); err != nil {
+			if err := r.ensureComponent(ctx, tenant, addon, componentOriginInstall, app.PinOf(addon), nil, nil, nil); err != nil {
 				return err
 			}
 		}
@@ -575,11 +586,24 @@ func (r *TenantReconciler) ensureAppComponents(ctx context.Context, tenant *gent
 	return nil
 }
 
+// activePins is the pins of an app's entry that name an addon the entry
+// activates. A pin for an addon that is not in the list pins nothing, and is
+// not carried on.
+func activePins(app gentianov1alpha1.TenantApp) []gentianov1alpha1.AddonPin {
+	var out []gentianov1alpha1.AddonPin
+	for _, pin := range app.AddonPins {
+		if slices.Contains(app.Addons, pin.Name) {
+			out = append(out, pin)
+		}
+	}
+	return out
+}
+
 // ensureComponent keeps one Component of the tenant: named after its profile,
 // of class app, carrying what the Tenant says about that install.
 func (r *TenantReconciler) ensureComponent(
 	ctx context.Context, tenant *gentianov1alpha1.Tenant, profileName, origin, digest string,
-	addons []string, config *gentianov1alpha1.TenantAppConfig,
+	addons []string, addonPins []gentianov1alpha1.AddonPin, config *gentianov1alpha1.TenantAppConfig,
 ) error {
 	desired := &gentianov1alpha1.Component{
 		ObjectMeta: metav1.ObjectMeta{
@@ -595,6 +619,7 @@ func (r *TenantReconciler) ensureComponent(
 			ProfileRef: gentianov1alpha1.ProfileRef{Name: profileName, Digest: digest},
 			Class:      gentianov1alpha1.ComponentClassApp,
 			Addons:     addons,
+			AddonPins:  addonPins,
 			Config:     config,
 			Privileges: tenantPrivilegeGrants(tenant, profileName),
 			Exposures:  tenantExposures(tenant, profileName),
@@ -647,6 +672,12 @@ func (r *TenantReconciler) ensureComponent(
 	}
 	if !equality.Semantic.DeepEqual(existing.Spec.Addons, desired.Spec.Addons) {
 		existing.Spec.Addons = desired.Spec.Addons
+		changed = true
+	}
+	if !equality.Semantic.DeepEqual(existing.Spec.AddonPins, desired.Spec.AddonPins) {
+		// With the list, never after it: a pin that arrived one write later
+		// would leave a moment in which the addon is listed unpinned.
+		existing.Spec.AddonPins = desired.Spec.AddonPins
 		changed = true
 	}
 	if !equality.Semantic.DeepEqual(existing.Spec.Config, desired.Spec.Config) {

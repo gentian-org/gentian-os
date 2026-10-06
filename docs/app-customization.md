@@ -594,6 +594,12 @@ installed base, arriving in `Tenant.spec.apps[].addons`. It inherits the base's
 ladder — same image, same drop-in dirs, same plugin API — so it never restates
 `grade`, `rubricScore` or `supportedRungs`.
 
+An addon can be **pinned to a build**, like an app. The pin is recorded beside
+the list, in `Tenant.spec.apps[].addonPins` (`name`, `digest`, `catalogue`);
+`addons` stays a list of names. A pinned addon is activated only from a
+profile shown to be that build, and its base is held as it runs until it is.
+See [design/store-contract.md](design/store-contract.md) §3 and §4.
+
 **Editions** are `ce · pe · me · ee`, and say *who maintains and supports the
 entry*, not who publishes it:
 

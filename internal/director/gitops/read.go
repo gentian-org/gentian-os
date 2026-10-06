@@ -27,6 +27,9 @@ type App struct {
 	// at one.
 	Digest string   `json:"digest,omitempty"`
 	Addons []string `json:"addons,omitempty"`
+	// AddonPins is the build each pinned addon was installed at, by the
+	// addon's name. An addon with no entry here is not pinned.
+	AddonPins []AddonPin `json:"addonPins,omitempty"`
 	// DefaultGrant is whether every member of the tenant has access to the
 	// app by default: the install was made for everyone.
 	DefaultGrant bool `json:"defaultGrant,omitempty"`

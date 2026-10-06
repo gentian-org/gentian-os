@@ -437,6 +437,21 @@ type TenantApp struct {
 	// +listType=set
 	Addons []string `json:"addons,omitempty"`
 
+	// AddonPins pins addons of this app to the build each was installed
+	// from, like digest and catalogue do for the app itself. It is keyed by
+	// the addon's name and stands beside addons rather than inside it: addons
+	// stays the list of names every reader walks, and an addon with no entry
+	// here is activated unpinned, as before.
+	//
+	// A pinned addon is rolled out only from a profile shown to be that
+	// build. Until it is, the base it activates inside is held as it runs.
+	// An entry naming an addon that is not in addons pins nothing.
+	// +optional
+	// +listType=map
+	// +listMapKey=name
+	// +kubebuilder:validation:MaxItems=128
+	AddonPins []AddonPin `json:"addonPins,omitempty"`
+
 	// DefaultGrant says every member of the tenant has access to this app by
 	// default. The people who are members when the app's group first exists
 	// are added to it, once, and the group is marked so that somebody invited
@@ -447,6 +462,37 @@ type TenantApp struct {
 	// Absent or false, access is given per person.
 	// +optional
 	DefaultGrant bool `json:"defaultGrant,omitempty"`
+}
+
+// AddonPin is the build one addon was installed from.
+type AddonPin struct {
+	// Name is the addon's profile name, as addons lists it.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
+	Name string `json:"name"`
+
+	// Digest pins the addon's profile bundle: the build the install asked
+	// for.
+	// +kubebuilder:validation:Pattern=`^sha256:[a-f0-9]{64}$`
+	Digest string `json:"digest"`
+
+	// Catalogue is the catalogue the pinned build was fetched from: the first
+	// half of its coordinate, <catalogue>/<name>.
+	// +optional
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`
+	// +kubebuilder:validation:MaxLength=63
+	Catalogue string `json:"catalogue,omitempty"`
+}
+
+// PinOf answers the digest an addon of this app is pinned to, or "" for an
+// addon that is not pinned.
+func (a TenantApp) PinOf(addon string) string {
+	for _, pin := range a.AddonPins {
+		if pin.Name == addon {
+			return pin.Digest
+		}
+	}
+	return ""
 }
 
 // TenantAppConfig holds per-tenant application overrides.

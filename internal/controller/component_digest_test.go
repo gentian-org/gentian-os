@@ -281,3 +281,171 @@ func TestAComponentWithNoDigestIsRolledOutAsBefore(t *testing.T) {
 		t.Fatalf("events = %v", e)
 	}
 }
+
+// talkBundle is an addon as a catalogue source publishes it: it deploys
+// nothing and activates inside wiki.
+const talkBundle = `apiVersion: gentianos.io/v1alpha1
+kind: ComponentProfile
+metadata:
+  name: wiki-talk
+spec:
+  classes: [app]
+  launch: none
+  trustTier: certified
+  version: "1.0.0"
+  package:
+    addon:
+      of: wiki
+`
+
+// startAddonHarness is the digest harness with wiki as an unpinned base that
+// activates wiki-talk, pinned or not. addon is the addon's profile as the
+// cluster holds it, nil for a cluster that does not hold it.
+func startAddonHarness(t *testing.T, addon *gentianov1alpha1.ComponentProfile, pinned string) *digestHarness {
+	t.Helper()
+	h := startDigestHarness(t, materialised(t, wikiBundle), "")
+	if addon != nil {
+		if err := h.c.Create(context.Background(), addon); err != nil {
+			t.Fatal(err)
+		}
+	}
+	base := &gentianov1alpha1.Component{}
+	if err := h.c.Get(context.Background(), client.ObjectKeyFromObject(h.comp), base); err != nil {
+		t.Fatal(err)
+	}
+	base.Spec.Addons = []string{"wiki-talk"}
+	if pinned != "" {
+		base.Spec.AddonPins = []gentianov1alpha1.AddonPin{{Name: "wiki-talk", Digest: pinned, Catalogue: "main"}}
+	}
+	if err := h.c.Update(context.Background(), base); err != nil {
+		t.Fatal(err)
+	}
+	return h
+}
+
+// An addon takes effect in its base's release, so its pin is checked where
+// the base is rolled out. The addon's profile is the pinned build: the base
+// is rolled out.
+func TestABaseWithAVerifiedPinnedAddonRollsOut(t *testing.T) {
+	h := startAddonHarness(t, materialised(t, talkBundle), profilebundle.Digest([]byte(talkBundle)))
+	got := h.reconcile()
+	if ready := componentReadyCondition(got); ready == nil || ready.Reason != "Installing" {
+		t.Fatalf("condition = %+v, want the release under way", ready)
+	}
+	if h.releasedVersion() != "1.0.0" {
+		t.Fatalf("release at %q", h.releasedVersion())
+	}
+	if e := h.events(); len(e) != 0 {
+		t.Fatalf("events for an addon that verified: %v", e)
+	}
+}
+
+// The addon is pinned to one build and the cluster holds another. Nothing is
+// rendered for the base, so the addon reaches no release values; the
+// condition names the addon and both builds.
+func TestABaseIsHeldWhileAPinnedAddonIsAnotherBuild(t *testing.T) {
+	newer := strings.ReplaceAll(talkBundle, `version: "1.0.0"`, `version: "2.0.0"`)
+	pinned := profilebundle.Digest([]byte(talkBundle))
+	h := startAddonHarness(t, materialised(t, newer), pinned)
+
+	got := h.reconcile()
+	ready := componentReadyCondition(got)
+	if ready == nil || ready.Status != "False" || ready.Reason != profilebundle.ReasonMismatch {
+		t.Fatalf("condition = %+v, want %s", ready, profilebundle.ReasonMismatch)
+	}
+	for _, want := range []string{"addon wiki-talk", profilebundle.Short(pinned), profilebundle.Short(profilebundle.Digest([]byte(newer)))} {
+		if !strings.Contains(ready.Message, want) {
+			t.Fatalf("the condition does not name %s: %s", want, ready.Message)
+		}
+	}
+	if h.releasedVersion() != "" || h.networkPolicyWritten() {
+		t.Fatalf("rendered for a base whose addon is not the pinned build: release %q, network policy %v",
+			h.releasedVersion(), h.networkPolicyWritten())
+	}
+	if e := h.events(); len(e) != 1 || !strings.Contains(e[0], "Warning "+profilebundle.ReasonMismatch) {
+		t.Fatalf("events = %v, want one warning", e)
+	}
+
+	// The addon's profile becomes the pinned build again: the base is
+	// released.
+	current := &gentianov1alpha1.ComponentProfile{}
+	if err := h.c.Get(context.Background(), types.NamespacedName{Name: "wiki-talk"}, current); err != nil {
+		t.Fatal(err)
+	}
+	restored := materialised(t, talkBundle)
+	restored.ResourceVersion = current.ResourceVersion
+	if err := h.c.Update(context.Background(), restored); err != nil {
+		t.Fatal(err)
+	}
+	if ready := componentReadyCondition(h.reconcile()); ready == nil || ready.Reason != "Installing" {
+		t.Fatalf("condition = %+v, want the release under way once the addon verifies", ready)
+	}
+}
+
+// A base that was rolled out is not taken down when an addon's profile stops
+// being the pinned build: it is held as it runs.
+func TestAnAddonChangedAfterInstallHoldsTheBaseAsItRuns(t *testing.T) {
+	h := startAddonHarness(t, materialised(t, talkBundle), profilebundle.Digest([]byte(talkBundle)))
+	h.reconcile()
+	if h.releasedVersion() != "1.0.0" {
+		t.Fatalf("release at %q", h.releasedVersion())
+	}
+	current := &gentianov1alpha1.ComponentProfile{}
+	if err := h.c.Get(context.Background(), types.NamespacedName{Name: "wiki-talk"}, current); err != nil {
+		t.Fatal(err)
+	}
+	current.Spec.Version = "9.9.9"
+	if err := h.c.Update(context.Background(), current); err != nil {
+		t.Fatal(err)
+	}
+	if ready := componentReadyCondition(h.reconcile()); ready == nil || ready.Reason != profilebundle.ReasonMismatch {
+		t.Fatalf("condition = %+v, want %s", ready, profilebundle.ReasonMismatch)
+	}
+	if h.releasedVersion() != "1.0.0" {
+		t.Fatalf("the release was taken down or changed: %q", h.releasedVersion())
+	}
+}
+
+// A pinned addon with nothing to check it against holds the base too: a
+// profile with no bundle, and a profile the cluster does not hold.
+func TestABaseIsHeldWhileAPinnedAddonCannotBeVerified(t *testing.T) {
+	pinned := profilebundle.Digest([]byte(talkBundle))
+	bare := materialised(t, talkBundle)
+	bare.Annotations = nil
+	for name, addon := range map[string]*gentianov1alpha1.ComponentProfile{"no bundle": bare, "no profile": nil} {
+		h := startAddonHarness(t, addon, pinned)
+		ready := componentReadyCondition(h.reconcile())
+		if ready == nil || ready.Status != "False" || ready.Reason != profilebundle.ReasonUnverifiable ||
+			!strings.Contains(ready.Message, "addon wiki-talk") {
+			t.Fatalf("%s: condition = %+v, want %s naming the addon", name, ready, profilebundle.ReasonUnverifiable)
+		}
+		if h.releasedVersion() != "" {
+			t.Fatalf("%s: rendered for a base whose addon could not be verified", name)
+		}
+	}
+}
+
+// An addon with no pin is not checked, like an app installed with no digest:
+// whatever its profile is, the base is rolled out as before. And a pin for an
+// addon the base does not activate holds nothing.
+func TestAnUnpinnedAddonIsActivatedAsBefore(t *testing.T) {
+	bare := materialised(t, talkBundle)
+	bare.Annotations = nil
+	h := startAddonHarness(t, bare, "")
+	if ready := componentReadyCondition(h.reconcile()); ready == nil || ready.Reason != "Installing" {
+		t.Fatalf("condition = %+v, want the release under way", ready)
+	}
+
+	h = startAddonHarness(t, nil, "")
+	base := &gentianov1alpha1.Component{}
+	if err := h.c.Get(context.Background(), client.ObjectKeyFromObject(h.comp), base); err != nil {
+		t.Fatal(err)
+	}
+	base.Spec.AddonPins = []gentianov1alpha1.AddonPin{{Name: "something-else", Digest: profilebundle.Digest([]byte(talkBundle))}}
+	if err := h.c.Update(context.Background(), base); err != nil {
+		t.Fatal(err)
+	}
+	if ready := componentReadyCondition(h.reconcile()); ready == nil || ready.Reason != "Installing" {
+		t.Fatalf("a pin for an addon that is not activated held the base: %+v", ready)
+	}
+}

@@ -81,6 +81,44 @@ spec:
               A service may have a console, but never on the perimeter: that surface has
               no session, so there is nothing for an enablement to switch on.
             properties:
+              addonPins:
+                description: |-
+                  AddonPins is the build each pinned addon was installed from, as the
+                  Tenant records it. Nothing is rendered for this instance while a
+                  pinned addon's profile is not shown to be that build: the addon list
+                  reaches the release through this component, so this is where an
+                  unverified addon is kept out of it.
+                items:
+                  description: AddonPin is the build one addon was installed from.
+                  properties:
+                    catalogue:
+                      description: |-
+                        Catalogue is the catalogue the pinned build was fetched from: the first
+                        half of its coordinate, <catalogue>/<name>.
+                      maxLength: 63
+                      pattern: ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$
+                      type: string
+                    digest:
+                      description: |-
+                        Digest pins the addon's profile bundle: the build the install asked
+                        for.
+                      pattern: ^sha256:[a-f0-9]{64}$
+                      type: string
+                    name:
+                      description: Name is the addon's profile name, as addons lists
+                        it.
+                      maxLength: 63
+                      minLength: 1
+                      type: string
+                  required:
+                  - digest
+                  - name
+                  type: object
+                maxItems: 128
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
+                x-kubernetes-list-type: map
               addons:
                 description: Addons enabled on this instance, by the profile's own
                   names.

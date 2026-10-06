@@ -160,6 +160,30 @@ hash to the digest, so the two fields travel together or not at all:
 | `422` | the coordinate's catalogue is not a source this cluster declares, or a digest came with no coordinate: the build could not be verified. Or the entry is larger than the bundle the cluster carries beside a profile (180 KiB), so its digest could not be checked at rollout. Nothing was installed |
 | `502` | the source could not be read, or served bytes that do not hash to the digest. Nothing was installed |
 
+**Add-ons.** An add-on is a profile of its own, activated inside an app the
+tenant has installed. Which ones are active is one list, replaced whole:
+
+```
+PUT /v1/tenants/{t}/apps/{profile}/addons
+{"addons": ["<name>", {"coordinate": "<catalogue>/<addon>", "digest": "sha256:<64 hex>"}]}
+```
+
+under the same question, `can_install_app`. Each entry is a name, or the
+build to install the add-on at; the add-on an object names is the second half
+of its coordinate. A pinned add-on is installed like a pinned app and under
+the same rule: its catalogue must be a declared source, its bundle is fetched
+from there, checked against the digest and committed beside the profile, and
+the pin is written on the app's entry. Every bundle of a request is fetched
+and checked before the first is committed, so a list one of whose builds
+does not verify changes nothing. The refusals are those of the table above.
+
+| An entry | What happens |
+|---|---|
+| `{coordinate, digest}` | fetched, checked, committed and pinned (§4) |
+| a name the entry already activates | left as it is: an add-on that was pinned stays pinned |
+| a name that is new to the list | activated unpinned, from the profile the cluster holds |
+| an add-on no longer in the list | deactivated, and its pin removed with it |
+
 ## 4. The digest
 
 The digest pins the build. It is the sha256 of the profile bundle, and it
@@ -223,6 +247,37 @@ It is not signed and it is not a permission. What it does:
   then held with `DigestMismatch` until they move their pin. And the check is
   on the profile, not on what the profile points at: a chart or image it
   names by tag is whatever that tag is when it is pulled.
+
+**An add-on's pin** is recorded beside the list of names, keyed by the
+add-on's name, and never inside the list:
+
+```yaml
+spec:
+  apps:
+  - profile: odoo-base-ce
+    digest: sha256:…
+    addons:
+    - odoo-crm-ce
+    - odoo-sales-ce
+    addonPins:
+    - name: odoo-crm-ce
+      digest: sha256:…
+      catalogue: gentian
+```
+
+The operator carries it onto the add-on's own Component
+(`spec.profileRef.digest`) and onto the Component of the app it is activated
+in (`spec.addonPins`). The second is where it is enforced. An add-on deploys
+nothing itself: it takes effect in the release of its base, from the list the
+base hands on. So the base is what is held. Before it renders anything for an
+app, the operator checks every pinned add-on the app activates the way it
+checks the app's own profile; if one fails, the *app's* Component reports
+`Ready=False` with `DigestMismatch` or `DigestUnverifiable`, naming the
+add-on, and nothing is rolled out for the app until the add-on's profile is
+the pinned build again or the pin is moved. The app is held whole rather
+than rolled out without the add-on, because a release rendered without an
+add-on that is already active switches it off. An add-on with no pin is not
+checked.
 
 Who states the digest is whoever may install: a person with `can_install_app`
 can name any build of any entry a source serves. That is the same authority
@@ -460,6 +515,8 @@ token:
    vault. Both ask `can_write_credential` on the tenant.
 2. Installs at the director (§3) with exactly the confirmation's
    `coordinate` and `digest`, and the `defaultGrant` the person chose.
+3. For the add-ons the confirmation lists: sets the app's add-ons at the
+   director (§3), each as the item's `coordinate` and `digest`.
 
 The OS decides nothing about supply at any step. Whether the app then
 arrives is the repository's answer to the credential.
@@ -577,8 +634,8 @@ reads. The store is not asked: what is installed, how it is doing and who
 may open it are facts the cluster holds.
 
 ```
-director   GET /v1/tenants/{t}/apps                  installed profiles, their digests and their addons
-director   GET /v1/tenants/{t}/apps/{p}/addons
+director   GET /v1/tenants/{t}/apps                  installed profiles, their digests, their addons and each addon's pin
+director   GET /v1/tenants/{t}/apps/{p}/addons       one app's addons, and addonPins: {name, digest, catalogue} for each that is pinned
 usher      GET /v1/tenants/{t}/apps/status           what the cluster made of them
 usher      GET /v1/tenants/{t}/resources             the plan, and what is used of it
 ```

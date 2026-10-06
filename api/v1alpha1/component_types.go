@@ -88,6 +88,17 @@ type ComponentSpec struct {
 	// +kubebuilder:validation:items:MaxLength=63
 	Addons []string `json:"addons,omitempty"`
 
+	// AddonPins is the build each pinned addon was installed from, as the
+	// Tenant records it. Nothing is rendered for this instance while a
+	// pinned addon's profile is not shown to be that build: the addon list
+	// reaches the release through this component, so this is where an
+	// unverified addon is kept out of it.
+	// +optional
+	// +listType=map
+	// +listMapKey=name
+	// +kubebuilder:validation:MaxItems=128
+	AddonPins []AddonPin `json:"addonPins,omitempty"`
+
 	// Config is what this install overrides of the profile's defaults: the
 	// replica count and chart values the tenant chose. It is the install's
 	// and not the profile's, so two tenants installing one profile may differ

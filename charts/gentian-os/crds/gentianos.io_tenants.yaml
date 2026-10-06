@@ -84,6 +84,49 @@ spec:
                   description: TenantApp specifies a desired application installation
                     for a tenant.
                   properties:
+                    addonPins:
+                      description: |-
+                        AddonPins pins addons of this app to the build each was installed
+                        from, like digest and catalogue do for the app itself. It is keyed by
+                        the addon's name and stands beside addons rather than inside it: addons
+                        stays the list of names every reader walks, and an addon with no entry
+                        here is activated unpinned, as before.
+
+                        A pinned addon is rolled out only from a profile shown to be that
+                        build. Until it is, the base it activates inside is held as it runs.
+                        An entry naming an addon that is not in addons pins nothing.
+                      items:
+                        description: AddonPin is the build one addon was installed
+                          from.
+                        properties:
+                          catalogue:
+                            description: |-
+                              Catalogue is the catalogue the pinned build was fetched from: the first
+                              half of its coordinate, <catalogue>/<name>.
+                            maxLength: 63
+                            pattern: ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$
+                            type: string
+                          digest:
+                            description: |-
+                              Digest pins the addon's profile bundle: the build the install asked
+                              for.
+                            pattern: ^sha256:[a-f0-9]{64}$
+                            type: string
+                          name:
+                            description: Name is the addon's profile name, as addons
+                              lists it.
+                            maxLength: 63
+                            minLength: 1
+                            type: string
+                        required:
+                        - digest
+                        - name
+                        type: object
+                      maxItems: 128
+                      type: array
+                      x-kubernetes-list-map-keys:
+                      - name
+                      x-kubernetes-list-type: map
                     addons:
                       description: |-
                         Addons lists the addon profiles activated inside this app for this tenant —

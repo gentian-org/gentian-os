@@ -44,6 +44,22 @@ func TestAProfileChangeRunsItsComponents(t *testing.T) {
 			t.Fatalf("request %v is not a desktop", req)
 		}
 	}
+	// An addon's profile runs the component that activates it as well as its
+	// own: a base held for a pinned addon is released by the addon's profile
+	// becoming the pinned build.
+	base := &gentianov1alpha1.Component{ObjectMeta: metav1.ObjectMeta{Name: "odoo", Namespace: "tenant-demo"}}
+	base.Spec.ProfileRef.Name = "odoo"
+	base.Spec.Addons = []string{"odoo-crm"}
+	addon := &gentianov1alpha1.Component{ObjectMeta: metav1.ObjectMeta{Name: "odoo-crm", Namespace: "tenant-demo"}}
+	addon.Spec.ProfileRef.Name = "odoo-crm"
+	for _, obj := range []*gentianov1alpha1.Component{base, addon} {
+		if err := c.Create(context.Background(), obj); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := componentsReferencingProfile(context.Background(), c, "odoo-crm"); len(got) != 2 {
+		t.Fatalf("requests = %v, want the addon and its base", got)
+	}
 	if got := componentsReferencingProfile(context.Background(), c, "nothing"); len(got) != 0 {
 		t.Fatalf("a profile nothing references runs %v", got)
 	}
