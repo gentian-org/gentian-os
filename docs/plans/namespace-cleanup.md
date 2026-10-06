@@ -69,7 +69,7 @@ the catalogue.
 | Platform-admin console | part of `gentian-portal`, `platform-kernel` | `tenant-platform` — see §2.5 | a UI with no authority is not kernel (AD-10); the platform is a tenant whose realm is the kernel realm |
 | Headlamp | — | `kernel-observability` | new; the cluster as the administrator sees it, with their own identity (OIDC against the kernel realm; a kubectl in a browser is kernel, not system). The namespace is where metrics and logs go when they come |
 | metrics-server | `kube-system` | stays, labelled | API-aggregation convention |
-| MetalLB, Kyverno exception for it | `metallb-system` | stays, labelled | platform-provided, not installed by gentian-os |
+| MetalLB | `metallb-system` | stays, labelled `tier: kernel`, `function: load-balancer` | platform-provided, not installed by gentian-os, so the name is the platform's. The label is its exemption from the baseline policies and replaces the PolicyException it once had; `platformParams.metallb: "false"` on the claim withholds it |
 
 ### 2.2 System
 

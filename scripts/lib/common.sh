@@ -1158,9 +1158,9 @@ load_deployments_cluster_settings() {
         claim_map_setting PLATFORM_PARAMS platformParams  "${claim_file}"
         claim_setting     EDGE_ADDRESS_REF addressRef     "${claim_file}"
         # platformParams.metallb on its own, because it is a switch and not a
-        # value to pass on: whether this cluster wants the policy exception
-        # MetalLB needs (kernel/security/metallb/policy-exception.yaml).
-        claim_setting     METALLB_EXCEPTION platformParams.metallb "${claim_file}"
+        # value to pass on: "false" keeps MetalLB's namespace under the
+        # baseline policies. See ns_ensure_kernel.
+        claim_setting     METALLB_ALLOWED platformParams.metallb "${claim_file}"
         claim_setting     DNS_PROVIDER    certificates.dnsProvider "${claim_file}"
         claim_map_setting DNS_PARAMS      certificates.dnsParams   "${claim_file}"
         claim_setting     EXTERNAL_DNS_ENABLED certificates.externalDns "${claim_file}"

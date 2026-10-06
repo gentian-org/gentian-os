@@ -93,7 +93,28 @@ ns_ensure_kernel() {
     # The platform's own namespaces are labelled where they exist and left alone
     # where they do not: gentian-os does not create kube-system.
     for name in $(_ns_table | awk '$1 !~ /^kernel-/ { print $1 }'); do
-        kubectl get namespace "${name}" >/dev/null 2>&1 && ns_ensure "${name}"
+        kubectl get namespace "${name}" >/dev/null 2>&1 || continue
+        if ns_declined "${name}"; then
+            # Declined after having been labelled: the labels come off, or the
+            # claim would say one thing and the cluster go on doing the other.
+            kubectl label namespace "${name}" gentianos.io/tier- gentianos.io/function- >/dev/null
+            continue
+        fi
+        ns_ensure "${name}"
     done
     return 0
+}
+
+# ns_declined <name> -- whether the claim declines to label one of the
+# platform's own namespaces.
+#
+# The kernel tier is what the baseline policies leave alone, so labelling a
+# namespace into it is an exemption. The load balancer's is the one a cluster
+# may refuse: MetalLB needs the host's network and capabilities the baseline
+# forbids, and it is allowed them unless the claim sets platformParams.metallb
+# to "false". The namespace is found by its function, never by its name.
+ns_declined() {
+    local name="${1:?ns_declined <name>}" fn
+    fn="$(_ns_table | awk -v n="${name}" '$1 == n { print $NF }')"
+    [[ "${fn}" == "load-balancer" && "${METALLB_ALLOWED:-true}" == "false" ]]
 }

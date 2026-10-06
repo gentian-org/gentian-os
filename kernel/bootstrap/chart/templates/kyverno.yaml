@@ -24,11 +24,6 @@ spec:
                 values: [kernel]
         admissionController:
           replicas: 1
-          container:
-            extraArgs:
-              # PolicyExceptions honoured from one namespace only (MetalLB's).
-              enablePolicyException: "true"
-              exceptionNamespace: "metallb-system"
         backgroundController:
           replicas: 1
         cleanupController:
