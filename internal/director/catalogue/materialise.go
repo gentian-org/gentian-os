@@ -28,6 +28,8 @@ SPDX-License-Identifier: MPL-2.0
 package catalogue
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -38,6 +40,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	utilyaml "k8s.io/apimachinery/pkg/util/yaml"
 
 	"sigs.k8s.io/yaml"
 )
@@ -177,6 +181,15 @@ func (f *Fetcher) Fetch(ctx context.Context, coordinate, digest string) (*Profil
 			Name string `json:"name"`
 		} `json:"metadata"`
 	}
+	// One document, and no more. Only the first is looked at here, while the
+	// file is committed whole and everything in it is applied: a second
+	// document would be an object of any kind riding in under a profile's
+	// name and a profile's digest.
+	if n, err := documents(body); err != nil {
+		return nil, fmt.Errorf("catalogue: %s does not parse: %w", coordinate, err)
+	} else if n != 1 {
+		return nil, fmt.Errorf("catalogue: %s holds %d documents; a bundle is exactly one ComponentProfile", coordinate, n)
+	}
 	if err := yaml.Unmarshal(body, &head); err != nil {
 		return nil, fmt.Errorf("catalogue: %s does not parse: %w", coordinate, err)
 	}
@@ -234,4 +247,27 @@ func ParseSources(configured string) map[string]string {
 		out[slug] = base
 	}
 	return out
+}
+
+// documents counts the YAML documents in body that hold anything. A separator
+// with nothing after it, or a document of comments only, is not one.
+func documents(body []byte) (int, error) {
+	reader := utilyaml.NewYAMLReader(bufio.NewReader(bytes.NewReader(body)))
+	n := 0
+	for {
+		doc, err := reader.Read()
+		if errors.Is(err, io.EOF) {
+			return n, nil
+		}
+		if err != nil {
+			return 0, err
+		}
+		var v any
+		if err := yaml.Unmarshal(doc, &v); err != nil {
+			return 0, err
+		}
+		if v != nil {
+			n++
+		}
+	}
 }

@@ -143,3 +143,22 @@ func TestAnOversizedBundleIsRefused(t *testing.T) {
 		t.Fatal("a bundle past the limit was accepted")
 	}
 }
+
+// A bundle is one profile. A file with a second document in it hashes to its
+// digest like any other, and everything in it would be applied: the second
+// document is refused whatever it is, and a trailing separator or a comment
+// is not one.
+func TestABundleWithASecondDocumentIsRefused(t *testing.T) {
+	extra := nextcloudProfile + "\n---\napiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: rides-along\n"
+	f := source(t, extra)
+	if _, err := f.Fetch(context.Background(), "main/nextcloud-base-ce", digestOf(extra)); err == nil ||
+		!strings.Contains(err.Error(), "2 documents") {
+		t.Fatalf("a second document was not refused: %v", err)
+	}
+
+	harmless := "# a comment\n---\n" + nextcloudProfile + "\n---\n# nothing here\n"
+	f = source(t, harmless)
+	if _, err := f.Fetch(context.Background(), "main/nextcloud-base-ce", digestOf(harmless)); err != nil {
+		t.Fatalf("separators and comments are not documents: %v", err)
+	}
+}
