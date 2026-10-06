@@ -11,12 +11,18 @@ SPDX-License-Identifier: MPL-2.0
 // Package usher tells a signed-in person what is here and what they may open
 // (operator-split-plan.md §3.10).
 //
-// It decides nothing and changes nothing. Every answer is a projection the
-// operator wrote, filtered by a question put to the authorization store with
-// the caller's own identity. It holds no git credential, no signing key and
-// no Kubernetes access, which is why these reads are here and not in the
-// director: a tenant's own people need them, and the process that answers
-// them should have nothing worth taking.
+// It changes nothing. Every answer is the operator's -- a projection it
+// wrote, or what it says when asked -- given to a caller the authorization
+// store allowed, asked with the caller's own identity. It holds no git
+// credential, no signing key and no Kubernetes access, which is why these
+// reads are here and not in the director: a tenant's own people need them,
+// and the process that answers them should have as little worth taking as
+// can be arranged.
+//
+// What it does hold, beside the store's key, is a token for the operator's
+// listener that admits reads only (state.go). With it the usher can read
+// every tenant's live state; the guard below is what stands between that and
+// a caller. It can issue no command with it.
 //
 // Its routes are lists, and a list is where one tenant's objects leak to
 // another. So a route is registered only through guarded, which names the
@@ -25,15 +31,19 @@ SPDX-License-Identifier: MPL-2.0
 package usher
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"regexp"
 	"strings"
 
 	"github.com/gentian-org/gentian-os/internal/director/authn"
 	"github.com/gentian-org/gentian-os/internal/director/authz"
+	"github.com/gentian-org/gentian-os/internal/director/lifecycle"
 	"github.com/gentian-org/gentian-os/internal/tilecatalogue"
 )
 
@@ -49,6 +59,21 @@ type Config struct {
 	// TilesPath is the file the operator's tile catalogue is mounted at.
 	TilesPath string
 	Log       *slog.Logger
+	// Cluster is the id of the one cluster this usher serves: the object
+	// cluster relations are asked about, and the only {c} a route accepts.
+	// Empty leaves the cluster's routes unregistered.
+	Cluster string
+	// Lifecycle asks the operator what only the cluster knows. Nil leaves
+	// the reads of live state unregistered: an usher with no operator to ask
+	// has nothing to answer them with.
+	Lifecycle Lifecycle
+}
+
+// Lifecycle is the operator's listener, as far as the usher may use it: two
+// ways to read, and no way to ask for anything to be done.
+type Lifecycle interface {
+	Get(ctx context.Context, path string, query url.Values) (int, []byte, error)
+	Plans(ctx context.Context, tenant string, selfService bool) ([]lifecycle.Plan, error)
 }
 
 // Server is the usher's HTTP surface.
@@ -69,7 +94,10 @@ func New(cfg Config) *Server {
 	// Whoever may enter a tenant may be told what is in it. Each tile is then
 	// asked about on its own, so entering shows a person their tiles and not
 	// the tenant's.
-	s.guarded("GET /v1/tenants/{t}/tiles", "can_enter", s.tenantTiles)
+	s.guarded("GET /v1/tenants/{t}/tiles", "can_enter", tenantObject, s.tenantTiles)
+	if cfg.Lifecycle != nil {
+		s.stateRoutes()
+	}
 	return s
 }
 
@@ -81,13 +109,37 @@ var tenantName = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,50}[a-z0-9])?$`)
 
 // call is a request that has passed the guard.
 type call struct {
-	user   string
+	user string
+	// tenant is the tenant a tenant route is about; empty on a cluster route.
 	tenant string
 }
 
-// guarded registers a route about one tenant with the relation it requires on
-// that tenant. There is no other way to register a route.
-func (s *Server) guarded(pattern, relation string, h func(http.ResponseWriter, *http.Request, call)) {
+// object names what a route's relation is asked about.
+type object func(s *Server, r *http.Request) (string, error)
+
+// tenantObject is the tenant in the path.
+func tenantObject(_ *Server, r *http.Request) (string, error) {
+	t := r.PathValue("t")
+	if !tenantName.MatchString(t) {
+		return "", errInvalidName
+	}
+	return authz.Tenant(t), nil
+}
+
+// clusterObject accepts only this usher's own cluster. Another id is not
+// forbidden, it does not exist here.
+func clusterObject(s *Server, r *http.Request) (string, error) {
+	if c := r.PathValue("c"); c == "" || c != s.cfg.Cluster {
+		return "", errInvalidName
+	}
+	return authz.Cluster(s.cfg.Cluster), nil
+}
+
+var errInvalidName = errors.New("invalid name")
+
+// guarded registers a route with the relation it requires on the object it
+// is about. There is no other way to register a route.
+func (s *Server) guarded(pattern, relation string, obj object, h func(http.ResponseWriter, *http.Request, call)) {
 	s.mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
 		ident, err := s.cfg.Authn.FromRequest(r)
@@ -102,12 +154,12 @@ func (s *Server) guarded(pattern, relation string, h func(http.ResponseWriter, *
 			fail(w, http.StatusUnauthorized, "unauthenticated")
 			return
 		}
-		tenant := r.PathValue("t")
-		if !tenantName.MatchString(tenant) {
+		target, err := obj(s, r)
+		if err != nil {
 			fail(w, http.StatusBadRequest, "invalid name")
 			return
 		}
-		allowed, err := s.cfg.Authz.Check(ctx, "", user, relation, authz.Tenant(tenant))
+		allowed, err := s.cfg.Authz.Check(ctx, "", user, relation, target)
 		if err != nil {
 			fail(w, http.StatusServiceUnavailable, "authorization unavailable")
 			return
@@ -116,7 +168,7 @@ func (s *Server) guarded(pattern, relation string, h func(http.ResponseWriter, *
 			fail(w, http.StatusForbidden, "forbidden")
 			return
 		}
-		h(w, r, call{user: user, tenant: tenant})
+		h(w, r, call{user: user, tenant: r.PathValue("t")})
 	})
 }
 

@@ -367,6 +367,14 @@ spec:
                   key: token
                   optional: true
             {{- end }}
+            {{- if and .Values.usher.enabled (.Values.appLifecycle).readTokenSecretName }}
+            # The Secret, in the edge namespace, the operator hands the
+            # usher's token over in: a second token for this API that admits
+            # reads and nothing else. Named only where there is an usher to
+            # read it; without the name the API has no reader at all.
+            - name: APP_LIFECYCLE_READ_TOKEN_SECRET
+              value: {{ .Values.appLifecycle.readTokenSecretName | quote }}
+            {{- end }}
             - name: GENTIAN_DEPLOYMENTS_CLUSTER_ID
               value: {{ $lifecycleDeployments.cluster | default "default-cluster" | quote }}
             - name: USAGE_SAMPLER_ENABLED

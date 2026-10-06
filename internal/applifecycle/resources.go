@@ -14,6 +14,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -138,6 +139,36 @@ func (s *Service) ResourceState(ctx context.Context, tenantName string) (*Resour
 		}
 	}
 	return result, nil
+}
+
+// TenantUnavailable is a tenant whose state could not be reported, and why.
+type TenantUnavailable struct {
+	Tenant string `json:"tenant"`
+	Reason string `json:"reason"`
+}
+
+// AllResourceStates reports every tenant the cluster holds, by name.
+func (s *Service) AllResourceStates(ctx context.Context) ([]*ResourceStateResult, []TenantUnavailable, error) {
+	var tenants gentianov1alpha1.TenantList
+	if err := s.client.List(ctx, &tenants); err != nil {
+		return nil, nil, fmt.Errorf("list tenants: %w", err)
+	}
+	names := make([]string, 0, len(tenants.Items))
+	for i := range tenants.Items {
+		names = append(names, tenants.Items[i].Name)
+	}
+	sort.Strings(names)
+	states := make([]*ResourceStateResult, 0, len(names))
+	unavailable := []TenantUnavailable{}
+	for _, name := range names {
+		state, err := s.ResourceState(ctx, name)
+		if err != nil {
+			unavailable = append(unavailable, TenantUnavailable{Tenant: name, Reason: err.Error()})
+			continue
+		}
+		states = append(states, state)
+	}
+	return states, unavailable, nil
 }
 
 // Plans lists the catalogue as it applies to one tenant.

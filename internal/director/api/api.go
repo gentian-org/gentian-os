@@ -61,7 +61,6 @@ type Repository interface {
 	RequestTenantPurge(ctx context.Context, tenant string, now time.Time, opts gitops.PurgeOptions, meta gitops.Meta) (gitops.Result, error)
 	DeclareTenant(ctx context.Context, name string, spec *gentianov1alpha1.TenantSpec, origin string, meta gitops.Meta) (gitops.Result, error)
 	PendingPurges(ctx context.Context) ([]string, error)
-	Tenants(ctx context.Context) ([]string, error)
 	SetTenantDomain(ctx context.Context, tenant, domain string, meta gitops.Meta) (gitops.Result, error)
 	ClusterBranding(ctx context.Context) (*gentianov1alpha1.BrandingSpec, bool, error)
 	SetClusterBranding(ctx context.Context, spec gentianov1alpha1.BrandingSpec, meta gitops.Meta) (gitops.Result, error)
@@ -88,9 +87,11 @@ type Repository interface {
 	SetPlatformSecurity(ctx context.Context, waivers []gitops.MacWaiver, meta gitops.Meta) (gitops.Result, error)
 }
 
-// Lifecycle is the operator's app-lifecycle API, read and never written: what
-// the cluster enforces for a tenant, what is committed under it, and which
-// plans the tenant may move to. See internal/director/lifecycle.
+// Lifecycle is the operator's listener as the director uses it: the commands
+// of §3.11, and the questions a commit or a command depends on -- which plans
+// a tenant may move to, whether a restore finished, what the cluster still
+// holds of a tenant being purged. No person's read of live state passes
+// through here; those are the usher's. See internal/director/lifecycle.
 type Lifecycle interface {
 	Get(ctx context.Context, path string, query url.Values) (int, []byte, error)
 	// Stream is Get for a body that is passed through byte for byte and may
@@ -130,10 +131,9 @@ type Config struct {
 	// Cluster is the id of the one cluster this director serves: the object
 	// cluster verbs are checked against, and the only {c} the routes accept.
 	Cluster string
-	// Lifecycle answers what only the cluster knows about a tenant's
-	// resources. Nil leaves the resources routes unregistered: a director
-	// with no operator to ask has nothing to relay and nothing to validate a
-	// plan against.
+	// Lifecycle carries out commands and answers what a commit depends on.
+	// Nil leaves those routes unregistered: a director with no operator to
+	// ask has nothing to command and nothing to validate a plan against.
 	Lifecycle Lifecycle
 }
 
@@ -448,52 +448,35 @@ func (s *Server) routes() {
 	s.guarded("PUT /v1/tenants/{t}/privileges/{inst}/{kind}/{name}", "can_view", tenantObject, s.grantPrivilege)
 	s.guarded("DELETE /v1/tenants/{t}/privileges/{inst}/{kind}/{name}", "can_view", tenantObject, s.revokePrivilege)
 
-	// A tenant's resources: the ceiling the cluster enforces, what is under
-	// it, the plans it may move to, and its history. The reads are the
-	// operator's answers relayed under can_view. The one write, choosing a
-	// plan, is can_set_plan, model v1's own verb for it, and it is a commit:
-	// the operator learns the plan from git like everything else.
+	// No reads of live state here. What the cluster made of a tenant -- the
+	// state of its apps, its ceiling and usage, the plans it may move to, its
+	// backups and their schedules, the policy in force, its integrations and
+	// notices, and the cluster's own view of the same -- is the usher's to
+	// answer (internal/usher), under the relation this server asked. This
+	// process commits and commands; it does not answer for the cluster. What
+	// it reads here is what git declares.
+	//
+	// The routes below need the operator all the same: a plan is validated
+	// against the operator's answer before it is committed, and the commands
+	// are carried out by it.
 	if s.cfg.Lifecycle != nil {
-		// What the cluster made of what git says is installed, and the two
-		// acts on an app that are not desired state. Purging is whoever may
-		// install's to do, as uninstalling is; provisioning hands an app to
-		// people, which is can_grant's.
-		s.guarded("GET /v1/tenants/{t}/apps/status", "can_view", tenantObject, s.appStates)
+		// The two acts on an app that are not desired state. Purging is
+		// whoever may install's to do, as uninstalling is; provisioning hands
+		// an app to people, which is can_grant's.
 		s.guarded("POST /v1/tenants/{t}/actions/purge-app", "can_install_app", tenantObject, s.purgeApp)
 		s.guarded("POST /v1/tenants/{t}/actions/provision-app", "can_grant", tenantObject, s.provisionApp)
 
-		s.guarded("GET /v1/tenants/{t}/resources", "can_view", tenantObject, s.resourceState)
-		s.guarded("GET /v1/tenants/{t}/resources/plans", "can_view", tenantObject, s.resourcePlans)
-		s.guarded("GET /v1/tenants/{t}/resources/usage", "can_view", tenantObject, s.resourceUsage)
-		s.guarded("GET /v1/tenants/{t}/resources/report", "can_view", tenantObject, s.resourceReport)
+		// Choosing a plan is can_set_plan, model v1's own verb for it, and it
+		// is a commit: the operator learns the plan from git like everything
+		// else.
 		s.guarded("PUT /v1/tenants/{t}/resources", "can_set_plan", tenantObject, s.setResourcePlan)
-		if s.cfg.Cluster != "" {
-			// Every tenant's ceiling in one answer, for the platform
-			// operator's view. can_audit, like the tenant list it is made
-			// from.
-			s.guarded("GET /v1/clusters/{c}/resources", "can_audit", s.clusterObject, s.clusterResources)
-		}
 
-		// A tenant's backups: what exists, what each run did, the policy in
-		// force once inheritance is resolved, and when the next scheduled
-		// run is. All reads, all relayed from the operator under can_view --
-		// whoever may see a tenant may see whether its data is being kept.
-		// Changing a policy is a commit, and is not here yet.
-		s.guarded("GET /v1/tenants/{t}/backups", "can_view", tenantObject, s.tenantBackups)
-		s.guarded("GET /v1/tenants/{t}/backups/{name}", "can_view", tenantObject, s.tenantBackup)
 		// The bundle as one file, through the director and never a signed
 		// URL: a link that works without a session is a session nobody can
-		// revoke (sovereignty-concept.md §4.2).
+		// revoke (sovereignty-concept.md §4.2). The one read of live state
+		// left here: the usher's token for the operator lists backups and
+		// does not fetch one.
 		s.guarded("GET /v1/tenants/{t}/backups/{name}/download", "can_view", tenantObject, s.tenantBundleDownload)
-		s.guarded("GET /v1/tenants/{t}/backup-policy", "can_view", tenantObject, s.tenantBackupPolicy)
-		s.guarded("GET /v1/tenants/{t}/backup-schedules", "can_view", tenantObject, s.tenantBackupSchedules)
-		if s.cfg.Cluster != "" {
-			// The cluster's own policy, and every tenant's schedules. Read
-			// under can_audit: what the platform keeps, and for how long, is
-			// something whoever may look at the cluster may see.
-			s.guarded("GET /v1/clusters/{c}/backup-policy", "can_audit", s.clusterObject, s.clusterBackupPolicy)
-			s.guarded("GET /v1/clusters/{c}/backup-schedules", "can_audit", s.clusterObject, s.clusterBackupSchedules)
-		}
 
 		// Writing a backup policy is writing declared state: what should be
 		// true of every run from now on. It is a commit, under
@@ -507,32 +490,27 @@ func (s *Server) routes() {
 			s.guarded("PUT /v1/clusters/{c}/backup-policy", "can_configure", s.clusterObject, s.setClusterBackupPolicy)
 		}
 
-		// What one tenant's apps consume from each other, and whether the
-		// grant permits what the binding asks for. can_view: seeing which
-		// apps are wired together is reading the tenant, not changing it.
-		s.guarded("GET /v1/tenants/{t}/integrations", "can_view", tenantObject, s.tenantIntegrations)
 		// What an app may consume is declared state, and can_grant is model
 		// v1's own verb for deciding it.
 		s.guarded("PUT /v1/tenants/{t}/grants/{app}", "can_grant", tenantObject, s.setAppGrant)
 		s.guarded("DELETE /v1/tenants/{t}/grants/{app}", "can_grant", tenantObject, s.clearAppGrant)
 		if s.cfg.Cluster != "" {
-			// What the platform permits to escape its default posture, and
-			// how much customisation the cluster carries. Both are the
-			// cluster's own state and read under can_audit.
+			// What git declares may escape the default posture: the list
+			// the PUT below replaces, read from where it is written so that
+			// an edit starts from the last commit and not from the last
+			// sync. What the cluster enforces at this moment, and which
+			// profiles ask for a waiver, is the usher's answer on the same
+			// path.
 			s.guarded("GET /v1/clusters/{c}/platform-security", "can_audit", s.clusterObject, s.platformSecurity)
 			// Changing what may escape the default posture is the cluster's
 			// own security configuration: can_set_admission, which model v1
 			// defines as exactly this.
 			s.guarded("PUT /v1/clusters/{c}/platform-security", "can_set_admission", s.clusterObject, s.setPlatformSecurity)
-			s.guarded("GET /v1/clusters/{c}/customizations", "can_audit", s.clusterObject, s.customizations)
 		}
 
-		// The notices an administrator publishes to the people of a tenant.
-		// Reading them is can_view -- they are addressed to everyone in the
-		// tenant. Publishing is an action under can_administer: it is not a
-		// statement about how the cluster should be, it happens once, and
-		// nothing reconciles it.
-		s.guarded("GET /v1/tenants/{t}/notifications", "can_view", tenantObject, s.tenantNotifications)
+		// Publishing a notice to the people of a tenant is an action under
+		// can_administer: it is not a statement about how the cluster should
+		// be, it happens once, and nothing reconciles it.
 		s.action("POST /v1/tenants/{t}/actions/notify", "can_administer", tenantObject, s.publishNotification)
 
 		// What changed, who changed it, and what allowed them to. The

@@ -21,14 +21,15 @@ import (
 	"github.com/gentian-org/gentian-os/internal/director/lifecycle"
 )
 
-// A tenant's resources go through the director like everything else: the
-// reads are the operator's answers relayed to whoever may view the tenant,
-// and choosing a plan is a commit by whoever may set one. The operator here
-// is a stand-in that answers the way internal/applifecycle does, including
-// the plans it marks as not selectable and why.
+// Choosing a tenant's plan goes through the director like every other change
+// to declared state: a commit by whoever may set one, validated against the
+// operator's answer first. Reading the plans, the ceiling or anything else
+// the cluster holds is the usher's and is tested there. The operator here is
+// a stand-in that answers the way internal/applifecycle does, including the
+// plans it marks as not selectable and why.
 
 // operator is the app-lifecycle API as these tests need it: a catalogue of
-// three plans, a tenant on the middle one, and the queries it was asked.
+// plans, a tenant on the second, and the queries it was asked.
 type operator struct {
 	*httptest.Server
 	// selfService records the flag the plans request carried, per tenant.
@@ -53,16 +54,6 @@ func startOperator(t *testing.T) *operator {
 		}
 		return true
 	}
-	mux.HandleFunc("GET /v1/tenants/{t}/resources", func(w http.ResponseWriter, r *http.Request) {
-		if !known(w, r) {
-			return
-		}
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"tenant": r.PathValue("t"), "plan": "nodes-2", "annotatedPlan": "nodes-2",
-			"quota":    []map[string]any{{"resource": "requests.cpu", "used": "3", "hard": "8", "usedRatio": 0.375}},
-			"hasQuota": true, "installedApps": 1,
-		})
-	})
 	mux.HandleFunc("GET /v1/tenants/{t}/resources/plans", func(w http.ResponseWriter, r *http.Request) {
 		if !known(w, r) {
 			return
@@ -81,87 +72,6 @@ func startOperator(t *testing.T) *operator {
 			plans[3].BlockedBy = "self-service"
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"tenant": r.PathValue("t"), "plans": plans})
-	})
-	mux.HandleFunc("GET /v1/tenants/{t}/resources/usage", func(w http.ResponseWriter, r *http.Request) {
-		if !known(w, r) {
-			return
-		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"tenant": r.PathValue("t"), "from": r.URL.Query().Get("from"), "stepSeconds": r.URL.Query().Get("stepSeconds"), "samples": []any{}})
-	})
-	mux.HandleFunc("GET /v1/tenants/{t}/resources/report", func(w http.ResponseWriter, r *http.Request) {
-		if !known(w, r) {
-			return
-		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"tenant": r.PathValue("t"), "intervals": []any{}})
-	})
-	mux.HandleFunc("GET /v1/tenants/{t}/backups", func(w http.ResponseWriter, r *http.Request) {
-		if !known(w, r) {
-			return
-		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"tenant": r.PathValue("t"), "backups": []any{
-			map[string]any{"name": "nightly-1", "phase": "Ready", "platformReadable": true},
-		}})
-	})
-	mux.HandleFunc("GET /v1/tenants/{t}/backup-policy", func(w http.ResponseWriter, r *http.Request) {
-		if !known(w, r) {
-			return
-		}
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"scope": "tenant", "tenant": r.PathValue("t"), "configured": false,
-			"effectiveSchedule": "0 2 * * *", "effectiveBucket": "gentian-backups",
-		})
-	})
-	mux.HandleFunc("GET /v1/tenants/{t}/backup-schedules", func(w http.ResponseWriter, r *http.Request) {
-		if !known(w, r) {
-			return
-		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"tenant": r.PathValue("t"), "schedules": []any{
-			map[string]any{"name": "policy", "managed": true, "schedule": "0 2 * * *"},
-		}})
-	})
-	mux.HandleFunc("GET /v1/backup-policy", func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{"scope": "cluster", "configured": true, "effectiveSchedule": "0 2 * * *"})
-	})
-	mux.HandleFunc("GET /v1/backup-schedules", func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{"schedules": []any{}})
-	})
-	mux.HandleFunc("GET /v1/tenants/{t}/integrations", func(w http.ResponseWriter, r *http.Request) {
-		if !known(w, r) {
-			return
-		}
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"bindings": []any{}, "grants": []any{}, "effectiveAccess": []any{},
-			"summary": map[string]any{"bindingCount": 0, "grantCount": 0, "grantReadyCount": 0},
-		})
-	})
-	mux.HandleFunc("GET /v1/platform-security", func(w http.ResponseWriter, _ *http.Request) {
-		// The cluster answers what the catalogue asks for; what is permitted
-		// is git's, and the director overwrites this field with it.
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"allowedMacWaivers": []any{},
-			"catalogueRequests": []any{map[string]any{
-				"name": "element", "displayName": "Element",
-				"macWaivers": []any{map[string]any{"policy": "gentian-require-non-root", "scope": "synapse"}},
-			}},
-		})
-	})
-	mux.HandleFunc("GET /v1/customizations", func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"totalRecords": 0, "carriedDeltas": 0, "byRung": map[string]any{}, "records": []any{},
-		})
-	})
-	mux.HandleFunc("GET /v1/tenants/{t}/apps/status", func(w http.ResponseWriter, r *http.Request) {
-		if !known(w, r) {
-			return
-		}
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"tenant": r.PathValue("t"),
-			"apps": []map[string]any{
-				{"profile": "nextcloud-base-ce", "name": "nextcloud-base-ce", "ready": true, "phase": "ready"},
-				{"profile": "xwiki-ce", "name": "xwiki-ce", "ready": false, "phase": "failing",
-					"failure": "xwiki in xwiki-0 — ImagePullBackOff"},
-			},
-		})
 	})
 	mux.HandleFunc("POST /v1/tenants/{t}/actions/{action}", func(w http.ResponseWriter, r *http.Request) {
 		if !known(w, r) {
@@ -209,9 +119,9 @@ func TestTheOperatorsAPIRefusesADirectorWithNoToken(t *testing.T) {
 	op := startOperator(t)
 	h := startWith(t, lifecycle.New(op.URL, ""))
 	tom := h.token(t, "tenant-demo", "tom")
-	code, _ := h.do(t, http.MethodGet, "/v1/tenants/demo/resources", tom, "")
-	if code == http.StatusOK {
-		t.Fatal("a director presenting no token reached the operator's API")
+	code, _ := h.do(t, http.MethodPut, "/v1/tenants/demo/resources", tom, `{"plan":"nodes-3"}`)
+	if code != http.StatusBadGateway {
+		t.Fatalf("a director presenting no token chose a plan, or the refusal was not named as the gateway fault it is: %d", code)
 	}
 }
 
@@ -269,19 +179,13 @@ func TestWhoMayChooseAPlanIsTheGraphsAnswer(t *testing.T) {
 	h, _ := startWithOperator(t)
 	before := h.tip(t)
 
-	// A member may look and not choose.
+	// A member may not choose.
 	mia := h.token(t, "tenant-demo", "mia")
-	if code, body := h.do(t, "GET", "/v1/tenants/demo/resources", mia, ""); code != http.StatusOK || body["plan"] != "nodes-2" {
-		t.Fatalf("member read: %d %v", code, body)
-	}
 	if code, _ := h.do(t, "PUT", "/v1/tenants/demo/resources", mia, `{"plan":"nodes-4"}`); code != http.StatusForbidden {
 		t.Fatalf("member chose a plan: %d", code)
 	}
 	// Another tenant's administrator holds nothing here.
 	tina := h.token(t, "tenant-solo", "tina")
-	if code, _ := h.do(t, "GET", "/v1/tenants/demo/resources/plans", tina, ""); code != http.StatusForbidden {
-		t.Fatalf("a stranger read the plans: %d", code)
-	}
 	if code, _ := h.do(t, "PUT", "/v1/tenants/demo/resources", tina, `{"plan":"nodes-4"}`); code != http.StatusForbidden {
 		t.Fatalf("a stranger chose a plan: %d", code)
 	}
@@ -296,26 +200,16 @@ func TestWhoMayChooseAPlanIsTheGraphsAnswer(t *testing.T) {
 func TestSelfServiceIsDecidedHereNotByTheScreen(t *testing.T) {
 	h, op := startWithOperator(t)
 
+	// The arranged plan is refused to a tenant's administrator as the
+	// entitlement it lacks, not written.
 	tom := h.token(t, "tenant-demo", "tom")
-	code, body := h.do(t, "GET", "/v1/tenants/demo/resources/plans", tom, "")
-	if code != http.StatusOK || op.selfService["demo"] != "true" {
-		t.Fatalf("tenant admin: %d, selfService=%q", code, op.selfService["demo"])
-	}
-	plans := body["plans"].([]any)
-	if top := plans[3].(map[string]any); top["selectable"] != false {
-		t.Fatalf("the arranged plan was offered to a tenant admin: %v", top)
-	}
-	// And choosing it is refused as the entitlement it lacks, not written.
-	if code, _ := h.do(t, "PUT", "/v1/tenants/demo/resources", tom, `{"plan":"nodes-4"}`); code != http.StatusPaymentRequired {
-		t.Fatalf("a tenant admin took the arranged plan: %d", code)
+	if code, _ := h.do(t, "PUT", "/v1/tenants/demo/resources", tom, `{"plan":"nodes-4"}`); code != http.StatusPaymentRequired || op.selfService["demo"] != "true" {
+		t.Fatalf("a tenant admin took the arranged plan: %d, selfService=%q", code, op.selfService["demo"])
 	}
 
 	alice := h.token(t, "gentian", "alice")
-	if code, _ := h.do(t, "GET", "/v1/tenants/demo/resources/plans", alice, ""); code != http.StatusOK || op.selfService["demo"] != "" {
-		t.Fatalf("platform admin: %d, selfService=%q", code, op.selfService["demo"])
-	}
-	if code, body := h.do(t, "PUT", "/v1/tenants/demo/resources", alice, `{"plan":"nodes-4"}`); code != http.StatusAccepted {
-		t.Fatalf("platform admin choosing the arranged plan: %d %v", code, body)
+	if code, body := h.do(t, "PUT", "/v1/tenants/demo/resources", alice, `{"plan":"nodes-4"}`); code != http.StatusAccepted || op.selfService["demo"] != "" {
+		t.Fatalf("platform admin choosing the arranged plan: %d %v, selfService=%q", code, body, op.selfService["demo"])
 	}
 }
 
@@ -354,92 +248,11 @@ func TestAPlanTheClusterDoesNotHaveIsNotFound(t *testing.T) {
 	}
 }
 
-func TestTheOperatorsAnswersAreRelayedWithTheirQueries(t *testing.T) {
-	h, _ := startWithOperator(t)
-	tom := h.token(t, "tenant-demo", "tom")
-	code, body := h.do(t, "GET", "/v1/tenants/demo/resources/usage?from=2026-09-01T00:00:00Z&stepSeconds=3600&rm=-rf", tom, "")
-	if code != http.StatusOK || body["from"] != "2026-09-01T00:00:00Z" || body["stepSeconds"] != "3600" {
-		t.Fatalf("usage: %d %v", code, body)
-	}
-	if code, body := h.do(t, "GET", "/v1/tenants/demo/resources/report", tom, ""); code != http.StatusOK || body["tenant"] != "demo" {
-		t.Fatalf("report: %d %v", code, body)
-	}
-}
-
-// The cluster's view is every tenant git lists, each answered by the
-// operator, and a tenant the operator cannot answer for is named rather than
-// dropped.
-func TestTheClustersViewNamesEveryTenant(t *testing.T) {
-	h, op := startWithOperator(t)
-	delete(op.tenants, "other")
-
-	audrey := h.token(t, "gentian", "audrey") // may audit, may not configure
-	code, body := h.do(t, "GET", "/v1/clusters/"+dt.Cluster+"/resources", audrey, "")
-	if code != http.StatusOK {
-		t.Fatalf("cluster view: %d %v", code, body)
-	}
-	states := body["tenants"].([]any)
-	if len(states) != 2 {
-		t.Fatalf("states = %v", states)
-	}
-	unavailable := body["unavailable"].([]any)
-	if len(unavailable) != 1 || unavailable[0].(map[string]any)["tenant"] != "other" {
-		t.Fatalf("unavailable = %v", unavailable)
-	}
-
-	tina := h.token(t, "tenant-solo", "tina")
-	if code, _ := h.do(t, "GET", "/v1/clusters/"+dt.Cluster+"/resources", tina, ""); code != http.StatusForbidden {
-		t.Fatalf("a tenant admin saw the cluster's view: %d", code)
-	}
-}
-
 func TestWithoutAnOperatorThereAreNoResourcesRoutes(t *testing.T) {
 	h := start(t)
 	tom := h.token(t, "tenant-demo", "tom")
-	if code, _ := h.do(t, "GET", "/v1/tenants/demo/resources", tom, ""); code != http.StatusNotFound {
+	if code, _ := h.do(t, "PUT", "/v1/tenants/demo/resources", tom, `{"plan":"nodes-3"}`); code != http.StatusNotFound {
 		t.Fatalf("resources without an operator: %d", code)
-	}
-}
-
-// Backups are read by whoever may view the tenant: seeing whether a tenant's
-// data is being kept is not the same permission as changing how. The
-// cluster's own policy is can_audit, like the rest of the cluster's state.
-func TestBackupsAreReadByWhoeverMayViewTheTenant(t *testing.T) {
-	h, _ := startWithOperator(t)
-
-	mia := h.token(t, "tenant-demo", "mia") // a member: can_view, nothing more
-	code, body := h.do(t, "GET", "/v1/tenants/demo/backups", mia, "")
-	if code != http.StatusOK {
-		t.Fatalf("member reading backups: %d %v", code, body)
-	}
-	if list, _ := body["backups"].([]any); len(list) != 1 {
-		t.Fatalf("backups = %v", body["backups"])
-	}
-	// The policy says what applies even where the tenant states nothing of
-	// its own, which is what the screen renders instead of an empty form.
-	code, body = h.do(t, "GET", "/v1/tenants/demo/backup-policy", mia, "")
-	if code != http.StatusOK || body["configured"] != false || body["effectiveSchedule"] != "0 2 * * *" {
-		t.Fatalf("policy: %d %v", code, body)
-	}
-	if code, body = h.do(t, "GET", "/v1/tenants/demo/backup-schedules", mia, ""); code != http.StatusOK {
-		t.Fatalf("schedules: %d %v", code, body)
-	}
-
-	// Another tenant's administrator holds nothing here.
-	tina := h.token(t, "tenant-solo", "tina")
-	for _, path := range []string{"/v1/tenants/demo/backups", "/v1/tenants/demo/backup-policy", "/v1/tenants/demo/backup-schedules"} {
-		if code, _ := h.do(t, "GET", path, tina, ""); code != http.StatusForbidden {
-			t.Fatalf("a stranger read %s: %d", path, code)
-		}
-	}
-
-	// The cluster's own policy: can_audit, which a tenant admin does not hold.
-	audrey := h.token(t, "gentian", "audrey")
-	if code, body := h.do(t, "GET", "/v1/clusters/"+dt.Cluster+"/backup-policy", audrey, ""); code != http.StatusOK || body["scope"] != "cluster" {
-		t.Fatalf("cluster policy: %d %v", code, body)
-	}
-	if code, _ := h.do(t, "GET", "/v1/clusters/"+dt.Cluster+"/backup-policy", tina, ""); code != http.StatusForbidden {
-		t.Fatalf("a tenant admin read the cluster's backup policy: %d", code)
 	}
 }
 
@@ -735,14 +548,11 @@ func TestTheWaiverAllowlistIsReadWidelyAndChangedOnlyByBreakGlass(t *testing.T) 
 	if code != http.StatusOK {
 		t.Fatalf("read: %d %v", code, body)
 	}
-	// Declared nothing yet: an empty list, with what asks for a waiver
-	// beside it, which is the difference the screen exists to show.
-	if list, _ := body["allowedMacWaivers"].([]any); len(list) != 0 {
-		t.Fatalf("allowed = %v", body["allowedMacWaivers"])
-	}
-	asks, _ := body["catalogueRequests"].([]any)
-	if len(asks) != 1 {
-		t.Fatalf("nothing says what asks for a waiver: %v", body)
+	// Declared nothing yet: an empty list, and nothing else. What asks for a
+	// waiver is the cluster's to say, and this process does not answer for
+	// the cluster.
+	if list, ok := body["allowedMacWaivers"].([]any); !ok || len(list) != 0 || len(body) != 1 {
+		t.Fatalf("the declared allowlist is not all that was answered: %v", body)
 	}
 
 	// A platform administrator is refused, and nothing moves.
@@ -775,5 +585,36 @@ func TestOnlyTheRightVerbsChangeGrantsAndWaivers(t *testing.T) {
 	}
 	if h.tip(t) != before {
 		t.Fatal("a refused request moved the repository")
+	}
+}
+
+// The director does not answer for the cluster. Every read of live state it
+// once relayed is the usher's now, and none of them is a route here any
+// more: the path is unknown, or known only for the write that stayed.
+func TestLiveStateIsNotServedHere(t *testing.T) {
+	h, _ := startWithOperator(t)
+	audrey := h.token(t, "gentian", "audrey") // may audit the cluster and view every tenant
+	for _, path := range []string{
+		"/v1/tenants/demo/apps/status",
+		"/v1/tenants/demo/resources",
+		"/v1/tenants/demo/resources/plans",
+		"/v1/tenants/demo/resources/usage",
+		"/v1/tenants/demo/resources/report",
+		"/v1/tenants/demo/backups",
+		"/v1/tenants/demo/backups/nightly-1",
+		"/v1/tenants/demo/backup-policy",
+		"/v1/tenants/demo/backup-schedules",
+		"/v1/tenants/demo/integrations",
+		"/v1/tenants/demo/notifications",
+		"/v1/clusters/" + dt.Cluster + "/resources",
+		"/v1/clusters/" + dt.Cluster + "/backup-policy",
+		"/v1/clusters/" + dt.Cluster + "/backup-schedules",
+		"/v1/clusters/" + dt.Cluster + "/customizations",
+	} {
+		// 405 where a write of declared state keeps the path -- the plan, a
+		// backup policy -- and 404 everywhere else.
+		if code, body := h.do(t, "GET", path, audrey, ""); code != http.StatusNotFound && code != http.StatusMethodNotAllowed {
+			t.Errorf("GET %s is still served here: %d %v", path, code, body)
+		}
 	}
 }

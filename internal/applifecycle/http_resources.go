@@ -30,15 +30,18 @@ const (
 )
 
 func (h *HTTPServer) registerResourceRoutes(mux router) {
-	mux.HandleFunc("GET /v1/tenants/{tenant}/resources", h.handleResourceState)
-	mux.HandleFunc("GET /v1/tenants/{tenant}/resources/plans", h.handleResourcePlans)
+	mux.Read("GET /v1/tenants/{tenant}/resources", h.handleResourceState)
+	// Every tenant's state in one answer, for the cluster's view.
+	mux.Read("GET /v1/resources", h.handleAllResourceStates)
+	mux.Read("GET /v1/tenants/{tenant}/resources/plans", h.handleResourcePlans)
 	// No PUT. Choosing a plan is a commit to the deployments repository, and
 	// the director is the one writer to it: it checks can_set_plan, writes
 	// the tenant's resource-plan.yaml as the person, and this API reads the
 	// result back once Argo CD has synced it. The reads here are what the
-	// director relays and what it validates a choice against.
-	mux.HandleFunc("GET /v1/tenants/{tenant}/resources/usage", h.handleResourceUsage)
-	mux.HandleFunc("GET /v1/tenants/{tenant}/resources/report", h.handleResourceReport)
+	// usher answers a person with and what the director validates a choice
+	// against.
+	mux.Read("GET /v1/tenants/{tenant}/resources/usage", h.handleResourceUsage)
+	mux.Read("GET /v1/tenants/{tenant}/resources/report", h.handleResourceReport)
 }
 
 func (h *HTTPServer) handleResourceState(w http.ResponseWriter, r *http.Request) {
@@ -48,6 +51,18 @@ func (h *HTTPServer) handleResourceState(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	writeJSON(w, http.StatusOK, state)
+}
+
+// handleAllResourceStates answers every tenant the cluster holds. A tenant
+// whose state cannot be worked out is named under unavailable rather than
+// dropped, so the view never silently shows fewer tenants than exist.
+func (h *HTTPServer) handleAllResourceStates(w http.ResponseWriter, r *http.Request) {
+	states, unavailable, err := h.Service.AllResourceStates(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"tenants": states, "unavailable": unavailable})
 }
 
 func (h *HTTPServer) handleResourcePlans(w http.ResponseWriter, r *http.Request) {

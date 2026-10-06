@@ -109,20 +109,21 @@ name on it.
 
 ## 5. Reading
 
-The store renders cluster state from the director's reads, with the person's
-token, filtered by what that person may see:
+The store renders what a tenant has from two services, with the person's
+token, filtered by what that person may see. What git declares is the
+director's to answer; what the cluster holds right now is the usher's:
 
 ```
-GET /v1/tenants/{t}/apps                  installed profiles, their digests and their addons
-GET /v1/tenants/{t}/apps/status           what the cluster made of them
-GET /v1/tenants/{t}/apps/{p}/addons
-GET /v1/tenants/{t}/resources             the plan, and what is used of it
+director   GET /v1/tenants/{t}/apps                  installed profiles, their digests and their addons
+director   GET /v1/tenants/{t}/apps/{p}/addons
+usher      GET /v1/tenants/{t}/apps/status           what the cluster made of them
+usher      GET /v1/tenants/{t}/resources             the plan, and what is used of it
 ```
 
 Reads are authorised by `can_view`, never by the write relation.
 
 `/apps` answers from git: what the tenant is meant to have. `/apps/status` is
-the operator's answer, relayed: each app is `installing`, `ready` or
+the operator's answer, relayed by the usher: each app is `installing`, `ready` or
 `failing`, with the reason in the reconciler's own words, and carries what
 its pods reserve against the tenant's plan. `failing` is a
 workload that cannot start — an image that cannot be pulled, a container that
@@ -223,13 +224,13 @@ desktop → store   {"gentian":"store-bridge","v":1,"id":"<id>","ok":true,"statu
                   {"gentian":"store-bridge","v":1,"id":"<id>","ok":false,"status":403,"error":"…"}
 ```
 
-| Operation | Asks the director | Confirmed by the person |
+| Operation | Asks the director, or the usher where named | Confirmed by the person |
 |---|---|---|
 | `context` | — (cluster, tenant, the caller's relations, their language) | |
 | `apps.list` | `GET /apps` | |
-| `apps.status` | `GET /apps/status` | |
+| `apps.status` | usher: `GET /apps/status` | |
 | `addons.get` | `GET /apps/{p}/addons` | |
-| `resources.get` | `GET /resources` | |
+| `resources.get` | usher: `GET /resources` | |
 | `catalogues.list`, `catalogues.entries` | `GET /catalogues`, `GET /catalogues/{s}/entries` | |
 | `apps.install` | `POST /apps/{p}` with the coordinate and the digest | yes |
 | `apps.uninstall` | `DELETE /apps/{p}` | yes |

@@ -384,7 +384,7 @@ func (s *Service) ProvisionApp(ctx context.Context, tenantName, profile string) 
 }
 
 func (h *HTTPServer) registerAppRoutes(mux router) {
-	mux.HandleFunc("GET /v1/tenants/{tenant}/apps/status", h.handleAppStates)
+	mux.Read("GET /v1/tenants/{tenant}/apps/status", h.handleAppStates)
 	// Actions, not writes. Desired state is the director's, in git; these are
 	// things done once.
 	mux.HandleFunc("POST /v1/tenants/{tenant}/actions/purge-app", h.handlePurgeApp)

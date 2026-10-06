@@ -313,6 +313,9 @@ bouncer:
 usher:
   enabled: false
   replicas: 2
+  # Where the operator's listener answers, for the usher's reads of live
+  # state. Empty is the listener of this release.
+  appLifecycleURL: ""
   resources:
     requests:
       cpu: 20m
@@ -746,6 +749,13 @@ appLifecycle:
   # Empty name disables the Secret; the API then has no token and refuses
   # every request, which is the safe direction for a misconfiguration.
   tokenSecretName: gentian-os-lifecycle-token
+  # A second, separate token for the same API, the usher's. It admits the
+  # reads of live state the usher answers people with and nothing else: no
+  # command, no bundle download. The operator mints it and writes this Secret
+  # in the edge namespace, where the usher mounts it; nothing renders its
+  # value. Empty leaves the API with no reader, and the usher without its
+  # reads of live state.
+  readTokenSecretName: gentian-os-lifecycle-read-token
   # Where the cluster is declared. The director clones and pushes it; the
   # operator, the custodian and the registrar read only `cluster`, the id the
   # cluster's own relations are asked about. The operator holds no checkout

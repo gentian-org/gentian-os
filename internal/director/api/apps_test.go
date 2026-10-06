@@ -15,33 +15,6 @@ import (
 	"testing"
 )
 
-// What became of a tenant's apps is the operator's answer, relayed to whoever
-// may see the tenant. A member sees it too: whether the wiki is up is not an
-// administrator's secret.
-func TestWhatBecameOfATenantsAppsIsRelayed(t *testing.T) {
-	h, _ := startWithOperator(t)
-
-	for _, who := range []string{"tom", "mia"} {
-		code, body := h.do(t, "GET", "/v1/tenants/demo/apps/status", h.token(t, "tenant-demo", who), "")
-		if code != http.StatusOK {
-			t.Fatalf("%s: %d %v", who, code, body)
-		}
-		apps, _ := body["apps"].([]any)
-		if len(apps) != 2 {
-			t.Fatalf("%s: apps = %v", who, body["apps"])
-		}
-		failing, _ := apps[1].(map[string]any)
-		if failing["phase"] != "failing" || failing["failure"] == "" {
-			t.Fatalf("the failing app lost its reason on the way: %v", failing)
-		}
-	}
-
-	// Another tenant's administrator holds nothing here.
-	if code, _ := h.do(t, "GET", "/v1/tenants/demo/apps/status", h.token(t, "tenant-solo", "tina"), ""); code != http.StatusForbidden {
-		t.Fatalf("a stranger read another tenant's apps: %d", code)
-	}
-}
-
 // Purging and provisioning are actions: nothing is committed, the person is
 // named on the request, and the profile is all that travels.
 func TestPurgingAndProvisioningAreActionsByANamedPerson(t *testing.T) {

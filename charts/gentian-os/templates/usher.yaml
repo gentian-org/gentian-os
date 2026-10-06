@@ -3,15 +3,24 @@
   what that person may open (operator-split-plan.md §3.10).
 
   It runs in the edge namespace beside the bouncer, from the operator's image
-  with its own command, and holds what the bouncer holds and nothing more: the
-  identity provider's public keys and the authorization store's credential.
-  No ServiceAccount token, no RBAC, no route on a Gateway -- a desktop's
-  backend reaches it in-cluster with the person's own token. What it lists is
-  the operator's tile catalogue, mounted as a file.
+  with its own command. It holds what the bouncer holds -- the identity
+  provider's public keys and the authorization store's credential -- and one
+  thing more: a token for the operator's listener that admits reads of live
+  state and nothing else. No ServiceAccount token, no RBAC, no route on a
+  Gateway -- a console's backend reaches it in-cluster with the person's own
+  token. What it lists is the operator's tile catalogue, mounted as a file.
+
+  The reader's token is not rendered here. The operator mints it and writes
+  the Secret this pod mounts (appLifecycle.readTokenSecretName), so there is
+  one writer and no value in a template. The mount is optional and the file
+  is read on every request, so the pod starts before the operator has written
+  it and follows it afterwards.
 */ -}}
 {{- if .Values.usher.enabled }}
 {{- $ns := .Values.layout.edge | default .Values.servicesNamespace }}
 {{- $name := printf "%s-usher" (include "gentian-os.fullname" .) }}
+{{- $deployments := .Values.appLifecycle.deployments | default dict }}
+{{- $readToken := (.Values.appLifecycle).readTokenSecretName | default "" }}
 {{- if .Values.director.openfgaTokenSecretRef.openbaoPath }}
 apiVersion: external-secrets.io/v1
 kind: ExternalSecret
@@ -117,6 +126,17 @@ spec:
                   key: {{ .Values.director.openfgaTokenSecretRef.key }}
                   optional: true
             {{- end }}
+            # The cluster's id: the object cluster relations are asked about.
+            - name: GENTIAN_DEPLOYMENTS_CLUSTER_ID
+              value: {{ $deployments.cluster | default "" | quote }}
+            {{- if $readToken }}
+            # The operator's listener, for reads of live state, and where the
+            # reader's token is mounted.
+            - name: USHER_LIFECYCLE_URL
+              value: {{ .Values.usher.appLifecycleURL | default (printf "http://%s-lifecycle.%s.svc.cluster.local:%v" (include "gentian-os.fullname" .) .Release.Namespace .Values.appLifecycle.port) | quote }}
+            - name: USHER_LIFECYCLE_TOKEN_FILE
+              value: /etc/gentian/lifecycle/token
+            {{- end }}
           readinessProbe:
             httpGet:
               path: /healthz
@@ -139,6 +159,11 @@ spec:
             - name: tiles
               mountPath: /etc/gentian/tiles
               readOnly: true
+            {{- if $readToken }}
+            - name: lifecycle-token
+              mountPath: /etc/gentian/lifecycle
+              readOnly: true
+            {{- end }}
       volumes:
         # The operator's tile catalogue. Optional so the pod starts before the
         # first projection; until then the tiles route answers 503.
@@ -146,4 +171,13 @@ spec:
           configMap:
             name: gentian-tiles
             optional: true
+        {{- if $readToken }}
+        # The reader's token, written by the operator. Optional so the pod
+        # starts before the operator has; until then the reads of live state
+        # answer 502.
+        - name: lifecycle-token
+          secret:
+            secretName: {{ $readToken | quote }}
+            optional: true
+        {{- end }}
 {{- end }}

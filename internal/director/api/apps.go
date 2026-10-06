@@ -22,7 +22,7 @@ import (
 //
 // GET /v1/tenants/{t}/apps answers from git: what the tenant is meant to have.
 // What the cluster made of it -- still coming up, running, broken -- is the
-// operator's to say, so it is relayed rather than recomputed here.
+// operator's to say and the usher's to relay; it is not served here.
 //
 // Purging and provisioning are actions. Neither is desired state: a purge
 // deletes what an app that is already gone left behind, and provisioning
@@ -31,10 +31,6 @@ import (
 
 func appsPath(r *http.Request, suffix string) string {
 	return "/v1/tenants/" + url.PathEscape(r.PathValue("t")) + suffix
-}
-
-func (s *Server) appStates(w http.ResponseWriter, r *http.Request, _ call) {
-	s.relayed(w, r, appsPath(r, "/apps/status"))
 }
 
 // appAction relays one action about one profile.

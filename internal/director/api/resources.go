@@ -11,7 +11,6 @@ SPDX-License-Identifier: MPL-2.0
 package api
 
 import (
-	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -26,50 +25,14 @@ import (
 	"github.com/gentian-org/gentian-os/internal/locales"
 )
 
-// A tenant's resources.
+// A tenant's resource plan.
 //
 // The cluster knows the ceiling it enforces and what is committed under it;
-// git knows which plan was chosen. This file joins the two the way every
-// other route does: the reads are relayed from the operator once the caller
-// is allowed them, and the write is a commit the caller is allowed to make.
-// The operator has no write to call. It reads the plan back from git once
-// Argo CD has synced it, like every other change to a tenant.
-
-// relayed passes the operator's answer to one read through as it came, with
-// only the query parameters the route allows.
-func (s *Server) relayed(w http.ResponseWriter, r *http.Request, path string, allowed ...string) {
-	query := url.Values{}
-	for _, name := range allowed {
-		if v := r.URL.Query().Get(name); v != "" {
-			query.Set(name, v)
-		}
-	}
-	status, body, err := s.cfg.Lifecycle.Get(r.Context(), path, query)
-	if err != nil {
-		s.cfg.Log.ErrorContext(r.Context(), "app-lifecycle API unreachable", "request_id", reqID(r.Context()), "error", err.Error())
-		s.fail(w, r, http.StatusBadGateway, "the operator's API did not answer")
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_, _ = w.Write(body)
-}
-
-func resourcesPath(r *http.Request, suffix string) string {
-	return "/v1/tenants/" + url.PathEscape(r.PathValue("t")) + "/resources" + suffix
-}
-
-func (s *Server) resourceState(w http.ResponseWriter, r *http.Request, _ call) {
-	s.relayed(w, r, resourcesPath(r, ""))
-}
-
-func (s *Server) resourceUsage(w http.ResponseWriter, r *http.Request, _ call) {
-	s.relayed(w, r, resourcesPath(r, "/usage"), "from", "to", "stepSeconds")
-}
-
-func (s *Server) resourceReport(w http.ResponseWriter, r *http.Request, _ call) {
-	s.relayed(w, r, resourcesPath(r, "/report"), "from", "to")
-}
+// git knows which plan was chosen. Reading either is the usher's. What is
+// here is the write: a commit the caller is allowed to make, validated against
+// the operator's answer first. The operator has no write to call. It reads the
+// plan back from git once Argo CD has synced it, like every other change to a
+// tenant.
 
 // selfService reports whether the caller chooses for themselves, as a tenant
 // administrator does, rather than for the cluster, as its operator does.
@@ -85,24 +48,6 @@ func (s *Server) selfService(r *http.Request, c call) (bool, error) {
 		return false, err
 	}
 	return !configures, nil
-}
-
-// resourcePlans answers the catalogue as it applies to this tenant and this
-// caller. The plans come from the operator, which marks the ones this tenant
-// may not move to and why; whether the caller is self-service is decided
-// here.
-func (s *Server) resourcePlans(w http.ResponseWriter, r *http.Request, c call) {
-	self, err := s.selfService(r, c)
-	if err != nil {
-		s.fail(w, r, http.StatusServiceUnavailable, "authorization unavailable")
-		return
-	}
-	plans, err := s.cfg.Lifecycle.Plans(r.Context(), r.PathValue("t"), self)
-	if err != nil {
-		s.lifecycleError(w, r, err)
-		return
-	}
-	s.json(w, http.StatusOK, map[string]any{"tenant": r.PathValue("t"), "plans": plans})
 }
 
 type setResourcePlanRequest struct {
@@ -190,35 +135,6 @@ func (s *Server) setResourcePlan(w http.ResponseWriter, r *http.Request, c call)
 	s.json(w, http.StatusAccepted, answer)
 }
 
-// clusterResources answers every tenant's state, for the view that shows the
-// cluster's ceilings side by side. The tenants are git's list; each state is
-// the operator's answer. A tenant the operator cannot answer for -- one it
-// has not provisioned yet, say -- is named under unavailable rather than
-// dropped, so the view never silently shows fewer tenants than exist.
-func (s *Server) clusterResources(w http.ResponseWriter, r *http.Request, _ call) {
-	names, err := s.cfg.Repo.Tenants(r.Context())
-	if err != nil {
-		s.repoError(w, r, err)
-		return
-	}
-	states := make([]json.RawMessage, 0, len(names))
-	unavailable := make([]map[string]string, 0)
-	for _, name := range names {
-		status, body, err := s.cfg.Lifecycle.Get(r.Context(), "/v1/tenants/"+url.PathEscape(name)+"/resources", nil)
-		if err != nil {
-			s.cfg.Log.ErrorContext(r.Context(), "app-lifecycle API unreachable", "request_id", reqID(r.Context()), "error", err.Error())
-			s.fail(w, r, http.StatusBadGateway, "the operator's API did not answer")
-			return
-		}
-		if status != http.StatusOK || !json.Valid(body) {
-			unavailable = append(unavailable, map[string]string{"tenant": name, "reason": lifecycle.ErrorMessage(body)})
-			continue
-		}
-		states = append(states, json.RawMessage(body))
-	}
-	s.json(w, http.StatusOK, map[string]any{"cluster": s.cfg.Cluster, "tenants": states, "unavailable": unavailable})
-}
-
 // lifecycleError answers a failed question to the operator. Its refusals
 // carry over -- an unknown tenant is its 400 -- and its absence is a 502
 // that says so.
@@ -232,25 +148,8 @@ func (s *Server) lifecycleError(w http.ResponseWriter, r *http.Request, err erro
 	s.fail(w, r, http.StatusBadGateway, "the operator's API did not answer")
 }
 
-// A tenant's backups, relayed from the operator.
-//
-// What exists, what each run did, what policy is in force and when the next
-// scheduled run is are all cluster state, held on the CRs the backup
-// reconcilers own. The inheritance — a tenant's policy over the cluster's —
-// is resolved there and reported on status, so it is relayed rather than
-// recomputed here: two answers to "what applies to this tenant" is exactly
-// the drift this architecture exists to avoid.
-
 func backupsPath(r *http.Request, suffix string) string {
 	return "/v1/tenants/" + url.PathEscape(r.PathValue("t")) + suffix
-}
-
-func (s *Server) tenantBackups(w http.ResponseWriter, r *http.Request, _ call) {
-	s.relayed(w, r, backupsPath(r, "/backups"))
-}
-
-func (s *Server) tenantBackup(w http.ResponseWriter, r *http.Request, _ call) {
-	s.relayed(w, r, backupsPath(r, "/backups/"+url.PathEscape(r.PathValue("name"))))
 }
 
 // tenantBundleDownload relays the operator's stream of one bundle. The
@@ -272,22 +171,6 @@ func (s *Server) tenantBundleDownload(w http.ResponseWriter, r *http.Request, _ 
 	_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
 	w.WriteHeader(resp.StatusCode)
 	_, _ = io.Copy(w, resp.Body)
-}
-
-func (s *Server) tenantBackupPolicy(w http.ResponseWriter, r *http.Request, _ call) {
-	s.relayed(w, r, backupsPath(r, "/backup-policy"))
-}
-
-func (s *Server) tenantBackupSchedules(w http.ResponseWriter, r *http.Request, _ call) {
-	s.relayed(w, r, backupsPath(r, "/backup-schedules"))
-}
-
-func (s *Server) clusterBackupPolicy(w http.ResponseWriter, r *http.Request, _ call) {
-	s.relayed(w, r, "/v1/backup-policy")
-}
-
-func (s *Server) clusterBackupSchedules(w http.ResponseWriter, r *http.Request, _ call) {
-	s.relayed(w, r, "/v1/backup-schedules")
 }
 
 // ── Backup: declared state, and actions ─────────────────────────────────────
@@ -486,15 +369,7 @@ func (s *Server) clusterChanges(w http.ResponseWriter, r *http.Request, _ call) 
 	})
 }
 
-// ── Integrations, platform security, customisation ──────────────────────────
-
-func (s *Server) tenantIntegrations(w http.ResponseWriter, r *http.Request, _ call) {
-	s.relayed(w, r, "/v1/tenants/"+url.PathEscape(r.PathValue("t"))+"/integrations")
-}
-
-func (s *Server) customizations(w http.ResponseWriter, r *http.Request, _ call) {
-	s.relayed(w, r, "/v1/customizations")
-}
+// ── Grants and platform security ────────────────────────────────────────────
 
 // setAppGrant writes what one app may consume. Declared state: a commit.
 func (s *Server) setAppGrant(w http.ResponseWriter, r *http.Request, c call) {
@@ -513,42 +388,22 @@ func (s *Server) clearAppGrant(w http.ResponseWriter, r *http.Request, c call) {
 	s.written(w, r, res, err)
 }
 
-// platformSecurity answers what the cluster permits and what asks for it.
+// platformSecurity answers the allowlist git declares, and only that.
 //
-// Two sources on purpose: the allowlist is declared in git and read from
-// there, because that is the list this screen edits; what the catalogue asks
-// of it is cluster state and comes from the operator. Reading the allowlist
-// from the cluster instead would show the last thing that synced rather than
-// the thing about to be changed.
+// From git because this is the list the screen edits: read from the cluster
+// it would be the last thing that synced, and an edit made on top of that
+// drops a change committed a moment earlier. What the cluster has, and what
+// the catalogue asks of it, is live state and the usher's to answer.
 func (s *Server) platformSecurity(w http.ResponseWriter, r *http.Request, _ call) {
 	declared, err := s.cfg.Repo.PlatformSecurity(r.Context())
 	if err != nil {
 		s.repoError(w, r, err)
 		return
 	}
-	status, body, err := s.cfg.Lifecycle.Get(r.Context(), "/v1/platform-security", nil)
-	if err != nil {
-		s.cfg.Log.ErrorContext(r.Context(), "app-lifecycle API unreachable", "request_id", reqID(r.Context()), "error", err.Error())
-		s.fail(w, r, http.StatusBadGateway, "the operator's API did not answer")
-		return
-	}
-	if status != http.StatusOK || !json.Valid(body) {
-		s.fail(w, r, status, lifecycle.ErrorMessage(body))
-		return
-	}
-	var fromCluster map[string]any
-	if err := json.Unmarshal(body, &fromCluster); err != nil {
-		s.fail(w, r, http.StatusBadGateway, "the operator's API answered something unreadable")
-		return
-	}
 	if declared == nil {
 		declared = []gitops.MacWaiver{}
 	}
-	// What git declares wins as "the list", and what the cluster has is
-	// reported beside it: the two differing means a commit has not synced
-	// yet, which is worth seeing rather than hiding.
-	fromCluster["allowedMacWaivers"] = declared
-	s.json(w, http.StatusOK, fromCluster)
+	s.json(w, http.StatusOK, map[string]any{"allowedMacWaivers": declared})
 }
 
 // setPlatformSecurity commits the allowlist.
@@ -568,12 +423,7 @@ func (s *Server) setPlatformSecurity(w http.ResponseWriter, r *http.Request, c c
 	s.written(w, r, res, err)
 }
 
-// tenantNotifications answers what has been said to this tenant's people.
-func (s *Server) tenantNotifications(w http.ResponseWriter, r *http.Request, _ call) {
-	s.relayed(w, r, "/v1/tenants/"+url.PathEscape(r.PathValue("t"))+"/notifications")
-}
-
-// publishNotification says something to them. An action: it happens once,
+// publishNotification says something to a tenant's people. An action: it happens once,
 // and the person who published it is recorded because a notice nobody can
 // ask about is worse than none.
 func (s *Server) publishNotification(w http.ResponseWriter, r *http.Request, c call) {

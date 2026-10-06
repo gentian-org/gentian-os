@@ -30,15 +30,16 @@ import (
 // next scheduled run is — and that is what this serves.
 func (h *HTTPServer) registerBackupRoutes(mux router) {
 	// Reads of state.
-	mux.HandleFunc("GET /v1/tenants/{tenant}/backups", h.handleBackups)
-	mux.HandleFunc("GET /v1/tenants/{tenant}/backups/{name}", h.handleBackup)
+	mux.Read("GET /v1/tenants/{tenant}/backups", h.handleBackups)
+	mux.Read("GET /v1/tenants/{tenant}/backups/{name}", h.handleBackup)
 	// The bundle itself, as one file. Not JSON: a tar of the artefacts, for
-	// the person who wants their data in their hands.
+	// the person who wants their data in their hands. The director's alone:
+	// the reader's token lists backups and does not fetch one.
 	mux.HandleFunc("GET /v1/tenants/{tenant}/backups/{name}/download", h.handleBundleDownload)
-	mux.HandleFunc("GET /v1/tenants/{tenant}/backup-policy", h.handleTenantBackupPolicy)
-	mux.HandleFunc("GET /v1/tenants/{tenant}/backup-schedules", h.handleBackupSchedules)
-	mux.HandleFunc("GET /v1/backup-policy", h.handleClusterBackupPolicy)
-	mux.HandleFunc("GET /v1/backup-schedules", h.handleAllBackupSchedules)
+	mux.Read("GET /v1/tenants/{tenant}/backup-policy", h.handleTenantBackupPolicy)
+	mux.Read("GET /v1/tenants/{tenant}/backup-schedules", h.handleBackupSchedules)
+	mux.Read("GET /v1/backup-policy", h.handleClusterBackupPolicy)
+	mux.Read("GET /v1/backup-schedules", h.handleAllBackupSchedules)
 
 	// Actions. Under /actions/ and always POST, because they are neither a
 	// read nor a change to what the cluster should be: they make something
@@ -167,9 +168,9 @@ func (h *HTTPServer) handleAllBackupSchedules(w http.ResponseWriter, r *http.Req
 // the operator chart's, and a customisation record is written where the
 // customisation is.
 func (h *HTTPServer) registerPlatformRoutes(mux router) {
-	mux.HandleFunc("GET /v1/tenants/{tenant}/integrations", h.handleIntegrations)
-	mux.HandleFunc("GET /v1/platform-security", h.handlePlatformSecurity)
-	mux.HandleFunc("GET /v1/customizations", h.handleCustomizationDebt)
+	mux.Read("GET /v1/tenants/{tenant}/integrations", h.handleIntegrations)
+	mux.Read("GET /v1/platform-security", h.handlePlatformSecurity)
+	mux.Read("GET /v1/customizations", h.handleCustomizationDebt)
 }
 
 func (h *HTTPServer) handleIntegrations(w http.ResponseWriter, r *http.Request) {
@@ -206,7 +207,7 @@ func (h *HTTPServer) handleCustomizationDebt(w http.ResponseWriter, r *http.Requ
 // it because the operator already resolves that database, and a console that
 // kept its own copy would be a second place a notice could exist.
 func (h *HTTPServer) registerNotificationRoutes(mux router) {
-	mux.HandleFunc("GET /v1/tenants/{tenant}/notifications", h.handleNotifications)
+	mux.Read("GET /v1/tenants/{tenant}/notifications", h.handleNotifications)
 	mux.HandleFunc("POST /v1/tenants/{tenant}/actions/notify", h.handlePublishNotification)
 }
 

@@ -37,7 +37,8 @@
 # (the Deployment labelled app.kubernetes.io/component=director) and reached
 # through a port-forward for the length of one command; its own settings say
 # which identity provider to sign in with and which cluster it serves. The
-# registrar is found the same way, beside it.
+# registrar is found the same way, beside it, and the usher -- which answers
+# what the cluster holds of a tenant right now -- by its own label.
 
 set -euo pipefail
 
@@ -232,6 +233,43 @@ _disconnect() {
     if [[ -n "${_REG_PF_PID}" ]]; then
         kill "${_REG_PF_PID}" 2>/dev/null || true
     fi
+    if [[ -n "${_USH_PF_PID}" ]]; then
+        kill "${_USH_PF_PID}" 2>/dev/null || true
+    fi
+}
+
+# The usher: the Deployment labelled app.kubernetes.io/component=usher, in
+# whichever namespace it runs. It answers what the cluster holds of a tenant
+# right now; the director answers what git declares.
+_USH_PF_PID=""
+_USH_BASE=""
+
+_connect_usher() {
+    [[ -n "${_USH_BASE}" ]] && return 0
+    _discover
+    local line ns deploy target port
+    line="$(kubectl get deploy -A -l app.kubernetes.io/component=usher \
+        -o jsonpath='{range .items[*]}{.metadata.namespace} {.metadata.name}{"\n"}{end}' 2>/dev/null | head -1)"
+    [[ -n "${line}" ]] || die "no usher in this cluster: what the cluster holds of a tenant is read there, and this cluster does not run one"
+    ns="${line%% *}"
+    deploy="${line#* }"
+    target="$(kubectl get deploy "${deploy}" -n "${ns}" \
+        -o jsonpath='{.spec.template.spec.containers[0].ports[0].containerPort}' 2>/dev/null || true)"
+    [[ -n "${target}" ]] || die "the usher in ${ns} names no port"
+    port="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')"
+    kubectl port-forward -n "${ns}" "deploy/${deploy}" "${port}:${target}" >/dev/null 2>&1 &
+    _USH_PF_PID=$!
+    trap '_disconnect' EXIT
+    local _i
+    for _i in $(seq 1 30); do
+        if curl -s -o /dev/null --max-time 1 "http://127.0.0.1:${port}/healthz"; then
+            _USH_BASE="http://127.0.0.1:${port}"
+            return 0
+        fi
+        kill -0 "${_USH_PF_PID}" 2>/dev/null || break
+        sleep 0.5
+    done
+    die "the usher in ${ns} could not be reached"
 }
 
 # The registrar: the Deployment labelled app.kubernetes.io/component=registrar
@@ -278,6 +316,12 @@ _call_registrar() {
     _ask registrar "${_REG_BASE}" "$@"
 }
 
+# _call_usher <method> <path> — a read of live state, of the usher.
+_call_usher() {
+    _connect_usher
+    _ask usher "${_USH_BASE}" "$@"
+}
+
 # _ask <who> <base-url> <method> <path> [json-body]
 _ask() {
     local who="$1" base="$2" method="$3" path="$4" body="${5:-}" token out status
@@ -294,7 +338,7 @@ _ask() {
     fi
     if [[ "${status}" -ge 300 ]]; then
         local msg
-        msg="$(jq -r '.error // .message // empty' "${out}" 2>/dev/null || true)"
+        msg="$(jq -r '.error // .message // .detail // empty' "${out}" 2>/dev/null || true)"
         rm -f "${out}"
         die "the ${who} answered ${status}: ${msg:-no detail}"
     fi
@@ -580,13 +624,13 @@ cmd_resources() {
     case "${sub}" in
         plans)
             t="$(_tenant_flag "$@")"
-            _call GET "/v1/tenants/${t}/resources/plans" |
+            _call_usher GET "/v1/tenants/${t}/resources/plans" |
                 jq -r '(["","PLAN","CPU","MEMORY","STORAGE"] | @tsv), (.plans[] | [(if .current then "*" else "" end), .name, (.quotas.requestsCpu // "-"), (.quotas.requestsMemory // "-"), (.quotas.storage // "-")] | @tsv)' |
                 column -t -s $'\t'
             ;;
         show)
             t="$(_tenant_flag "$@")"
-            _call GET "/v1/tenants/${t}/resources" | jq .
+            _call_usher GET "/v1/tenants/${t}/resources" | jq .
             ;;
         set)
             t="$(_tenant_flag "$@")"
@@ -613,7 +657,7 @@ cmd_resources() {
                 esac
             done
             [[ -n "${from}" && -n "${to}" ]] || die "--from and --to are required (RFC 3339)"
-            _call GET "/v1/tenants/${t}/resources/report?from=$(jq -rn --arg v "${from}" '$v|@uri')&to=$(jq -rn --arg v "${to}" '$v|@uri')" |
+            _call_usher GET "/v1/tenants/${t}/resources/report?from=$(jq -rn --arg v "${from}" '$v|@uri')&to=$(jq -rn --arg v "${to}" '$v|@uri')" |
                 jq -r 'if .incomplete then "Nothing is known about the plan in force when this window opened; the first interval starts later.\n" else "" end,
                        (["PLAN","DAYS","FROM","TO","SKU"] | @tsv),
                        ((.intervals // [])[] | [.plan, ((.seconds / 86400) * 100 | round / 100 | tostring), .from[0:19], .to[0:19], (.productSku // "")] | @tsv)' |

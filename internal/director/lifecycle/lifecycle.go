@@ -8,8 +8,10 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 SPDX-License-Identifier: MPL-2.0
 */
 
-// Package lifecycle is the director's client for the operator's app-lifecycle
-// API: the one place the director asks the cluster a question.
+// Package lifecycle is the client for the operator's app-lifecycle API. The
+// director uses it for its commands and for the questions a commit depends
+// on; the usher uses it, with a token of its own that only reads, to answer
+// a person's reads of live state.
 //
 // Only ever a question. The director holds no cluster credential, and the
 // operator's API is how it learns what only the cluster knows -- a tenant's
@@ -34,9 +36,14 @@ import (
 
 // Client talks to one operator.
 type Client struct {
-	base  string
-	token string
-	http  *http.Client
+	base string
+	// token is asked for on every request, so a token handed over in a file
+	// that appears or changes after start is followed without a restart.
+	token func() string
+	// who names the caller in the one message a person may see about the
+	// token itself.
+	who  string
+	http *http.Client
 	// stream has no timeout: it carries bundle downloads, which take as long
 	// as the bundle is big and are bounded by the caller's context instead.
 	stream *http.Client
@@ -48,9 +55,18 @@ type Client struct {
 // nothing, which made the actor header this client sets a claim rather than a
 // proof: any pod that could reach the Service could act as anybody.
 func New(base, token string) *Client {
+	c := NewReader(base, func() string { return token })
+	c.who = "director"
+	return c
+}
+
+// NewReader returns a client that asks token for its token on every request.
+// It is the usher's: the token it presents admits reads only.
+func NewReader(base string, token func() string) *Client {
 	return &Client{
 		base:   strings.TrimRight(base, "/"),
 		token:  token,
+		who:    "usher",
 		http:   &http.Client{Timeout: 30 * time.Second},
 		stream: &http.Client{Transport: &http.Transport{ResponseHeaderTimeout: 30 * time.Second}},
 	}
@@ -59,8 +75,8 @@ func New(base, token string) *Client {
 // authorize presents the shared token. Called on every request, including
 // reads: a tenant's installed apps and its usage are its own business.
 func (c *Client) authorize(req *http.Request) {
-	if c.token != "" {
-		req.Header.Set("Authorization", "Bearer "+c.token)
+	if token := c.token(); token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
 	}
 }
 
@@ -87,7 +103,7 @@ func (c *Client) Get(ctx context.Context, path string, query url.Values) (int, [
 	if err != nil {
 		return 0, nil, fmt.Errorf("app-lifecycle API: %w", err)
 	}
-	status, body := refusedByOperator(resp.StatusCode, body)
+	status, body := c.refusedByOperator(resp.StatusCode, body)
 	return status, body, nil
 }
 
@@ -107,7 +123,7 @@ func (c *Client) Stream(ctx context.Context, path string) (*http.Response, error
 	}
 	if resp.StatusCode == http.StatusUnauthorized {
 		_ = resp.Body.Close()
-		status, body := refusedByOperator(resp.StatusCode, nil)
+		status, body := c.refusedByOperator(resp.StatusCode, nil)
 		resp.StatusCode = status
 		resp.Header.Set("Content-Type", "application/json")
 		resp.Header.Del("Content-Disposition")
@@ -135,11 +151,11 @@ func (c *Client) Upload(ctx context.Context, path, contentType string, body io.R
 	if err != nil {
 		return 0, nil, fmt.Errorf("app-lifecycle API: %w", err)
 	}
-	status, answer := refusedByOperator(resp.StatusCode, answer)
+	status, answer := c.refusedByOperator(resp.StatusCode, answer)
 	return status, answer, nil
 }
 
-// refusedByOperator rewrites the operator refusing the DIRECTOR's token.
+// refusedByOperator rewrites the operator refusing this client's own token.
 //
 // The app-lifecycle API answers 401 only to a wrong shared token: a fault
 // between two platform services. Passed through unchanged it reached the
@@ -147,11 +163,13 @@ func (c *Client) Upload(ctx context.Context, path, contentType string, body io.R
 // answers by signing in again -- so a token mismatch made the Operations
 // Console reload several times a second rather than say what was wrong. It
 // leaves here as 502 Bad Gateway, which is what it is.
-func refusedByOperator(status int, body []byte) (int, []byte) {
+func (c *Client) refusedByOperator(status int, body []byte) (int, []byte) {
 	if status != http.StatusUnauthorized {
 		return status, body
 	}
-	return http.StatusBadGateway, []byte(`{"detail":"the operator refused the director's token for its app-lifecycle API; the two hold different tokens -- restart both after checking the gentian-os-lifecycle-token Secret"}`)
+	detail := "the operator refused the " + c.who + "'s token for its app-lifecycle API; the two hold different tokens"
+	answer, _ := json.Marshal(map[string]string{"detail": detail})
+	return http.StatusBadGateway, answer
 }
 
 // Plan is one plan as the operator presents it for a tenant.
@@ -242,6 +260,6 @@ func (c *Client) Do(ctx context.Context, path, actor string, body any) (int, []b
 	if err != nil {
 		return 0, nil, fmt.Errorf("app-lifecycle API: %w", err)
 	}
-	status, answer := refusedByOperator(resp.StatusCode, answer)
+	status, answer := c.refusedByOperator(resp.StatusCode, answer)
 	return status, answer, nil
 }

@@ -13,8 +13,10 @@ SPDX-License-Identifier: MPL-2.0
 //
 // It runs beside the bouncer from the same image and with the same two
 // dependencies -- the identity provider's keys and the authorization store --
-// and holds nothing else: no git credential, no signing key, no Kubernetes
-// access. What it lists is the operator's projection, mounted as a file.
+// plus one of its own: a token for the operator's listener that admits reads
+// and nothing else. It holds no git credential, no signing key and no
+// Kubernetes access. What it lists is the operator's projection, mounted as
+// a file, and what it says of live state is the operator's answer.
 package main
 
 import (
@@ -25,11 +27,13 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/gentian-org/gentian-os/internal/director/authn"
 	"github.com/gentian-org/gentian-os/internal/director/authz"
+	"github.com/gentian-org/gentian-os/internal/director/lifecycle"
 	"github.com/gentian-org/gentian-os/internal/usher"
 )
 
@@ -88,12 +92,36 @@ func run(log *slog.Logger) error {
 		return err
 	}
 
+	cfg := usher.Config{
+		Authn: verifier, Authz: store, Log: log,
+		TilesPath: envOr("USHER_TILES_PATH", "/etc/gentian/tiles/tiles.yaml"),
+		Cluster:   os.Getenv("GENTIAN_DEPLOYMENTS_CLUSTER_ID"),
+	}
+	// The operator's listener, for reads of live state. The token is the
+	// reader's, handed over by the operator in a mounted file and read on
+	// every request: the file appears after the operator's first start and
+	// this process must not need a restart to notice. While it is missing or
+	// empty no token is presented and the operator refuses, which a caller
+	// sees as a gateway error rather than as an empty screen.
+	if base := os.Getenv("USHER_LIFECYCLE_URL"); base == "" {
+		log.Warn("no app-lifecycle URL: reads of live state are not served here", "setting", "USHER_LIFECYCLE_URL")
+	} else {
+		tokenFile := envOr("USHER_LIFECYCLE_TOKEN_FILE", "/etc/gentian/lifecycle/token")
+		cfg.Lifecycle = lifecycle.NewReader(base, func() string {
+			token, err := os.ReadFile(tokenFile)
+			if err != nil {
+				return ""
+			}
+			return strings.TrimSpace(string(token))
+		})
+		if cfg.Cluster == "" {
+			log.Warn("no cluster id: the cluster's own reads are not served here", "setting", "GENTIAN_DEPLOYMENTS_CLUSTER_ID")
+		}
+	}
+
 	srv := &http.Server{
-		Addr: envOr("USHER_LISTEN", ":8080"),
-		Handler: usher.New(usher.Config{
-			Authn: verifier, Authz: store, Log: log,
-			TilesPath: envOr("USHER_TILES_PATH", "/etc/gentian/tiles/tiles.yaml"),
-		}),
+		Addr:              envOr("USHER_LISTEN", ":8080"),
+		Handler:           usher.New(cfg),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      30 * time.Second,

@@ -48,6 +48,11 @@ spec:
         # Where the people screens go: inviting somebody, their groups, the
         # realm's password policy. The paths are the ones the director served.
         registrarUrlKey: registrar.url
+        # Where the reads of live state go: backups, resources, app status,
+        # integrations, notifications. The paths are the ones the director
+        # served. Naming it is also what opens this component's way to the
+        # edge namespace, where the usher is.
+        usherUrlKey: usher.url
         clusterKey: director.cluster
         tenantKey: platform.tenant
         kernelDomainKey: platform.kernelDomain
