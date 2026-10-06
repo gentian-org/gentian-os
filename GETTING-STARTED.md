@@ -196,7 +196,8 @@ one. Every question shows its default; Enter takes it.
 | `mail.host` | unset | `external` mode: the relay's hostname. Its credentials are a credential, supplied in step 5 — not asked here |
 | `platform` | detected from the nodes | Detection is wrong for your provider |
 | `storageClass` | the cluster default | The cluster has more than one StorageClass |
-| `tenancyMode` | `multi` | One tenant occupies the whole cluster (`single`) |
+| `tenancyMode` | `multi` | Leave it. `single` is an older arrangement in which the platform tenant is the only tenant; it admits no tenant for users, and is not how a cluster for one organisation is built — name a first tenant instead |
+| First tenant | none | This cluster's users should have a tenant when the install ends: give its name, and the install creates it (step 7). With exactly one, the cluster's bare domain leads straight to its sign-in |
 | `secretMode` | `derived` | You want independent random secrets rather than ones reproducible from the master password |
 | `backup.escrowIdentity` | `true` | The backup key should live in the recovery kit only, never in OpenBao |
 | `llm.enabled` | `false` | This cluster serves models; then `llm.gpuAcceleration` is asked too |
@@ -289,6 +290,14 @@ The install pauses here and waits for you. Three things finish it:
    here once. Open it, set the password, then sign in at
    `https://console.<kernel-domain>/`. Nobody else, the installer included,
    ever knows the password.
+
+   If the install created a first tenant, a second link follows for that
+   tenant's administrator, `admin@<tenant>.<kernel-domain>`, handed over the
+   same way: mailed to `GENTIAN_FIRST_TENANT_RECOVERY_EMAIL` when the tenant's
+   realm can send mail, shown once otherwise. That account signs in at
+   `https://console.<tenant>.<kernel-domain>/`, and it is a different person's
+   account in a different realm: activating it does not finish the handover.
+   Sign in as the cluster administrator first.
 3. **Supply the runtime credentials.** Once signed in, open the **Credentials**
    tab and fill in what the cluster is still missing — SMTP relay, any extra app
    repository and its pull secret.
@@ -341,10 +350,46 @@ kubectl get application,applicationset -n kernel-gitops
 
 ## 7. Create your first tenant
 
-Tenants are created through the director — in the admin console, or with the
-`gentian` CLI, which is a command-line client of the same director. Either way
-the director checks that you may, commits the tenant to the deployments
-repository as you, and records it.
+A cluster's users live in a tenant of their own. The platform tenant, which
+every cluster has, holds the cluster's administrators and the platform's own
+components and nothing else: it takes no apps, and the director says so if you
+try.
+
+**With the install.** Name a first tenant and the install creates it, so the
+cluster is usable when the run ends. Answer the *first tenant* question in
+step 0, or set it in `install.env` before the first run:
+
+```bash
+GENTIAN_FIRST_TENANT=acme                              # a DNS label; not platform, default, kernel or master
+GENTIAN_FIRST_TENANT_DISPLAY_NAME="ACME AG"            # optional; the name otherwise
+GENTIAN_FIRST_TENANT_RECOVERY_EMAIL=owner@acme.example # optional; where its administrator's link is mailed
+```
+
+Step 0 writes `clusters/<cluster-id>/tenants/acme` beside the platform
+tenant's and commits both, signed. `E-01-tenants` waits for the tenant to be
+Ready, and the handover hands its administrator account over (step 5). A
+tenant that is not Ready in time does not stop the install: the run goes on
+to the handover and names the command that hands the account over later.
+
+The manifest carries `gentianos.io/handover-override`, with the reason. The
+cluster otherwise holds every tenant back until an administrator has signed in
+(see *Why handover is gated*), and this one is created before anybody could
+have. It is empty at that point, which is what keeps the exception cheap: sign
+in as the cluster administrator before the tenant is given anything to lose.
+
+**What the bare domain does.** While the cluster has exactly one tenant for
+users, `https://<kernel-domain>/` (and `www.`) leads straight to that tenant's
+sign-in, at `https://console.<tenant>.<kernel-domain>/`. With none, or once
+there are several, it shows a page that asks for an e-mail address and sends
+each person to their own tenant. The switch happens by itself within a minute
+or two of a tenant becoming Ready, appearing or going away. The cluster's
+administrators always sign in at `https://console.<kernel-domain>/`; on a
+cluster with one tenant the bare domain does not take them there.
+
+**Afterwards**, tenants are created through the director — in the admin
+console, or with the `gentian` CLI, which is a command-line client of the same
+director. Either way the director checks that you may, commits the tenant to
+the deployments repository as you, and records it.
 
 **In the console:** **Tenants** → *Bring a tenant on*. Give it a name (any name
 but `default`, which is reserved for the cluster-wide backup policy), a display
@@ -433,7 +478,8 @@ answers any of them without a question: `KERNEL_DOMAIN` (no default — must be
 set), `NETWORK_MODE`, `NODE_IP`, `CERT_ISSUER_MODE`, `ACME_ENV`,
 `DNS_PROVIDER`, `MAIL_SERVICE_MODE`, `EXTERNAL_SMTP_HOST`, `PLATFORM`,
 `STORAGE_CLASS`, `TENANCY_MODE`, `SECRET_MODE`, `BACKUP_ESCROW_IDENTITY`,
-`LLM_SUPPORT`, `GPU_ACCELERATION`. The handover wait is skipped, so the run
+`LLM_SUPPORT`, `GPU_ACCELERATION`, `GENTIAN_FIRST_TENANT` (no first tenant
+unless it is set). The handover wait is skipped, so the run
 ends at `Almost There` and `--only E-03` finishes it once someone has signed
 in.
 
@@ -561,6 +607,9 @@ can supply a credential to; revoking it with no recovery kit would mean that
 if the login path later breaks, there is nothing to fall back on. Either gap
 alone makes the recovery "re-initialise OpenBao from scratch", so the
 revocation waits for both. Until it happens, creating tenants is held back.
+The one exception is a first tenant the install itself creates: its manifest
+carries `gentianos.io/handover-override` with the reason, and it holds nothing
+yet.
 
 Where a cluster stands:
 

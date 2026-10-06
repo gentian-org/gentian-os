@@ -71,7 +71,7 @@ happened to be open.
 
 The apex carries a redirect to the tenant's console (§5), and it is kept
 reachable by keeping it out of the tenant certificate. A tenant on the kernel
-domain itself -- the one tenant of a single-tenant cluster -- gets no listener
+domain itself -- the platform tenant under `tenancyMode: single` -- gets no listener
 or certificate of its own: `*.<kernelDomain>` beside the catch-all would be the
 more specific match for every kernel host and route them nowhere, so its routes
 attach to `https-wildcard` instead.
@@ -315,18 +315,34 @@ Keycloak OIDC broker policy:
 
 ## 5. Redirects and URL Control
 
-The **kernel** apex and `www.<kernelDomain>` redirect with an HTTPRoute filter,
-once the kernel zone and the desktop exist:
+The **kernel** apex -- the cluster's bare domain -- is not routed by the
+kernel at all. It is the first thing anybody typing the cluster's address
+meets, before any session, so it is a perimeter surface: the concierge, a
+component of the platform tenant, published from that tenant's DMZ
+(`tenant-platform-dmz`) on a listener of the perimeter Gateway.
+`www.<kernelDomain>` redirects to the bare domain with an HTTPRoute filter.
 
-- multi-tenant: to `https://id.<kernelDomain>/sign-in/`, the concierge,
-  which asks for an e-mail address and sends the browser to its workspace's
-  console. The apex is nobody's workspace on such a cluster.
-- single-tenant: to `https://console.<kernelDomain>/`, the one console.
+What a visitor gets there depends on how many user tenants the cluster has
+(the platform tenant is not one; see [iam.md §1.1a](iam.md)):
 
-The concierge and the cluster's brand (`/branding/`) are paths on the
-identity provider's public route, served by the `concierge` Deployment beside
-Keycloak. Being on that host is the point: the router hands the address to the
-realm's form in a cookie scoped to `/auth/realms/`, which no other host sees.
+- none, or several: the concierge's form, which asks for an e-mail address
+  and sends the browser to its workspace's console;
+- exactly one, and Ready: the concierge sends the browser straight to that
+  tenant's console, `https://console.<effectiveDomain>/`.
+
+The edge is the same in every case. The difference is one file,
+`_single.json`, in the `concierge-lookup` ConfigMap the operator keeps in the
+platform tenant's namespace and the concierge serves under
+`/sign-in/lookup/`. `ConciergeLookupReconciler` re-derives the ConfigMap on
+every tenant event; the page fetches the file uncached on each visit. The
+kubelet refreshes a mounted ConfigMap within a minute or two, which is the
+delay between a tenant appearing, becoming Ready or going away and the bare
+domain following it.
+
+The administrators' console, `console.<kernelDomain>`, is reached by its own
+name. On a cluster with one user tenant the bare domain does not lead to it.
+
+The cluster's brand (`/branding/`) is served by the concierge beside the page.
 
 A **tenant** apex redirects to `https://console.<effectiveDomain>/`, path and
 query kept; a tenant on the kernel domain has the kernel's apex instead.

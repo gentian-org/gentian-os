@@ -1175,6 +1175,83 @@ names the realm and the reason.
 administrator signs in at its own host, sees its desktop, and is refused
 nothing they hold.
 
+### M2a ◐ A single-tenant cluster is the platform tenant and one user tenant
+
+**What was wrong.** "Single-tenant" meant that the platform tenant was the
+one tenant: the bare domain led to `console.<kernel>`, and the cluster's users
+were the kernel realm's. Two things followed. Those users shared a realm with
+the cluster's administrators, whose accounts administer everything. And they
+could run no apps, because an app's composition takes the tenant's name as its
+realm and the platform tenant's realm is `kernel` — an accident of naming that
+happened to be the right outcome.
+
+**The model.**
+
+1. The platform tenant is the platform's own: the administrators, and the
+   components the install puts there. It takes no catalogue apps or add-ons,
+   and that is a refusal with a reason rather than a composition that fails.
+2. Users live in a user tenant, which is unchanged: a realm, namespaces, a
+   zone and hosts of its own.
+3. Single-tenant means the platform tenant plus exactly one user tenant. It is
+   a property of what exists, not a mode. With exactly one, Ready, the bare
+   domain (and `www`) leads to that tenant's console; with none or several it
+   shows the concierge's form.
+4. The install can create the first user tenant, so a single-tenant cluster
+   comes out of one run.
+
+**Why.** Users must not share a realm with the cluster's administrators, and
+the platform tenant runs only what setup installs. Making it a property of
+what exists means a cluster grows from one tenant to several, or back, without
+anybody changing a setting or the bare domain being left pointing somewhere
+stale.
+
+**What changes.**
+
+| | what | where |
+|---|---|---|
+| a | The director refuses an app install and an add-on selection for a tenant whose manifest names a realm other than its own, `409` with the reason, before anything is fetched or committed | `internal/director/gitops` (`ErrPlatformTenant`), `internal/director/api` |
+| b | `_single.json` is written when there is exactly one user tenant, not being deleted, and it is Ready; it names `console.<effectiveDomain>`. The platform tenant never counts. `TENANCY_MODE=single` no longer writes it | `internal/controller/concierge_lookup.go` |
+| c | The bare domain's route is unchanged: the concierge on the perimeter, `www` redirecting to it. Tests pin that for none, one and two user tenants | `internal/controller/kernel_gateway_routes.go` and its tests |
+| d | The install takes `GENTIAN_FIRST_TENANT` (asked in step 0, or from `install.env`), scaffolds and commits `tenants/<name>` signed, waits for it in `E-01`, and the handover issues its administrator's activation link | `scripts/lib/bootstrap.sh`, `scripts/lib/common.sh`, `scripts/steps/E-01-tenants.sh`, `scripts/steps/E-03-revoke-bootstrap-token.sh` |
+| e | One function issues an administrator's activation link for any realm; the cluster administrator's and the first tenant's are two calls of it | `scripts/lib/portal-login-bootstrap.sh` |
+| f | The closing output and the docs say where each administrator signs in, and that the bare domain does not lead to `console.<kernel>` on a single-tenant cluster | `scripts/lib/bootstrap.sh`, `GETTING-STARTED.md`, `docs/install-reference.md`, `docs/design/` |
+
+**Limits, stated.**
+
+- The forward follows the tenants within a minute or two: the operator
+  rewrites the file at once, and the kubelet refreshes the concierge's mounted
+  ConfigMap on its own period. During that time the bare domain gives the
+  previous answer. Nobody is signed in to the wrong tenant by it — a sign-in
+  form of another realm does not know them — and every console's own address
+  works throughout.
+- The forward is the concierge page's, so it happens in the browser after the
+  page has loaded, not as a redirect at the edge.
+- The first tenant is created before the administrator's first sign-in, which
+  is what otherwise admits tenants (the handover gate). Its manifest carries
+  `gentianos.io/handover-override` with the reason. The gate exists because
+  recovering a broken login path means re-initialising OpenBao, which is cheap
+  on a cluster holding nothing; the tenant holds nothing when it is created,
+  and stops being nothing once its administrator starts using it.
+- A first tenant that is not Ready in time does not stop the install. What it
+  may be waiting for can be something only a signed-in administrator
+  supplies, so blocking the handover on it could never clear.
+
+**Open.**
+
+- The published concierge page forwards only to `console.<kernel>` and ignores
+  any other target in `_single.json`. Until gentian-ui's page accepts a console
+  of a tenant, the bare domain of a single-tenant cluster shows the form.
+- `tenancyMode: single` still exists and still means the platform tenant
+  alone, on flat hosts. Under this model such a cluster has nowhere for users.
+  Whether the mode is removed is an owner decision; nothing here depends on
+  it, and the install refuses a first tenant together with it.
+
+**Done when** a fresh install with a first tenant named ends with both
+administrators holding an activation link, the tenant's administrator signs in
+at `console.<tenant>.<kernel>` and installs an app, the same install into the
+platform tenant is refused with the reason, and the bare domain leads to the
+tenant's console, then to the form once a second tenant exists.
+
 ### M3 — the first user invited by a tenant administrator
 
 The write path is built (S7A.17). What M3 adds is everything around the

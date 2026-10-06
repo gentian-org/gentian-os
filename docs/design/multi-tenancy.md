@@ -41,12 +41,51 @@ Both modes use the **same central IdP** at `id.<KERNEL_DOMAIN>/realms/<tenant>`.
 
 | Mode | Cluster profile | Default `effectiveDomain` | Example Jitsi URL |
 |---|---|---|---|
-| **`multi`** | Shared SaaS | `<tenant>.<KERNEL_DOMAIN>` | `https://meet.demo.platform.example.com` |
-| **`single`** | Dedicated / demanding customer | `<KERNEL_DOMAIN>` (flat) | `https://meet.platform.example.com` |
+| **`multi`** | Every cluster with user tenants, one or many | `<tenant>.<KERNEL_DOMAIN>` | `https://meet.demo.platform.example.com` |
+| **`single`** | The platform tenant alone (see below) | `<KERNEL_DOMAIN>` (flat) | `https://meet.platform.example.com` |
 
-**Single-tenancy rules:** the platform tenant (`Tenant/platform`, the kernel realm's) is the only tenant, operator env
-`TENANCY_MODE=single`; the webhook, the reconciler and the director refuse a second one. Its domain is the kernel domain,
-so it gets no listener, certificate, DNS records or apex route of its own: the kernel's serve every name under it.
+**`tenancyMode: single` is not what "single-tenant" means.** It is an older
+arrangement that is still accepted: the platform tenant (`Tenant/platform`, the
+kernel realm's) is the only tenant, and the webhook, the reconciler and the
+director refuse any other. Its domain is the kernel domain, so it gets no
+listener, certificate, DNS records or apex route of its own. Because the
+platform tenant takes no catalogue apps and no user tenant is admitted, a
+cluster in that mode has nowhere for users to live; the install refuses a
+first tenant together with it. A cluster for one organisation is a `multi`
+cluster with one user tenant, described next.
+
+### The platform tenant, user tenants, and a single-tenant cluster
+
+Three statements, and the rest follows from them ([iam.md §1.1a](iam.md) has
+the sign-in side):
+
+1. **The platform tenant is the platform's own.** It holds the cluster's
+   administrators (it adopts the kernel realm) and the platform's own
+   components, which are installed with the cluster. Nobody installs catalogue
+   apps or add-ons into it: the director answers `409` with the reason to
+   `POST /v1/tenants/{t}/apps/{p}` and `PUT /v1/tenants/{t}/apps/{p}/addons`
+   for a tenant whose manifest names a realm other than its own. An app's
+   composition takes the tenant's name as its realm, so such an install could
+   never have worked; it is now refused where it is asked for, before anything
+   is fetched or committed.
+2. **Users live in a user tenant**, which is what a tenant has always been:
+   its own realm, namespaces, zone and hosts.
+3. **Single-tenant means the platform tenant plus exactly one user tenant.**
+   It is a property of what exists. While there is exactly one user tenant and
+   it is Ready, the cluster's bare domain leads to that tenant's console; with
+   none or several it shows the concierge's form
+   ([routing.md §5](routing.md)). Creating a second tenant ends it and
+   retiring one of two starts it, each within a minute or two and with nothing
+   to configure.
+
+The reason for the second statement is the realm. A realm's administrators can
+see and change every account in it, and the kernel realm's accounts are the
+ones that administer the cluster. Users of the cluster's apps do not belong
+there, on a cluster of one organisation any more than on a shared one.
+
+The install can create the first user tenant, so that a single-tenant cluster
+comes out of one run: see
+[GETTING-STARTED.md](../../GETTING-STARTED.md#7-create-your-first-tenant).
 
 | Plane | Domain | Example hosts | Origin TLS (cert-manager) | DNS responsibility |
 |---|---|---|---|---|

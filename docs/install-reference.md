@@ -142,11 +142,38 @@ The template carries one line per setting; the reasoning is here.
 | `GENTIAN_*_AUTH` | `none`, `basic` (username + token) or `bearer` — how the installer authenticates to that repository. The credential itself is prompted for. Deployments defaults to `basic` because a private repository cannot describe its own access; set `none` for a public one. |
 | `GENTIAN_*_REPO` / `_BRANCH` | Point them at a mirror for a forked or air-gapped install; the child ApplicationSets follow. |
 | `GENTIAN_OS_BRANCH` | The ref every in-cluster Application tracks — [deployment.md §4](deployment.md). |
+| `GENTIAN_FIRST_TENANT` | The name of a tenant for this cluster's users, created by the install: step 0 scaffolds and commits its manifest beside the platform tenant's, `E-01` waits for it, and the handover issues its administrator's activation link. Unset, the install creates no tenant. A DNS label, and not `platform`, `default`, `master` or the kernel realm's name; refused together with `tenancyMode: single`. It is the first tenant only: a manifest that exists is never rewritten, and once the cluster's definition holds another tenant the install refuses to write this one and points at the director, which is where every later tenant is created. |
+| `GENTIAN_FIRST_TENANT_DISPLAY_NAME` | What that tenant is called. Defaults to its name. |
+| `GENTIAN_FIRST_TENANT_RECOVERY_EMAIL` | Where that tenant's administrator's activation link is mailed, when its realm can send mail. Unset, the handover asks; left empty there, or when the realm cannot send yet, the link is shown in the terminal once. Kept here and not in git, like `CLUSTER_ADMIN_RECOVERY_EMAIL`. |
 | `INSTALL_CLUSTER_INFRA` | `0` when cert-manager, CloudNativePG and Reloader are managed elsewhere on this cluster. |
 | `GENTIAN_NO_LICENCE_REPORT` | `1` turns the licence report off, as `--no-licence-report` does; `0` turns it back on. Unset keeps what the cluster has. Off, nothing is sent and the App Store is not offered — [design/operations.md §6.2](design/operations.md). |
 | `GENTIAN_LICENCE_REPORT_URL` | Where the licence report goes, instead of the default address in `kernel/bootstrap/chart/values.yaml`. `https` only. |
 | `OPENBAO_CLI_VERSION` | Which `bao` to fetch when none is on `PATH`. Defaults to the pin in `versions.yaml`, which is where component versions are declared. |
 | `INFRA_CHART_REPO` / `_PRIVATE` | Where the infrastructure charts come from, and whether that registry needs a credential. Install-time rather than cluster state: it decides what the installer does before a cluster exists. |
+
+### A first tenant, and the bare domain
+
+A cluster's users live in a tenant of their own, never in the platform tenant
+([design/multi-tenancy.md §3](design/multi-tenancy.md)). With
+`GENTIAN_FIRST_TENANT` set, one install run ends with that tenant in place:
+
+| | Signs in at | As | Account handed over by |
+|---|---|---|---|
+| Cluster administrator | `https://console.<kernel-domain>/` | `admin@<kernel-domain>`, kernel realm | the handover's first activation link; `./install.sh --activate-admin` for a new one |
+| The tenant's administrator | `https://console.<tenant>.<kernel-domain>/` | `admin@<tenant>.<kernel-domain>`, the tenant's realm | the handover's second activation link; `kubectl gentian tenants activate-admin <tenant>` for a new one |
+
+While the cluster has exactly one tenant for users, its bare domain
+(`https://<kernel-domain>/`, and `www.`) leads to that tenant's sign-in. With
+none or several it shows the page that asks for an address. Nothing is
+configured for this: the operator counts the tenants, and the bare domain
+follows within a minute or two. The cluster administrators' console is always
+reached by its own name.
+
+The tenant's manifest is written with `gentianos.io/handover-override`,
+because it is created before the administrator's first sign-in, which is what
+otherwise admits tenants. If the tenant is not Ready when `E-01` stops waiting
+(15 minutes, `GENTIAN_FIRST_TENANT_WAIT_SECS`), the install continues and
+`--status` reports `E-01` as outstanding until it is.
 
 ### Image tags
 

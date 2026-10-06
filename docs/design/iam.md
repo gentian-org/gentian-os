@@ -25,9 +25,53 @@ user and group store for that organisation.
 
 - **Members and tenant admins** are stored, and sign in, in the **tenant realm** — each has its own `Cookie → forms` browser flow, so there's no brokering on the sign-in path.
 - The canonical, bookmarkable entry point is the tenant's console, **`https://console.<tenant>.<KERNEL_DOMAIN>/`**: the edge sends the browser to the tenant realm's form, which asks for email and password together.
-- On a multi-tenant cluster the apex and `www` land on the **concierge** at `https://id.<KERNEL_DOMAIN>/sign-in/`. It asks for the email only and sends the browser to the console of the workspace the address belongs to (`@<tenant>.<KERNEL_DOMAIN>`, `@<KERNEL_DOMAIN>`, or a tenant's custom domain); an address it cannot place is asked for the workspace's name. It asks the server nothing about accounts, and hands the address to the realm's form through a short-lived cookie only the realm pages on `id.<KERNEL_DOMAIN>` receive. A single-tenant cluster's apex goes to its one console.
+- The cluster's bare domain (the apex; `www` redirects to it) is the **concierge**, a page the platform tenant publishes with no session in front of it. It asks for the email only and sends the browser to the console of the workspace the address belongs to (`@<tenant>.<KERNEL_DOMAIN>`, `@<KERNEL_DOMAIN>`, or a tenant's custom domain); an address it cannot place is asked for the workspace's name. It asks the server nothing about accounts, and hands the address on as `login_hint`. When the cluster has exactly one user tenant the concierge asks nothing and sends every visitor to that tenant's console (§1.1a).
 - **Tenant apps** use the same tenant realm for OIDC, so a session created at portal login is reused silently by every app launch — no broker hop, no second login screen.
-- **Platform admins** sign in in the kernel realm, at `console.<KERNEL_DOMAIN>`; there is no tenant realm for them to be routed to. On a single-tenant cluster the one tenant is the platform tenant, so its people are the kernel realm's.
+- **Platform admins** sign in in the kernel realm, at `console.<KERNEL_DOMAIN>`; there is no tenant realm for them to be routed to. The kernel realm holds them and nobody else: a cluster's users are never the kernel realm's, however few tenants the cluster has.
+
+### 1.1a The platform tenant, user tenants, and a single-tenant cluster
+
+Every cluster has the **platform tenant** (`Tenant/platform`). It adopts the
+kernel realm instead of getting one of its own, so its people are the
+cluster's administrators, and it runs the platform's own components: the
+desktop and the administration console at `console.` and
+`admin.<KERNEL_DOMAIN>`, and the concierge on the bare domain. What it runs is
+installed with the cluster. It takes no catalogue apps and no add-ons: the
+director refuses both for a tenant whose manifest names a realm other than
+its own (`spec.isolation.keycloakRealm`), with a message that says why, and
+the command line and the console show that message as it is.
+
+Everybody else lives in a **user tenant**: a realm, namespaces, a zone and
+hosts of its own, under `<tenant>.<KERNEL_DOMAIN>` or a custom domain. That is
+true of a cluster built for one organisation as much as of a shared one, so a
+cluster's users never share a realm with its administrators.
+
+A **single-tenant cluster** is the platform tenant and exactly one user
+tenant. It is not a setting. The operator counts the user tenants and, while
+there is exactly one and it is Ready, writes `_single.json` into the
+concierge's lookup directory, naming that tenant's console
+(`https://console.<tenant>.<KERNEL_DOMAIN>/`, or `console.` on its custom
+domain). The concierge reads the file on every visit and forwards. The
+platform tenant is never counted, and a tenant being deleted is not either.
+
+What follows from that:
+
+- **Administrators type their own address.** On a single-tenant cluster the
+  bare domain leads to the user tenant, not to `console.<KERNEL_DOMAIN>`, and
+  the concierge's form, which would have placed `admin@<KERNEL_DOMAIN>`, is
+  not shown. The administrators' console is reached by its name.
+- **The forward follows the tenants with a delay.** The operator rewrites the
+  file on every tenant event, and the concierge serves it from a mounted
+  ConfigMap, which the kubelet refreshes within a minute or two. The forward
+  starts that long after the one tenant becomes Ready, and stops that long
+  after a second tenant appears on the cluster or the only one is deleted.
+- **During the delay nobody is signed in to the wrong place.** After a second
+  tenant appears, the bare domain still leads to the first tenant's sign-in
+  for a moment; a person of the second tenant sees a sign-in form that does
+  not know them, and their own console's address works throughout. After the
+  only tenant is deleted, the bare domain leads to a console that is going
+  away until the file is gone, and then shows the concierge's form. Before
+  the one tenant is Ready, the bare domain shows the form.
 
 See [admin-console.md §3](admin-console.md#3-identity-topology-suze--keycloak-native) for diagrams and entry-point details.
 
