@@ -442,25 +442,6 @@ def convert(doc, review, bases):
         review.note("launch: none — the profile is reachable but advertises no tile; confirm that is "
                     "intended rather than a tile that failed to convert")
 
-    # Entitlement is the one thing presentation cannot take with it.
-    #
-    # license: proprietary is what gated a commercial addon, and the operator
-    # read it off the profile. AD-3 moves license to the listing, outside the
-    # cluster — so without this the gate would still be there, reading a field
-    # that is always empty, and every paid addon would activate for free.
-    #
-    # It stays as an annotation for the same reason a tile keeps its relation:
-    # it is an authorization question, and the enforcement point is in the
-    # cluster. What it is NOT is the licence text, which is presentation and
-    # does leave.
-    if str((src.get("license") or "")).strip().lower() == "proprietary":
-        meta = doc["metadata"]
-        annotations = meta.get("annotations")
-        if annotations is None:
-            annotations = CommentedMap()
-            meta["annotations"] = annotations
-        annotations["gentianos.io/requires-entitlement"] = "true"
-
     # Presentation leaves the cluster, comments and all.
     listing = CommentedMap()
     listing["profile"] = name

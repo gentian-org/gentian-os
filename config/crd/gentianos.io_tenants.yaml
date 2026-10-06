@@ -96,9 +96,10 @@ spec:
                         (Odoo `-i`, Nextcloud `occ app:enable`).
 
                         The App Store writes this list — pre-filled from an AppPackage preset when
-                        one is chosen, then editable afterwards. Entries the tenant is not entitled
-                        to are rejected; entitlement is what gates an ee addon, not compatibility.
-                        See gentian-os/docs/app-customization.md §4.2.
+                        one is chosen, then editable afterwards. Every entry that resolves is
+                        activated, whatever its edition: the platform gates none, and a paid
+                        addon arrives only where the tenant holds a credential for the
+                        repository it is pulled from. See gentian-os/docs/app-customization.md §4.2.
                       items:
                         type: string
                       type: array
@@ -199,7 +200,8 @@ spec:
                               type: string
                             edition:
                               default: ce
-                              description: Edition selects the edition (ce, me, ee).
+                              description: Edition selects the edition (ce, pe, me,
+                                ee).
                               enum:
                               - ce
                               - pe

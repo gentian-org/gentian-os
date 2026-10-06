@@ -25,9 +25,6 @@ type ResolvedAddon struct {
 	// ID is what the app calls it (e.g. the Odoo module "crm"). This is what the
 	// composition renders activation for.
 	ID string
-	// RequiresEntitlement reports whether the addon is commercially licensed, so
-	// the caller can gate activation on an install grant.
-	RequiresEntitlement bool
 }
 
 // ResolveAddons maps a tenant's selected addon profile names onto the identifiers
@@ -90,11 +87,7 @@ func ResolveAddons(
 		}
 		seenID[decl.ID] = name
 
-		resolved = append(resolved, ResolvedAddon{
-			Profile:             name,
-			ID:                  decl.ID,
-			RequiresEntitlement: gentianov1alpha1.ProfileRequiresEntitlement(addon),
-		})
+		resolved = append(resolved, ResolvedAddon{Profile: name, ID: decl.ID})
 	}
 
 	// Stable order so the rendered XR does not churn on map iteration.
@@ -109,21 +102,6 @@ func AddonIDs(resolved []ResolvedAddon) []string {
 		ids = append(ids, a.ID)
 	}
 	return ids
-}
-
-// EntitledAddons splits resolved addons into those that may be activated now and
-// those blocked pending an install grant. Entitlement — not technical
-// compatibility — is what gates a commercial addon; see the editions model in
-// gentian-os/docs/app-customization.md §4.2.
-func EntitledAddons(resolved []ResolvedAddon, granted map[string]bool) (allowed, blocked []ResolvedAddon) {
-	for _, a := range resolved {
-		if a.RequiresEntitlement && !granted[a.Profile] {
-			blocked = append(blocked, a)
-			continue
-		}
-		allowed = append(allowed, a)
-	}
-	return allowed, blocked
 }
 
 func dedupe(in []string) []string {

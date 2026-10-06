@@ -16,8 +16,10 @@ needs regardless of which apps run on it. It does **not** contain:
   (sidecar templates).
 - Proprietary AppProfiles, or any private catalogue: supplied by whoever operates
   the cluster, as an additional catalogue repository.
-- A commerce backend for redeeming entitlements and receiving metering reports.
-  gentian-os calls one when `commerce.enabled` is set and ships none itself.
+- Any licence gate. Editions (`ce · pe · me · ee`) say who maintains and
+  supports an app; the OS gates none of them. Whether a paid app arrives is
+  decided at the repository it is pulled from, by the credential a tenant
+  holds for it ([docs/design/store-contract.md](docs/design/store-contract.md) §2).
 - Cluster-specific GitOps manifests (tenant instances, per-cluster config) — see
   [gentian-deployments](https://github.com/gentian-org/gentian-deployments).
 - The kernel shell UI (login hub, app launcher) — see [gentian-ui](https://github.com/gentian-org/gentian-ui).

@@ -13,11 +13,11 @@
 |---|---|
 | `family` | Logical app id shared across revisions |
 | `catalogueVersion` | Semver of this immutable catalogue entry |
-| `edition` | Feature variant (`minimal`, `standard`, `full`, `performant`) |
+| `edition` | Who maintains and supports the entry (`ce`, `pe`, `me`, `ee`); the OS gates none |
 | `trustTier` | Platform certification (`platform`, `certified`, `experimental`) |
 | `license` | SPDX identifier (`Apache-2.0`, `proprietary`, …) |
 
-Public vs premium is implied by **source repo** and **license**:
+Whether an entry is paid for is not something the cluster acts on. It follows from the **source repo** it is pulled from:
 
 | Source | Typical license |
 |---|---|

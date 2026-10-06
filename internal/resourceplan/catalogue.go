@@ -175,8 +175,8 @@ func MaxTier(tenant *gentianov1alpha1.Tenant) *int32 {
 //
 // maxTier, when non-nil, is the tenant's entitlement ceiling: plans above it
 // are withheld. A nil ceiling means none is set, and every plan is on offer —
-// the same shape the App Store uses, where an unreachable commerce backend
-// leaves proprietary apps on Buy rather than blocking the catalogue.
+// so that an unreachable backend leaves the catalogue usable rather than
+// blocking it.
 func (c *Catalogue) Selectable(selfService bool, maxTier *int32) []gentianov1alpha1.ResourcePlan {
 	if c == nil {
 		return nil

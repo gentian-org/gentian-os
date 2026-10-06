@@ -791,19 +791,6 @@ grafana:
     # Namespace where the Grafana sidecar looks for dashboard ConfigMaps
     namespace: ""
 
-# Commerce integration configuration
-# Optional commerce backend: the service that redeems install grants for
-# proprietary-licensed profiles and receives metering reports. Any service
-# implementing POST /api/v1/install-grants/{jti}/exchange and
-# POST /api/v1/metering/report will do; gentian-os ships no such service and
-# does not assume one exists. Left disabled, proprietary profiles simply refuse
-# to install and no metering is reported.
-commerce:
-  enabled: false
-  apiURL: ""
-  apiToken: ""
-  meteringInterval: ""
-
 # The licence report. The software is free under a usage limit that is
 # enforced legally and not technically, so a cluster says, in the open, what
 # it runs: once shortly after the operator starts and once a day after that,

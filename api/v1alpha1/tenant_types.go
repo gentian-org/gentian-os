@@ -429,9 +429,10 @@ type TenantApp struct {
 	// (Odoo `-i`, Nextcloud `occ app:enable`).
 	//
 	// The App Store writes this list — pre-filled from an AppPackage preset when
-	// one is chosen, then editable afterwards. Entries the tenant is not entitled
-	// to are rejected; entitlement is what gates an ee addon, not compatibility.
-	// See gentian-os/docs/app-customization.md §4.2.
+	// one is chosen, then editable afterwards. Every entry that resolves is
+	// activated, whatever its edition: the platform gates none, and a paid
+	// addon arrives only where the tenant holds a credential for the
+	// repository it is pulled from. See gentian-os/docs/app-customization.md §4.2.
 	// +optional
 	// +listType=set
 	Addons []string `json:"addons,omitempty"`

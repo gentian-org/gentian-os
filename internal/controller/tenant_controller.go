@@ -11,14 +11,10 @@ SPDX-License-Identifier: MPL-2.0
 package controller
 
 import (
-	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	goerrors "errors"
 	"fmt"
-	"io"
-	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -284,15 +280,6 @@ type TenantReconciler struct {
 	// CrossplaneOnly skips shared-kernel side effects (mail, portal redirect)
 	// so tenant lifecycle is driven by the Crossplane graph alone.
 	CrossplaneOnly bool
-	// CommerceEnabled flags if licensing checks and metering reports are active.
-	CommerceEnabled bool
-	// CommerceAPIURL is the base URL of the commerce backend: the service that
-	// redeems install grants and accepts metering reports. Which service that is
-	// belongs to the deployment, not to this operator — anything implementing the
-	// two endpoints below will do, and with commerce disabled there is none.
-	CommerceAPIURL string
-	// CommerceAPIToken is the bearer token presented to that backend.
-	CommerceAPIToken string
 }
 
 // tenantRateLimiter replaces controller-runtime's default workqueue rate
@@ -781,12 +768,13 @@ func (r *TenantReconciler) deleteOwnedResourcesInNamespace(ctx context.Context, 
 }
 
 // ensureRegistryCredentials replicates the kernel-managed `registry-credentials`
-// Secret from the services namespace into the tenant namespace, and manages
-// scoped registry credentials for proprietary applications.
+// Secret from the services namespace into the tenant namespace. That is the
+// cluster's own pull credential and nothing more: whether an app from a
+// private repository arrives is decided by the credential the tenant holds
+// for that repository, not here.
 func (r *TenantReconciler) ensureRegistryCredentials(ctx context.Context, tenant *gentianov1alpha1.Tenant, nsName string) error {
 	const defaultSecretName = "registry-credentials"
 
-	// 1. Replicate default registry credentials
 	source := &corev1.Secret{}
 	if err := r.Get(ctx, types.NamespacedName{Name: defaultSecretName, Namespace: servicesNamespace}, source); err != nil {
 		if !errors.IsNotFound(err) {
@@ -829,223 +817,7 @@ func (r *TenantReconciler) ensureRegistryCredentials(ctx context.Context, tenant
 		}
 	}
 
-	// 2. Fetch scoped credentials for proprietary apps if commerce integration is enabled
-	for _, app := range tenant.Spec.Apps {
-		profileName := app.Profile
-		if profileName == "" {
-			continue
-		}
-
-		profile := &gentianov1alpha1.ComponentProfile{}
-		if err := r.Get(ctx, types.NamespacedName{Name: profileName}, profile); err != nil {
-			return fmt.Errorf("failed to read ComponentProfile %s: %w", profileName, err)
-		}
-
-		// Registry credentials are for an entry somebody paid for. The
-		// licence itself is the store's now (AD-3); whether this needs paying
-		// for is an annotation, because the thing that acts on it runs here.
-		if !gentianov1alpha1.ProfileRequiresEntitlement(profile) {
-			continue
-		}
-
-		secretName := "registry-credentials-" + profileName
-		existingSec := &corev1.Secret{}
-		err := r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: nsName}, existingSec)
-		if err == nil {
-			// Secret exists already
-			continue
-		}
-		if !errors.IsNotFound(err) {
-			return fmt.Errorf("failed to check existing secret %s: %w", secretName, err)
-		}
-
-		// Scoped secret is missing; exchange the grant
-		if !r.CommerceEnabled {
-			return fmt.Errorf("app %s has a proprietary license but commercial integration (GENTIAN_COMMERCE_ENABLED) is disabled", profileName)
-		}
-
-		annoKey := "gentianos.io/install-grant-" + profileName
-		log.FromContext(ctx).Info("checking registry credentials for proprietary app", "profile", profileName, "annoKey", annoKey, "annotations", tenant.Annotations)
-		jwtToken := tenant.Annotations[annoKey]
-		if jwtToken == "" {
-			return fmt.Errorf("app %s has a proprietary license; please purchase a subscription and provide the install grant JWT annotation %s", profileName, annoKey)
-		}
-
-		jti, err := extractJTIFromJWT(jwtToken)
-		if err != nil {
-			return fmt.Errorf("failed to extract token ID from grant for %s: %w", profileName, err)
-		}
-
-		log.FromContext(ctx).Info("exchanging install grant", "profile", profileName, "jti", jti)
-		exchangeRes, err := r.exchangeInstallGrant(ctx, jti, jwtToken)
-		if err != nil {
-			log.FromContext(ctx).Error(err, "failed to exchange install grant", "profile", profileName, "jti", jti)
-			return fmt.Errorf("failed to exchange install grant for %s: %w", profileName, err)
-		}
-		log.FromContext(ctx).Info("exchanged install grant successfully", "profile", profileName, "entitlementId", exchangeRes.EntitlementId)
-
-		dockerConfigJSON, err := buildDockerConfigJSON(
-			exchangeRes.RegistryCredential.Host,
-			exchangeRes.RegistryCredential.Username,
-			exchangeRes.RegistryCredential.Password,
-		)
-		if err != nil {
-			return fmt.Errorf("failed to build dockerconfig JSON for %s: %w", profileName, err)
-		}
-
-		registrySec := &corev1.Secret{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      secretName,
-				Namespace: nsName,
-				Labels: map[string]string{
-					tenantLabel:    tenant.Name,
-					managedByLabel: managedByValue,
-				},
-			},
-			Type: corev1.SecretTypeDockerConfigJson,
-			Data: map[string][]byte{
-				corev1.DockerConfigJsonKey: dockerConfigJSON,
-			},
-		}
-		log.FromContext(ctx).Info("creating registry credentials secret", "secret", secretName, "namespace", nsName)
-		if err := r.Create(ctx, registrySec); err != nil {
-			log.FromContext(ctx).Error(err, "failed to create registry credentials secret", "secret", secretName)
-			return fmt.Errorf("failed to create secret %s: %w", secretName, err)
-		}
-		log.FromContext(ctx).Info("created registry credentials secret successfully", "secret", secretName)
-
-		meteringSecName := "metering-secret-" + profileName
-		meteringSec := &corev1.Secret{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      meteringSecName,
-				Namespace: nsName,
-				Labels: map[string]string{
-					tenantLabel:    tenant.Name,
-					managedByLabel: managedByValue,
-				},
-			},
-			Type: corev1.SecretTypeOpaque,
-			StringData: map[string]string{
-				"metering-secret": exchangeRes.MeteringSecret,
-				"entitlement-id":  exchangeRes.EntitlementId,
-				"product-sku":     profileName,
-			},
-		}
-		log.FromContext(ctx).Info("creating metering secret", "secret", meteringSecName, "namespace", nsName)
-		if err := r.Create(ctx, meteringSec); err != nil {
-			log.FromContext(ctx).Error(err, "failed to create metering secret", "secret", meteringSecName)
-			return fmt.Errorf("failed to create secret %s: %w", meteringSecName, err)
-		}
-		log.FromContext(ctx).Info("created metering secret successfully", "secret", meteringSecName)
-	}
-
 	return nil
-}
-
-type installExchangeRequest struct {
-	InstallGrantJwt string `json:"installGrantJwt"`
-}
-
-type registryCreds struct {
-	Host      string    `json:"host"`
-	Username  string    `json:"username"`
-	Password  string    `json:"password"`
-	Scopes    []string  `json:"scopes"`
-	ExpiresAt time.Time `json:"expiresAt"`
-}
-
-type installExchangeResponse struct {
-	Ok                 bool          `json:"ok"`
-	Profile            string        `json:"profile"`
-	EntitlementId      string        `json:"entitlementId"`
-	RegistryCredential registryCreds `json:"registryCredential"`
-	MeteringSecret     string        `json:"meteringSecret"`
-}
-
-func (r *TenantReconciler) exchangeInstallGrant(ctx context.Context, jti, jwtToken string) (*installExchangeResponse, error) {
-	url := fmt.Sprintf("%s/api/v1/install-grants/%s/exchange", strings.TrimRight(r.CommerceAPIURL, "/"), jti)
-	reqBody, err := json.Marshal(installExchangeRequest{InstallGrantJwt: jwtToken})
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(reqBody))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+r.CommerceAPIToken)
-
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("exchange failed with status %d: %s", resp.StatusCode, string(body))
-	}
-
-	var out installExchangeResponse
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return nil, err
-	}
-	return &out, nil
-}
-
-func extractJTIFromJWT(token string) (string, error) {
-	parts := strings.Split(token, ".")
-	if len(parts) < 2 {
-		return "", fmt.Errorf("invalid JWT format")
-	}
-	payloadSegment := parts[1]
-	if l := len(payloadSegment) % 4; l > 0 {
-		payloadSegment += strings.Repeat("=", 4-l)
-	}
-	decoded, err := base64.URLEncoding.DecodeString(payloadSegment)
-	if err != nil {
-		decoded, err = base64.StdEncoding.DecodeString(payloadSegment)
-		if err != nil {
-			return "", err
-		}
-	}
-	var claims struct {
-		JTI string `json:"jti"`
-	}
-	if err := json.Unmarshal(decoded, &claims); err != nil {
-		return "", err
-	}
-	if claims.JTI == "" {
-		return "", fmt.Errorf("jti claim not found in JWT")
-	}
-	return claims.JTI, nil
-}
-
-type dockerConfig struct {
-	Auths map[string]dockerAuth `json:"auths"`
-}
-
-type dockerAuth struct {
-	Username string `json:"username"`
-	Password string `json:"password"`
-	Auth     string `json:"auth"`
-}
-
-func buildDockerConfigJSON(host, username, password string) ([]byte, error) {
-	authStr := username + ":" + password
-	encodedAuth := base64.StdEncoding.EncodeToString([]byte(authStr))
-	config := dockerConfig{
-		Auths: map[string]dockerAuth{
-			host: {
-				Username: username,
-				Password: password,
-				Auth:     encodedAuth,
-			},
-		},
-	}
-	return json.Marshal(config)
 }
 
 // ensureStagingCaTrust bootstraps gentian-trust-anchor-tls in the services namespace
@@ -1429,17 +1201,10 @@ func (r *TenantReconciler) buildXTenant(ctx context.Context, tenant *gentianov1a
 				log.FromContext(ctx).Error(addonErr, "skipping invalid addon selection",
 					"tenant", tenant.Name, "app", app.Profile)
 			}
-			// Addons carrying license: proprietary are gated on a grant. Nothing
-			// supplies grants for addons yet, so the map is empty and every such
-			// addon is withheld. Denying by default is the only safe posture:
-			// silently activating one because entitlement cannot be checked would
-			// give it away.
-			allowed, blocked := customization.EntitledAddons(resolved, nil)
-			for _, b := range blocked {
-				log.FromContext(ctx).Info("withholding commercial addon pending entitlement",
-					"tenant", tenant.Name, "app", app.Profile, "addon", b.Profile)
-			}
-			if ids := customization.AddonIDs(allowed); len(ids) > 0 {
+			// Every resolved addon is activated like any other. Whether a
+			// paid one arrives is decided where it is pulled from, by the
+			// repository credential the tenant holds.
+			if ids := customization.AddonIDs(resolved); len(ids) > 0 {
 				entry["addons"] = toInterfaceSlice(ids)
 			}
 		}

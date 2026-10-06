@@ -594,22 +594,26 @@ installed base, arriving in `Tenant.spec.apps[].addons`. It inherits the base's
 ladder — same image, same drop-in dirs, same plugin API — so it never restates
 `grade`, `rubricScore` or `supportedRungs`.
 
-**Editions** are `ce · pe · me · ee`, and say *who stands behind the entry*,
-not who publishes it:
+**Editions** are `ce · pe · me · ee`, and say *who maintains and supports the
+entry*, not who publishes it:
 
 | | |
 | --- | --- |
 | `ce` | community edition, as the upstream organisation publishes it |
 | `pe` | private edition: somebody's own profile, in their own catalogue source, for their own tenants |
 | `me` | maintained edition — `ce` plus active Gentian maintenance; the editions Gentian Technologies itself runs |
-| `ee` | enterprise edition — commercially licensed and entitlement-gated |
+| `ee` | enterprise edition — commercially licensed and supported by its supplier |
 
 `ee` is deliberately not "the upstream's enterprise build" — a third party's
 proprietary distribution is equally an `ee`, and `spec.author` is what names the
 supplier. A supplier's name is never an edition. Editions are technically
-compatible with one another; what gates an `ee` addon is **entitlement**, and
-what constrains addon↔base compatibility is **version**. There is therefore one
-addon set per family and no per-edition compatibility matrix.
+compatible with one another, and the OS gates none of them: an `ee` app or
+addon is installed and activated exactly like a `ce` one. Supply is controlled
+at the source — its chart and images arrive only where the tenant holds a
+credential for the repository they are pulled from
+([store-contract.md](design/store-contract.md) §2). What constrains
+addon↔base compatibility is **version**. There is therefore one addon set per
+family and no per-edition compatibility matrix.
 
 The split that matters operationally is not free against paid but **where the
 entry comes from**. `ce` and `pe` are entries a cluster can hold and install on

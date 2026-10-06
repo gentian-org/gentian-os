@@ -23,21 +23,6 @@ import (
 	"strings"
 )
 
-// ProfileRequiresEntitlement reports whether an entitlement must be redeemed
-// before this entry may be activated.
-//
-// An annotation, not spec.license. AD-3 moves the licence to the store's
-// listing, outside the cluster, because it is presentation — but whether an
-// entry NEEDS PAYING FOR is an authorization question, and the thing that
-// enforces it runs here. A gate reading a field that has left is a gate that
-// always opens.
-func ProfileRequiresEntitlement(p *ComponentProfile) bool {
-	if p == nil {
-		return false
-	}
-	return strings.EqualFold(strings.TrimSpace(p.Annotations[AnnotationProfileRequiresEntitlement]), "true")
-}
-
 // GatewayAPIBackend is one extra HTTPRoute rule: path prefix → Kubernetes Service.
 type GatewayAPIBackend struct {
 	PathPrefix  string `json:"pathPrefix"`

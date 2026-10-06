@@ -39,7 +39,7 @@ This package is the only input to `make manifests`; CRD YAML and the chart's
 The single entrypoint. Wires every reconciler, the optional webhook server, the
 app-lifecycle HTTP server, and the OpenBao seeder onto one controller-runtime
 manager. Feature switches are environment variables (`ROUTING_MODE`,
-`TENANCY_MODE`, `BAO_ADDR`, `GENTIAN_COMMERCE_ENABLED`, …) supplied by the Helm
+`TENANCY_MODE`, `BAO_ADDR`, …) supplied by the Helm
 chart — read this file first to learn what the operator actually runs.
 
 ### `internal/`

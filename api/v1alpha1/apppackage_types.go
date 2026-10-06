@@ -61,9 +61,8 @@ type AppPackageSpec struct {
 	// addon profile (gentianos.io/deployment-role: addon) in the same family.
 	//
 	// Entries are a starting point, not a constraint: the user may untick any of
-	// them, and may add addons the preset does not list. A preset that names an
-	// addon the tenant is not entitled to still renders — with a Buy button rather
-	// than a tick — so a package can advertise an ee addon without gating install.
+	// them, and may add addons the preset does not list. A preset may name an
+	// ee addon like any other: nothing here gates it.
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinItems=1
 	// +listType=set

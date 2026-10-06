@@ -25,15 +25,8 @@ func profile(name, family, role string, addon *gentianov1alpha1.CustomizationAdd
 		p.Annotations = map[string]string{gentianov1alpha1.AnnotationProfileDeploymentRole: role}
 	}
 	// family and license are the store's now (AD-3). What is left in the
-	// cluster is the addon declaration itself, and an annotation for whether
-	// the entry has to be paid for.
-	_ = family
-	if license == "proprietary" {
-		if p.Annotations == nil {
-			p.Annotations = map[string]string{}
-		}
-		p.Annotations[gentianov1alpha1.AnnotationProfileRequiresEntitlement] = "true"
-	}
+	// cluster is the addon declaration itself.
+	_, _ = family, license
 	if addon != nil {
 		p.Spec.Package.Addon = &gentianov1alpha1.PackageAddon{ID: addon.ID, Of: addon.Of}
 	}
@@ -125,7 +118,9 @@ func TestResolveAddonsReportsEveryProblem(t *testing.T) {
 	}
 }
 
-func TestEntitledAddonsBlocksUngrantedCommercial(t *testing.T) {
+// A paid addon resolves and is activated like any other: the platform gates
+// none, and whether it arrives is decided at the repository it is pulled from.
+func TestResolveAddonsTreatsAPaidAddonLikeAnyOther(t *testing.T) {
 	base, idx := odooFixture()
 	idx["odoo-payroll-ee"] = profile("odoo-payroll-ee", "odoo", "addon",
 		&gentianov1alpha1.CustomizationAddon{ID: "payroll", Of: "odoo-base-ce"}, "proprietary")
@@ -133,17 +128,8 @@ func TestEntitledAddonsBlocksUngrantedCommercial(t *testing.T) {
 	if len(errs) != 0 {
 		t.Fatalf("unexpected errors: %v", errs)
 	}
-	allowed, blocked := EntitledAddons(resolved, map[string]bool{})
-	if len(allowed) != 1 || allowed[0].ID != "crm" {
-		t.Fatalf("allowed: %+v", allowed)
-	}
-	if len(blocked) != 1 || blocked[0].Profile != "odoo-payroll-ee" {
-		t.Fatalf("blocked: %+v", blocked)
-	}
-	// granting the entitlement unblocks it — compatibility never was the gate
-	allowed, blocked = EntitledAddons(resolved, map[string]bool{"odoo-payroll-ee": true})
-	if len(allowed) != 2 || len(blocked) != 0 {
-		t.Fatalf("after grant: allowed=%d blocked=%d", len(allowed), len(blocked))
+	if ids := AddonIDs(resolved); len(ids) != 2 || ids[0] != "crm" || ids[1] != "payroll" {
+		t.Fatalf("activated ids = %v, want [crm payroll]", ids)
 	}
 }
 

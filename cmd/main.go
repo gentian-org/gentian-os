@@ -222,30 +222,10 @@ func main() {
 		Ingress:                  buildEdgeIngress(),
 		RoutingMode:              routingMode,
 		CrossplaneOnly:           controller.EnvBool("TENANT_CROSSPLANE_ONLY"),
-		CommerceEnabled:          controller.EnvBool("GENTIAN_COMMERCE_ENABLED"),
-		CommerceAPIURL:           os.Getenv("GENTIAN_COMMERCE_API_URL"),
-		CommerceAPIToken:         os.Getenv("GENTIAN_COMMERCE_API_TOKEN"),
 	}
 	if err := tenantReconciler.SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Tenant")
 		os.Exit(1)
-	}
-
-	if controller.EnvBool("GENTIAN_COMMERCE_ENABLED") {
-		interval := 1 * time.Hour
-		if os.Getenv("METERING_INTERVAL") != "" {
-			if parsed, err := time.ParseDuration(os.Getenv("METERING_INTERVAL")); err == nil {
-				interval = parsed
-			}
-		}
-		setupLog.Info("starting metering background worker", "interval", interval)
-		if err := mgr.Add(&controller.MeteringWorker{
-			Reconciler: tenantReconciler,
-			Interval:   interval,
-		}); err != nil {
-			setupLog.Error(err, "unable to add metering worker to manager")
-			os.Exit(1)
-		}
 	}
 
 	// DNS publication: whether the records the platform requests through
