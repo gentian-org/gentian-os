@@ -43,6 +43,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/backup"
 	"github.com/gentian-org/gentian-os/internal/catalogue"
 	"github.com/gentian-org/gentian-os/internal/controller/provisioner"
 	"github.com/gentian-org/gentian-os/internal/customization"
@@ -645,29 +646,25 @@ func (r *TenantReconciler) reconcileDelete(ctx context.Context, tenant *gentiano
 		return true, ctrl.Result{}, err
 	}
 
-	// Clean up identity resources before removing the namespace.
-	if requeue, res, err := awaitJob(r.deleteIdentity(ctx, tenant)); requeue {
-		return res, err
+	// The tenant's stores and its realm, in the one teardown order the
+	// inventory defines (backup.TeardownOrder: provisioning's, reversed) --
+	// the order the purge of a single app follows too. The cache, the
+	// buckets and the databases go before the realm, which holds every
+	// app's access group and sign-in client. Each step destroys the kind for
+	// every app the tenant ever had, by the same Jobs an app's purge runs,
+	// and a Job that fails stops the deletion here until it has succeeded.
+	teardown := map[backup.Kind][]func(context.Context, *gentianov1alpha1.Tenant) error{
+		backup.KindCache:         {r.deleteCache},
+		backup.KindObjectStorage: {r.deleteStorage},
+		backup.KindDatabase:      {r.deleteMariaDB, r.deleteDatabase},
+		backup.KindAccessGroup:   {r.deleteIdentity},
 	}
-
-	// Clean up database resources before removing the namespace.
-	if requeue, res, err := awaitJob(r.deleteDatabase(ctx, tenant)); requeue {
-		return res, err
-	}
-
-	// Clean up MariaDB resources before removing the namespace.
-	if requeue, res, err := awaitJob(r.deleteMariaDB(ctx, tenant)); requeue {
-		return res, err
-	}
-
-	// Clean up storage resources before removing the namespace.
-	if requeue, res, err := awaitJob(r.deleteStorage(ctx, tenant)); requeue {
-		return res, err
-	}
-
-	// Clean up cache resources before removing the namespace.
-	if requeue, res, err := awaitJob(r.deleteCache(ctx, tenant)); requeue {
-		return res, err
+	for _, kind := range backup.TeardownOrder() {
+		for _, step := range teardown[kind] {
+			if requeue, res, err := awaitJob(step(ctx, tenant)); requeue {
+				return res, err
+			}
+		}
 	}
 
 	// Clean up app deployment resources (always, regardless of DeletionPolicy).
@@ -707,10 +704,15 @@ func (r *TenantReconciler) reconcileDelete(ctx context.Context, tenant *gentiano
 	if tenant.Spec.DeletionPolicy == gentianov1alpha1.DeletionPolicyDelete {
 		logger.Info("deletionPolicy=Delete: removing tenant namespace", "namespace", nsName)
 		ns := &corev1.Namespace{}
-		if err := r.Get(ctx, types.NamespacedName{Name: nsName}, ns); err == nil {
+		switch err := r.Get(ctx, types.NamespacedName{Name: nsName}, ns); {
+		case err == nil:
 			if err := r.Delete(ctx, ns); client.IgnoreNotFound(err) != nil {
 				return ctrl.Result{}, err
 			}
+		case !errors.IsNotFound(err):
+			// Not knowing whether the namespace is there is not the same as
+			// its being gone: every volume of the tenant is in it.
+			return ctrl.Result{}, fmt.Errorf("look for the tenant namespace %s: %w", nsName, err)
 		}
 	} else {
 		// DeletionPolicyRetain: keep namespace, only remove orchestrator-owned sub-resources.

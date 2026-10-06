@@ -368,7 +368,10 @@ func TestDB_DeleteDeletePolicy_DeletesDatabaseCR(t *testing.T) {
 	if err := testClient.Delete(context.Background(), tenant); err != nil {
 		t.Fatalf("delete tenant: %v", err)
 	}
-	// deleteIdentity runs before deleteDatabase; mark its jobs. The purge
+	// Stores go before the realm (backup.TeardownOrder), and a purge always
+	// removes the backup bucket: that Job has to finish for the rest to follow.
+	go markJobCompleteWhenReady("s3-delete-dbdelete-gentian-backup", "system-s3")
+	// The realm goes after the stores; mark its jobs. The purge
 	// drops the database and role through a Job before the CR goes.
 	go markJobCompleteWhenReady("keycloak-realm-delete-dbdelete", layout.Namespace(layout.Authentication))
 	go markJobCompleteWhenReady("pg-delete-dbdelete-pg-app4", "system-postgresql")
@@ -439,6 +442,9 @@ func TestDB_DeleteDeletePolicy_DeletesOrphanedDatabaseCR(t *testing.T) {
 	if err := testClient.Delete(context.Background(), tenant); err != nil {
 		t.Fatalf("delete tenant: %v", err)
 	}
+	// Stores go before the realm (backup.TeardownOrder), and a purge always
+	// removes the backup bucket: that Job has to finish for the rest to follow.
+	go markJobCompleteWhenReady("s3-delete-dborphan-gentian-backup", "system-s3")
 	go markJobCompleteWhenReady("keycloak-realm-delete-dborphan", layout.Namespace(layout.Authentication))
 	// The purge drops every database a CR records, the orphan's included.
 	go markJobCompleteWhenReady("pg-delete-dborphan-pg-app5", "system-postgresql")

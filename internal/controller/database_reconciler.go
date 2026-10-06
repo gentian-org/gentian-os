@@ -213,24 +213,9 @@ func (r *TenantReconciler) collectPostgresAppsForDelete(ctx context.Context, ten
 }
 
 // makePostgresDeleteJob drops an app's database, every database its role
-// still owns (apps allowed to create their own), and the role. The same
-// statements the app purge runs, as a Job because tenant teardown has no pod
-// to exec into.
+// still owns, and the role: the Job the purge of one app runs too.
 func makePostgresDeleteJob(tenant *gentianov1alpha1.Tenant, appName string) *batchv1.Job {
-	container := psqlContainer("delete-db", buildPostgresDeleteScript(databaseName(tenant, appName), roleUserName(tenant.Name, appName)), "")
-	return newKernelProvisioningJob(pgDeleteJobName(tenant.Name, appName), postgresNamespace, tenant, appName, container)
-}
-
-func buildPostgresDeleteScript(dbName, roleName string) string {
-	return fmt.Sprintf(`set -euo pipefail
-for db in $(psql -tAc "SELECT d.datname FROM pg_database d JOIN pg_roles r ON r.oid = d.datdba WHERE r.rolname = '%[2]s' AND NOT d.datistemplate" postgres) "%[1]s"; do
-  psql -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '${db}';" postgres >/dev/null
-  psql -c "DROP DATABASE IF EXISTS \"${db}\";" postgres
-  echo "database ${db} dropped"
-done
-psql -c "DO \$\$ BEGIN IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '%[2]s') THEN EXECUTE 'DROP OWNED BY \"%[2]s\"'; END IF; END \$\$;" postgres
-psql -c "DROP ROLE IF EXISTS \"%[2]s\";" postgres
-echo "role %[2]s dropped"`, dbName, roleName)
+	return backup.PostgresDestroyJob(tenant, appName, backup.DestroyInTheBackground)
 }
 
 // --- CR constructors ---------------------------------------------------------
@@ -456,5 +441,5 @@ func roleJobName(tenantName, appName string) string {
 }
 
 func pgDeleteJobName(tenantName, appName string) string {
-	return fmt.Sprintf("pg-delete-%s-%s", tenantName, appName)
+	return backup.PostgresDestroyJobName(tenantName, appName)
 }

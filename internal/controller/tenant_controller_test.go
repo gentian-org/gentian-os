@@ -904,6 +904,9 @@ func TestTenantReconciler_DeleteDeleteRemovesNamespace(t *testing.T) {
 		t.Fatalf("delete tenant: %v", err)
 	}
 	// For Delete policy deleteIdentity creates cleanup jobs.
+	// Stores go before the realm (backup.TeardownOrder), and a purge always
+	// removes the backup bucket: that Job has to finish for the rest to follow.
+	go markJobCompleteWhenReady("s3-delete-destroyer-gentian-backup", "system-s3")
 	go markJobCompleteWhenReady("keycloak-realm-delete-destroyer", layout.Namespace(layout.Authentication))
 
 	// Wait for Tenant CR to be gone

@@ -27,6 +27,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/backup"
 	"github.com/gentian-org/gentian-os/internal/kernel"
 	"github.com/gentian-org/gentian-os/internal/meta"
 )
@@ -225,35 +226,10 @@ func makeRedisACLJob(tenant *gentianov1alpha1.Tenant, appName, userPassword stri
 	}
 }
 
-// makeRedisACLDeleteJob creates a redis-cli Job that removes the per-app Redis ACL user.
+// makeRedisACLDeleteJob removes an app's user from the shared cache: the Job
+// the purge of one app runs too.
 func makeRedisACLDeleteJob(tenant *gentianov1alpha1.Tenant, appName string) *batchv1.Job {
-	ttl := meta.ProvisioningJobTTLSeconds
-	deadline := meta.ProvisioningJobActiveDeadlineSeconds
-	username := redisACLUsername(tenant.Name, appName)
-	keyPrefix := redisKeyPrefix(tenant.Name, appName)
-	return &batchv1.Job{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      redisACLDeleteJobName(tenant.Name, appName),
-			Namespace: cacheNamespace,
-			Labels: map[string]string{
-				tenantLabel:    tenant.Name,
-				managedByLabel: managedByValue,
-				appLabel:       appName,
-			},
-		},
-		Spec: batchv1.JobSpec{
-			TTLSecondsAfterFinished: &ttl,
-			ActiveDeadlineSeconds:   &deadline,
-			Template: corev1.PodTemplateSpec{
-				Spec: corev1.PodSpec{
-					RestartPolicy: corev1.RestartPolicyOnFailure,
-					Containers: []corev1.Container{
-						redisContainer("del-acl-user", username, keyPrefix, redisDelUserScript(username)),
-					},
-				},
-			},
-		},
-	}
+	return backup.CacheDestroyJob(tenant, appName, backup.DestroyInTheBackground)
 }
 
 // --- Memcached workload constructors -----------------------------------------
@@ -420,17 +396,6 @@ func (r *TenantReconciler) redisCacheEndpoint(ctx context.Context) (host, port s
 	return host, port, nil
 }
 
-// redisDelUserScript returns a script that removes the ACL user, ignoring absence.
-func redisDelUserScript(username string) string {
-	return fmt.Sprintf(
-		`set -euo pipefail
-redis-cli -h "$REDIS_HOST" -p "${REDIS_PORT:-6379}" -a "$REDIS_PASSWORD" --no-auth-warning \
-  ACL DELUSER %s 2>/dev/null || echo "user %s already absent"
-echo "done"`,
-		username, username,
-	)
-}
-
 // --- Status helpers ----------------------------------------------------------
 
 func deploymentIsReady(dep *appsv1.Deployment) bool {
@@ -446,10 +411,8 @@ func deploymentIsReady(dep *appsv1.Deployment) bool {
 // --- Name helpers ------------------------------------------------------------
 
 // redisACLUsername returns the Redis ACL username for a tenant + app.
-// Redis usernames have no strict character restrictions, but we keep them
-// to [a-z0-9-] to match the convention used in other provisioning Jobs.
 func redisACLUsername(tenantName, appName string) string {
-	return fmt.Sprintf("%s-%s", tenantName, appName)
+	return backup.RedisACLUser(tenantName, appName)
 }
 
 // redisKeyPrefix returns the Redis key prefix scoped to a tenant + app.
@@ -464,5 +427,5 @@ func redisACLJobName(tenantName, appName string) string {
 }
 
 func redisACLDeleteJobName(tenantName, appName string) string {
-	return fmt.Sprintf("redis-acl-delete-%s-%s", tenantName, appName)
+	return backup.CacheDestroyJobName(tenantName, appName)
 }

@@ -232,7 +232,7 @@ func TestStorage_DeleteDeletePolicy_CreatesDeleteJobs(t *testing.T) {
 	if err := testClient.Delete(context.Background(), tenant); err != nil {
 		t.Fatalf("delete tenant: %v", err)
 	}
-	// deleteIdentity runs before deleteStorage; mark cleanup Jobs so reconcile proceeds.
+	// The realm goes after the stores; mark cleanup Jobs so reconcile proceeds.
 	go markJobCompleteWhenReady("keycloak-realm-delete-storagedelete", layout.Namespace(layout.Authentication))
 
 	s3DeleteJob := &batchv1.Job{}

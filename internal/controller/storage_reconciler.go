@@ -167,33 +167,10 @@ func (r *TenantReconciler) minioEndpoint(ctx context.Context) string {
 	return string(secret.Data["endpoint"])
 }
 
+// makeS3BucketDeleteJob removes a bucket with the user and policy made for
+// it: the Job the purge of one app runs too.
 func makeS3BucketDeleteJob(tenant *gentianov1alpha1.Tenant, appName string) *batchv1.Job {
-	ttl := meta.ProvisioningJobTTLSeconds
-	deadline := meta.ProvisioningJobActiveDeadlineSeconds
-	bucket := s3BucketName(tenant, appName)
-	return &batchv1.Job{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      s3BucketDeleteJobName(tenant.Name, appName),
-			Namespace: s3Namespace,
-			Labels: map[string]string{
-				tenantLabel:    tenant.Name,
-				managedByLabel: managedByValue,
-				appLabel:       appName,
-			},
-		},
-		Spec: batchv1.JobSpec{
-			TTLSecondsAfterFinished: &ttl,
-			ActiveDeadlineSeconds:   &deadline,
-			Template: corev1.PodTemplateSpec{
-				Spec: corev1.PodSpec{
-					RestartPolicy: corev1.RestartPolicyOnFailure,
-					Containers: []corev1.Container{
-						minioContainer("delete-bucket", bucket, minioDeleteScript(bucket)),
-					},
-				},
-			},
-		},
-	}
+	return backup.ObjectStorageDestroyJob(tenant, appName, backup.DestroyInTheBackground)
 }
 
 func minioContainer(name, bucket, script string) corev1.Container {
@@ -252,24 +229,6 @@ fi
 echo "bucket %[1]s ready"`, bucket)
 }
 
-// minioDeleteScript removes the bucket and the user and policy that were made
-// for it. The user is found through the policy, whose statement names the
-// bucket: the key pair itself was seeded and is not known to a delete Job.
-func minioDeleteScript(bucket string) string {
-	return fmt.Sprintf(`set -eu
-mc alias set gentian "${MINIO_ENDPOINT}" "${MINIO_ACCESS_KEY}" "${MINIO_SECRET_KEY}"
-mc rb --force "gentian/%[1]s" 2>/dev/null || echo "bucket %[1]s already gone"
-for policy in $(mc admin policy ls gentian 2>/dev/null); do
-  case "${policy}" in *-policy) ;; *) continue ;; esac
-  if mc admin policy info gentian "${policy}" 2>/dev/null | grep -q 'arn:aws:s3:::%[1]s"'; then
-    mc admin user rm gentian "${policy%%-policy}" 2>/dev/null || true
-    mc admin policy rm gentian "${policy}" 2>/dev/null || true
-    echo "user ${policy%%-policy} and its policy removed"
-  fi
-done
-echo "bucket %[1]s removed"`, bucket)
-}
-
 func s3BucketName(tenant *gentianov1alpha1.Tenant, appName string) string {
 	return backup.S3Bucket(tenant, appName)
 }
@@ -279,5 +238,5 @@ func s3BucketJobName(tenantName, appName string) string {
 }
 
 func s3BucketDeleteJobName(tenantName, appName string) string {
-	return fmt.Sprintf("s3-delete-%s-%s", tenantName, appName)
+	return backup.ObjectStorageDestroyJobName(tenantName, appName)
 }

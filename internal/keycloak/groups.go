@@ -89,3 +89,17 @@ func GroupsJobName(tenantName string) string {
 func ShellWordList(values []string) string {
 	return strings.Join(values, " ")
 }
+
+// RealmName is the Keycloak realm a tenant's people, groups and clients are
+// in: spec.isolation.keycloakRealm when the tenant names one, and otherwise
+// the tenant's own name. The platform tenant names the kernel realm this way.
+//
+// The one place this is decided. Everything that talks to the identity
+// provider about a tenant asks here; taking the tenant's name for its realm
+// is right only for a tenant that did not say otherwise.
+func RealmName(tenant *gentianov1alpha1.Tenant) string {
+	if tenant.Spec.Isolation != nil && tenant.Spec.Isolation.KeycloakRealm != "" {
+		return tenant.Spec.Isolation.KeycloakRealm
+	}
+	return tenant.Name
+}

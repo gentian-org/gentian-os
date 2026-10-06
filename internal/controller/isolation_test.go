@@ -295,17 +295,19 @@ func TestDeletion_EndToEnd_WithApps(t *testing.T) {
 	}
 	// Cleanup Jobs must finish before purgeTenantKernelResources runs; otherwise
 	// incomplete delete Jobs survive after the Tenant finalizer is removed.
-	// In the order the reconciler runs them: each stage waits for its Jobs
-	// before the next stage's are made. A purge drops the Postgres database
-	// before the MariaDB one, and the backup bucket goes with the app buckets.
+	// In the order the reconciler runs them, which is the inventory's
+	// teardown order (backup.TeardownOrder: provisioning's, reversed): each
+	// stage waits for its Jobs before the next stage's are made. The cache
+	// first, then the buckets with the backup bucket, then the databases,
+	// and the realm -- which holds every app's group and client -- last.
 	cleanupJobs := []string{
-		"keycloak-realm-delete-del-full",
-		"pg-delete-del-full-del-pgapp",
-		"mariadb-delete-del-full-del-mariaapp",
+		"redis-acl-delete-del-full-del-pgapp",
 		"s3-delete-del-full-del-pgapp",
 		"s3-delete-del-full-del-mariaapp",
 		"s3-delete-del-full-gentian-backup",
-		"redis-acl-delete-del-full-del-pgapp",
+		"mariadb-delete-del-full-del-mariaapp",
+		"pg-delete-del-full-del-pgapp",
+		"keycloak-realm-delete-del-full",
 	}
 	for _, jobName := range cleanupJobs {
 		waitForKernelJob(t, jobName, "del-full")

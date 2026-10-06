@@ -22,8 +22,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/backup"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
-	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 func tenantKernelLabelSelector(tenantName string) client.MatchingLabels {
@@ -63,10 +63,10 @@ func isTenantCleanupJobName(tenantName, jobName string) bool {
 	cleanupPrefixes := []string{
 		fmt.Sprintf("keycloak-realm-delete-%s", tenantName),
 		fmt.Sprintf("keycloak-realm-disable-%s", tenantName),
-		fmt.Sprintf("mariadb-delete-%s-", tenantName),
-		fmt.Sprintf("pg-delete-%s-", tenantName),
-		fmt.Sprintf("s3-delete-%s-", tenantName),
-		fmt.Sprintf("redis-acl-delete-%s-", tenantName),
+		backup.MariaDBDestroyJobName(tenantName, ""),
+		backup.PostgresDestroyJobName(tenantName, ""),
+		backup.ObjectStorageDestroyJobName(tenantName, ""),
+		backup.CacheDestroyJobName(tenantName, ""),
 	}
 	for _, prefix := range cleanupPrefixes {
 		if strings.HasPrefix(jobName, prefix) {
@@ -131,14 +131,17 @@ func (r *TenantReconciler) purgeTenantKernelResources(ctx context.Context, tenan
 	// inherited the previous one's login. "Delete it and make it again" did not
 	// do what it looks like it does.
 	//
-	// Reported rather than fatal: OpenBao being unreachable must not strand the
-	// finalizer and with it the Tenant, and the residue is a path, not a
-	// workload. Retain skips this with everything else, which is the policy's
-	// meaning — the data stays.
+	// A failure here fails the pass, and the deletion comes back to it. It
+	// used to be logged and passed over, so that an unreachable vault would
+	// not hold the finalizer; what that bought was a tenant reported deleted
+	// with its credentials still stored. The Tenant stays, Terminating, until
+	// the vault answers -- which is the true state. Retain skips this with
+	// everything else, which is the policy's meaning: the data stays.
+	//
+	// An operator with no vault configured has none to purge.
 	if r.Seeder != nil && r.Seeder.KV() != nil {
 		if err := r.Seeder.KV().DeleteTree(ctx, secrets.TenantPath(tenant.Name)); err != nil {
-			log.FromContext(ctx).Error(err, "could not purge the tenant's OpenBao paths",
-				"tenant", tenant.Name)
+			return fmt.Errorf("purge the vault paths of tenant %s: %w", tenant.Name, err)
 		}
 	}
 

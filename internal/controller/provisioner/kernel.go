@@ -13,6 +13,7 @@ package provisioner
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -119,6 +120,7 @@ func EnsureDeleteJobs(
 	jobComplete func(*batchv1.Job) bool,
 ) error {
 	pending := false
+	var failures []string
 	for _, appName := range apps {
 		name := jobName(tenant.Name, appName)
 		existing := &batchv1.Job{}
@@ -132,12 +134,50 @@ func EnsureDeleteJobs(
 			pending = true
 			continue
 		}
+		if jobFailed(existing) {
+			// A cleanup Job that failed did not clean up. It used to count
+			// as "not complete yet", so a deletion waited on it for ever
+			// and said nothing, or went on once its TTL had removed it. It
+			// is reported, and removed so the next pass runs it again: the
+			// deletion resumes where it stopped and does not move past a
+			// store it could not destroy.
+			failures = append(failures, fmt.Sprintf("%s (%s)", name, jobFailureReason(existing)))
+			prop := metav1.DeletePropagationBackground
+			if err := c.Delete(ctx, existing, &client.DeleteOptions{PropagationPolicy: &prop}); err != nil && !errors.IsNotFound(err) {
+				return fmt.Errorf("remove the failed delete Job %s: %w", name, err)
+			}
+			continue
+		}
 		if !jobComplete(existing) {
 			pending = true
 		}
+	}
+	if len(failures) > 0 {
+		return fmt.Errorf("%w in %s: %s; each is run again", ErrDeleteJobFailed, kernelNamespace, strings.Join(failures, ", "))
 	}
 	if pending {
 		return ErrDeleteJobPending
 	}
 	return nil
+}
+
+// ErrDeleteJobFailed is a cleanup Job that ended without doing its work.
+var ErrDeleteJobFailed = fmt.Errorf("cleanup job failed")
+
+func jobFailed(job *batchv1.Job) bool {
+	for _, c := range job.Status.Conditions {
+		if c.Type == batchv1.JobFailed && c.Status == corev1.ConditionTrue {
+			return true
+		}
+	}
+	return false
+}
+
+func jobFailureReason(job *batchv1.Job) string {
+	for _, c := range job.Status.Conditions {
+		if c.Type == batchv1.JobFailed && c.Status == corev1.ConditionTrue {
+			return strings.TrimSpace(c.Reason + " " + c.Message)
+		}
+	}
+	return ""
 }

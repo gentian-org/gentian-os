@@ -1,0 +1,259 @@
+/*
+Copyright The Gentian OS Authors.
+
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+SPDX-License-Identifier: MPL-2.0
+*/
+
+package backup
+
+import (
+	"os/exec"
+	"reflect"
+	"slices"
+	"strings"
+	"testing"
+
+	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+)
+
+// The table is what keeps five acts agreeing about what an app owns, so it
+// has to be complete: a kind that provisioning makes must say what an export
+// does with it and what each teardown does with it. Adding a kind to
+// AppKinds -- or a field to Stores, which is how a new kernel store is
+// declared -- without doing so fails here.
+func TestEveryKindProvisioningMakesIsAccountedForByExportAndTeardown(t *testing.T) {
+	seen := map[Kind]bool{}
+	for _, rule := range AppKinds {
+		if rule.Kind == "" || seen[rule.Kind] {
+			t.Fatalf("kind %q is empty or listed twice", rule.Kind)
+		}
+		seen[rule.Kind] = true
+		if rule.MadeBy == "" {
+			t.Errorf("%s: nothing says what makes it", rule.Kind)
+		}
+		switch rule.Export {
+		case Carries:
+		case Omits:
+			if rule.ExportNote == "" {
+				t.Errorf("%s: an export omits it and does not say why", rule.Kind)
+			}
+		default:
+			t.Errorf("%s: an export must either carry it or omit it for a stated reason, not %q", rule.Kind, rule.Export)
+		}
+		if rule.Uninstall != Keeps && rule.Uninstall != Removes {
+			t.Errorf("%s: uninstalling must keep it or remove it, not %q", rule.Kind, rule.Uninstall)
+		}
+		// What uninstalling keeps, a purge of the app destroys; what it
+		// removes is gone by then. There is no third case: something kept
+		// that no purge destroys would be kept for ever.
+		switch {
+		case rule.Uninstall == Keeps && rule.AppPurge != Destroys:
+			t.Errorf("%s: uninstalling keeps it and the app's purge does not destroy it", rule.Kind)
+		case rule.Uninstall == Removes && rule.AppPurge != Gone:
+			t.Errorf("%s: uninstalling removes it, so there is nothing for a purge to do, not %q", rule.Kind, rule.AppPurge)
+		}
+		if rule.TenantDelete != Destroys && rule.TenantDelete != Removes {
+			t.Errorf("%s: deleting the tenant must destroy or remove it, not %q", rule.Kind, rule.TenantDelete)
+		}
+	}
+
+	// Every store a profile can declare is a kind with a destroy Job: a new
+	// field on Stores that StoreDestroyJobs does not know leaves this short.
+	tenant := &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "demo"}}
+	declared := reflect.TypeOf(Stores{}).NumField()
+	all := Stores{Database: gentianov1alpha1.DatabaseEnginePostgreSQL, S3: true, Redis: true}
+	jobs := StoreDestroyJobs(tenant, "wiki", all, DestroyWithinARequest)
+	if len(jobs) != declared {
+		t.Fatalf("a profile can declare %d kinds of store and %d have a destroy Job: %v", declared, len(jobs), jobs)
+	}
+	for kind := range jobs {
+		if !seen[kind] {
+			t.Errorf("the destroy Job for %s is of a kind the table does not list", kind)
+		}
+		if RuleFor(kind).AppPurge != Destroys || RuleFor(kind).TenantDelete != Destroys {
+			t.Errorf("%s has a destroy Job and the table does not say it is destroyed", kind)
+		}
+	}
+}
+
+// One order: teardown is provisioning reversed, and the purge of an app is
+// the part of it that destroys.
+func TestTeardownIsProvisioningReversed(t *testing.T) {
+	made, torn := ProvisionOrder(), TeardownOrder()
+	reversed := slices.Clone(made)
+	slices.Reverse(reversed)
+	if !reflect.DeepEqual(torn, reversed) {
+		t.Fatalf("teardown %v is not provisioning %v reversed", torn, made)
+	}
+	want := []Kind{KindFiles, KindCache, KindObjectStorage, KindDatabase, KindAccessGroup, KindCredentials, KindRecords}
+	if got := AppPurgeOrder(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("an app's purge works in the order %v, want %v", got, want)
+	}
+	// The stores are made with the passwords the vault already holds, and
+	// the records are written from the first step on.
+	if made[0] != KindRecords || made[1] != KindCredentials {
+		t.Errorf("provisioning starts with %v", made[:2])
+	}
+}
+
+// The names of what an app owns, pinned: provisioning creates them, export
+// reads them and both teardowns destroy them, and none spells one out again.
+func TestTheInventoryNamesWhatAnAppOwns(t *testing.T) {
+	tenant := &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "demo"}}
+	profile := &gentianov1alpha1.ComponentProfile{
+		ObjectMeta: metav1.ObjectMeta{Name: "docmost-ce"},
+		Spec: gentianov1alpha1.ComponentProfileSpec{
+			Package: gentianov1alpha1.PackageSpec{Chart: &gentianov1alpha1.ChartRef{Name: "docmost"}},
+			Requires: &gentianov1alpha1.RequirementSpec{Services: &gentianov1alpha1.ServiceRequirements{
+				Database: &gentianov1alpha1.DatabaseRequirement{Engine: gentianov1alpha1.DatabaseEnginePostgreSQL},
+				Storage:  &gentianov1alpha1.StorageRequirement{S3: &gentianov1alpha1.S3Requirement{}},
+				Cache:    &gentianov1alpha1.CacheRequirement{Engine: gentianov1alpha1.CacheEngineRedis},
+			}},
+			Extensions: []gentianov1alpha1.AppSidecarSpec{{Name: "mcp"}},
+		},
+	}
+	got := InventoryOf(tenant, "docmost-ce", profile)
+	want := AppInventory{
+		Tenant: "demo", App: "docmost-ce",
+		Stores:         Stores{Database: gentianov1alpha1.DatabaseEnginePostgreSQL, S3: true, Redis: true},
+		Database:       "demo_docmost_ce",
+		DatabaseUser:   "demo_docmost-ce",
+		DatabaseRecord: "db-demo-docmost-ce",
+		Bucket:         "demo-docmost-ce",
+		CacheUser:      "demo-docmost-ce",
+		Keys:           []string{"docmost-ce", "docmost-ce-mcp"},
+		Releases:       []string{"docmost-ce-release", "tenant-demo-docmost-ce", "docmost-ce-mcp-release"},
+		Chart:          "docmost",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("inventory =\n%+v\nwant\n%+v", got, want)
+	}
+
+	maria := profile.DeepCopy()
+	maria.Spec.Requires.Services.Database.Engine = gentianov1alpha1.DatabaseEngineMariaDB
+	if inv := InventoryOf(tenant, "docmost-ce", maria); inv.DatabaseUser != "demo_docmost_ce" || inv.DatabaseRecord != "" {
+		t.Errorf("a MariaDB app: user %q, record %q", inv.DatabaseUser, inv.DatabaseRecord)
+	}
+	// Without a profile only what every app has is named.
+	bare := InventoryOf(tenant, "docmost-ce", nil)
+	if bare.Database != "" || bare.Bucket != "" || bare.CacheUser != "" || len(bare.Keys) != 1 {
+		t.Errorf("an inventory without a profile names stores nothing declared: %+v", bare)
+	}
+}
+
+func destroyScripts() map[string]string {
+	return map[string]string{
+		"postgres": postgresDestroyScript("demo_wiki", "demo_wiki"),
+		"mariadb":  mariadbDestroyScript,
+		"minio":    objectStorageDestroyScript("demo-wiki"),
+		"redis":    cacheDestroyScript("demo-wiki"),
+	}
+}
+
+// The destroy scripts end in success only when what they were asked to
+// remove is verifiably gone: they stop at the first failing command and
+// discard no failure. And they have to parse -- a Job that fails at `sh -n`
+// strands a deletion on a syntax error nobody sees until a purge.
+func TestTheDestroyScriptsDiscardNoFailure(t *testing.T) {
+	for name, script := range destroyScripts() {
+		if !strings.HasPrefix(script, "set -eu") {
+			t.Errorf("%s: the script does not stop at the first failing command", name)
+		}
+		for _, line := range strings.Split(script, "\n") {
+			if strings.Contains(line, "|| true") || strings.Contains(line, "|| echo") {
+				t.Errorf("%s: a failure is discarded: %s", name, line)
+			}
+			if strings.Contains(line, "2>/dev/null") && !strings.Contains(line, "user info") {
+				t.Errorf("%s: an error is hidden: %s", name, line)
+			}
+		}
+		shell := "sh"
+		if strings.Contains(script, "pipefail") {
+			shell = "bash"
+		}
+		if out, err := exec.Command(shell, "-n", "-c", script).CombinedOutput(); err != nil {
+			t.Errorf("%s: %s -n: %v\n%s", name, shell, err, out)
+		}
+	}
+	scripts := destroyScripts()
+	for _, want := range []string{
+		`DROP DATABASE IF EXISTS \"${db}\";`, `DROP OWNED BY \"demo_wiki\"`, `DROP ROLE IF EXISTS \"demo_wiki\";`,
+		`rolname = 'demo_wiki' AND NOT d.datistemplate`, "ON_ERROR_STOP=1", "is still there",
+	} {
+		if !strings.Contains(scripts["postgres"], want) {
+			t.Errorf("the PostgreSQL script is missing %q", want)
+		}
+	}
+	// The user and policy are found through the policy statement that names
+	// the bucket exactly -- a prefix match would take a sibling bucket's
+	// user with it.
+	for _, want := range []string{`mc rb --force "gentian/demo-wiki"`, "mc admin user rm", `mc admin policy rm gentian "${policy}"`, `arn:aws:s3:::demo-wiki"`} {
+		if !strings.Contains(scripts["minio"], want) {
+			t.Errorf("the object-storage script is missing %q", want)
+		}
+	}
+	if !strings.Contains(scripts["redis"], "ACL DELUSER 'demo-wiki'") || !strings.Contains(scripts["redis"], "ACL LIST") {
+		t.Error("the cache script does not remove the user and then look for it")
+	}
+}
+
+// One Job per store, the same for an app's purge and a tenant's deletion but
+// for how long it may run: named and labelled so both can find it, in the
+// store's own namespace, under the restricted context those namespaces
+// enforce, and failing rather than retrying for ever.
+func TestTheDestroyJobs(t *testing.T) {
+	tenant := &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "demo"}}
+	cases := []struct {
+		job       *batchv1.Job
+		name, ns  string
+		mustNamed string
+	}{
+		{PostgresDestroyJob(tenant, "wiki", DestroyWithinARequest), "pg-delete-demo-wiki", "system-postgresql", "demo_wiki"},
+		{MariaDBDestroyJob(tenant, "wiki", DestroyWithinARequest), "mariadb-delete-demo-wiki", "system-mariadb", "DROP DATABASE"},
+		{ObjectStorageDestroyJob(tenant, "wiki", DestroyWithinARequest), "s3-delete-demo-wiki", "system-s3", "gentian/demo-wiki"},
+		{CacheDestroyJob(tenant, "wiki", DestroyWithinARequest), "redis-acl-delete-demo-wiki", "system-cache", "demo-wiki"},
+	}
+	for _, c := range cases {
+		job := c.job
+		if job.Name != c.name || job.Namespace != c.ns {
+			t.Errorf("job %s/%s, want %s/%s", job.Namespace, job.Name, c.ns, c.name)
+		}
+		if job.Labels["gentianos.io/tenant"] != "demo" || job.Labels["gentianos.io/app"] != "wiki" || job.Labels["app.kubernetes.io/managed-by"] != "gentian-os" {
+			t.Errorf("%s: labels %v", c.name, job.Labels)
+		}
+		spec := job.Spec
+		if spec.BackoffLimit == nil || *spec.BackoffLimit != 1 || spec.Template.Spec.RestartPolicy != corev1.RestartPolicyNever {
+			t.Errorf("%s: a destroy Job that cannot do its work must fail, not retry for ever", c.name)
+		}
+		if spec.ActiveDeadlineSeconds == nil || *spec.ActiveDeadlineSeconds != 100 {
+			t.Errorf("%s: deadline %v", c.name, spec.ActiveDeadlineSeconds)
+		}
+		container := spec.Template.Spec.Containers[0]
+		sc := container.SecurityContext
+		if sc == nil || sc.AllowPrivilegeEscalation == nil || *sc.AllowPrivilegeEscalation || sc.SeccompProfile == nil || sc.Capabilities == nil {
+			t.Errorf("%s: the pod would be refused admission in %s", c.name, c.ns)
+		}
+		if !strings.Contains(strings.Join(container.Command, " "), c.mustNamed) {
+			t.Errorf("%s: the script does not name %q", c.name, c.mustNamed)
+		}
+	}
+	// A tenant's deletion is not waited for by anybody and gives the same
+	// Job the time a bucket takes to empty.
+	if got := *ObjectStorageDestroyJob(tenant, "wiki", DestroyInTheBackground).Spec.ActiveDeadlineSeconds; got != 3600 {
+		t.Errorf("background deadline = %d", got)
+	}
+	// The backup bucket is deleted as its own unit, and the unit's name
+	// resolves to exactly the bucket exports write to.
+	backupJob := ObjectStorageDestroyJob(tenant, "gentian-backup", DestroyInTheBackground)
+	if !strings.Contains(strings.Join(backupJob.Spec.Template.Spec.Containers[0].Command, " "), "gentian/"+BackupBucket(tenant)) {
+		t.Error("the backup bucket's unit does not name the bucket exports write to")
+	}
+}

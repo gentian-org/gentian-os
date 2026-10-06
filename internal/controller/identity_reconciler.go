@@ -26,6 +26,7 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/authz"
+	"github.com/gentian-org/gentian-os/internal/controller/provisioner"
 	"github.com/gentian-org/gentian-os/internal/kernel"
 	"github.com/gentian-org/gentian-os/internal/keycloak"
 	"github.com/gentian-org/gentian-os/internal/meta"
@@ -282,6 +283,16 @@ func (r *TenantReconciler) deleteIdentity(ctx context.Context, tenant *gentianov
 			}
 			r.deleteProvisioningJobs(ctx, provNames...)
 			return nil
+		}
+		if jobIsFailed(existing) {
+			// The realm was not deleted, or not disabled. Said, and the
+			// Job removed so the next pass runs it again; it used to count
+			// as still running, and the deletion waited on it in silence.
+			prop := metav1.DeletePropagationBackground
+			if err := r.Delete(ctx, existing, &client.DeleteOptions{PropagationPolicy: &prop}); client.IgnoreNotFound(err) != nil {
+				return fmt.Errorf("remove the failed Job %s: %w", jobName, err)
+			}
+			return fmt.Errorf("%w: %s in %s; it is run again", provisioner.ErrDeleteJobFailed, jobName, identityNamespace)
 		}
 		return errDeleteJobPending
 	}
@@ -780,47 +791,69 @@ fi`,
 		realmName, realmName, realmName, realmName, realmName, realmName)
 }
 
+// buildRealmDeleteScript deletes the tenant's realm, and with it every
+// client, group, membership and user in it.
+//
+// The answer is read, not printed and forgotten: the script used to report
+// "deletion requested (HTTP 403)" and exit 0, so a realm the admin credential
+// could not delete was recorded as deleted and the tenant's deletion went on
+// without it. Deleted, or already not there, is success; anything else fails
+// the Job, and the deletion comes back to it.
 func buildRealmDeleteScript(realmName string) string {
 	return fmt.Sprintf(`set -eu
 `+keycloak.ShellAdminToken()+`
 HTTP=$(curl -s -o /dev/null -w "%%{http_code}" \
   -X DELETE \
   -H "Authorization: Bearer ${TOKEN}" \
-  "${KEYCLOAK_URL}/admin/realms/%s")
-echo "realm %s deletion requested (HTTP ${HTTP})"`, realmName, realmName)
+  "${KEYCLOAK_URL}/admin/realms/%[1]s")
+case "${HTTP}" in
+  204) echo "realm %[1]s deleted" ;;
+  404) echo "realm %[1]s is not there" ;;
+  *) echo "ERROR: deleting realm %[1]s answered HTTP ${HTTP}" >&2; exit 1 ;;
+esac`, realmName)
 }
 
 // buildRealmDisableScript disables a Keycloak realm on Retain undeploy,
-// invalidating all active sessions.
+// invalidating all active sessions, and disables the tenant's administrator
+// in the kernel realm when there is one to broker through.
+//
+// Nothing in it is allowed to fail quietly: a realm that could not be
+// disabled is a tenant that was retired and can still sign in.
 func buildRealmDisableScript(realmName, adminUsername, kernelRealm string) string {
-	return fmt.Sprintf(`set -eu
+	script := fmt.Sprintf(`set -eu
 `+keycloak.ShellAdminToken()+`
 HTTP=$(curl -s -o /dev/null -w "%%{http_code}" \
   -H "Authorization: Bearer ${TOKEN}" \
-  "${KEYCLOAK_URL}/admin/realms/%s")
-if [ "${HTTP}" = "404" ]; then
-  echo "realm %s not found, nothing to disable"
-else
-  curl -sf \
-    -X PUT "${KEYCLOAK_URL}/admin/realms/%s" \
-    -H "Authorization: Bearer ${TOKEN}" \
-    -H "Content-Type: application/json" \
-    -d '{"realm":"%s","enabled":false}'
-  echo "realm %s disabled (sessions invalidated)"
-fi
-# Also disable tenant admin in kernel realm when brokering is configured.
+  "${KEYCLOAK_URL}/admin/realms/%[1]s")
+case "${HTTP}" in
+  404) echo "realm %[1]s not found, nothing to disable" ;;
+  200)
+    curl -sf \
+      -X PUT "${KEYCLOAK_URL}/admin/realms/%[1]s" \
+      -H "Authorization: Bearer ${TOKEN}" \
+      -H "Content-Type: application/json" \
+      -d '{"realm":"%[1]s","enabled":false}'
+    echo "realm %[1]s disabled (sessions invalidated)" ;;
+  *) echo "ERROR: reading realm %[1]s answered HTTP ${HTTP}" >&2; exit 1 ;;
+esac
+`, realmName)
+	if kernelRealm == "" {
+		return script
+	}
+	return script + fmt.Sprintf(`# Also disable the tenant admin in the kernel realm, which brokers its sign-in.
 USER_RESP=$(curl -sf -H "Authorization: Bearer ${TOKEN}" \
-  "${KEYCLOAK_URL}/admin/realms/%s/users?username=%s&exact=true" || echo "")
+  "${KEYCLOAK_URL}/admin/realms/%[1]s/users?username=%[2]s&exact=true")
 if echo "${USER_RESP}" | grep -q '"id"'; then
   UID=$(echo "${USER_RESP}" | sed 's/.*"id":"\([^"]*\)".*/\1/')
   curl -sf -X PUT -H "Authorization: Bearer ${TOKEN}" \
     -H "Content-Type: application/json" \
-    "${KEYCLOAK_URL}/admin/realms/%s/users/${UID}" \
-    -d '{"enabled":false}' || true
-  echo "user %s disabled in %s realm"
+    "${KEYCLOAK_URL}/admin/realms/%[1]s/users/${UID}" \
+    -d '{"enabled":false}'
+  echo "user %[2]s disabled in %[1]s realm"
 else
-  echo "user %s not found in %s realm"
-fi`, realmName, realmName, realmName, realmName, realmName, kernelRealm, adminUsername, kernelRealm, adminUsername, kernelRealm, adminUsername, kernelRealm)
+  echo "user %[2]s not found in %[1]s realm"
+fi
+`, kernelRealm, adminUsername)
 }
 
 // --- Name helpers ------------------------------------------------------------
@@ -828,10 +861,7 @@ fi`, realmName, realmName, realmName, realmName, realmName, kernelRealm, adminUs
 // keycloakRealmName returns the Keycloak realm name for a tenant.
 // Uses spec.isolation.keycloakRealm if set, otherwise defaults to the tenant name.
 func keycloakRealmName(tenant *gentianov1alpha1.Tenant) string {
-	if tenant.Spec.Isolation != nil && tenant.Spec.Isolation.KeycloakRealm != "" {
-		return tenant.Spec.Isolation.KeycloakRealm
-	}
-	return tenant.Name
+	return keycloak.RealmName(tenant)
 }
 
 func adminJobName(tenantName string) string {

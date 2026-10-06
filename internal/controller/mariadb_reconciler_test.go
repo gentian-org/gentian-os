@@ -242,7 +242,10 @@ func TestMariaDB_DeleteDeletePolicy_CreatesDeleteJob(t *testing.T) {
 	if err := testClient.Delete(context.Background(), tenant); err != nil {
 		t.Fatalf("delete tenant: %v", err)
 	}
-	// deleteIdentity runs before deleteMariaDB; mark its jobs.
+	// Stores go before the realm (backup.TeardownOrder), and a purge always
+	// removes the backup bucket: that Job has to finish for the rest to follow.
+	go markJobCompleteWhenReady("s3-delete-mariadelete-gentian-backup", "system-s3")
+	// The realm goes after the stores; mark its jobs.
 	go markJobCompleteWhenReady("keycloak-realm-delete-mariadelete", layout.Namespace(layout.Authentication))
 
 	// A delete Job should be created in the kernel namespace.

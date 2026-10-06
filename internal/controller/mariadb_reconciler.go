@@ -13,7 +13,6 @@ package controller
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/gentian-org/gentian-os/internal/kernel"
@@ -23,6 +22,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/backup"
 )
 
 const (
@@ -90,17 +90,10 @@ func makeMariaDBSetupJob(tenant *gentianov1alpha1.Tenant, appName, dbPassword st
 	return newKernelProvisioningJob(mariadbSetupJobName(tenant.Name, appName), mariadbNamespace, tenant, appName, c)
 }
 
-// makeMariaDBDeleteJob builds the DROP DATABASE / DROP USER cleanup Job.
+// makeMariaDBDeleteJob builds the DROP DATABASE / DROP USER cleanup Job: the
+// Job the purge of one app runs too.
 func makeMariaDBDeleteJob(tenant *gentianov1alpha1.Tenant, appName string) *batchv1.Job {
-	dbName := databaseName(tenant, appName)
-	dbUser := mariadbUserName(tenant.Name, appName)
-	return newKernelProvisioningJob(
-		mariadbDeleteJobName(tenant.Name, appName),
-		mariadbNamespace,
-		tenant,
-		appName,
-		mariadbContainer("delete-db", mariadbDeleteScript, dbName, dbUser),
-	)
+	return backup.MariaDBDestroyJob(tenant, appName, backup.DestroyInTheBackground)
 }
 
 // mariadbContainer returns a Container that runs a mariadb CLI script.
@@ -200,30 +193,11 @@ var mariadbSetupScript = "" +
 	"  echo \"privileges granted - done\"\n" +
 	"fi\n"
 
-// mariadbDeleteScript drops the database and user idempotently.
-var mariadbDeleteScript = "" +
-	"set -euo pipefail\n" +
-	"if ! echo \"${DB_NAME}\" | grep -qE '^[a-zA-Z0-9_]+$'; then\n" +
-	"  echo \"ERROR: invalid DB_NAME '${DB_NAME}'\" >&2; exit 1\n" +
-	"fi\n" +
-	"if ! echo \"${DB_USER}\" | grep -qE '^[a-zA-Z0-9_]+$'; then\n" +
-	"  echo \"ERROR: invalid DB_USER '${DB_USER}'\" >&2; exit 1\n" +
-	"fi\n" +
-	"MARIADB=\"mariadb -h${MYSQL_HOST} -P${MYSQL_TCP_PORT} -u${MYSQL_ADMIN_USER}\"\n" +
-	"$MARIADB -e \"REVOKE ALL PRIVILEGES, GRANT OPTION FROM '${DB_USER}'@'%';\" 2>/dev/null || true\n" +
-	"$MARIADB -e \"DROP USER IF EXISTS '${DB_USER}'@'%';\"\n" +
-	"$MARIADB -e \"DROP DATABASE IF EXISTS ${DB_NAME};\"\n" +
-	"echo \"deleted database ${DB_NAME} and user ${DB_USER}\"\n"
-
 // --- Name helpers ------------------------------------------------------------
 
 // mariadbUserName returns the MariaDB username for a tenant + app.
-// Hyphens are replaced with underscores because MariaDB usernames must
-// match ^[a-zA-Z0-9_]+$ (enforced in the provisioner script validation).
 func mariadbUserName(tenantName, appName string) string {
-	safeTenant := strings.ReplaceAll(tenantName, "-", "_")
-	safeApp := strings.ReplaceAll(appName, "-", "_")
-	return fmt.Sprintf("%s_%s", safeTenant, safeApp)
+	return backup.MariaDBUser(tenantName, appName)
 }
 
 func mariadbSetupJobName(tenantName, appName string) string {
@@ -231,5 +205,5 @@ func mariadbSetupJobName(tenantName, appName string) string {
 }
 
 func mariadbDeleteJobName(tenantName, appName string) string {
-	return fmt.Sprintf("mariadb-delete-%s-%s", tenantName, appName)
+	return backup.MariaDBDestroyJobName(tenantName, appName)
 }

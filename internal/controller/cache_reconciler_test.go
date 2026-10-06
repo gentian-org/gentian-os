@@ -22,7 +22,6 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/kernel"
-	"github.com/gentian-org/gentian-os/internal/layout"
 )
 
 // newRedisProfile creates a minimal AppProfile that requires a Redis cache.
@@ -302,11 +301,9 @@ func TestCache_DeleteDeletePolicy_CreatesDeleteJobsAndDeletesApplication(t *test
 	if err := testClient.Delete(context.Background(), tenant); err != nil {
 		t.Fatalf("delete tenant: %v", err)
 	}
-	// deleteIdentity runs before deleteCache; mark its jobs.
-	go markJobCompleteWhenReady("keycloak-realm-delete-cachedelete", layout.Namespace(layout.Authentication))
-	// deleteStorage runs before deleteCache, and a purge always removes the
-	// backup bucket, so that Job has to finish before the cache's is made.
-	go markJobCompleteWhenReady("s3-delete-cachedelete-gentian-backup", "system-s3")
+	// The cache is first in the teardown order (backup.TeardownOrder); its
+	// Job has to finish before the rest of the cache's cleanup follows.
+	go markJobCompleteWhenReady("redis-acl-delete-cachedelete-redis-app3", "system-cache")
 
 	// Redis delete Job should appear.
 	deleteJob := waitForKernelJob(t, "redis-acl-delete-cachedelete-redis-app3", "cachedelete")

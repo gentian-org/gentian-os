@@ -229,7 +229,10 @@ func TestApps_DeleteRemovesAppClaims(t *testing.T) {
 	if err := testClient.Delete(context.Background(), tenant); err != nil {
 		t.Fatalf("delete tenant: %v", err)
 	}
-	// deleteIdentity runs before deleteAppDeployment; mark its jobs.
+	// Stores go before the realm (backup.TeardownOrder), and a purge always
+	// removes the backup bucket: that Job has to finish for the rest to follow.
+	go markJobCompleteWhenReady("s3-delete-del-tenant-gentian-backup", "system-s3")
+	// The realm goes after the stores; mark its jobs.
 	go markJobCompleteWhenReady("keycloak-realm-delete-del-tenant", layout.Namespace(layout.Authentication))
 
 	// App claim should be removed.

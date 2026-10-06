@@ -11,7 +11,6 @@ SPDX-License-Identifier: MPL-2.0
 package controller
 
 import (
-	"os/exec"
 	"strings"
 	"testing"
 
@@ -71,26 +70,5 @@ func TestBuildRoleScript_CreateDBIsConverged(t *testing.T) {
 	revoked := buildRoleScript("demo_m", "demo_m", gentianov1alpha1.SchemaPreferenceAppSchema, false)
 	if !strings.Contains(revoked, `WITH NOCREATEDB;`) {
 		t.Errorf("default did not revoke CREATEDB, so the permission would be sticky:\n%s", revoked)
-	}
-}
-
-// The purge script drops the app's database, whatever else its role owns, and
-// the role -- the same statements the app purge runs -- and it has to parse,
-// because a Job that fails at `sh -n` strands tenant deletion on a syntax
-// error nobody sees until a purge.
-func TestBuildPostgresDeleteScript(t *testing.T) {
-	script := buildPostgresDeleteScript("demo_xwiki", "demo_xwiki_user")
-	for _, want := range []string{
-		`DROP DATABASE IF EXISTS \"${db}\";`,
-		`DROP OWNED BY \"demo_xwiki_user\"`,
-		`DROP ROLE IF EXISTS \"demo_xwiki_user\";`,
-		`rolname = 'demo_xwiki_user' AND NOT d.datistemplate`,
-	} {
-		if !strings.Contains(script, want) {
-			t.Fatalf("buildPostgresDeleteScript() missing %q\nscript:\n%s", want, script)
-		}
-	}
-	if out, err := exec.Command("sh", "-n", "-c", script).CombinedOutput(); err != nil {
-		t.Fatalf("sh -n: %v\n%s", err, out)
 	}
 }
