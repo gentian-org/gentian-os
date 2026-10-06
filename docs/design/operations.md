@@ -311,3 +311,59 @@ admins do not.
 - **Backup verification** runs daily: pgBackRest verify, MinIO
   replication lag check, OpenBao snapshot integrity check. Failures
   alert on the platform team's PagerDuty.
+
+## 9. One Inventory, One Order
+
+Five acts work on what an app of a tenant owns: provisioning makes it, export
+and backup copy it, uninstalling leaves it, a purge of the app destroys it,
+and deleting the tenant destroys it for every app at once. They read one
+inventory and follow one order, both in
+[`internal/backup`](../../internal/backup/): `inventory.go` names each thing
+(`InventoryOf`), and `teardown.go` lists the kinds in the order provisioning
+makes them (`AppKinds`), says what every act does with each, and builds the one
+Job that destroys each store. Teardown is that order reversed
+(`TeardownOrder`); nothing else defines an order. A test fails when a kind is
+added without saying what export and each teardown do with it.
+
+In provisioning order:
+
+| Kind | Install | Export / backup (restore puts back what was carried) | Uninstall | App purge | Tenant delete (`deletionPolicy: Delete`) |
+| --- | --- | --- | --- | --- | --- |
+| Provisioning records (Jobs, labelled Secrets) | written from the first step on | omitted: not data | kept | destroyed, last | destroyed, last |
+| Stored credentials (vault `…/apps/<app>`, `…/apps/<app>-<extension>`) | seeded before each store | omitted: derived or generated per cluster; a restore re-seeds them | kept | destroyed | destroyed, with the tenant's whole vault subtree |
+| Access group and memberships | the tenant's identity Job | carried, in the realm export | kept | destroyed, in the tenant's realm | destroyed, with the realm |
+| Database and role | role Job and CloudNativePG Database, or MariaDB setup Job | carried: dump of the provisioned database | kept | destroyed | destroyed |
+| Object storage (bucket, user, policy) | bucket Job | carried: the objects; user and policy are re-made | kept | destroyed | destroyed, and the tenant's backup bucket unless bundles are kept |
+| Cache user | ACL Job | omitted: a restored cache is stale | kept | removed; keys are not | removed; keys are not |
+| Sign-in client | the app Composition, or the identity Job | carried, in the realm export | removed | — | destroyed, with the realm |
+| Workloads (the Helm release) | the app Composition or the component reconciler | omitted: re-made from the profile | removed | — | removed |
+| Files (the release's volume claims) | the app's chart | carried: an archive per claim | kept | destroyed | destroyed, with the namespace |
+
+So the teardown order is: files, workloads, sign-in client, cache, object
+storage, database, access group, stored credentials, provisioning records. A
+purge of an app runs the steps of that list that destroy (the workloads and the
+client went with the uninstall). A tenant's deletion runs the store steps in
+the same order for every app the tenant ever had — cache, object storage,
+databases, then the realm — with the same Jobs and scripts, then removes the
+namespace and the vault subtree and, last, the records.
+
+Both teardowns fail loudly. A destroy script ends in success only when what
+it was asked to remove is verifiably gone. A purge of an app stops at the first
+step that fails and answers with it
+([store-contract.md](store-contract.md) §8). A tenant's deletion is not waited
+for by anybody: a cleanup Job that fails, or a vault that does not answer, is a
+reconcile error, the Tenant stays `Terminating`, and the failed step is run
+again on the next pass, so it resumes where it stopped and does not move past
+a store it could not destroy.
+
+Known differences from the single order, kept as they are:
+
+- A tenant's deletion removes the namespace — the workloads and the files —
+  after the stores and the realm, not before them.
+- At a tenant's deletion the PostgreSQL databases of apps uninstalled earlier
+  are found through the Database record the cluster keeps; MariaDB databases,
+  buckets and cache users of such apps are found only while their setup Job
+  still exists.
+- Export, restore and purge address the tenant's namespace as `tenant-<name>`;
+  provisioning honours `spec.isolation.namespace`.
+

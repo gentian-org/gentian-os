@@ -12,9 +12,7 @@ package applifecycle
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -99,14 +97,18 @@ func (v *fakeVault) ListChildren(_ context.Context, path string) ([]string, erro
 type fakeGroups struct {
 	mu      sync.Mutex
 	members map[string][]string
-	fail    bool
-	deletes int
+	// fail makes every call fail; failDelete only the deletion.
+	fail, failDelete bool
+	deletes          int
+	// realms are the realms asked about, in order.
+	realms []string
 }
 
-func (g *fakeGroups) DeleteGroup(_ context.Context, _ string, name string) (bool, error) {
+func (g *fakeGroups) DeleteGroup(_ context.Context, realm string, name string) (bool, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if g.fail {
+	g.realms = append(g.realms, realm)
+	if g.fail || g.failDelete {
 		return false, errors.New("keycloak GET /admin/realms/demo/groups: 503 Service Unavailable")
 	}
 	g.deletes++
@@ -115,9 +117,10 @@ func (g *fakeGroups) DeleteGroup(_ context.Context, _ string, name string) (bool
 	return existed, nil
 }
 
-func (g *fakeGroups) GroupNames(_ context.Context, _ string, prefix string) ([]string, error) {
+func (g *fakeGroups) GroupNames(_ context.Context, realm string, prefix string) ([]string, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	g.realms = append(g.realms, realm)
 	if g.fail {
 		return nil, errors.New("keycloak GET /admin/realms/demo/groups: 503 Service Unavailable")
 	}
@@ -141,10 +144,6 @@ type purgeWorld struct {
 	groups *fakeGroups
 
 	mu sync.Mutex
-	// sql is every statement run, as "<pod>: <statement>".
-	sql []string
-	// failSQL makes a statement containing it answer with a server error.
-	failSQL string
 	// jobs are the names of the Jobs created, in order.
 	jobs []string
 	// failJob makes the Job of this name end Failed; hangJob makes it never
@@ -284,32 +283,27 @@ func newPurgeWorld(t *testing.T, tenant *gentianov1alpha1.Tenant, objects []clie
 		}
 		return false, nil, nil
 	})
-	w.svc = &Service{client: w.objs, clientset: w.kube, vault: w.vault, groups: w.groups,
-		exec: func(_ context.Context, ns, pod, container string, command []string) (string, error) {
-			w.mu.Lock()
-			defer w.mu.Unlock()
-			stmt := command[len(command)-1]
-			if ns != layout.System("postgresql") || container != "postgres" {
-				return "", fmt.Errorf("exec into %s/%s[%s]", ns, pod, container)
-			}
-			w.sql = append(w.sql, pod+": "+stmt)
-			if w.failSQL != "" && strings.Contains(stmt, w.failSQL) {
-				return "ERROR:  cannot execute DROP DATABASE in a read-only transaction", nil
-			}
-			return "", nil
-		}}
+	w.svc = &Service{client: w.objs, clientset: w.kube, vault: w.vault, groups: w.groups}
 	return w
 }
 
-func (w *purgeWorld) ran(fragment string) bool {
+// created reports whether a Job of this name was run.
+func (w *purgeWorld) created(job string) bool {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	for _, s := range w.sql {
-		if strings.Contains(s, fragment) {
+	for _, name := range w.jobs {
+		if name == job {
 			return true
 		}
 	}
 	return false
+}
+
+// untouched reports whether nothing at all was destroyed.
+func (w *purgeWorld) untouched(t *testing.T) bool {
+	t.Helper()
+	return len(w.jobs)+len(w.vault.deleted)+w.groups.deletes == 0 &&
+		w.claimExists(t, "wiki-release-data") && w.recordExists(t, "wiki")
 }
 
 func (w *purgeWorld) claimExists(t *testing.T, name string) bool {
@@ -337,7 +331,8 @@ func (w *purgeWorld) recordExists(t *testing.T, app string) bool {
 	return true
 }
 
-var everyKind = []string{KindDatabase, KindObjectStorage, KindCache, KindFiles, KindCredentials, KindAccessGroup, KindRecords}
+// everyKind is the order a purge works in: the inventory's teardown order.
+var everyKind = []string{KindFiles, KindCache, KindObjectStorage, KindDatabase, KindAccessGroup, KindCredentials, KindRecords}
 
 // A purge destroys every kind of data the app owns and nothing of anybody
 // else's: the database and its role on the primary, the bucket and the cache
@@ -351,32 +346,20 @@ func TestAPurgeDestroysEveryKindTheAppOwnsAndNothingElse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Status != "purged" || !res.Purged || res.Complete == nil || !*res.Complete || len(res.NotExamined) != 0 {
+	if res.Status != "purged" || !res.Purged || res.Complete == nil || !*res.Complete {
 		t.Fatalf("result = %+v", res)
 	}
 	if !reflect.DeepEqual(res.Destroyed, everyKind) {
 		t.Fatalf("destroyed = %v, want %v", res.Destroyed, everyKind)
 	}
 
-	// The database, on the primary and nowhere else.
-	for _, want := range []string{`DROP DATABASE IF EXISTS "demo_wiki"`, `DROP ROLE IF EXISTS "demo_wiki"`} {
-		if !w.ran("postgres-2: " + want) {
-			t.Errorf("the primary was not asked to %s; ran %v", want, w.sql)
-		}
-	}
-	if w.ran("postgres-1: ") {
-		t.Errorf("a replica was asked to drop something: %v", w.sql)
-	}
-	if w.ran("demo_drive") {
-		t.Errorf("another app's database was touched: %v", w.sql)
+	// The stores, each by its Job, in teardown order: the cache user, the
+	// bucket, then the database -- and the database's record after it.
+	if want := []string{"redis-acl-delete-demo-wiki", "s3-delete-demo-wiki", "pg-delete-demo-wiki"}; !reflect.DeepEqual(w.jobs, want) {
+		t.Errorf("deletion Jobs = %v, want %v", w.jobs, want)
 	}
 	if w.recordExists(t, "wiki") || !w.recordExists(t, "drive") {
 		t.Error("the database records: wiki's must go and drive's must stay")
-	}
-
-	// The bucket and the cache user.
-	if want := []string{"s3-delete-demo-wiki", "redis-acl-delete-demo-wiki"}; !reflect.DeepEqual(w.jobs, want) {
-		t.Errorf("deletion Jobs = %v, want %v", w.jobs, want)
 	}
 
 	// The files, with the finished pod that held one of them.
@@ -426,16 +409,16 @@ func TestAFailingStepFailsThePurgeAndNamesItself(t *testing.T) {
 		breakIt func(w *purgeWorld)
 		says    string
 	}{
-		{KindDatabase, func(w *purgeWorld) { w.failSQL = "DROP DATABASE" }, "read-only transaction"},
-		{KindObjectStorage, func(w *purgeWorld) { w.failJob = "s3-delete-demo-wiki" }, "s3-delete-demo-wiki failed"},
-		{KindCache, func(w *purgeWorld) { w.failJob = "redis-acl-delete-demo-wiki" }, "redis-acl-delete-demo-wiki failed"},
 		{KindFiles, func(w *purgeWorld) {
 			w.kube.PrependReactor("delete", "persistentvolumeclaims", func(k8stesting.Action) (bool, runtime.Object, error) {
 				return true, nil, errors.New("the storage backend refused")
 			})
 		}, "the storage backend refused"},
+		{KindCache, func(w *purgeWorld) { w.failJob = "redis-acl-delete-demo-wiki" }, "redis-acl-delete-demo-wiki failed"},
+		{KindObjectStorage, func(w *purgeWorld) { w.failJob = "s3-delete-demo-wiki" }, "s3-delete-demo-wiki failed"},
+		{KindDatabase, func(w *purgeWorld) { w.failJob = "pg-delete-demo-wiki" }, "pg-delete-demo-wiki failed"},
+		{KindAccessGroup, func(w *purgeWorld) { w.groups.failDelete = true }, "503"},
 		{KindCredentials, func(w *purgeWorld) { w.vault.fail = "gentian-os/tenants/demo/apps/wiki-mcp" }, "the vault is sealed"},
-		{KindAccessGroup, func(w *purgeWorld) { w.groups.fail = true }, "503"},
 		{KindRecords, func(w *purgeWorld) {
 			w.kube.PrependReactor("list", "secrets", func(action k8stesting.Action) (bool, runtime.Object, error) {
 				if action.(k8stesting.ListAction).GetListRestrictions().Labels.String() == "owner=helm" {
@@ -490,13 +473,13 @@ func TestAFailingStepFailsThePurgeAndNamesItself(t *testing.T) {
 			if after[KindAccessGroup] && w.groups.deletes != 0 {
 				t.Errorf("the access group was deleted after %s failed", c.step)
 			}
-			if after[KindFiles] && !w.claimExists(t, "wiki-release-data") {
-				t.Errorf("files were deleted after %s failed", c.step)
+			if after[KindDatabase] && (w.created("pg-delete-demo-wiki") || !w.recordExists(t, "wiki")) {
+				t.Errorf("the database was dropped after %s failed", c.step)
 			}
 			// And the app is still known to hold data, so it can be found
 			// and purged again -- asked once the identity provider answers
 			// again, where that was what failed.
-			w.groups.fail = false
+			w.groups.failDelete = false
 			retained, err := w.svc.RetainedApps(context.Background(), "demo")
 			if err != nil {
 				t.Fatal(err)
@@ -542,27 +525,87 @@ func TestARetriedPurgeFinishesWhatTheFirstLeft(t *testing.T) {
 	}
 }
 
-// A replica refuses DROP DATABASE, so the statements go to the primary; and
-// with no primary to ask the purge fails rather than skip the database.
-func TestTheDatabaseIsDroppedOnThePrimaryOrNotAtAll(t *testing.T) {
-	w := newPurgeWorld(t, nil, []client.Object{wikiProfile()})
-	if err := w.kube.CoreV1().Pods(layout.System("postgresql")).Delete(context.Background(), "postgres-2", metav1.DeleteOptions{}); err != nil {
-		t.Fatal(err)
+// Whatever can be known beforehand about whether a purge can finish is
+// established before anything is destroyed: that the database server has a
+// primary to drop on, that the vault and the identity provider answer, and
+// that the engine is one this platform can drop. A purge that would have
+// stopped half-way for one of these is refused instead, with everything in
+// place.
+func TestAPurgeThatCannotFinishDestroysNothing(t *testing.T) {
+	odd := wikiProfile()
+	odd.Spec.Requires.Services.Database.Engine = "oracle"
+	cases := []struct {
+		name    string
+		profile *gentianov1alpha1.ComponentProfile
+		breakIt func(t *testing.T, w *purgeWorld)
+		says    string
+	}{
+		{"no PostgreSQL primary", wikiProfile(), func(t *testing.T, w *purgeWorld) {
+			if err := w.kube.CoreV1().Pods(layout.System("postgresql")).Delete(context.Background(), "postgres-2", metav1.DeleteOptions{}); err != nil {
+				t.Fatal(err)
+			}
+		}, "no running PostgreSQL primary"},
+		{"no vault configured", wikiProfile(), func(_ *testing.T, w *purgeWorld) { w.svc.vault = nil }, "no connection to the vault"},
+		{"the vault does not answer", wikiProfile(), func(_ *testing.T, w *purgeWorld) { w.vault.down = true }, "the vault does not answer"},
+		{"the identity provider does not answer", wikiProfile(), func(_ *testing.T, w *purgeWorld) { w.groups.fail = true }, "realm demo"},
+		{"an engine nothing here can drop", odd, func(*testing.T, *purgeWorld) {}, `cannot drop a "oracle" database`},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			w := newPurgeWorld(t, nil, []client.Object{c.profile})
+			c.breakIt(t, w)
+			_, err := w.svc.PurgeApp(context.Background(), "demo", "wiki", "tom")
+			if !errors.Is(err, ErrCannotPurgeNow) {
+				t.Fatalf("err = %v, want a refusal before anything is destroyed", err)
+			}
+			if !strings.Contains(err.Error(), c.says) || !strings.Contains(err.Error(), "Nothing was destroyed") {
+				t.Errorf("message = %s", err)
+			}
+			if !w.untouched(t) {
+				t.Errorf("a purge that could not finish destroyed something: jobs=%v vault=%v", w.jobs, w.vault.deleted)
+			}
+		})
 	}
 
-	_, err := w.svc.PurgeApp(context.Background(), "demo", "wiki", "tom")
-	var failed *PurgeError
-	if !errors.As(err, &failed) || failed.Step != KindDatabase {
-		t.Fatalf("err = %v", err)
+	// Over HTTP: not the caller's mistake and not a half-done purge.
+	w := newPurgeWorld(t, nil, []client.Object{wikiProfile()})
+	w.vault.down = true
+	if code, body := purgeOverHTTP(t, w, "wiki"); code != http.StatusServiceUnavailable || !strings.Contains(body, "Nothing was destroyed") {
+		t.Errorf("answered %d: %s", code, body)
 	}
-	if !strings.Contains(err.Error(), "no running PostgreSQL primary") || !strings.Contains(err.Error(), "Nothing had been destroyed") {
-		t.Errorf("message = %s", err)
+}
+
+// The app's group is in the tenant's realm, which a tenant may name
+// (spec.isolation.keycloakRealm) and the platform tenant does: it is not
+// always called what the tenant is. The group's own name carries the
+// tenant's either way.
+func TestTheAccessGroupIsRemovedFromTheTenantsOwnRealm(t *testing.T) {
+	tenant := demoTenant()
+	tenant.Spec.Isolation = &gentianov1alpha1.TenantIsolation{KeycloakRealm: "gentian"}
+	w := newPurgeWorld(t, tenant, []client.Object{wikiProfile()})
+
+	if _, err := w.svc.PurgeApp(context.Background(), "demo", "wiki", "tom"); err != nil {
+		t.Fatal(err)
 	}
-	if len(w.sql) != 0 {
-		t.Errorf("statements were run with no primary: %v", w.sql)
+	if len(w.groups.realms) == 0 {
+		t.Fatal("the identity provider was never asked")
 	}
-	if !w.recordExists(t, "wiki") {
-		t.Error("the database's record was removed although the database was not dropped")
+	for _, realm := range w.groups.realms {
+		if realm != "gentian" {
+			t.Fatalf("the identity provider was asked about realm %q; the tenant's realm is gentian (asked: %v)", realm, w.groups.realms)
+		}
+	}
+	if _, there := w.groups.members[keycloak.TenantAppGroup("demo", "wiki")]; there {
+		t.Error("the group was not removed")
+	}
+
+	// The read of what is retained asks the same realm.
+	w.groups.realms = nil
+	if _, err := w.svc.RetainedApps(context.Background(), "demo"); err != nil {
+		t.Fatal(err)
+	}
+	if len(w.groups.realms) != 1 || w.groups.realms[0] != "gentian" {
+		t.Errorf("the retained read asked %v", w.groups.realms)
 	}
 }
 
@@ -595,8 +638,8 @@ func TestAPurgeIsRefusedWhileAnythingOfTheAppIsStillThere(t *testing.T) {
 			if !errors.Is(err, c.want) {
 				t.Fatalf("err = %v, want %v", err, c.want)
 			}
-			if len(w.sql)+len(w.jobs)+len(w.vault.deleted)+w.groups.deletes != 0 || !w.claimExists(t, "wiki-release-data") {
-				t.Errorf("a refused purge destroyed something: sql=%v jobs=%v vault=%v", w.sql, w.jobs, w.vault.deleted)
+			if !w.untouched(t) {
+				t.Errorf("a refused purge destroyed something: jobs=%v vault=%v", w.jobs, w.vault.deleted)
 			}
 		})
 	}
@@ -617,60 +660,44 @@ func TestAnotherAppsReleaseDoesNotHoldAPurgeBack(t *testing.T) {
 	}
 }
 
-// When the app's ComponentProfile is no longer on the cluster nothing says
-// which stores it had. The purge does what it did before -- a PostgreSQL
-// database is assumed, the app's own paths, files, group and records go --
-// and answers success for that alone: the answer is marked incomplete and
-// names the kinds it did not examine. Whether such a purge should be refused
-// instead is undecided; the status code is unchanged until it is.
-func TestAPurgeWithoutTheProfileSaysWhatItDidNotExamine(t *testing.T) {
+// Which stores an app has is declared by its profile and by nothing else.
+// When the profile is not on the cluster a purge is refused and destroys
+// nothing: it used to assume a PostgreSQL database, look at nothing else and
+// answer success. The refusal says what the administrator can do, and the
+// app is still listed as holding data.
+func TestAPurgeWithoutTheProfileIsRefusedAndDestroysNothing(t *testing.T) {
 	w := newPurgeWorld(t, nil, nil)
 
-	code, body := purgeOverHTTP(t, w, "wiki")
-	if code != http.StatusOK {
-		t.Fatalf("status = %d: %s", code, body)
+	_, err := w.svc.PurgeApp(context.Background(), "demo", "wiki", "tom")
+	if !errors.Is(err, ErrProfileMissing) {
+		t.Fatalf("err = %v", err)
 	}
-	var res Result
-	if err := json.Unmarshal([]byte(body), &res); err != nil {
-		t.Fatal(err)
-	}
-	if res.Status != "partially-purged" || res.Complete == nil || *res.Complete {
-		t.Fatalf("the answer claims a complete purge: %s", body)
-	}
-	want := []string{KindObjectStorage, KindCache, notExaminedMariaDB, notExaminedExtensionCredentials, notExaminedExtensionGroups, notExaminedChartNamedFiles}
-	if !reflect.DeepEqual(res.NotExamined, want) {
-		t.Errorf("notExamined = %v, want %v", res.NotExamined, want)
-	}
-	if want := []string{KindDatabase, KindFiles, KindCredentials, KindAccessGroup, KindRecords}; !reflect.DeepEqual(res.Destroyed, want) {
-		t.Errorf("destroyed = %v, want %v", res.Destroyed, want)
-	}
-	if !strings.Contains(res.Message, "no longer on this cluster") || !strings.Contains(res.Message, "object storage") {
-		t.Errorf("message = %s", res.Message)
+	if !w.untouched(t) {
+		t.Errorf("a purge without the profile destroyed something: jobs=%v vault=%v", w.jobs, w.vault.deleted)
 	}
 
-	// Which stores it purges is what it was: PostgreSQL assumed, no bucket
-	// or cache Job, and the extension's vault path left alone because
-	// nothing declares the extension.
-	if !w.ran(`DROP DATABASE IF EXISTS "demo_wiki"`) {
-		t.Error("the assumed PostgreSQL database was not dropped")
+	code, body := purgeOverHTTP(t, w, "wiki")
+	if code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409: %s", code, body)
 	}
-	if len(w.jobs) != 0 {
-		t.Errorf("stores the profile would have declared were guessed at: %v", w.jobs)
+	for _, want := range []string{"ComponentProfile wiki is not on this cluster", "Nothing was destroyed", "catalogue source"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the refusal does not say %q: %s", want, body)
+		}
 	}
-	if want := []string{"gentian-os/tenants/demo/apps/wiki"}; !reflect.DeepEqual(w.vault.deleted, want) {
-		t.Errorf("vault paths deleted = %v, want %v", w.vault.deleted, want)
+	for _, gone := range []string{"partially", "notExamined"} {
+		if strings.Contains(body, gone) {
+			t.Errorf("the answer still speaks of a partial purge (%q): %s", gone, body)
+		}
 	}
-	if _, there := w.groups.members[keycloak.TenantAppGroup("demo", "wiki-mcp")]; !there {
-		t.Error("the extension's group was deleted although nothing declares the extension")
-	}
-	// What was not examined is still reported as held, under the name a
-	// purge would have to be asked for to remove it.
+
 	retained, err := w.svc.RetainedApps(context.Background(), "demo")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(retained.Apps) != 1 || retained.Apps[0].Profile != "wiki-mcp" {
-		t.Errorf("after the incomplete purge the cluster reports %+v, want what is left under wiki-mcp", retained.Apps)
+	apps := retainedByProfile(retained.Apps)
+	if wiki, ok := apps["wiki"]; !ok || wiki.ProfileAvailable || wiki.Kinds[KindDatabase] != RetainedPresent {
+		t.Errorf("the app whose purge was refused is not listed as holding data without a profile: %+v", retained.Apps)
 	}
 }
 
@@ -711,26 +738,10 @@ func TestAnIncompletePurgeIsAnErrorTheCallerCanActOn(t *testing.T) {
 	if code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500: %s", code, body)
 	}
-	for _, want := range []string{"did not complete", "object storage", "Already destroyed: database", "Not attempted: cache, files", "Retry the purge"} {
+	for _, want := range []string{"did not complete", "object storage", "Already destroyed: files, cache", "Not attempted: database, access group", "Retry the purge"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("the answer does not say %q: %s", want, body)
 		}
-	}
-}
-
-// With no vault to talk to, the credentials are not destroyed and the purge
-// says so. It used to report them destroyed.
-func TestAPurgeWithNoVaultFailsAtTheCredentials(t *testing.T) {
-	w := newPurgeWorld(t, nil, []client.Object{wikiProfile()})
-	w.svc.vault = nil
-
-	_, err := w.svc.PurgeApp(context.Background(), "demo", "wiki", "tom")
-	var failed *PurgeError
-	if !errors.As(err, &failed) || failed.Step != KindCredentials {
-		t.Fatalf("err = %v", err)
-	}
-	if !strings.Contains(err.Error(), "no credential was deleted") {
-		t.Errorf("message = %s", err)
 	}
 }
 
@@ -751,7 +762,7 @@ func TestAPurgeThatRunsOutOfTimeSaysWhereItStopped(t *testing.T) {
 	if !errors.As(err, &failed) || failed.Step != KindObjectStorage {
 		t.Fatalf("err = %v", err)
 	}
-	if !reflect.DeepEqual(failed.Destroyed, []string{KindDatabase}) || !strings.Contains(err.Error(), "ran out of the") {
+	if !reflect.DeepEqual(failed.Destroyed, []string{KindFiles, KindCache}) || !strings.Contains(err.Error(), "ran out of the") {
 		t.Errorf("err = %v", err)
 	}
 }
@@ -789,31 +800,6 @@ func TestASecondPurgeOfTheSameAppDoesNotQueue(t *testing.T) {
 	}
 	if _, err := w.svc.PurgeApp(context.Background(), "demo", "wiki", "tom"); err != nil {
 		t.Fatalf("after the first finished: %v", err)
-	}
-}
-
-// The deletion scripts end in success only when what they were asked to
-// remove is verifiably gone: no command's failure is discarded.
-func TestTheDeletionScriptsDiscardNoFailure(t *testing.T) {
-	for name, script := range map[string]string{
-		"mariadb": mariadbDeleteScript,
-		"minio":   minioPurgeScript("demo-wiki"),
-		"redis":   redisPurgeScript("demo-wiki"),
-	} {
-		if !strings.HasPrefix(script, "set -eu\n") {
-			t.Errorf("%s: the script does not stop at the first failing command", name)
-		}
-		for _, line := range strings.Split(script, "\n") {
-			if strings.Contains(line, "|| true") || strings.Contains(line, "|| echo") {
-				t.Errorf("%s: a failure is discarded: %s", name, line)
-			}
-		}
-	}
-	minio := minioPurgeScript("demo-wiki")
-	for _, want := range []string{`mc rb --force "gentian/demo-wiki"`, "mc admin user rm", "mc admin policy rm", `arn:aws:s3:::demo-wiki"`} {
-		if !strings.Contains(minio, want) {
-			t.Errorf("the object-storage script does not %s", want)
-		}
 	}
 }
 

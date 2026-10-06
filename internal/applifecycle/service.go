@@ -62,9 +62,6 @@ type Service struct {
 	// groups, when set, is the identity provider to use in place of the one
 	// the keycloak-admin Secret names. Tests set it.
 	groups AccessGroups
-	// exec, when set, runs a command in a pod in place of the API server's
-	// exec. Tests set it.
-	exec func(ctx context.Context, ns, pod, container string, command []string) (string, error)
 }
 
 // accessGroups is the identity provider's groups, with the administrator
@@ -232,7 +229,10 @@ func (s *Service) loadKeycloakAdmin(ctx context.Context) (string, string, string
 	return u, user, pass, nil
 }
 
-func (s *Service) provisionAppGroupUsers(ctx context.Context, tenantName, profileName string) error {
+func (s *Service) provisionAppGroupUsers(ctx context.Context, tenant *gentianov1alpha1.Tenant, profileName string) error {
+	// The group's name carries the tenant's; the realm it is in is the
+	// tenant's own, which need not be called the same.
+	tenantName, realm := tenant.Name, keycloak.RealmName(tenant)
 	// ComponentProfile: AD-4 leaves one catalogue kind, and this asked for
 	// the other one long after the catalogue stopped shipping it, so every
 	// call failed with a NotFound and no app group ever got its attributes.
@@ -290,7 +290,7 @@ func (s *Service) provisionAppGroupUsers(ctx context.Context, tenantName, profil
 	}
 	attrs[keycloak.DefaultGrantAttribute] = []string{"true"}
 
-	groupID, err := kc.EnsureGroup(ctx, tenantName, fullGroupName, attrs)
+	groupID, err := kc.EnsureGroup(ctx, realm, fullGroupName, attrs)
 	if err != nil {
 		return fmt.Errorf("ensure keycloak group %s: %w", fullGroupName, err)
 	}
@@ -298,13 +298,13 @@ func (s *Service) provisionAppGroupUsers(ctx context.Context, tenantName, profil
 		return fmt.Errorf("group %s ID not found", fullGroupName)
 	}
 
-	users, err := kc.ListRealmUsers(ctx, tenantName)
+	users, err := kc.ListRealmUsers(ctx, realm)
 	if err != nil {
-		return fmt.Errorf("list keycloak users in realm %s: %w", tenantName, err)
+		return fmt.Errorf("list keycloak users in realm %s: %w", realm, err)
 	}
 
 	for _, u := range users {
-		if err := kc.AddUserToGroup(ctx, tenantName, u.ID, groupID); err != nil {
+		if err := kc.AddUserToGroup(ctx, realm, u.ID, groupID); err != nil {
 			return fmt.Errorf("failed to add user %s to group %s: %w", u.Username, fullGroupName, err)
 		}
 	}
@@ -321,23 +321,27 @@ func (s *Service) provisionAppGroupUsers(ctx context.Context, tenantName, profil
 // granted is false, with no error, while the group is not there; the caller
 // tries again.
 //
-// The realm is taken to be the tenant's name, as everywhere on this path.
+// The realm is the tenant's own (keycloak.RealmName).
 func (s *Service) GrantAppByDefault(ctx context.Context, tenantName, profile string) (granted bool, err error) {
 	defer s.lockApp(tenantName, profile)()
+	tenant, err := s.getTenant(ctx, tenantName)
+	if err != nil {
+		return false, err
+	}
 
 	kcURL, kcUser, kcPass, err := s.loadKeycloakAdmin(ctx)
 	if err != nil {
 		return false, fmt.Errorf("load keycloak admin credentials: %w", err)
 	}
 	exists, err := authz.NewKeycloakAdminClient(kcURL, kcUser, kcPass).
-		GroupExists(ctx, tenantName, keycloak.TenantAppGroup(tenantName, profile))
+		GroupExists(ctx, keycloak.RealmName(tenant), keycloak.TenantAppGroup(tenantName, profile))
 	if err != nil {
 		return false, fmt.Errorf("look up the app's group: %w", err)
 	}
 	if !exists {
 		return false, nil
 	}
-	if err := s.provisionAppGroupUsers(ctx, tenantName, profile); err != nil {
+	if err := s.provisionAppGroupUsers(ctx, tenant, profile); err != nil {
 		return false, err
 	}
 	return true, nil

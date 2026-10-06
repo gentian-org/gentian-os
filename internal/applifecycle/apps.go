@@ -277,6 +277,10 @@ var ErrStillRemoving = errors.New("the app is still being removed")
 // asked has been told it did not happen.
 var ErrBusy = errors.New("another operation on this app is running")
 
+// ErrProfileMissing is a purge asked of an app whose ComponentProfile is not
+// on the cluster. Nothing is destroyed.
+var ErrProfileMissing = errors.New("the app's profile is missing")
+
 // ErrNotAnApp is a purge asked of a name that is not an app's.
 var ErrNotAnApp = errors.New("not an app")
 
@@ -335,38 +339,39 @@ func (s *Service) PurgeApp(ctx context.Context, tenantName, profile, actor strin
 		}
 	}
 
+	// Which stores an app has is declared by its profile and by nothing
+	// else. Without it a purge could only guess -- it used to assume a
+	// PostgreSQL database and look at nothing more -- and a purge that
+	// guesses either destroys what it should not or reports as purged an
+	// app whose bucket is still there. So it is refused, with everything in
+	// place.
 	cp := &gentianov1alpha1.ComponentProfile{}
 	if err := s.client.Get(ctx, client.ObjectKey{Name: profile}, cp); err != nil {
 		if !apierrors.IsNotFound(err) {
 			return nil, fmt.Errorf("get componentprofile %q: %w", profile, err)
 		}
-		// A profile the cluster no longer has: see purgeSteps for what that
-		// leaves unexamined.
-		cp = nil
+		return nil, fmt.Errorf("%w: the ComponentProfile %s is not on this cluster, and what the app owns in %s "+
+			"cannot be determined without it. Nothing was destroyed. A profile is placed on the cluster when the app "+
+			"is installed from a catalogue source that serves it: make %s available again that way -- installing it "+
+			"in a tenant puts its profile back -- then uninstall it here if it was installed here, and purge",
+			ErrProfileMissing, profile, tenantName, profile)
 	}
 	if err := s.waitForAppGone(ctx, tenant, profile, cp, purgeWait); err != nil {
 		return nil, err
 	}
+	// Everything that can be known beforehand about whether the purge can
+	// finish, before the first thing is destroyed.
+	if err := s.purgePreflight(ctx, tenant, cp); err != nil {
+		return nil, err
+	}
 
 	log.FromContext(ctx).WithName("purge").Info("purging an app", "tenant", tenantName, "app", profile, "actor", actor)
-	destroyed, notExamined, err := s.purge(ctx, tenant, cp, profile)
+	destroyed, err := s.purge(ctx, tenant, cp, profile)
 	if err != nil {
 		return nil, err
 	}
-	res := &Result{Status: "purged", Tenant: tenantName, Profile: profile, Purged: true,
-		Complete: ptr(true), Destroyed: destroyed, Message: "purged by " + actor}
-	if len(notExamined) > 0 {
-		// Success for what was destroyed, and no more than that.
-		res.Status = "partially-purged"
-		res.Complete = ptr(false)
-		res.NotExamined = notExamined
-		res.Message = fmt.Sprintf("purged by %s, incompletely: the ComponentProfile %s is no longer on this cluster, "+
-			"so which stores the app had is not known. A PostgreSQL database was assumed and dropped if it was there. "+
-			"Not examined, and possibly still present: object storage, a cache user, a MariaDB database, "+
-			"the stored credentials and access groups of the app's extensions, and volumes that carry only its chart's name",
-			actor, profile)
-	}
-	return res, nil
+	return &Result{Status: "purged", Tenant: tenantName, Profile: profile, Purged: true,
+		Complete: ptr(true), Destroyed: destroyed, Message: "purged by " + actor}, nil
 }
 
 // appRemnants names what is still on the cluster of an app's workloads: its
@@ -488,7 +493,7 @@ func (s *Service) ProvisionApp(ctx context.Context, tenantName, profile string) 
 	if !installed {
 		return nil, fmt.Errorf("%s is not installed in %s", profile, tenantName)
 	}
-	if err := s.provisionAppGroupUsers(ctx, tenantName, profile); err != nil {
+	if err := s.provisionAppGroupUsers(ctx, tenant, profile); err != nil {
 		return nil, err
 	}
 	return &Result{Status: "provisioned", Tenant: tenantName, Profile: profile}, nil
@@ -538,9 +543,13 @@ func (h *HTTPServer) handlePurgeApp(w http.ResponseWriter, r *http.Request) {
 	res, err := h.Service.PurgeApp(r.Context(), r.PathValue("tenant"), profile, actorOf(r))
 	var incomplete *PurgeError
 	switch {
-	case errors.Is(err, ErrStillInstalled), errors.Is(err, ErrStillRemoving), errors.Is(err, ErrBusy):
+	case errors.Is(err, ErrStillInstalled), errors.Is(err, ErrStillRemoving), errors.Is(err, ErrBusy),
+		errors.Is(err, ErrProfileMissing):
 		// Nothing was destroyed, and the request can be made again.
 		writeErr(w, http.StatusConflict, err)
+	case errors.Is(err, ErrCannotPurgeNow):
+		// Something the purge needs is not there. Nothing was destroyed.
+		writeErr(w, http.StatusServiceUnavailable, err)
 	case errors.As(err, &incomplete):
 		// A purge that began and did not finish. Not the caller's mistake,
 		// so not a 4xx; the message says what was destroyed and to retry.

@@ -107,8 +107,8 @@ func TestTheRetainedReadListsAnUninstalledAppAndOmitsAnInstalledOne(t *testing.T
 			t.Errorf("the read did %s %s", verb, action.GetResource().Resource)
 		}
 	}
-	if len(w.vault.deleted)+len(w.jobs)+len(w.sql)+w.groups.deletes != 0 {
-		t.Errorf("the read changed something: vault=%v jobs=%v sql=%v", w.vault.deleted, w.jobs, w.sql)
+	if len(w.vault.deleted)+len(w.jobs)+w.groups.deletes != 0 {
+		t.Errorf("the read changed something: vault=%v jobs=%v", w.vault.deleted, w.jobs)
 	}
 
 	// And once the app is purged it is no longer listed.

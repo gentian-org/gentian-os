@@ -184,8 +184,9 @@ listener carries a short, closed list of commands for the director and a
 set of reads for the usher, each admitted by its own ServiceAccount (§3.11). The
 operator's ServiceAccount can still read every Secret, so the repository's
 credential is within its reach as any other Secret is; what changed is that
-nothing hands it over. It keeps `pods/exec` because purge
-needs it, to drop a database on the PostgreSQL primary. Purge stays a
+nothing hands it over. Purge no longer needs `pods/exec`: it drops a
+database with the same Job a tenant's deletion runs, through the database
+cluster's read-write Service. Purge stays a
 one-shot command, by decision: it is not a reconcile of desired state, and
 nothing continues it in the background. Destroying data is something a person
 asks for once and is answered about once. What a request that died mid-purge
@@ -193,8 +194,8 @@ used to leave behind is dealt with inside that rule instead: every step is
 safe to repeat, the first step that fails ends the purge with an answer that
 names it, what was already destroyed and what was not attempted, the operator
 bounds the whole purge below its caller's deadline so the answer always
-arrives, and the remedy is to ask again (§3.11). After AD-9 its exec targets
-are the `system-<engine>` namespaces, never `kernel-data`.
+arrives, and the remedy is to ask again (§3.11). Its Jobs run in the
+`system-<engine>` namespaces, never in `kernel-data`.
 
 ### 3.3 Argo CD
 
@@ -737,10 +738,14 @@ a tenant being purged, and the stream of a backup's bundle.
 
 `purge-app` differs from the rest in one way: its answer is the end of the
 work, not the start of it. The operator destroys kind by kind and answers
-when it is over -- `200` with what was destroyed, `409` having destroyed
-nothing while the app is still the tenant's or still being taken down, `500`
-naming the step that failed, what was already destroyed and what was not
-attempted. It gives itself 4 min 30 s for all of it and the director waits
+when it is over -- `200` with what was destroyed; `409` having destroyed
+nothing while the app is still the tenant's, still being taken down, or
+without its ComponentProfile on the cluster; `503` having destroyed nothing
+when the vault, the identity provider or the database primary it will need
+does not answer; `500` naming the step that failed, what was already
+destroyed and what was not attempted. The steps, their order and the Jobs
+that destroy each store are the ones a tenant's deletion uses
+([operations.md](../design/operations.md) §9). It gives itself 4 min 30 s for all of it and the director waits
 5 min for this one action (30 s for every other), so a purge is never cut
 off by the request that asked for it. It is and stays a one-shot command:
 nothing reconciles towards "purged" and nothing resumes one; a purge that
@@ -960,7 +965,8 @@ in step 3, not D — it is the one path that bypasses git entirely.
 
 Delete the operator-side copies from §5, the init container, the values, the
 `X-Gentian-Actor` header everywhere, and the `NeedLeaderElection` special
-case. Remove `pods/exec` from nothing — purge still needs it — but confirm the
+case. Purge no longer execs into a pod; whether the operator's `pods/exec` can
+go is a question for whatever else uses it. Confirm the
 ClusterRole no longer lists `argoproj.io` write verbs.
 
 ## 7. Adjacent scope the split pulls in

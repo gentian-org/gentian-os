@@ -671,7 +671,7 @@ so removing an app never takes its data with it by accident.
 | Kind of data | Uninstall | Purge |
 | --- | --- | --- |
 | Files — the volumes the app's chart creates | **kept**: every volume claim of the release is marked for Helm to leave in place, and the release has one name per tenant and app, so the next install takes the claims over | **destroyed**: the claims are deleted, with any finished pod still holding one, and the purge waits until they are gone |
-| Database | **kept**, with its role and its password | **destroyed**: the database, every database the app's role created, and the role |
+| Database | **kept**, with its role and its password | **destroyed**: the database and the role (on PostgreSQL also every database the role created) |
 | Object storage | **kept**: the bucket, its user and its policy | **destroyed**: the bucket with its contents, the user and the policy |
 | Cache | **kept**: the app's user in the shared instance | the app's user is **removed**; the keys it wrote are not (see the limits below) |
 | Stored credentials — the app's vault paths, and its extensions' | **kept** | **destroyed**, every version |
@@ -710,42 +710,54 @@ vault or the identity provider could not be asked this time. An app that is
 installed, or still being taken down, is never listed.
 
 **A purge is one request, and it fails loudly.** The operator does all of it
-before it answers and continues nothing afterwards. It is refused with `409`,
-having destroyed nothing, while the tenant still has the app (or has it
-switched on as an add-on), while the cluster is still taking it down — until
-Helm has finished uninstalling its release, not merely until its Component is
-gone — or while another purge of the same app is running. Once admitted, it
-destroys kind by kind in the order of the table (database, object storage,
-cache, files, credentials, access group, then the provisioning records). The
-first step that fails ends it: the answer is `500` and says which step failed,
-what had already been destroyed and what was not attempted. Nothing is rolled
-back; every step is safe to repeat, and asking again continues with what is
-left. The operator gives a purge 4 min 30 s in all and the director waits
-5 min for it, so the answer always arrives; a purge that runs out of its time
-says at which step, in the same way.
+before it answers and continues nothing afterwards.
+
+It is refused with `409`, having destroyed nothing:
+
+- while the tenant still has the app, or has it switched on as an add-on;
+- while the cluster is still taking it down — until Helm has finished
+  uninstalling its release, not merely until its Component is gone;
+- while another purge of the same app is running;
+- when the app's ComponentProfile is not on the cluster. Which stores an app
+  has is declared by its profile and by nothing else, so without it what the
+  app owns cannot be determined, and a purge does not guess. A profile is
+  placed on the cluster when the app is installed from a catalogue source
+  that serves it (§3): installing the app again, in any tenant, puts it back,
+  and the purge can then be asked for. The retained list shows such an app
+  with `profileAvailable: false`.
+
+Before it destroys anything it establishes whatever can be known beforehand
+about whether it can finish: the tenant's realm and that the identity provider
+answers for it, that the vault answers, that the database server has a primary
+to drop on, and that the app's database is of an engine the platform can drop.
+If one of these fails the answer is `503`, and nothing was destroyed.
+
+Once admitted, it destroys kind by kind in the platform's one teardown order —
+the order provisioning makes things in, reversed, which the deletion of a
+tenant follows too ([operations.md](operations.md) §9): files, cache user,
+object storage, database, access group, stored credentials, and last the
+provisioning records. The first step that fails ends it: the answer is `500`
+and says which step failed, what had already been destroyed and what was not
+attempted. Nothing is rolled back; every step is safe to repeat, and asking
+again continues with what is left. The operator gives a purge 4 min 30 s in
+all and the director waits 5 min for it, so the answer always arrives; a purge
+that runs out of its time says at which step, in the same way.
 
 The answer of a purge that completed:
 
 ```json
 { "status": "purged", "purged": true, "complete": true,
-  "destroyed": ["database", "objectStorage", "cache", "files", "credentials", "accessGroup", "provisioningRecords"] }
+  "destroyed": ["files", "cache", "objectStorage", "database", "accessGroup", "credentials", "provisioningRecords"] }
 ```
+
+The access group is removed from the tenant's own realm —
+`spec.isolation.keycloakRealm` when the tenant names one, as the platform
+tenant does, and otherwise the realm called after the tenant.
 
 Limits that remain:
 
 - **Cache keys.** The cache is one shared instance. A purge removes the app's
   user; the keys the app wrote carry no owner and stay until they expire.
-- **A profile that is gone.** Which stores an app had is declared by its
-  profile. When the profile is no longer on the cluster, a purge assumes a
-  PostgreSQL database and destroys it, the app's own vault path, its files,
-  its access group and its records, and answers `"status":
-  "partially-purged"`, `"complete": false` and `notExamined` — object storage,
-  a cache user, a MariaDB database, the credentials and access groups of the
-  app's extensions and volumes that carry only the chart's name are not
-  looked at. Such an app is no longer listed as retained afterwards, although
-  a bucket may remain; what an extension left is listed under the
-  extension's own key (`<app>-<extension>`), which is the name a purge of it
-  has to be asked for.
 - **Names that overlap.** An extension's stores are kept under
   `<app>-<extension>`. If the tenant has an app of exactly that name, what is
   under it is that app's and a purge of the first leaves it alone. A volume
@@ -753,10 +765,8 @@ Limits that remain:
   is; one that records none is matched by its labels and its name.
 - **Contracts.** A credential shared through an integration contract belongs
   to neither side and is not removed with either.
-- **The realm.** The access group is looked for in the realm named after the
-  tenant, as everywhere on this path. Were a tenant's people in a realm of
-  another name, the purge would fail at the access-group step, with the app's
-  data already destroyed and the answer saying so.
+- **Databases an app made for itself.** On PostgreSQL every database the
+  app's role owns goes with it. On MariaDB only the provisioned database does.
 
 Uninstalling tells the store nothing. The acquisition stays the tenant's;
 ending it is between the tenant and the store.

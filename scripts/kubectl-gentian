@@ -754,18 +754,18 @@ _purge_app_when_gone() {
             rm -f "${out}"
             die "the purge of ${app} did not complete (the director answered ${status}): ${msg:-no detail}"
         fi
+        # Refused for good, not "not yet": waiting does not bring a profile back.
+        if [[ "${msg}" == *"ComponentProfile"* ]]; then
+            rm -f "${out}"
+            die "the purge of ${app} was refused: ${msg}"
+        fi
         if [[ "$(date +%s)" -ge "${deadline}" ]]; then
             rm -f "${out}"
             die "${app} was still not gone from the cluster after ${wait}s, so nothing was purged and its data is retained: ${msg:-no detail}. Run the same command again once it is gone."
         fi
         sleep 10
     done
-    if [[ "$(jq -r '.complete' "${out}" 2>/dev/null || true)" == "false" ]]; then
-        echo "Purged ${app} from ${t}, incompletely: $(jq -r '.message // empty' "${out}")"
-        echo "Destroyed: $(jq -r '(.destroyed // []) | join(", ")' "${out}"). Not examined: $(jq -r '(.notExamined // []) | join(", ")' "${out}")."
-    else
-        echo "Purged ${app} from ${t}: its data is destroyed ($(jq -r '(.destroyed // []) | join(", ")' "${out}")). This cannot be undone."
-    fi
+    echo "Purged ${app} from ${t}: its data is destroyed ($(jq -r '(.destroyed // []) | join(", ")' "${out}")). This cannot be undone."
     rm -f "${out}"
 }
 

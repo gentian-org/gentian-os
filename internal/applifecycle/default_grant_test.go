@@ -118,11 +118,15 @@ func TestGrantAppByDefaultWaitsForTheGroupThenAddsEverybody(t *testing.T) {
 			Data:       map[string][]byte{"url": []byte(srv.URL), "username": []byte("admin"), "password": []byte("pw")},
 		},
 		&gentianov1alpha1.ComponentProfile{ObjectMeta: metav1.ObjectMeta{Name: "wiki"}},
+		// Named apart from its realm: the grant is made in the realm the
+		// tenant says is its own, not in one assumed to carry its name.
+		&gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "acme"},
+			Spec: gentianov1alpha1.TenantSpec{Isolation: &gentianov1alpha1.TenantIsolation{KeycloakRealm: "demo"}}},
 	).Build()
 	s := &Service{client: c}
-	group := keycloak.TenantAppGroup("demo", "wiki")
+	group := keycloak.TenantAppGroup("acme", "wiki")
 
-	granted, err := s.GrantAppByDefault(context.Background(), "demo", "wiki")
+	granted, err := s.GrantAppByDefault(context.Background(), "acme", "wiki")
 	if err != nil || granted {
 		t.Fatalf("before the group exists: granted=%v err=%v", granted, err)
 	}
@@ -131,7 +135,7 @@ func TestGrantAppByDefaultWaitsForTheGroupThenAddsEverybody(t *testing.T) {
 	}
 
 	kc.groups[group] = map[string][]string{"kept": {"yes"}}
-	granted, err = s.GrantAppByDefault(context.Background(), "demo", "wiki")
+	granted, err = s.GrantAppByDefault(context.Background(), "acme", "wiki")
 	if err != nil || !granted {
 		t.Fatalf("with the group there: granted=%v err=%v", granted, err)
 	}

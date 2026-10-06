@@ -28,24 +28,4 @@ func databaseName(tenant *gentianov1alpha1.Tenant, app string) string {
 	return backup.DatabaseName(tenant, app)
 }
 
-func mariadbUserName(tenant, app string) string { return backup.MariaDBUser(tenant, app) }
-
-func s3BucketName(tenant *gentianov1alpha1.Tenant, app string) string {
-	return backup.S3Bucket(tenant, app)
-}
-
-func redisACLUsername(tenant, app string) string { return backup.RedisACLUser(tenant, app) }
-
 func cnpgDatabaseName(tenant, app string) string { return backup.CNPGDatabaseCR(tenant, app) }
-
-func mariadbDeleteJobName(tenant, app string) string {
-	return "mariadb-delete-" + tenant + "-" + app
-}
-
-func s3DeleteJobName(tenant, app string) string {
-	return "s3-delete-" + tenant + "-" + app
-}
-
-func redisACLDeleteJobName(tenant, app string) string {
-	return "redis-acl-delete-" + tenant + "-" + app
-}

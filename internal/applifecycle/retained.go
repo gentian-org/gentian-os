@@ -69,8 +69,8 @@ type RetainedApp struct {
 	State string `json:"state"`
 	// ProfileAvailable is whether the app's ComponentProfile is still on the
 	// cluster. Without it nothing says which stores the app had: the kinds
-	// that depend on that are unknown here, and a purge of the app answers
-	// "partially-purged" with the kinds it did not examine.
+	// that depend on that are unknown here, and a purge of the app is
+	// refused until the profile is back.
 	ProfileAvailable bool `json:"profileAvailable"`
 	// Kinds says, per kind of data, whether it is present, absent or
 	// unknown. Every kind is always listed.
@@ -142,7 +142,7 @@ func (s *Service) RetainedApps(ctx context.Context, tenantName string) (*Retaine
 		return nil, err
 	}
 
-	src := s.retainedSources(ctx, tenantName, ns)
+	src := s.retainedSources(ctx, tenant, ns)
 	profiles := s.profileLookup(ctx)
 
 	// Every name something is held under. A name that is an extension's key
@@ -224,9 +224,7 @@ func (s *Service) RetainedApps(ctx context.Context, tenantName string) (*Retaine
 // a purge destroys before the ones it can, the credentials and the group. So
 // an app whose purge stopped half-way is still listed here by what is left of
 // the verifiable kinds, and does not drop out of the list with a bucket still
-// to its name. The exception is an app whose profile is gone: a purge of it
-// does not examine those kinds at all, says so in its answer, and the app is
-// not listed afterwards.
+// to its name.
 func (s *Service) retainedApp(tenant *gentianov1alpha1.Tenant, name string, profile *gentianov1alpha1.ComponentProfile, src retainedSources) RetainedApp {
 	tenantName := tenant.Name
 	app := RetainedApp{Profile: name, State: AppStateRetained, ProfileAvailable: profile != nil, Kinds: map[string]string{}}
@@ -288,7 +286,8 @@ func (s *Service) retainedApp(tenant *gentianov1alpha1.Tenant, name string, prof
 // retainedSources reads what is held, once, for the whole tenant. A source
 // that cannot be read is recorded as failed and the read goes on: one
 // unreachable service must not hide what the others report.
-func (s *Service) retainedSources(ctx context.Context, tenantName, ns string) retainedSources {
+func (s *Service) retainedSources(ctx context.Context, tenant *gentianov1alpha1.Tenant, ns string) retainedSources {
+	tenantName := tenant.Name
 	src := retainedSources{
 		databases: map[string]bool{}, credentials: map[string]bool{}, groups: map[string]bool{},
 		failed: map[string]string{},
@@ -324,12 +323,11 @@ func (s *Service) retainedSources(ctx context.Context, tenantName, ns string) re
 		}
 	}
 
-	// Access groups. The realm is the tenant's name, as it is wherever this
-	// API talks to the identity provider.
+	// Access groups, in the tenant's own realm.
 	prefix := keycloak.TenantAppGroup(tenantName, "")
 	if groups, err := s.accessGroups(ctx); err != nil {
 		src.failed[KindAccessGroup] = "the identity provider could not be asked: " + err.Error()
-	} else if found, err := groups.GroupNames(ctx, tenantName, prefix); err != nil {
+	} else if found, err := groups.GroupNames(ctx, keycloak.RealmName(tenant), prefix); err != nil {
 		src.failed[KindAccessGroup] = "the identity provider's groups could not be listed: " + err.Error()
 	} else {
 		for _, g := range found {

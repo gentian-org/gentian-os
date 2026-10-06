@@ -212,6 +212,11 @@ Helm has finished uninstalling its release. The wait is bounded by
 `GENTIAN_UNINSTALL_WAIT` seconds (default 900); when it runs out the command
 says so, nothing has been purged, and the same command can be run again.
 
+A purge is refused, with nothing destroyed, when the app's profile is not on
+the cluster — what the app owns cannot be determined without it; installing
+the app again from a catalogue source puts the profile back — and when the
+vault, the identity provider or the database it will need does not answer.
+
 The purge itself is one request that is answered when it is over. If a step
 fails, the command ends with which step failed, what had already been
 destroyed and what was not attempted; nothing is rolled back, every step is

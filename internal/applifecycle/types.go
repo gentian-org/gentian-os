@@ -40,12 +40,9 @@ type Result struct {
 	Ready    bool     `json:"ready,omitempty"`
 	Message  string   `json:"message,omitempty"`
 	Warnings []string `json:"warnings,omitempty"`
-	// What a purge did. Complete is whether every kind of data the app could
-	// hold was examined: false, with NotExamined naming the kinds, when the
-	// app's profile is no longer on the cluster and what it declared is
-	// unknown. Destroyed are the kinds that are now gone. Set on a purge's
-	// answer and on nothing else.
-	Complete    *bool    `json:"complete,omitempty"`
-	Destroyed   []string `json:"destroyed,omitempty"`
-	NotExamined []string `json:"notExamined,omitempty"`
+	// What a purge did: Destroyed are the kinds of data that are now gone,
+	// in the order they went, and Complete is true. A purge that could not
+	// destroy everything answers with an error, not with this.
+	Complete  *bool    `json:"complete,omitempty"`
+	Destroyed []string `json:"destroyed,omitempty"`
 }

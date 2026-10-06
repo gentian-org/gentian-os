@@ -24,12 +24,10 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/client-go/tools/remotecommand"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/gentian-org/gentian-os/internal/backup"
-	"github.com/gentian-org/gentian-os/internal/kernel"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"github.com/gentian-org/gentian-os/internal/keycloak"
 	"github.com/gentian-org/gentian-os/internal/layout"
@@ -54,20 +52,18 @@ import (
 // not be found, and no command's failure is discarded. Every step can be
 // repeated, so the remedy for a purge that did not complete is to ask again.
 
-// The kinds of data an app can leave behind. The purge reports in these
-// words, and so does the read of what uninstalled apps still hold
-// (retained.go), so that one can be matched against the other.
+// The kinds of data an app can leave behind, as the shared inventory names
+// them (backup.AppKinds). The purge reports in these words, and so does the
+// read of what uninstalled apps still hold (retained.go), so that one can be
+// matched against the other.
 const (
-	KindDatabase      = "database"
-	KindObjectStorage = "objectStorage"
-	KindCache         = "cache"
-	KindFiles         = "files"
-	KindCredentials   = "credentials"
-	KindAccessGroup   = "accessGroup"
-	// KindRecords is what provisioning left in the cluster for the app: the
-	// Jobs, their pods and the Secrets labelled with it. Not data a person
-	// stored, but a finished Job's pod keeps its logs and what it mounted.
-	KindRecords = "provisioningRecords"
+	KindDatabase      = string(backup.KindDatabase)
+	KindObjectStorage = string(backup.KindObjectStorage)
+	KindCache         = string(backup.KindCache)
+	KindFiles         = string(backup.KindFiles)
+	KindCredentials   = string(backup.KindCredentials)
+	KindAccessGroup   = string(backup.KindAccessGroup)
+	KindRecords       = string(backup.KindRecords)
 )
 
 // kindLabels are the kinds as a person reads them.
@@ -80,17 +76,6 @@ var kindLabels = map[string]string{
 	KindAccessGroup:   "access group",
 	KindRecords:       "provisioning records",
 }
-
-// What a purge could not look at because the app's profile is gone. See
-// purgeSteps.
-const (
-	notExaminedMariaDB              = "database.mariadb"
-	notExaminedExtensionCredentials = "credentials.extensions"
-	notExaminedExtensionGroups      = "accessGroup.extensions"
-	// Volume claims that carry the chart's name and nothing of the app's:
-	// without the profile the chart is not known.
-	notExaminedChartNamedFiles = "files.chartNamed"
-)
 
 // The bounds of one purge.
 //
@@ -120,7 +105,7 @@ var (
 // purgeJobDeadlineSeconds ends a deletion Job that hangs before the wait for
 // it does, so the Job reports that it failed rather than the purge reporting
 // only that it stopped waiting.
-const purgeJobDeadlineSeconds = int64(100)
+const purgeJobDeadlineSeconds = int64(backup.DestroyWithinARequest)
 
 // PurgeError is a purge that did not complete.
 type PurgeError struct {
@@ -169,75 +154,106 @@ type purgeStep struct {
 	run  func(ctx context.Context) error
 }
 
-// purgeSteps is what a purge of this app does, in order, and what it cannot
-// look at.
+// purgeSteps is what a purge of this app does, in order.
 //
-// Which stores an app has is declared by its profile and by nothing else. An
-// app whose ComponentProfile is no longer on the cluster is therefore purged
-// of what every app has and of a PostgreSQL database, which is assumed; a
-// bucket, a cache, a MariaDB database, the credentials of its extensions and
-// the volumes that carry only its chart's name are not examined, because
-// nothing says whether they exist or what they are called. Those are returned
-// in notExamined and the purge's answer carries them: it reports what it
-// destroyed and does not claim the rest.
-func (s *Service) purgeSteps(tenant *gentianov1alpha1.Tenant, profile *gentianov1alpha1.ComponentProfile, app string) (steps []purgeStep, notExamined []string) {
-	stores := backup.ProfileStores(profile)
-	engine := stores.Database
-	if profile == nil {
-		engine = gentianov1alpha1.DatabaseEnginePostgreSQL
-		notExamined = []string{KindObjectStorage, KindCache, notExaminedMariaDB,
-			notExaminedExtensionCredentials, notExaminedExtensionGroups, notExaminedChartNamedFiles}
-	}
-	switch engine {
-	case gentianov1alpha1.DatabaseEnginePostgreSQL:
-		steps = append(steps, purgeStep{KindDatabase, func(ctx context.Context) error {
-			return s.purgePostgres(ctx, tenant, app)
-		}})
-	case gentianov1alpha1.DatabaseEngineMariaDB:
-		steps = append(steps, purgeStep{KindDatabase, func(ctx context.Context) error {
-			return s.runMariaDBDeleteJob(ctx, tenant, app)
-		}})
-	case "":
-	default:
-		steps = append(steps, purgeStep{KindDatabase, func(context.Context) error {
-			return fmt.Errorf("this platform cannot drop a %q database", engine)
-		}})
-	}
-	if stores.S3 {
-		steps = append(steps, purgeStep{KindObjectStorage, func(ctx context.Context) error {
-			return s.runS3DeleteJob(ctx, tenant, app)
-		}})
-	}
-	if stores.Redis {
-		steps = append(steps, purgeStep{KindCache, func(ctx context.Context) error {
-			return s.runRedisDeleteJob(ctx, tenant.Name, app)
-		}})
-	}
-	steps = append(steps,
-		purgeStep{KindFiles, func(ctx context.Context) error {
+// The order is the shared inventory's teardown order -- provisioning's,
+// reversed -- and the same one the deletion of a tenant follows: the files
+// first, then the stores, then the access group, the stored credentials and
+// last the records, which the purge's own Jobs add to. A kind the app does
+// not have is not a step. Which stores it has is declared by its profile and
+// by nothing else, which is why a purge is refused without one.
+func (s *Service) purgeSteps(tenant *gentianov1alpha1.Tenant, profile *gentianov1alpha1.ComponentProfile, app string) []purgeStep {
+	inv := backup.InventoryOf(tenant, app, profile)
+	extensions := backup.SidecarNames(profile)
+	stores := backup.StoreDestroyJobs(tenant, app, inv.Stores, backup.DestroyWithinARequest)
+	how := map[backup.Kind]func(ctx context.Context) error{
+		backup.KindFiles: func(ctx context.Context) error {
 			return s.purgePVCs(ctx, tenant, app, profile)
-		}},
-		purgeStep{KindCredentials, func(ctx context.Context) error {
-			return s.purgeCredentials(ctx, tenant, app, backup.SidecarNames(profile))
-		}},
-		purgeStep{KindAccessGroup, func(ctx context.Context) error {
-			return s.purgeAccessGroup(ctx, tenant, app, backup.SidecarNames(profile))
-		}},
-		// Last: the deletion Jobs above are records of this app too.
-		purgeStep{KindRecords, func(ctx context.Context) error {
+		},
+		backup.KindCredentials: func(ctx context.Context) error {
+			return s.purgeCredentials(ctx, tenant, app, extensions)
+		},
+		backup.KindAccessGroup: func(ctx context.Context) error {
+			return s.purgeAccessGroup(ctx, tenant, app, extensions)
+		},
+		backup.KindRecords: func(ctx context.Context) error {
 			return s.purgeClusterArtifacts(ctx, tenant.Name, app)
-		}},
-	)
-	return steps, notExamined
+		},
+	}
+	for kind, job := range stores {
+		how[kind] = func(ctx context.Context) error { return s.runKernelJob(ctx, job) }
+	}
+	if inv.DatabaseRecord != "" {
+		drop := how[backup.KindDatabase]
+		how[backup.KindDatabase] = func(ctx context.Context) error {
+			if err := drop(ctx); err != nil {
+				return err
+			}
+			// The record of the database goes only now that the database
+			// has: it is what says an uninstalled app still holds one, and
+			// removing it first would leave a database nothing reports if
+			// the drop failed.
+			return s.deleteDatabaseRecord(ctx, tenant.Name, app)
+		}
+	}
+	var steps []purgeStep
+	for _, kind := range backup.AppPurgeOrder() {
+		if run, ok := how[kind]; ok {
+			steps = append(steps, purgeStep{string(kind), run})
+		}
+	}
+	return steps
+}
+
+// ErrCannotPurgeNow is a purge that was not begun because something it needs
+// in order to finish is not there. Nothing was destroyed.
+var ErrCannotPurgeNow = errors.New("the purge cannot be completed now")
+
+// purgePreflight establishes, before anything is destroyed, everything that
+// can be known beforehand about whether the purge can finish: the realm the
+// app's group is in and that the identity provider answers for it, that the
+// vault answers, that the database server has a primary to drop on, and that
+// the app's database is of an engine this platform can drop. A purge that
+// would have stopped half-way for any of these stops here instead, with
+// everything still in place.
+func (s *Service) purgePreflight(ctx context.Context, tenant *gentianov1alpha1.Tenant, profile *gentianov1alpha1.ComponentProfile) error {
+	refuse := func(format string, args ...any) error {
+		return fmt.Errorf("%w: %s. Nothing was destroyed; ask again once that is put right",
+			ErrCannotPurgeNow, fmt.Sprintf(format, args...))
+	}
+	switch engine := backup.ProfileStores(profile).Database; engine {
+	case "", gentianov1alpha1.DatabaseEngineMariaDB:
+	case gentianov1alpha1.DatabaseEnginePostgreSQL:
+		if _, err := s.postgresPrimary(ctx); err != nil {
+			return refuse("%v", err)
+		}
+	default:
+		return refuse("this platform cannot drop a %q database", engine)
+	}
+	if s.vault == nil {
+		return refuse("the operator has no connection to the vault (BAO_ADDR is not set), so the app's stored credentials could not be deleted")
+	}
+	if _, err := s.vault.ListChildren(ctx, secrets.AppsPath(tenant.Name)); err != nil {
+		return refuse("the vault does not answer: %v", err)
+	}
+	realm := keycloak.RealmName(tenant)
+	groups, err := s.accessGroups(ctx)
+	if err != nil {
+		return refuse("the identity provider cannot be asked: %v", err)
+	}
+	if _, err := groups.GroupNames(ctx, realm, keycloak.TenantAppGroup(tenant.Name, "")); err != nil {
+		return refuse("the identity provider does not answer for the tenant's realm %s: %v", realm, err)
+	}
+	return nil
 }
 
 // purge runs the steps in order and stops at the first that fails.
 //
 // Stopping is deliberate. A step that failed leaves the app in a state nobody
 // has looked at, and carrying on would destroy more on the strength of it.
-func (s *Service) purge(ctx context.Context, tenant *gentianov1alpha1.Tenant, profile *gentianov1alpha1.ComponentProfile, app string) (destroyed, notExamined []string, err error) {
+func (s *Service) purge(ctx context.Context, tenant *gentianov1alpha1.Tenant, profile *gentianov1alpha1.ComponentProfile, app string) (destroyed []string, err error) {
 	logger := log.FromContext(ctx).WithName("purge").WithValues("tenant", tenant.Name, "app", app)
-	steps, notExamined := s.purgeSteps(tenant, profile, app)
+	steps := s.purgeSteps(tenant, profile, app)
 	for i, step := range steps {
 		if err := step.run(ctx); err != nil {
 			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
@@ -248,7 +264,7 @@ func (s *Service) purge(ctx context.Context, tenant *gentianov1alpha1.Tenant, pr
 				pending = append(pending, later.kind)
 			}
 			logger.Error(err, "a purge step failed", "step", step.kind, "destroyed", destroyed, "pending", pending)
-			return destroyed, notExamined, &PurgeError{
+			return destroyed, &PurgeError{
 				Tenant: tenant.Name, Profile: app, Step: step.kind,
 				Destroyed: destroyed, Pending: pending, Err: err,
 			}
@@ -256,7 +272,7 @@ func (s *Service) purge(ctx context.Context, tenant *gentianov1alpha1.Tenant, pr
 		logger.Info("purged", "kind", step.kind)
 		destroyed = append(destroyed, step.kind)
 	}
-	return destroyed, notExamined, nil
+	return destroyed, nil
 }
 
 // wait pauses for one poll interval, or returns why the purge must stop.
@@ -270,77 +286,6 @@ func wait(ctx context.Context) error {
 }
 
 // --- database ---------------------------------------------------------------
-
-func (s *Service) purgePostgres(ctx context.Context, tenant *gentianov1alpha1.Tenant, app string) error {
-	// The database and the role are named differently -- see pgRoleName -- and
-	// conflating them meant the role always survived a purge.
-	dbName := databaseName(tenant, app)
-	roleName := pgRoleName(tenant.Name, app)
-	pod, err := s.postgresPrimary(ctx)
-	if err != nil {
-		return err
-	}
-	// Apps that declare allowDynamicDatabaseCreation own every database their
-	// users made, not just the provisioned one. Dropping the role would fail
-	// while it still owns objects, and leaving them would strand tenant data on
-	// the shared cluster under a role nobody can log in as any more. Ownership
-	// is the join: CREATE DATABASE makes the creating role the owner, so this
-	// finds them without the platform having to track names it never chose.
-	extra, err := s.databasesOwnedBy(ctx, pod, roleName)
-	if err != nil {
-		return fmt.Errorf("list the databases owned by %s: %w", roleName, err)
-	}
-
-	var statements []string
-	for _, db := range extra {
-		statements = append(statements,
-			fmt.Sprintf("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '%s';", db),
-			fmt.Sprintf(`DROP DATABASE IF EXISTS "%s";`, db),
-		)
-	}
-	dropOwn := []string{
-		fmt.Sprintf("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '%s';", dbName),
-		fmt.Sprintf(`DROP DATABASE IF EXISTS "%s";`, dbName),
-	}
-	statements = append(statements, dropOwn...)
-	statements = append(statements,
-		// Anything the role still owns outside its own databases would block
-		// the drop and strand the role; DROP OWNED clears those grants first.
-		// Guarded because DROP OWNED errors on a missing role, and a purge has
-		// to be repeatable.
-		fmt.Sprintf(`DO $$ BEGIN IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '%s') `+
-			`THEN EXECUTE 'DROP OWNED BY "%s"'; END IF; END $$;`, roleName, roleName),
-		fmt.Sprintf(`DROP ROLE IF EXISTS "%s";`, roleName),
-	)
-	if err := s.runSQL(ctx, pod, statements); err != nil {
-		return err
-	}
-
-	// The record of the database goes only now that the database has: it is
-	// what says an uninstalled app still holds one, and removing it first
-	// would leave a database nothing reports if the statements above failed.
-	if err := s.deleteDatabaseRecord(ctx, tenant.Name, app); err != nil {
-		return err
-	}
-	// While the record stood it asked for the database to be present, and
-	// the database operator may have made it again between the drop and the
-	// record going. Dropping once more closes that; it finds nothing to drop
-	// otherwise.
-	return s.runSQL(ctx, pod, dropOwn)
-}
-
-func (s *Service) runSQL(ctx context.Context, pod string, statements []string) error {
-	for _, sql := range statements {
-		out, err := s.execPostgres(ctx, pod, sql)
-		if err != nil {
-			return fmt.Errorf("psql on %s: %w: %s", pod, err, strings.TrimSpace(out))
-		}
-		if strings.Contains(strings.ToUpper(out), "ERROR") {
-			return fmt.Errorf("psql on %s: %s", pod, strings.TrimSpace(out))
-		}
-	}
-	return nil
-}
 
 // deleteDatabaseRecord removes the CloudNativePG Database object the tenant's
 // provisioning made for the app, and waits for it to be gone.
@@ -377,40 +322,14 @@ func (s *Service) deleteDatabaseRecord(ctx context.Context, tenant, app string) 
 
 var cnpgDatabaseGVK = schema.GroupVersionKind{Group: "postgresql.cnpg.io", Version: "v1", Kind: "Database"}
 
-// databasesOwnedBy lists databases owned by role, excluding the app's own
-// provisioned database, which the caller drops last.
-func (s *Service) databasesOwnedBy(ctx context.Context, pod, role string) ([]string, error) {
-	out, err := s.execPostgres(ctx, pod, fmt.Sprintf(
-		"SELECT d.datname FROM pg_database d JOIN pg_roles r ON r.oid = d.datdba "+
-			"WHERE r.rolname = '%s' AND d.datname <> '%s' AND NOT d.datistemplate;", role, role))
-	if err != nil {
-		return nil, fmt.Errorf("%w: %s", err, strings.TrimSpace(out))
-	}
-	if strings.Contains(strings.ToUpper(out), "ERROR") {
-		return nil, fmt.Errorf("%s", strings.TrimSpace(out))
-	}
-	var names []string
-	for _, line := range strings.Split(out, "\n") {
-		name := strings.TrimSpace(line)
-		// psql's default output frames the rows with a header, a rule and a
-		// "(N rows)" footer; only the indented value lines are database names.
-		if name == "" || strings.HasPrefix(name, "datname") || strings.HasPrefix(name, "-") ||
-			strings.HasPrefix(name, "(") {
-			continue
-		}
-		names = append(names, name)
-	}
-	return names, nil
-}
-
 // postgresPrimary is the one instance of the shared cluster that accepts
 // writes.
 //
-// The instances carry the same cluster label, and a replica refuses DROP
-// DATABASE. Taking whichever pod the API server listed first therefore
-// dropped nothing whenever that was a replica -- on every cluster with more
-// than one instance, some of the time. No primary is a failure, not a reason
-// to skip: nothing can be dropped without one.
+// The database is dropped by a Job that connects through the cluster's
+// read-write Service, which is the primary whichever pod that is; this is
+// the check, made before anything is destroyed, that there is one. A purge
+// used to exec into whichever pod the API server listed first, and a replica
+// refuses DROP DATABASE.
 func (s *Service) postgresPrimary(ctx context.Context) (string, error) {
 	const selector = "cnpg.io/cluster=postgres,cnpg.io/instanceRole=primary"
 	ns := layout.System("postgresql")
@@ -436,125 +355,10 @@ func (s *Service) postgresPrimary(ctx context.Context) (string, error) {
 	}
 }
 
-func (s *Service) execPostgres(ctx context.Context, pod, sql string) (string, error) {
-	return s.execInPod(ctx, layout.System("postgresql"), pod, "postgres",
-		[]string{"psql", "-U", "postgres", "-d", "postgres", "-v", "ON_ERROR_STOP=1", "-c", sql})
-}
-
-// execInPod runs a command in a container and returns what it printed.
-func (s *Service) execInPod(ctx context.Context, ns, pod, container string, command []string) (string, error) {
-	if s.exec != nil {
-		return s.exec(ctx, ns, pod, container, command)
-	}
-	req := s.clientset.CoreV1().RESTClient().Post().
-		Resource("pods").
-		Name(pod).
-		Namespace(ns).
-		SubResource("exec").
-		VersionedParams(&corev1.PodExecOptions{
-			Container: container,
-			Command:   command,
-			Stdout:    true,
-			Stderr:    true,
-		}, parameterCodec)
-	exec, err := remoteCommandExecutor(req.URL())
-	if err != nil {
-		return "", err
-	}
-	var buf bytes.Buffer
-	err = exec.StreamWithContext(ctx, remotecommand.StreamOptions{
-		Stdout: &buf,
-		Stderr: &buf,
-	})
-	return buf.String(), err
-}
-
 // --- deletion Jobs ----------------------------------------------------------
 
-// The three scripts below run in the store's own namespace with its admin
-// credential. Each ends in success only when what it was asked to remove is
-// verifiably not there: no command's failure is discarded, and "already
-// absent" is established by asking the store, never inferred from a failed
-// delete.
-
-// REVOKE is not issued first: it fails on a user that does not exist, which
-// is why it used to be followed by `|| true`, and DROP USER takes the user's
-// privileges with it.
-const mariadbDeleteScript = `set -eu
-if ! echo "${DB_NAME}" | grep -qE '^[a-zA-Z0-9_]+$'; then
-  echo "ERROR: invalid DB_NAME '${DB_NAME}'" >&2; exit 1
-fi
-if ! echo "${DB_USER}" | grep -qE '^[a-zA-Z0-9_]+$'; then
-  echo "ERROR: invalid DB_USER '${DB_USER}'" >&2; exit 1
-fi
-MARIADB="mariadb -h${MYSQL_HOST} -P${MYSQL_TCP_PORT} -u${MYSQL_ADMIN_USER}"
-$MARIADB -e "DROP USER IF EXISTS '${DB_USER}'@'%';"
-$MARIADB -e "DROP DATABASE IF EXISTS ${DB_NAME};"
-echo "deleted database ${DB_NAME} and user ${DB_USER}"
-`
-
-// minioPurgeScript removes the bucket and the user and policy that were made
-// for it. The user is found through the policy, whose statement names the
-// bucket: the key pair itself was seeded and is not known to a delete Job.
-//
-// The same search the tenant purge's script makes, with its failures kept.
-// Whether the bucket exists is read from the server's own listing, so a
-// server that cannot be reached fails the Job where a failed `mc rb` followed
-// by "already gone" reported success.
-func minioPurgeScript(bucket string) string {
-	return fmt.Sprintf(`set -eu
-mc alias set gentian "${MINIO_ENDPOINT}" "${MINIO_ACCESS_KEY}" "${MINIO_SECRET_KEY}" >/dev/null
-buckets="$(mc ls gentian)"
-if printf '%%s\n' "${buckets}" | grep -q ' %[1]s/$'; then
-  mc rb --force "gentian/%[1]s"
-  echo "bucket %[1]s removed"
-else
-  echo "bucket %[1]s is not there"
-fi
-policies="$(mc admin policy ls gentian)"
-for policy in ${policies}; do
-  case "${policy}" in *-policy) ;; *) continue ;; esac
-  info="$(mc admin policy info gentian "${policy}")"
-  case "${info}" in *'arn:aws:s3:::%[1]s"'*) ;; *) continue ;; esac
-  user="${policy%%-policy}"
-  if ! mc admin user rm gentian "${user}"; then
-    if mc admin user info gentian "${user}" >/dev/null 2>&1; then
-      echo "ERROR: user ${user} could not be removed" >&2; exit 1
-    fi
-    echo "user ${user} is not there"
-  fi
-  mc admin policy rm gentian "${policy}"
-  echo "user ${user} and its policy removed"
-done
-echo "object storage for %[1]s purged"
-`, bucket)
-}
-
-// redisPurgeScript removes the app's ACL user.
-//
-// redis-cli exits 0 when the server answers with an error, so the exit code
-// says nothing. The script asks for the user list afterwards and passes only
-// if the list could be read -- it always names the default user -- and the
-// app's user is not in it.
-//
-// The user is all that is removed. The keys the app wrote stay in the shared
-// instance: they carry no owner, and nothing here can tell them from another
-// app's.
-func redisPurgeScript(user string) string {
-	return fmt.Sprintf(`set -eu
-cli() { redis-cli -h "$REDIS_HOST" -p "${REDIS_PORT:-6379}" -a "$REDIS_PASSWORD" --no-auth-warning "$@"; }
-cli ACL DELUSER '%[1]s'
-users="$(cli ACL LIST)"
-case "${users}" in
-  *"user default "*) ;;
-  *) echo "ERROR: the cache did not list its users: ${users}" >&2; exit 1 ;;
-esac
-if printf '%%s\n' "${users}" | grep -q '^user %[1]s '; then
-  echo "ERROR: cache user %[1]s is still there" >&2; exit 1
-fi
-echo "cache user %[1]s is gone"
-`, user)
-}
+// The Jobs themselves, and the scripts they run, are the shared ones in
+// internal/backup/teardown.go: the deletion of a tenant runs the same.
 
 // runKernelJob runs one deletion Job to its end and reports how it ended.
 func (s *Service) runKernelJob(ctx context.Context, job *batchv1.Job) error {
@@ -633,90 +437,6 @@ func (s *Service) jobOutput(ctx context.Context, job *batchv1.Job) string {
 		return ""
 	}
 	return "; its output ended: " + strings.Join(strings.Fields(string(raw)), " ")
-}
-
-func (s *Service) runMariaDBDeleteJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, app string) error {
-	dbName := databaseName(tenant, app)
-	dbUser := mariadbUserName(tenant.Name, app)
-	job := kernelDeleteJob(layout.System("mariadb"), mariadbDeleteJobName(tenant.Name, app), tenant.Name, app,
-		kernel.MariaDBProvisionerImage(), "delete-db", mariadbDeleteScript, append(mysqlAdminEnv(),
-			corev1.EnvVar{Name: "DB_NAME", Value: dbName},
-			corev1.EnvVar{Name: "DB_USER", Value: dbUser},
-		))
-	return s.runKernelJob(ctx, job)
-}
-
-func (s *Service) runS3DeleteJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, app string) error {
-	job := kernelDeleteJob(layout.System("s3"), s3DeleteJobName(tenant.Name, app), tenant.Name, app,
-		"quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z", "delete-bucket",
-		minioPurgeScript(s3BucketName(tenant, app)), minioAdminEnv())
-	return s.runKernelJob(ctx, job)
-}
-
-func (s *Service) runRedisDeleteJob(ctx context.Context, tenant, app string) error {
-	job := kernelDeleteJob(layout.System("cache"), redisACLDeleteJobName(tenant, app), tenant, app,
-		kernel.RedisProvisionerImage(), "del-acl-user",
-		redisPurgeScript(redisACLUsername(tenant, app)), redisAdminEnv())
-	return s.runKernelJob(ctx, job)
-}
-
-func kernelDeleteJob(ns, name, tenant, app, image, container, script string, env []corev1.EnvVar) *batchv1.Job {
-	ttl := int32(3600)
-	return &batchv1.Job{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: ns,
-			Labels: map[string]string{
-				meta.TenantLabel:    tenant,
-				"gentianos.io/app":  app,
-				meta.ManagedByLabel: meta.ManagedByValue,
-			},
-		},
-		Spec: batchv1.JobSpec{
-			TTLSecondsAfterFinished: &ttl,
-			// One retry and a deadline, so a Job that cannot succeed says so
-			// while the purge is still waiting for it.
-			BackoffLimit:          ptr(int32(1)),
-			ActiveDeadlineSeconds: ptr(purgeJobDeadlineSeconds),
-			Template: corev1.PodTemplateSpec{
-				Spec: corev1.PodSpec{
-					RestartPolicy: corev1.RestartPolicyNever,
-					Containers: []corev1.Container{{
-						Name:    container,
-						Image:   image,
-						Command: []string{"/bin/sh", "-c"},
-						Args:    []string{script},
-						Env:     env,
-					}},
-				},
-			},
-		},
-	}
-}
-
-func mysqlAdminEnv() []corev1.EnvVar {
-	return []corev1.EnvVar{
-		meta.SecretEnv("MYSQL_HOST", "mariadb-admin", "host"),
-		meta.SecretEnv("MYSQL_TCP_PORT", "mariadb-admin", "port"),
-		meta.SecretEnv("MYSQL_PWD", "mariadb-admin", "password"),
-		meta.SecretEnv("MYSQL_ADMIN_USER", "mariadb-admin", "username"),
-	}
-}
-
-func minioAdminEnv() []corev1.EnvVar {
-	return []corev1.EnvVar{
-		meta.SecretEnv("MINIO_ENDPOINT", "minio-admin", "endpoint"),
-		meta.SecretEnv("MINIO_ACCESS_KEY", "minio-admin", "accessKey"),
-		meta.SecretEnv("MINIO_SECRET_KEY", "minio-admin", "secretKey"),
-	}
-}
-
-func redisAdminEnv() []corev1.EnvVar {
-	return []corev1.EnvVar{
-		meta.SecretEnv("REDIS_HOST", "redis-admin", "host"),
-		meta.SecretEnv("REDIS_PORT", "redis-admin", "port"),
-		meta.SecretEnv("REDIS_PASSWORD", "redis-admin", "password"),
-	}
 }
 
 // --- stored credentials -----------------------------------------------------
@@ -812,17 +532,18 @@ type AccessGroups interface {
 // end of the app in this tenant, and a group left behind would hand a later
 // app of the same name to whoever had the old one.
 //
-// The realm is the tenant's name, as it is wherever this API talks to the
-// identity provider.
+// The realm is the tenant's own (keycloak.RealmName), which need not be
+// called what the tenant is; the group's name always carries the tenant's.
 func (s *Service) purgeAccessGroup(ctx context.Context, tenant *gentianov1alpha1.Tenant, app string, extensions []string) error {
 	groups, err := s.accessGroups(ctx)
 	if err != nil {
 		return err
 	}
+	realm := keycloak.RealmName(tenant)
 	for _, key := range ownedKeys(tenant, app, extensions) {
 		name := keycloak.TenantAppGroup(tenant.Name, key)
-		if _, err := groups.DeleteGroup(ctx, tenant.Name, name); err != nil {
-			return fmt.Errorf("delete the group %s in realm %s: %w", name, tenant.Name, err)
+		if _, err := groups.DeleteGroup(ctx, realm, name); err != nil {
+			return fmt.Errorf("delete the group %s in realm %s: %w", name, realm, err)
 		}
 	}
 	return nil
