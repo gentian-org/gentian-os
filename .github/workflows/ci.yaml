@@ -108,6 +108,13 @@ jobs:
         with:
           version: v2.11
 
+      # A module of its own, with its own license header to check.
+      - name: golangci-lint (api)
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.11
+          working-directory: api
+
       - name: yamllint
         uses: ibiqlik/action-yamllint@v3
         with:

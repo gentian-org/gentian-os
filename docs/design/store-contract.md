@@ -4,6 +4,9 @@ The App Store runs outside the cluster, on infrastructure the cluster does not
 trust and never calls. This is everything that crosses the boundary, in both
 directions. It is the interface a store implementation is written against.
 
+This specification is licensed under Apache-2.0, so that anyone may implement
+it; see [LICENSING.md](../../LICENSING.md).
+
 ## 1. Direction of trust
 
 | | |

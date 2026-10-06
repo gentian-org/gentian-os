@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-# SPDX-FileCopyrightText: 2026 Gentian Organization
-# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-FileCopyrightText: The Gentian OS Authors
+# SPDX-License-Identifier: MPL-2.0
 """Render the operator ClusterRole in the Helm chart from the RBAC rules
 controller-gen derives from the +kubebuilder:rbac markers in ./internal/...
 

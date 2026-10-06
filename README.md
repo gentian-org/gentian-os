@@ -38,3 +38,9 @@ bootstrap via `install.sh`.
 - [docs/roadmap.md](docs/roadmap.md) — roadmap
 - [docs/design/](docs/design/) — architecture deep-dives (kernel, IAM, gateway, multi-tenancy, security, ...)
 - [docs/research/](docs/research/) — exploratory research notes
+
+## License
+
+MPL-2.0, with the API (`api/`, the CRDs and the store contract) under
+Apache-2.0. [LICENSING.md](LICENSING.md) says what covers what and what each
+asks of you; [CONTRIBUTING.md](CONTRIBUTING.md) says how to contribute.
