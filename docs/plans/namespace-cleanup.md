@@ -56,7 +56,7 @@ the catalogue.
 | Keycloak event listener (SPI provider pushing signed membership events to the director) | — | `kernel-authentication` | new; the director is its only receiver; holds only its signing key |
 | OpenFGA | `platform-kernel` | `kernel-authorization` | reachable from enforcement points only |
 | gentian-os operator, custodian, `job-gc` CronJob | `gentian-system` | `kernel-control` | the director joins here |
-| Director API endpoint (called by the external App Store) | — | `kernel-control`, route on the kernel gateway, bearer only | the App Store runs outside the cluster, operated by Gentian Technologies |
+| Director API endpoint | — | `kernel-control`, route on the kernel gateway, bearer only | its callers are on the cluster or are the command line; the store outside the cluster never calls it (AD-3) |
 | `kernel-admin` admin credentials | `platform-kernel` | `kernel-control` | |
 | `kernel-admin` `portal-shell` database | `platform-kernel` | `kernel-data` | |
 | CNPG `kernel-postgres` for Keycloak, Keycloak extensions, OpenFGA | — (Bitnami `infra-postgresql` in `gentian-infra-<stage>`) | `kernel-data` | kernel identity does not share a data plane with tenants |
@@ -103,7 +103,7 @@ None today. The first candidate:
 
 | Workload | Today | Target |
 | --- | --- | --- |
-| App Store (`app-store-me` profile, per tenant) | `tenant-<t>` | external service; the cluster keeps the director's endpoint (§2.1) and, per tenant, only the installed profiles |
+| App Store (`app-store-me` profile, per tenant) | `tenant-<t>` | retired. Its data moves to a store outside the cluster; its interface is the App Store app, a platform UI per tenant with no ServiceAccount (AD-3). The cluster holds, per tenant, only the installed profiles |
 
 ### 2.5 Tenant
 

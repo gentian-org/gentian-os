@@ -45,11 +45,13 @@ in [iam.md](iam.md) and [multi-tenancy.md §8](multi-tenancy.md#81-admin--user-s
 | **Audit** | Sign-in and admin-action history | P6 — read-only event log, export |
 | **Notifications** | Scoped broadcasts | P7 — `admin-notifications` contract (**done**) |
 | **Resources** | Resource plans, ceilings, usage history | P10 — see [§4.8](#48-resources-p10) and [resource-plans.md](resource-plans.md) (**done**) |
-| **Catalogue** | What this cluster's own sources hold | The bare index (AD-14): coordinate, version, edition, trust tier. Installing is the App Store's |
+| **Apps** | The tenant's installed apps | Per app: state, who has access and the "for everyone" setting, integrations, privileges (requested and approved), uninstall, purge. Uninstall keeps the app's data; purge destroys the data of an app that is no longer installed ([ui-restructure.md](../plans/ui-restructure.md) §2, [store-contract.md](store-contract.md) §8) |
+| **Catalogue** | What this cluster's own sources hold | **Hidden.** The cluster renders no catalogue of its own (AD-14); the view is kept and not linked. With no store, apps are installed by command |
 
-The **App Store is not a module of the console.** It is a tile of its own
-beside it, opening the store that runs outside the cluster (AD-3,
-[store-contract.md](store-contract.md) §7).
+The **App Store is not a module of the console.** The App Store app is a
+platform UI of its own beside it (AD-3, [store-contract.md](store-contract.md)
+§6): it shows the data of the store outside the cluster and does the
+installing. The console administers what is installed and installs nothing.
 
 Implementation: its own BFF and React UI (`gentian-ui/apps/admin-console`,
 `ui_kits/console` aesthetic), installed from its ComponentProfile. It holds no

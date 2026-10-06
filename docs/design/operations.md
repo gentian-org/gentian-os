@@ -208,12 +208,19 @@ leaves it off. The operator chart's own default is off with no address, so a
 cluster installed without the installer reports nowhere. Off, nothing is sent,
 ever, and no signing key is created.
 
-**What turning it off costs.** The App Store is not offered. Its installs are
-what the report lists, so the usher's tiles answer
-(`GET /v1/tenants/{tenant}/tiles`) carries
-`"appStore": {"available": false, "reason": "licence-report-disabled"}` and a
-desktop shows no store; the installer also leaves `catalogue.storeUrl` out of
-a new Cluster claim. Everything else runs as before.
+**What turning it off costs.** The cluster has no App Store app. A store
+serves a tenant only when the reports it has received list that tenant's
+address ([store-contract.md](store-contract.md) §6.2), so the usher's tiles
+answer (`GET /v1/tenants/{tenant}/tiles`) carries
+`"appStore": {"available": false, "reason": "licence-report-disabled"}` and
+no App Store tile is shown; the installer also leaves `catalogue.storeUrl`
+out of a new Cluster claim. Everything else runs as before, and apps are
+installed by command.
+
+**For whoever receives it.** The request above is also written down as a
+machine-readable format,
+[licence-report.openapi.yaml](../plans/artefacts/licence-report.openapi.yaml).
+It describes what the operator sends and changes nothing about it.
 
 ## 7. Image Updates via ArgoCD Image Updater
 

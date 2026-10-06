@@ -1,0 +1,218 @@
+openapi: 3.1.0
+info:
+  title: Gentian OS licence report receiver
+  version: "1"
+  summary: The one request a reporting cluster makes, and what its receiver may answer.
+  license:
+    name: Apache-2.0
+    identifier: Apache-2.0
+  description: |
+    A Gentian OS cluster with licence reporting on sends one report a few
+    minutes after its operator starts and one every 24 hours after that.
+    This file is the format of that request, for whoever receives it. It
+    describes what the cluster already does (`internal/licencereport`,
+    `docs/design/operations.md` §6.2); it changes nothing about it. Where
+    this file and the code disagree, the code is what clusters send and
+    this file is the defect.
+
+    ## Direction
+
+    The cluster calls the receiver. The receiver never calls the cluster,
+    and nothing it answers is acted on: the cluster reads the HTTP status of
+    the reply and nothing else, and discards the body. A cluster whose
+    reports are refused runs exactly as one whose reports arrive.
+
+    ## What the cluster does
+
+    * It sends to one `https` address fixed at install time
+      (`licenceReport.url` in the operator chart). An address that is not
+      `https` counts as none and nothing is sent.
+    * It follows no redirect. A `3xx` is a report that did not arrive.
+    * A status from 200 to 299 is `accepted`. Anything else, or no answer
+      within 30 seconds, is a failure, and the report is tried again after a
+      wait that doubles from one minute up to one hour. A retry is a new
+      report with the next `sequence` and a new `sentAt`, not the same bytes
+      again.
+    * It never sends unsigned. A cluster without its signing key sends
+      nothing.
+
+    ## What a receiver should do
+
+    * Verify the signature over the request body exactly as received, byte
+      for byte, before parsing it: `X-Gentian-Signature` is `ed25519=`
+      followed by the base64 (standard alphabet, padded) Ed25519 signature,
+      made with the key whose public half is `publicKey` in the body.
+      `X-Gentian-Key-Id` is the first 16 hexadecimal characters of the
+      SHA-256 of the raw 32-byte public key, and should match.
+    * The public key travels in the report it verifies, so a signature
+      proves only that the sender holds that key. What ties a key to a
+      cluster is the receiver's own record: remember the key first seen for
+      a `cluster.id`, and treat a report for that id under another key as a
+      different sender.
+    * Refuse a `version` it does not know rather than guess at it.
+    * Use `sequence` to tell a replayed report from a new one: it counts a
+      cluster's reports and never repeats. It may skip numbers — a report
+      that left the cluster and whose outcome could not be recorded has
+      still used its number.
+
+    ## What is in a report, and what is not
+
+    Counts and addresses of things, never of people: no name, e-mail
+    address, user id, group name, tenant display name or administrator's
+    address, and nothing about an app that was not installed at a stated
+    digest.
+
+    ## What a store does with it
+
+    A store that depends on licence reporting (`store-api.openapi.yaml`,
+    `GET /v1/tenant`) matches the tenant URL a person states at sign-in
+    against `tenants[].url` of the reports it has received.
+servers:
+  - url: "{licenceReportUrl}"
+    description: The address fixed at install time. The report is posted to exactly this address; no path is appended.
+    variables:
+      licenceReportUrl:
+        default: https://reports.example/v1/licence-reports
+paths:
+  /:
+    post:
+      operationId: receiveLicenceReport
+      summary: Receive one cluster's report
+      security: []
+      parameters:
+        - name: X-Gentian-Signature
+          in: header
+          required: true
+          description: "`ed25519=` and the base64 Ed25519 signature over the request body, byte for byte."
+          schema:
+            type: string
+            pattern: "^ed25519=[A-Za-z0-9+/]{86}==$"
+          example: ed25519=q2Jm0V0sO3o1cT0d6vH1x9y8m2b7nQk4w5e6r7t8y9u0i1o2p3a4s5d6f7g8h9j0k1l2z3x4c5v6b7n8m9A0BA==
+        - name: X-Gentian-Key-Id
+          in: header
+          required: true
+          description: The first 16 hexadecimal characters of the SHA-256 of the public key in the body.
+          schema:
+            type: string
+            pattern: "^[0-9a-f]{16}$"
+          example: 9f2c4e6a8b0d1f35
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Report"
+            examples:
+              report:
+                value:
+                  version: 1
+                  sequence: 12
+                  sentAt: "2026-03-04T05:06:07Z"
+                  cluster:
+                    id: 3b1f6c0e-8a52-4d0e-9c1b-2f7a5e9d4c10
+                    url: https://cluster.example
+                  tenants:
+                    - url: https://acme.example
+                      users: 40
+                      apps:
+                        - coordinate: gentian/nextcloud-base-ee
+                          digest: sha256:3f6c0a1e5b7d9c2a4e6f8091a3b5c7d9e1f20314253647586970a1b2c3d4e5f6
+                          users: 25
+                        - coordinate: null
+                          digest: sha256:5d4c3b2a19087f6e5d4c3b2a19087f6e5d4c3b2a19087f6e5d4c3b2a19087f6e
+                          users: null
+                  publicKey: 7Yq0b1J2k3L4m5N6o7P8q9R0s1T2u3V4w5X6y7Z8a9A=
+      responses:
+        "2XX":
+          description: |
+            Accepted. Any status from 200 to 299; the cluster records it and
+            reads no body. `202` with no body is the usual answer.
+        "4XX":
+          description: |
+            Refused: a signature that does not verify, a version the
+            receiver does not know, a body that is not a report. The cluster
+            records the status and tries again later with a new report; it
+            reads no body and nothing on it changes.
+        "5XX":
+          description: The receiver failed. Treated by the cluster exactly as a refusal.
+components:
+  schemas:
+    Report:
+      type: object
+      description: |
+        The body, whole. The cluster sends these members and no others, as
+        compact JSON in this order; a receiver verifies the signature over
+        the bytes received and does not re-serialise them first.
+      required: [version, sequence, sentAt, cluster, tenants, publicKey]
+      properties:
+        version:
+          type: integer
+          const: 1
+          description: The format of the body.
+        sequence:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Counts this cluster's reports. Never repeats.
+        sentAt:
+          type: string
+          format: date-time
+          description: When the report was made. RFC 3339, UTC, to the second.
+        cluster:
+          type: object
+          required: [id, url]
+          properties:
+            id:
+              type: string
+              description: The id the cluster is known by.
+            url:
+              type: string
+              description: "`https://` and the cluster's own domain."
+        tenants:
+          type: array
+          description: Every tenant that has a host, sorted by `url`. A tenant being deleted is left out. May be empty.
+          items:
+            $ref: "#/components/schemas/Tenant"
+        publicKey:
+          type: string
+          description: The Ed25519 public key the signature verifies with — 32 bytes, base64, standard alphabet, padded.
+          pattern: "^[A-Za-z0-9+/]{43}=$"
+    Tenant:
+      type: object
+      required: [url, users, apps]
+      properties:
+        url:
+          type: string
+          description: "`https://` and the tenant's host. No path, no trailing slash. The tenant's name is never sent in its place."
+        users:
+          type: [integer, "null"]
+          minimum: 0
+          description: |
+            The number of enabled accounts in the tenant's realm. `null`
+            when they could not be counted, which is not the same as none.
+        apps:
+          type: array
+          description: |
+            The tenant's apps that were installed at a stated digest, sorted
+            by `digest`. An app that arrived with the platform, or was
+            installed with no build named, is not listed. May be empty.
+          items:
+            $ref: "#/components/schemas/App"
+    App:
+      type: object
+      required: [coordinate, digest, users]
+      properties:
+        coordinate:
+          type: [string, "null"]
+          description: |
+            `<catalogue>/<app>`. `null` when the install did not record
+            which catalogue its build was fetched from; `digest` still says
+            which build it is.
+        digest:
+          type: string
+          description: The content digest the install is pinned to.
+          pattern: "^sha256:[0-9a-f]{64}$"
+        users:
+          type: [integer, "null"]
+          minimum: 0
+          description: The number of people entitled to the app — the members of its group. `null` when they could not be counted.

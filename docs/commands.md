@@ -106,20 +106,25 @@ platform tenant can be neither retired nor purged.
 
 ## 5. Tenant App Store
 
-Tenant admins install apps from the **App Store** (preferred) or the CLI.
+Tenant admins install apps from the **App Store app** or the CLI. On a
+cluster with no store the CLI is the only way: the cluster shows no catalogue
+of its own.
 
-### The App Store tile
+### The App Store app
 
-An administrator's desktop carries an **App Store** tile whenever the Cluster
-claim names a store (`catalogue.storeUrl`) and the cluster's licence report is
-on ([design/operations.md §6.2](design/operations.md)). It opens the store in a window.
-Nothing of the store runs in the cluster: what it shows of this tenant —
-what is installed, how it is doing, how much of the plan is used — and what it
-does to it — install, remove, purge, add-ons — it asks of the desktop, which
-asks the director as the person signed in. Each change is confirmed in a
-dialog the desktop draws. See [design/store-contract.md](design/store-contract.md) §7.
+A person who may install apps in a tenant has an **App Store** tile whenever
+the Cluster claim names a store (`catalogue.storeUrl`) and the cluster's
+licence report is on ([design/operations.md §6.2](design/operations.md)). The
+tile opens the App Store app, which runs on the cluster. It shows the data of
+the store outside the cluster — apps, descriptions, reviews, versions, prices
+— and installs through the director and the custodian as the person signed
+in. The store itself never calls the cluster. See
+[design/store-contract.md](design/store-contract.md).
 
-### CLI (fallback)
+Apps that are installed are administered in the admin console's **Apps** tab:
+state, access, integrations, privileges, uninstall and purge.
+
+### CLI
 
 ```bash
 kubectl gentian apps list --tenant demo
@@ -142,7 +147,7 @@ kubectl gentian --help
 
 Apps are installed by the director adding them to the tenant's manifest in
 git, as the person who asked; the operator reconciles them. The tenant's
-administrator usually does this from the App Store; the CLI does the same:
+administrator usually does this from the App Store app; the CLI does the same:
 
 ```bash
 kubectl gentian apps list --tenant demo

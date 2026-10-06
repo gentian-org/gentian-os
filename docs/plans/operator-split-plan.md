@@ -128,10 +128,11 @@ manager). Built from `cmd/director`. It has:
   BFF does in `gentian-ui/backend/app/core/auth.py`. No `X-Gentian-Actor`
   header, ever; identity is the token's verdict (principle 1). Its callers
   are each tenant's desktop BFF (`tenant-<t>`, AD-10 — the platform's own in
-  `tenant-platform`), the CLI, and the **external App Store** (AD-3) —
-  which never holds authority of its own: it calls with the tenant admin's
-  token, or with an RFC 8693 exchanged token carrying `act` (principle 5),
-  and the FGA check is on the human either way. The route is on the kernel
+  `tenant-platform`), the admin console, the CLI, and the **App Store app**
+  (AD-3) — a platform UI on the cluster, which never holds authority of its
+  own: it calls with the tenant admin's token, and the FGA check is on the
+  human. The store outside the cluster is not a caller: it never calls the
+  cluster. The route is on the kernel
   gateway, bearer only, behind the gateway `SecurityPolicy` of G3; the
   director verifies again rather than trusting the hop.
 - An OpenFGA client, which it uses to **ask and never to write**. The store
@@ -244,10 +245,10 @@ projected. The reads below that describe declared state stay here; the ones
 every signed-in person needs merely to use the platform — tiles, "what may I
 do", status — move to the usher, so that loading a desktop no longer reaches
 the process that holds the push credential. A UI that cannot read either has
-to guess. The App Store must show which apps a tenant already has, at which
-version, with which addons and integrations enabled; the console must show
-which users, groups, policies and surfaces exist before it can offer a
-sensible change. Both render from these reads, with the signed-in human's
+to guess. The App Store app must show which of the store's entries a tenant
+already has; the console must show which apps are installed, at which
+version, with which addons and integrations enabled, and which users,
+groups, policies and surfaces exist before it can offer a sensible change. Both render from these reads, with the signed-in human's
 token, filtered by that account's relations. No endpoint below exists as a
 write without its matching read, and a new write verb ships with one.
 
@@ -304,12 +305,13 @@ GET    /v1/clusters/{c}/network
 GET    /v1/operations/{id}                      status of a 202
 ```
 
-The App Store is an ordinary caller of the reads. It holds no cluster state of
-its own and no identity toward the cluster: it renders what the director
-returns for the signed-in tenant administrator, which is what lets it show an
-app as installed, an addon as enabled, or a surface as published, instead of
-offering a choice the cluster has already made. That is a read direction AD-3
-did not originally have; it does not weaken "may trigger, may not supply",
+The App Store app is an ordinary caller of the reads. It is a platform UI on
+the cluster (AD-3) and holds no cluster state of its own and no identity
+toward the cluster: it renders what the director returns for the signed-in
+tenant administrator, which is what lets it show an entry of the store's as
+installed instead of offering a choice the cluster has already made. None of
+what it reads is sent to the store. That does not weaken "the store may
+describe, it may not supply",
 because reading state is not supplying an artefact.
 
 `/v1/files` exists so "sole writer" survives real operations: a platform
@@ -441,17 +443,14 @@ token is the human's, a CLI write is attributed to the human in the commit
 and in the decision log, exactly like a console write; the CLI is not an
 identity.
 
-**The App Store** authenticates the same way as any other client of the read
-API and carries the signed-in administrator's token on an install, so it too
-needs no identity of its own (§3.8, AD-3). What that does and does not buy
-should be plain: a sender-constrained token bound to the *store's* key makes
-a stolen token useless, but it does not stop the store itself from issuing a
-request the human never made — the store holds the key. That is accepted:
-the store is operated by Gentian Technologies, every install is still an
-OpenFGA check on the human and a signed commit naming them, and an
-entitlement it could not also forge is required. A store that must be
-unable to forge needs the browser to sign the intent with a key the store
-never sees; that is recorded as the stronger option, not built.
+**The App Store app** authenticates the same way as any other client and
+carries the signed-in administrator's token on an install, so it too needs
+no identity of its own (AD-3). The store outside the cluster is not a client
+at all: it never holds the person's cluster token, because nothing of it runs
+in the person's session with the cluster — its content reaches the cluster
+as data and is rendered by the App Store app. What a store can still do is
+lie about what an app is; what that is bounded by is
+[store-contract.md](../design/store-contract.md) §7.
 
 ### 3.10 Concierge, bouncer, usher
 
@@ -871,7 +870,7 @@ catastrophic on one with tenants.
 | Console direct writes (§2.2, desired-state rows) | replaced by director calls with the user's token, as `custodian.py` already forwards it; reads become director reads too — the console keeps no Kubernetes identity (G7, [ui-restructure.md](ui-restructure.md) §2) | tenant desktop BFF (`tenant-<t>`) and the platform tenant's in `tenant-platform`, AD-10 |
 | Console direct writes (§2.2, request rows) | director creates the request CR; secrets stay ESO/OpenBao references — settled by G7: all writes move | director, narrow RBAC on those kinds |
 | `catalogue-<repo>` ApplicationSet (every AppProfile synced to every cluster) | retired; the director materialises on reference (§3.6) | — |
-| App Store (`app-store-me` profile, per tenant) | leaves the cluster (AD-3); the director is its ingestion endpoint | external |
+| App Store (`app-store-me` profile, per tenant) | retired. Its data is served by a store outside the cluster; its interface is the App Store app, which installs through the director with the person's token (AD-3) | a store outside; `gentian-ui/apps/app-store` on the cluster |
 | `chart: initContainers.git-clone-deployments`, `git-credentials` volume, `appLifecycle.*` values | delete | — |
 | `Repository/deployments` composition | split read credential from push credential | Crossplane |
 
@@ -909,10 +908,9 @@ the CLI. Order, smallest and most API-shaped first:
 
 1. Resources plan (`PUT …/resources`) — already API-only, one file patch.
 2. Apps install/uninstall/addons — the console has no install path today, so
-   this is the CLI plus the App Store, which becomes the external caller of
-   AD-3 in the same step: the per-tenant `app-store-me` profile is replaced by
-   the external service calling `POST /v1/tenants/{t}/apps/{p}` with the
-   user's token.
+   this is the CLI plus the App Store app of AD-3: the per-tenant
+   `app-store-me` profile is replaced by a platform UI calling
+   `POST /v1/tenants/{t}/apps/{p}` with the user's token.
 3. Tenant deploy/undeploy — CLI-only today; gains authentication for the
    first time.
 4. Console desired-state writes (§2.2).
@@ -1083,12 +1081,11 @@ Cluster claim — in git, written through the director. The values never are.
 - **Credential split shape.** Second `Repository` claim (`deployments-push`)
   vs. a `credential.push` field on the existing one. The field keeps one
   object per repository, which the XRD's own rationale prefers.
-- **How the external App Store presents the human.** The user's own token
-  (the store is a pure client; the token's `aud` must include the director)
-  or an exchanged token with `act` (the store is an agent in the principle 5
-  chain, and its tuples must exist). The first is simpler and keeps the
-  store out of the FGA model; the second is what an autonomous store action
-  — a scheduled upgrade — will need. Start with the first.
+- **How the App Store app presents the human.** Settled: the user's own
+  token. The app is on the cluster and the store outside it never calls in
+  (AD-3). An exchanged token with `act` is what an unattended act — a
+  scheduled upgrade, renewing a repository credential — would need; it is
+  not built.
 - **Refuse by default at the Gateway.** Attach the bouncer to the
   authenticated Gateway itself, so a route with no line in its table is
   refused, and keep the per-route policy for the zone's session only.

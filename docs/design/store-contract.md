@@ -1,42 +1,62 @@
 # The App Store contract
 
-The App Store runs outside the cluster, on infrastructure the cluster does not
-trust and never calls. This is everything that crosses the boundary, in both
-directions. It is the interface a store implementation is written against.
+A store is a service outside the cluster, run by a vendor, on infrastructure
+the cluster does not trust. It holds the **data** about apps: what they are,
+what they look like, what people say about them, which versions exist and
+the digest of each, what they cost, and what a tenant has acquired.
+
+The store's **interface** is not at the store. It is an app on the cluster,
+the **App Store app**: it fetches that data, renders it, and does the
+installing on the cluster's side, as the person signed in. Everything that
+happens when a button is pressed happens on the cluster.
+
+This document is the contract between the two: who calls whom, what a store
+must serve, what the cluster does with each answer, and what a store is
+trusted with. The format of every request and answer is in
+[plans/artefacts/](../plans/artefacts/):
+
+| | |
+|---|---|
+| [store-api.openapi.yaml](../plans/artefacts/store-api.openapi.yaml) | The store API, machine-readable. **Normative**: where this document or the next differs from it, the file is right |
+| [store-api.md](../plans/artefacts/store-api.md) | The same in prose, field by field, with examples. It can be handed to whoever builds a store |
+| [licence-report.openapi.yaml](../plans/artefacts/licence-report.openapi.yaml) | The report a cluster sends about itself, which a store depends on (§6.2). It is spelled out in [operations.md §6.2](operations.md) |
 
 This specification is licensed under Apache-2.0, so that anyone may implement
 it; see [LICENSING.md](../../LICENSING.md).
 
-## 1. Direction of trust
+## 1. Direction
 
 | | |
 |---|---|
-| The cluster calls the store | never |
-| The store calls the cluster | never with an identity of its own. Requests reach the director from the signed-in person's browser, with that person's token |
-| What the store can state | which build an entry is: its coordinate and the content digest of its profile bundle |
-| What the store can read | whatever the signed-in person may read, through the director's read API |
-| What the store can never supply | an artefact. Charts, images and profile bundles come from the catalogue source, by digest |
-| What the store can never decide | whether a tenant may install. The cluster holds no key of the store's and verifies no statement from it |
+| The cluster calls the store | yes. The App Store app's backend, outbound, over HTTPS, to the one address the Cluster claim names (`catalogue.storeUrl`) |
+| The store calls the cluster | never. It holds no credential for a cluster, a cluster exposes no endpoint to it, and nothing in the API needs it to |
+| A page of the store's inside the cluster's interface | never. The store's content arrives as data and is rendered by the cluster's own app. No frame, no script, no message passed between a store page and the cluster |
+| What the store can state | what an app is, and which build an entry is: its coordinate and the content digest of its profile bundle |
+| What the store can hand over | a credential for the repository an app's artefacts are pulled from, which that repository checks |
+| What the store can never supply | an artefact. Profile bundles come from the catalogue source the Cluster claim names, by digest; charts and images from where the bundle says |
+| What the store can never decide | whether a person may install. The cluster holds no key of the store's and verifies no statement from it |
 
-The store may trigger and may read. It may not supply and may not decide for a
-tenant.
+The cluster asks and the store answers. The store may describe and may hand
+over a credential for its own repository. It may not supply and may not
+decide for a tenant.
 
 ## 2. No entitlements
 
 The cluster does no licence gating. There is no statement by which a store
-tells a cluster that a tenant may have an app, no key of a store's pinned on a
-cluster, and no relation in the authorization model for a tenant's right to a
-catalogue entry.
+tells a cluster that a tenant may have an app, no key of a store's pinned on
+a cluster, and no relation in the authorization model for a tenant's right to
+a catalogue entry.
 
 This is a decision, not an omission. Whether a tenant has paid for something
 is the business of whoever sells it, and it is enforced where the thing sold
-is handed over: at the repository the app's artefacts are pulled from. A
-tenant that may have a licensed app holds a credential for that app's source
-repository; a tenant that may not, does not, and the install it commits pulls
-nothing. The platform does not reproduce that decision in a second place,
-where it could only be a copy that drifts from the one that counts — and
-where a platform that wished to run without any store would have to switch a
-gate off rather than simply not have one.
+is handed over: at the repository the app's artefacts are pulled from. The
+store mints a credential for that repository when a tenant acquires an app;
+the repository checks it on every pull. A tenant that holds the credential
+gets the app; a tenant that does not installs something that pulls nothing.
+The platform does not reproduce that decision in a second place, where it
+could only be a copy that drifts from the one that counts — and where a
+platform that wished to run without any store would have to switch a gate
+off rather than simply not have one.
 
 What the platform does decide is who may change a tenant: installing is asked
 of the person (§3). And it decides *which build* is installed, by content
@@ -49,9 +69,11 @@ POST /v1/tenants/{t}/apps/{profile}
 {"coordinate": "<catalogue>/<app>", "digest": "sha256:<64 hex>", "defaultGrant": true}
 ```
 
-with the person's token. The director asks one question: may this person
-install apps in this tenant (`can_install_app` on `tenant:<t>`). Nothing is
-asked about the app or the tenant's right to it.
+to the director, with the person's token. The director asks one question:
+may this person install apps in this tenant (`can_install_app` on
+`tenant:<t>`). Nothing is asked about the app or the tenant's right to it.
+The route is the same whoever calls it — the App Store app with a store's
+confirmation in hand (§6.4), or the command line with no store at all (§9).
 
 **Installing for everyone.** Installing makes an app exist; who may open it is
 the membership of the app's group, decided separately. `"defaultGrant": true`
@@ -71,17 +93,11 @@ Because this gives people access, a request carrying `"defaultGrant": true` is
 asked a second question, `can_grant` on `tenant:<t>`, and must pass both; it is
 refused with `403` before anything is fetched or written when it does not. The
 realm is taken to be the tenant's name on this path, as it is for
-`provision-app` (§5).
-
-The sequence a store drives is: the tenant's administrator asks the store for
-the app; the store does whatever it does — a checkout, a contract, nothing at
-all for a free entry — and confirms with the entry's coordinate and digest;
-the desktop asks the director to install with exactly those (§7). The
-confirmation is the store's own affair and is not shown to the cluster.
+`provision-app` (§8).
 
 | Field | Rule |
 |---|---|
-| `coordinate` | `<catalogue>/<app>`, optional. When the catalogue is one of the cluster's sources (§6), the profile bundle is fetched from it and committed before the install; the app named must be the `{profile}` in the path |
+| `coordinate` | `<catalogue>/<app>`, optional. When the catalogue is one of the cluster's sources (§9), the profile bundle is fetched from it and committed before the install; the app named must be the `{profile}` in the path |
 | `digest` | optional, except when the bundle is fetched from a source: then it is required. Stated with or without capitals; recorded as `sha256:<lowercase hex>` |
 | `defaultGrant` | optional boolean. `true` installs for everyone and needs `can_grant` as well; `false` states that access is given per person and removes the key from an entry that had it; absent leaves an installed app's entry as it is, so moving a pin does not change who may open the app |
 
@@ -99,8 +115,8 @@ confirmation is the store's own affair and is not shown to the cluster.
 ## 4. The digest
 
 The digest pins the build. It is the sha256 of the profile bundle, and it
-travels with the request: the store's confirmation carries it, and the
-cluster's own listing of a source gives it (§6).
+travels with the request: a store's confirmation carries it (§6.4), and so
+does a catalogue source's own index (§9).
 
 It is not signed and it is not a permission. What it does:
 
@@ -165,11 +181,285 @@ can name any build of any entry a source serves. That is the same authority
 they already hold over the tenant, and every use of it is a commit with their
 name on it.
 
-## 5. Reading
+## 5. What a store serves
 
-The store renders what a tenant has from two services, with the person's
-token, filtered by what that person may see. What git declares is the
-director's to answer; what the cluster holds right now is the usher's:
+One API, versioned under `/v1`, at the address the Cluster claim names. Every
+operation is a request from the cluster's side. The full definition — every
+parameter, field and example — is in
+[store-api.md](../plans/artefacts/store-api.md); the machine-readable form is
+[store-api.openapi.yaml](../plans/artefacts/store-api.openapi.yaml), and it
+wins where the two differ.
+
+| Operation | Answers |
+|---|---|
+| `GET /v1/meta` | The store's name, the API version, and what is needed to sign a person in: issuer, client id, scopes. Also the origins images and checkout pages may be on. No token |
+| `GET /v1/tenant` | Whether the store serves the tenant in the token; if not, the reason; and notices to show (§6.2) |
+| `GET /v1/categories` | The categories apps are filed under |
+| `GET /v1/apps` | A page of apps, filtered by category, edition or text: coordinate, name, summary, icon, publisher, editions offered, trust tier, latest version, price, whether this tenant has acquired it |
+| `GET /v1/apps/{catalogue}/{app}` | One app in full: description, screenshots, versions each with its digest, release notes, requirements, add-ons, links, licence |
+| `GET /v1/apps/{catalogue}/{app}/reviews` | Reviews — rating, text, the author's name as the store shows it, date — and their summary |
+| `GET /v1/apps/{catalogue}/{app}/reports` | Evaluations and reports about the app: kind, title, issuer, date, summary, document address |
+| `GET /v1/acquisitions` | What this tenant has acquired |
+| `POST /v1/acquisitions` | Acquire an app. `201` with a confirmation; or `202` with a checkout address at the store; or `200` with the acquisition the tenant already has |
+| `GET /v1/acquisitions/{id}` | The outcome: `pending`, `confirmed`, `cancelled` or `failed`; once confirmed, the confirmation |
+| `POST /v1/acquisitions/{id}/credential` | The confirmation again, with newly minted repository credentials |
+
+Common to all of them: answers in the language asked for
+(`Accept-Language` in, `Content-Language` out, falling back within a language
+and then to the store's default); lists paged by cursor; errors as
+`application/problem+json` with a stable `code`; rate-limit headers. All of
+it is in the artefact.
+
+**What the store receives.** The tenant's URL, the coordinates looked at or
+acquired, the language, and the person's store token. It is not sent who is
+in the tenant, what is installed, or any configuration of the cluster. The
+only personal data that reaches it is the store account the person signed in
+with.
+
+## 6. The App Store app
+
+A platform UI of its own, component `app-store`, installed per tenant. Its
+tile is shown only to people who may install apps in that tenant. It is
+absent on a cluster whose licence report is off (§6.2) and on one that names
+no store.
+
+It has two sides and holds them apart. Toward the store it is a client of
+the API in §5, with the token of the person's store account. Toward the
+cluster it is a caller like any other: it asks the director and the
+custodian with the token of the person's cluster account, and is subject to
+the same checks as the command line. It has no authority of its own in
+either direction.
+
+### 6.1 Signing in to the store
+
+A person signs in to the store with an account at the store — not the
+account they are signed in to the cluster with. The flow is OAuth 2.0
+authorization code with PKCE against the store's issuer. The app is a public
+client: it holds no client secret, because a secret shipped to every cluster
+is not one.
+
+The request carries `tenant_url`, the address of the tenant the app is
+installed in, and the issuer binds it into the token. From then on every
+answer is about that tenant. The issuer accepts a redirect only to a host
+under the tenant's own address, so a code for a tenant is delivered only to
+a page served there.
+
+This is a code flow run by a component behind the edge, which AD-13 rules
+out for the cluster's own session. It is not that: it is against the store's
+issuer, yields a token valid at the store and nowhere on the cluster, and
+establishes no session with the platform.
+
+### 6.2 Standing, and the dependence on licence reporting
+
+The store depends on the cluster's licence report
+([operations.md §6.2](operations.md)). A cluster that does not report has no
+App Store app: the usher says so and no tile is shown.
+
+After sign-in the app asks `GET /v1/tenant`. The store matches the tenant
+URL in the token against the tenant URLs in the reports it has received.
+
+| The store answers | The app |
+|---|---|
+| `served: true` | proceeds, and shows every notice it is given |
+| `served: false`, with a reason — `no-reports-for-tenant`, `tenant-not-claimed`, … | shows the reason in the store's words and offers nothing further |
+| a notice `free-licence-limit` — the cluster has no subscription | shows it: the free licence covers clusters of fewer than 50 users that are not operated for resale |
+
+**Nothing on the cluster is blocked by any of this.** A refusal means the
+store will not serve this tenant. Installed apps keep running, and an app
+can still be installed by command (§9).
+
+### 6.3 Rendering
+
+The store's content is data. The app renders text as text. Two fields — an
+app's description and a version's release notes — are a restricted Markdown
+subset defined in the artefact; everything else is plain. No HTML from a
+store is interpreted, no script from a store runs, and no page of a store is
+framed. Images are loaded by address from the origins the store's
+`GET /v1/meta` names and from nowhere else. Links, report documents and the
+checkout open in a separate window.
+
+### 6.4 Acquiring and installing
+
+```
+person            App Store app                      store                      cluster
+  │  "get this app"     │                               │                          │
+  │────────────────────►│  POST /v1/acquisitions        │                          │
+  │                     │──────────────────────────────►│                          │
+  │                     │  201 confirmation             │   free, or no checkout   │
+  │                     │◄──────────────────────────────│                          │
+  │                     │  — or —                       │                          │
+  │                     │  202 {id, checkoutUrl}        │   paid                   │
+  │                     │◄──────────────────────────────│                          │
+  │  checkout, in a separate window, at the store       │                          │
+  │────────────────────────────────────────────────────►│                          │
+  │                     │  GET /v1/acquisitions/{id}    │                          │
+  │                     │──────────────────────────────►│                          │
+  │                     │  confirmed + confirmation     │                          │
+  │                     │◄──────────────────────────────│                          │
+  │  "install", and for everyone or not                 │                          │
+  │────────────────────►│  declare the repository       (director)                 │
+  │                     │─────────────────────────────────────────────────────────►│
+  │                     │  set its credential           (custodian)                │
+  │                     │─────────────────────────────────────────────────────────►│
+  │                     │  install {coordinate, digest, defaultGrant}  (director)  │
+  │                     │─────────────────────────────────────────────────────────►│
+```
+
+**Payment never passes through the cluster.** For a paid acquisition the
+store answers with a checkout address; the app opens it in a separate
+window, the person pays at the store, and the app asks the store for the
+outcome. The store does not tell the cluster.
+
+**The confirmation** is what the store hands over when a tenant has an app:
+
+```jsonc
+{
+  "coordinate": "gentian/nextcloud-base-ee",
+  "version": "31.0.4",
+  "digest": "sha256:<64 hex>",
+  "repository": {                    // absent for an app whose artefacts are public
+    "name": "example-apps-7c1d9e02ab",
+    "type": "oci",
+    "url": "oci://registry.store.example/apps",
+    "credential": {"username": "…", "token": "…", "expiresAt": "2027-10-01T00:00:00Z"}
+  },
+  "addons": [                        // each with coordinate, version, digest and optionally repository
+  ]
+}
+```
+
+| Field | What it is to the cluster |
+|---|---|
+| `coordinate` | which entry. Sent to the director as it is |
+| `version` | for a person to read. The cluster does not pin it |
+| `digest` | **what the cluster pins and verifies** (§4) |
+| `repository.name` | the name the repository is declared under. Unique per tenant, and the same each time for the same tenant |
+| `repository.type` | `oci`, and nothing else from a store (§7) |
+| `repository.url` | the registry the bundle's chart and images are in |
+| `repository.credential` | **opaque to the cluster.** A user name and a token the store minted for this tenant and the store's repository checks on pull. `expiresAt` may be `null` |
+| `addons` | add-ons the acquisition includes, each an entry of its own |
+
+A free app's confirmation carries no repository and no credential.
+
+**What the app does with it**, each step with the person's own cluster
+token:
+
+1. For each repository named: declares it for the tenant at the director
+   (`PUT /v1/tenants/{t}/repositories/{name}`, role `apps`), which commits
+   the address; then sets its credential at the custodian
+   (`PUT /v1/credentials/repository-{name}`), which writes the token to the
+   vault. Both ask `can_write_credential` on the tenant.
+2. Installs at the director (§3) with exactly the confirmation's
+   `coordinate` and `digest`, and the `defaultGrant` the person chose.
+
+The OS decides nothing about supply at any step. Whether the app then
+arrives is the repository's answer to the credential.
+
+**Renewing a credential.** Where `expiresAt` is set, the app asks the store
+for a new one (`POST /v1/acquisitions/{id}/credential`) and sets it at the
+custodian as above. The old one stays valid for at least 24 hours, so there
+is no moment at which the cluster holds only a credential the repository
+refuses. The weakness is stated plainly: the app acts only while an
+administrator is signed in to it, so nothing renews a credential unattended.
+One that expires unrenewed stops new pulls — a pod that is rescheduled onto
+a node without the image does not start — and leaves what is running
+untouched.
+
+## 7. Trust
+
+**The store's TLS identity is all that authenticates it.** The cluster
+trusts whatever answers at `catalogue.storeUrl` with a certificate valid for
+that name. Which store a cluster asks is a commit on the Cluster claim.
+Nothing a store says is signed, and the cluster holds no key of a store's.
+
+**Store content is data** (§6.3). The rule is what stops a store's words
+from being instructions to the person's browser on the cluster's origin.
+
+**The digest is what pins a build**, and the catalogue source — not the
+store — is what serves it (§4).
+
+What follows is what a store that has been compromised, or is hostile, can
+and cannot do. It is reasoned from what the director and the operator do,
+not from what the App Store app is expected to do.
+
+**It can:**
+
+* **Lie about everything it shows.** Descriptions, prices, publishers,
+  reviews, reports, versions. It can show one app and confirm the coordinate
+  of another. The bound on that is below.
+* **Refuse, or be absent.** It can serve no tenant, or none of the apps.
+* **Learn what the API is sent**: tenant URLs, which apps an administrator
+  looks at and acquires, the store account, and the addresses the requests
+  and the image loads come from.
+* **Hand over any repository address and any token.** The cluster then holds
+  a credential for that address and presents it there. The token is of the
+  store's own making, so this discloses nothing of the cluster's.
+* **Misuse its own pages.** The sign-in and the checkout are the store's,
+  in a separate window. What a person types there, the store has.
+
+**It cannot:**
+
+* **Change which bytes are installed.** The director fetches the bundle from
+  the catalogue source the Cluster claim names for the coordinate's
+  catalogue, at `profiles/<app>.yaml`. A source is addressed by name, not by
+  digest: it serves one build of an entry. A digest the store invents
+  therefore does not select another build — it matches what the source
+  serves, or the install is refused with `502` and nothing is written. The
+  same holds for the digest of an older build the source no longer serves.
+* **Install something from a place of its choosing.** A coordinate in a
+  catalogue the cluster names no source for fetches nothing. The install
+  then refers to a profile the cluster must already hold, and with a digest
+  pinned the operator rolls nothing out unless that profile's own bundle
+  hashes to it.
+* **Supply a profile through the repository.** The App Store app declares
+  what a store names as an OCI registry with role `apps`, and refuses any
+  other type. This matters: on a cluster, a *git* repository with role
+  `apps` is a source of profiles that Argo CD syncs, with no digest
+  involved. A store that could name one would be supplying. The declaration
+  an OCI registry gets carries a credential and names no content: what is
+  pulled is what the verified bundle names.
+* **Replace a repository the tenant already has.** Declaring a name the
+  tenant holds with another address is answered by the director with `428`
+  and asks for the name to be repeated. The app does not repeat it on a
+  store's word; it stops and shows the administrator what is asked. A name
+  another tenant or the cluster holds is answered `404`.
+* **Read the cluster, or act on it.** It has no way in and no credential.
+* **Decide who may install**, or lift any check. Every step in §6.4 is asked
+  of the person by the director or the custodian.
+
+**The real bound on a lying store** is therefore this. It can bring an
+administrator to install an entry they did not mean — but only an entry that
+a catalogue source named by the platform administrator serves right now, at
+the build that source serves, by a person who holds `can_install_app`, in a
+commit with their name and the coordinate on it. The app shows the
+coordinate and the digest it is about to send, on the cluster's side, before
+it sends them. Whatever the installed profile asks for beyond the baseline —
+egress, a pod-security waiver, an elevated role — still waits for its own
+approval (AD-5).
+
+**Where the bound stops.** Three things it does not cover, each already a
+property of the design rather than of this contract:
+
+* **A store and a catalogue source run by the same party** are one trust,
+  not two. The digest protects against a source that is compromised alone
+  and a store that is compromised alone. A party that controls both can
+  publish a bundle and name its digest. What stands then is what stands for
+  any profile: its validation, its admission policies, and the approval of
+  every privilege it asks for.
+* **The repository decides what a tag is.** The digest pins the profile, not
+  the chart or image the profile names by tag (§4). Whoever controls the
+  repository an app is pulled from controls what runs. That is where supply
+  was put on purpose (§2), and it is the cost of it.
+* **A person can be misled.** The cluster verifies bytes, not intentions.
+  The description that made somebody want an app is the store's word.
+
+## 8. Administering what is installed
+
+Not the App Store app's business, and not the desktop's. An app that is
+installed is administered in the admin console's **Apps** tab
+([ui-restructure.md](../plans/ui-restructure.md) §2), from the cluster's own
+reads. The store is not asked: what is installed, how it is doing and who
+may open it are facts the cluster holds.
 
 ```
 director   GET /v1/tenants/{t}/apps                  installed profiles, their digests and their addons
@@ -186,38 +476,61 @@ the operator's answer, relayed by the usher: each app is `installing`, `ready` o
 its pods reserve against the tenant's plan. `failing` is a
 workload that cannot start — an image that cannot be pulled, a container that
 keeps exiting — which Kubernetes retries for ever and which therefore reads as
-"still installing" to anything that only looks at readiness.
+"still installing" to anything that only looks at readiness. An app whose
+repository credential is missing or refused reads as `failing` here, with
+that reason.
 
-Two things can be done to an app that are not a change to what the tenant is,
-and so are actions rather than commits; the person is named on the request:
+**Uninstalling and purging are two different acts.**
 
 ```
-POST /v1/tenants/{t}/actions/purge-app       {"profile": "<name>"}   can_install_app
+DELETE /v1/tenants/{t}/apps/{p}                                        can_install_app
+POST   /v1/tenants/{t}/actions/purge-app       {"profile": "<name>"}   can_install_app
+```
+
+*Uninstalling* removes the app and **keeps its data**: databases, object
+storage and secrets stay, and installing the app again finds them. It is a
+commit. *Purging* **destroys the data** of an app that is no longer
+installed, and cannot be undone. It is refused with `409` while the tenant
+still has the app or while the cluster is still taking it down, so removing
+an app never takes its data with it by accident, and no single act does
+both.
+
+Uninstalling tells the store nothing. The acquisition stays the tenant's;
+ending it is between the tenant and the store.
+
+```
 POST /v1/tenants/{t}/actions/provision-app   {"profile": "<name>"}   can_grant
 ```
 
-A purge deletes what an uninstalled app left behind — databases, object
-storage, secrets. It is refused with `409` while the tenant still has the app
-or while the cluster is still taking it down, so removing an app never takes
-its data with it by accident. Provisioning grants an installed app — or an
-add-on switched on inside one, by its own name — to everybody who is a member
-now, and marks it granted by default to whoever joins later. It works only once
-the app exists in the cluster; an install that should be for everyone says so
-in the install itself (`defaultGrant`, §3) and needs no second call. The action
-remains for an app that is already installed, and for an add-on, which has no
-entry of its own to carry the field.
+Provisioning grants an installed app — or an add-on switched on inside one,
+by its own name — to everybody who is a member now, and marks it granted by
+default to whoever joins later. It works only once the app exists in the
+cluster; an install that should be for everyone says so in the install itself
+(`defaultGrant`, §3) and needs no second call. The action remains for an app
+that is already installed, and for an add-on, which has no entry of its own
+to carry the field.
 
-## 6. Without the store
+## 9. Without a store
 
-The store is the default path to an app and the path of least resistance. It
-is not a gate on the mechanism.
+A cluster that names no store, or does not report, has no App Store app.
+**Apps are then installed by command only**:
 
-A **catalogue source** is a repository of profile bundles, named on the
-Cluster claim:
+```bash
+kubectl gentian apps install <app> --tenant <t>
+```
+
+through the director, on the same route and under the same question as §3.
+The cluster renders no catalogue of its own in any interface. A second,
+barer shop beside the one that is maintained would be worse at everything a
+shop is for, and an install action in an administrative screen is one more
+place that logic would live.
+
+A **catalogue source** remains what it was: the repository of profile
+bundles the director fetches from, named on the Cluster claim:
 
 ```yaml
 catalogue:
-  storeUrl: https://…      # where people are sent for everything else
+  storeUrl: https://…      # the store's API; the App Store app calls it
   sources:
   - name: gentian
     url: https://…
@@ -225,101 +538,55 @@ catalogue:
     url: https://…
 ```
 
-A source publishes `index.yaml` beside its `profiles/` directory, because an
-https server does not list a directory and without it a cluster can install
-from a source by name but cannot say what is in it. The index is the
-technical half and nothing else: name, version, edition, trust tier, digest.
+A source publishes `profiles/<name>.yaml` for each entry and `index.yaml`
+beside them: name, version, edition, trust tier, digest, and nothing else.
+The director fetches a bundle from the source named by a coordinate's
+catalogue and checks it against the digest (§4). It still answers a source's
+index — `GET /v1/tenants/{t}/catalogues` and
+`GET /v1/tenants/{t}/catalogues/{source}/entries`, under `can_view`, `ce` and
+`pe` entries only — so that the digest of an entry can be looked up without
+a store; no screen lists it.
 
-The director serves it — `GET /v1/tenants/{t}/catalogues` and
-`GET /v1/tenants/{t}/catalogues/{source}/entries`, both under `can_view` — so
-a cluster can answer what it holds with no store connection at all.
+A source says nothing about tenants. One the claim names can be installed
+from by every tenant of the cluster; naming it is the platform
+administrator's act, a commit on the claim. There is no tuple for it and no
+per-tenant list: the install route asks whether the person may install apps
+in the tenant and never asked about the source (§3).
 
-Two rules make that view the fallback rather than a rival to the store, and
-they are the point rather than an omission:
-
-* **Only `ce` and `pe` are listed.** They are the entries whose value does not
-  depend on a supplier — community, and the operator's own. `me` and `ee`
-  exist because somebody maintains or licenses them; the answer is returned as
-  a count and `storeUrl`, not as rows.
-* **Nothing a shop would show.** No display name, description, icon or price.
-  The store keeps those current and a cluster copying them would go stale.
-
-Every listed entry carries its digest, which is what an install of it from
-this list sends back (§3).
-
-A source says nothing about tenants. One the claim names is offered to every
-tenant of the cluster: the listing marks an entry `installable` when it states
-its digest, and the desktop offers the install from the cluster's own screen.
-Naming a source is the platform administrator's act, a commit on the claim.
-There is no tuple for it and no per-tenant list: such a list gated nothing,
-because the install route asks whether the person may install apps in the
-tenant and never asked about the source (§3).
-
-Offering a source is not a licence. Whether an installed app arrives is
-decided where its artefacts are pulled, by the credential the tenant holds for
-their repository. There is no access mode a store sets on a source.
-
-What does not change without the store: the install mechanism (fetch the
+What does not change without a store: the install mechanism (fetch the
 bundle at the digest, apply the profile, commit as the person), the
 attribution, the audit trail, and every check on the profile itself — a
 side-loaded profile meets the same CEL rules, admission policies and
-privilege approvals as one the store lists. Only the questions the store
-answers — presentation and payment — go unanswered.
+privilege approvals as one a store lists. Only the questions a store
+answers — what an app is, and what it costs — go unanswered.
 
-## 7. The desktop bridge
+## 10. When the store fails
 
-The store holds no credential for a cluster (§1), and the person's token is
-forwarded to the desktop and to nothing else (AD-13). So the store is shown in
-a window on the desktop, and what it needs of the cluster it asks of the
-desktop, which asks the director as the person sitting at it. §3 and §5 are
-what is asked; this is how.
+| What happens | What the cluster does |
+|---|---|
+| The store cannot be reached, or answers `5xx` | The App Store app says so. It offers nothing that needs the store. Nothing is retried in the background |
+| The store answers `401` | The app signs the person in to the store again |
+| The store refuses the tenant | The app shows the reason (§6.2) |
+| The store answers something that is not the format | The app treats it as unreachable. A confirmation that does not validate is not acted on in part |
+| A step on the cluster fails after a confirmation — the declaration, the credential, the install | The app shows the director's or the custodian's answer and stops. The acquisition is still the tenant's; the steps can be repeated, and each is safe to repeat |
 
-The wire is `window.postMessage` between the store's page and the desktop
-that framed it:
+**Installed apps are unaffected by the store's absence.** Nothing that runs
+asks the store anything. The one dependence that outlives an install is on
+the *repository*, for pulls, with the credential the tenant holds.
 
-```
-store → desktop   {"gentian":"store-bridge","v":1,"id":"<id>","op":"<op>","args":{…}}
-desktop → store   {"gentian":"store-bridge","v":1,"id":"<id>","ok":true,"status":200,"data":{…}}
-                  {"gentian":"store-bridge","v":1,"id":"<id>","ok":false,"status":403,"error":"…"}
-```
+## 11. Not in the contract
 
-| Operation | Asks the director, or the usher where named | Confirmed by the person |
-|---|---|---|
-| `context` | — (cluster, tenant, the caller's relations, their language) | |
-| `apps.list` | `GET /apps` | |
-| `apps.status` | usher: `GET /apps/status` | |
-| `addons.get` | `GET /apps/{p}/addons` | |
-| `resources.get` | usher: `GET /resources` | |
-| `catalogues.list`, `catalogues.entries` | `GET /catalogues`, `GET /catalogues/{s}/entries` | |
-| `apps.install` | `POST /apps/{p}` with the coordinate and the digest, and `defaultGrant` when the person chose to install for everyone | yes |
-| `apps.uninstall` | `DELETE /apps/{p}` | yes |
-| `apps.purge` | `POST /actions/purge-app` | yes |
-| `apps.provision` | `POST /actions/provision-app` | yes |
-| `addons.set` | `PUT /apps/{p}/addons` | yes |
-
-Four rules, and each is enforced by the desktop rather than asked of the
-store:
-
-* **One origin.** A message is read only if it comes from the origin of
-  `catalogue.storeUrl` on the Cluster claim, and only from a frame the desktop
-  itself opened. Which store may ask anything of a cluster is recorded in git.
-  A cluster that names no store listens to nothing.
-* **A closed list.** The table is all there is. No operation takes a path or
-  a method, so there is no request the store can phrase that reaches another
-  route of the director.
-* **Names are names.** A profile or a catalogue lands in a URL path and is
-  matched against what a name may be before anything is sent — in the browser
-  and again in the desktop's backend.
-* **Writes are confirmed on the cluster's origin.** Each waits for the person
-  to say yes in a dialog the desktop draws. A page in a frame can ask for an
-  install; it cannot press the button. A refusal answers with status `499`.
-
-The checkout runs in a tab of its own, because a sign-in page will not be
-framed. What it produces — the confirmation, with the entry's coordinate and
-digest — it hands to the framed page, and the framed page is what asks for the
-install: a tab the person opened has the store's origin and is still not a
-frame of the desktop's, so it is not listened to.
-
-Opened on its own, outside a desktop, the store has nobody to ask. It lists
-and sells, and says that installing is done from the desktop.
-
+* **No call from the store into the cluster.** No webhook, no push, no
+  callback. An operation that needed one would not be part of this contract.
+* **No signed statement.** No entitlement, no revocation, no licence file,
+  no key of a store's on a cluster.
+* **No cluster state sent to the store.** What is installed, who is in the
+  tenant, the plan and its use are not sent. A store learns which apps a
+  tenant runs from the licence report, which is a separate, open, signed
+  statement the cluster makes on its own schedule.
+* **No uninstall notice.** The store is not told when an app is removed.
+* **No store content executed.** No HTML, script, style sheet or frame.
+* **No payment data on the cluster.**
+* **No writing of reviews** in this version of the API.
+* **How a store ties an account to a tenant**, what it asks of an account
+  before it confirms an app, and how it prices, are the store's own.

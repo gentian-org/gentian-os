@@ -424,6 +424,13 @@ Specified in [target-component-structure.md](target-component-structure.md).
 Specified in [ui-restructure.md](ui-restructure.md) §3 and
 [app-store-schema.sql](app-store-schema.sql).
 
+**Changed 2026-10-06 (AD-3).** What is outside the cluster is the store's
+data; its interface is the App Store app on the cluster, and the store never
+calls the cluster. The items below that are ticked describe the cluster's
+half of an install, which stands. The store's API is defined in
+[artefacts/store-api.md](artefacts/store-api.md) and
+[artefacts/store-api.openapi.yaml](artefacts/store-api.openapi.yaml).
+
 - [ ] The store service outside the cluster over the schema: listings in
       every locale, editions, plans, subscriptions, catalogue access per
       cluster.
@@ -776,8 +783,15 @@ would take, and the one the contract tests run against. Billing, plans and
 subscriptions stay out until the flow is proven.
 
 The store holds no cluster credential and no identity toward the cluster
-(AD-3). Everything it does at the director it does with the signed-in
-person's token. It signs nothing the cluster reads.
+(AD-3). It signs nothing the cluster reads.
+
+**Changed 2026-10-06 (AD-3).** The store does nothing at the director and is
+never in the person's session with the cluster: it serves data, and the App
+Store app on the cluster does the installing. What a store serves is defined
+in [artefacts/store-api.md](artefacts/store-api.md) and
+[artefacts/store-api.openapi.yaml](artefacts/store-api.openapi.yaml); a
+reference implementation is built against that, and the items below that
+describe a store page asking a desktop to install are superseded by it.
 
 - [x] **Repository and service.** In the store's own repository, one service
       per trust boundary over a shared account library; the store is FastAPI
