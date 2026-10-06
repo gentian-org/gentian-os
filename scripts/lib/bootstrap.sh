@@ -1655,7 +1655,9 @@ _claim_catalogue_section() {
     fi
     printf '    sources:\n'
     printf '      - name: gentian\n'
-    printf '        url: %s\n' "${GENTIAN_STORE_CATALOGUE_URL:-https://store.gentian.org/catalogue}"
+    # The public catalogue of the gentian-apps repository, which is where the
+    # ce and pe profiles are published. GENTIAN_CATALOGUE_URL names another.
+    printf '        url: %s\n' "${GENTIAN_CATALOGUE_URL:-https://gentian-org.github.io/gentian-apps}"
     printf '        # tenants: [demo]\n'
     printf '      # - name: in-house\n'
     printf '      #   url: https://git.example.com/profiles\n'
