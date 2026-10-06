@@ -357,7 +357,8 @@ try.
 
 **With the install.** Name a first tenant and the install creates it, so the
 cluster is usable when the run ends. Answer the *first tenant* question in
-step 0, or set it in `install.env` before the first run:
+step 0, or set it in `install.env` (step 0 asks only on a cluster's first run;
+`install.env` is read on every run):
 
 ```bash
 GENTIAN_FIRST_TENANT=acme                              # a DNS label; not platform, default, kernel or master
