@@ -147,9 +147,17 @@ administrator usually does this from the App Store; the CLI does the same:
 ```bash
 kubectl gentian apps list --tenant demo
 kubectl gentian apps install xwiki-ce --tenant demo
+kubectl gentian apps install xwiki-ce --tenant demo --for-everyone   # and grants it to every member
 kubectl gentian apps uninstall xwiki-ce --tenant demo            # keeps its data
 kubectl gentian apps uninstall xwiki-ce --tenant demo --purge    # removes it with its data
 ```
+
+`--for-everyone` writes `defaultGrant: true` on the app's entry in the same
+commit. Every member of the tenant then has the app by default: the people who
+are members when the app's group first exists are added to it once, and
+somebody invited later has it pre-selected. It needs the right to grant in the
+tenant as well as to install. Without the flag, access is given per person
+([design/store-contract.md](design/store-contract.md) §3).
 
 Inspect app reconciliation:
 

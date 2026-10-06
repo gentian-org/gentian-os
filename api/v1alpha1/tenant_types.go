@@ -436,6 +436,17 @@ type TenantApp struct {
 	// +optional
 	// +listType=set
 	Addons []string `json:"addons,omitempty"`
+
+	// DefaultGrant says every member of the tenant has access to this app by
+	// default. The people who are members when the app's group first exists
+	// are added to it, once, and the group is marked so that somebody invited
+	// later has the app pre-selected. It is applied once per install
+	// (status.defaultGrantedApps): a person an administrator removes from the
+	// group afterwards stays removed.
+	//
+	// Absent or false, access is given per person.
+	// +optional
+	DefaultGrant bool `json:"defaultGrant,omitempty"`
 }
 
 // TenantAppConfig holds per-tenant application overrides.
@@ -599,6 +610,17 @@ type TenantStatus struct {
 	// ProvisionedApps lists apps that have been successfully provisioned.
 	// +optional
 	ProvisionedApps []string `json:"provisionedApps,omitempty"`
+
+	// DefaultGrantedApps lists the apps whose default grant
+	// (spec.apps[].defaultGrant) has been applied: the tenant's members at
+	// that moment were added to the app's group. An app listed here is not
+	// granted again, which is what keeps a person removed from the group
+	// since then removed. An entry leaves the list when the app is
+	// uninstalled or no longer declares the grant, so declaring it again
+	// applies it again.
+	// +optional
+	// +listType=set
+	DefaultGrantedApps []string `json:"defaultGrantedApps,omitempty"`
 
 	// AppCount is the total number of apps requested in spec.
 	// +optional

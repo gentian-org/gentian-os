@@ -4392,6 +4392,11 @@ func (in *TenantStatus) DeepCopyInto(out *TenantStatus) {
 		*out = make([]string, len(*in))
 		copy(*out, *in)
 	}
+	if in.DefaultGrantedApps != nil {
+		in, out := &in.DefaultGrantedApps, &out.DefaultGrantedApps
+		*out = make([]string, len(*in))
+		copy(*out, *in)
+	}
 	if in.Mail != nil {
 		in, out := &in.Mail, &out.Mail
 		*out = new(TenantMailStatus)

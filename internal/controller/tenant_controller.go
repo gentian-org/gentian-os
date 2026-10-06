@@ -217,6 +217,10 @@ type TenantReconciler struct {
 	// APIReader is an optional uncached client for kernel Secret lookups. The
 	// default cached Client can lag behind direct API writes (e.g. envtest).
 	APIReader client.Reader
+	// DefaultGrant gives every member of a tenant access to one of its apps,
+	// for an app entry declaring defaultGrant. Nil when the operator runs
+	// without its app-lifecycle service, which is what holds the means.
+	DefaultGrant AppDefaultGranter
 	// PlanEventStore opens a tenant's usage store for the plan event a landed
 	// plan change is recorded as. Nil opens the tenant's own database.
 	PlanEventStore planEventStoreFor

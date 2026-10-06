@@ -23,7 +23,7 @@
 #   kubectl gentian tenants import --bucket <b> --prefix <p> [--endpoint <url>] (--identity-file <f> | --passphrase)
 #
 #   kubectl gentian apps list --tenant <tenant>
-#   kubectl gentian apps install <app> --tenant <tenant>
+#   kubectl gentian apps install <app> --tenant <tenant> [--for-everyone]
 #   kubectl gentian apps uninstall <app> --tenant <tenant> [--purge]
 #
 #   kubectl gentian resources plans --tenant <tenant>
@@ -592,17 +592,26 @@ cmd_apps() {
             local t
             t="$(_tenant_flag "$@")"
             _call GET "/v1/tenants/${t}/apps" |
-                jq -r '(["APP","ADDONS"] | @tsv), (.apps[] | [.profile, ((.addons // []) | join(","))] | @tsv)' |
+                jq -r '(["APP","FOR","ADDONS"] | @tsv), (.apps[] | [.profile, (if .defaultGrant then "everyone" else "-" end), ((.addons // []) | join(","))] | @tsv)' |
                 column -t -s $'\t'
             ;;
         install|uninstall)
             local app="${1:-}"
             [[ -n "${app}" && "${app}" != -* ]] || die "usage: kubectl gentian apps ${sub} <app> --tenant <tenant>"
             shift
-            local t purge="false" a
+            local t purge="false" everyone="false" a
             t="$(_tenant_flag "$@")"
-            for a in "$@"; do [[ "${a}" == "--purge" ]] && purge="true"; done
-            if [[ "${sub}" == "install" ]]; then
+            for a in "$@"; do
+                [[ "${a}" == "--purge" ]] && purge="true"
+                [[ "${a}" == "--for-everyone" ]] && everyone="true"
+            done
+            [[ "${everyone}" == "false" || "${sub}" == "install" ]] || die "--for-everyone goes with install"
+            if [[ "${sub}" == "install" && "${everyone}" == "true" ]]; then
+                # Part of the install, in the same commit: every member has the
+                # app by default, granted once its group exists.
+                _call POST "/v1/tenants/${t}/apps/${app}" '{"defaultGrant":true}' >/dev/null
+                echo "Installing ${app} into ${t} for everyone: committed; the platform installs it and grants it to every member."
+            elif [[ "${sub}" == "install" ]]; then
                 _call POST "/v1/tenants/${t}/apps/${app}" >/dev/null
                 echo "Installing ${app} into ${t}: committed; the platform installs it."
             elif [[ "${purge}" == "true" ]]; then

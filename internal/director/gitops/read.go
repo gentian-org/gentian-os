@@ -27,6 +27,9 @@ type App struct {
 	// at one.
 	Digest string   `json:"digest,omitempty"`
 	Addons []string `json:"addons,omitempty"`
+	// DefaultGrant is whether every member of the tenant has access to the
+	// app by default: the install was made for everyone.
+	DefaultGrant bool `json:"defaultGrant,omitempty"`
 }
 
 // Apps returns what git says a tenant has installed. Git is the desired state;

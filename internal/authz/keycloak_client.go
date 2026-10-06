@@ -351,6 +351,12 @@ func (c *KeycloakAdminClient) ListGroupMembers(ctx context.Context, realm, group
 	return out, nil
 }
 
+// GroupExists reports whether the realm has a group of this name.
+func (c *KeycloakAdminClient) GroupExists(ctx context.Context, realm, groupName string) (bool, error) {
+	id, err := c.findGroupID(ctx, realm, groupName)
+	return id != "", err
+}
+
 func (c *KeycloakAdminClient) findGroupID(ctx context.Context, realm, groupName string) (string, error) {
 	token, err := c.adminToken(ctx)
 	if err != nil {

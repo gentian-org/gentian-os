@@ -491,6 +491,10 @@ func main() {
 			setupLog.Error(err, "unable to add app lifecycle server")
 			os.Exit(1)
 		}
+		// An app installed for everyone is granted by the tenant reconciler
+		// with what this service already holds: the same function behind
+		// provision-app, and the same Keycloak credential.
+		tenantReconciler.DefaultGrant = lifecycle.Server.Service.GrantAppByDefault
 		setupLog.Info("app lifecycle API enabled", "addr", lifecycle.Server.Addr)
 	}
 

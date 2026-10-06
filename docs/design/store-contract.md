@@ -46,12 +46,32 @@ digest (§4).
 
 ```
 POST /v1/tenants/{t}/apps/{profile}
-{"coordinate": "<catalogue>/<app>", "digest": "sha256:<64 hex>"}
+{"coordinate": "<catalogue>/<app>", "digest": "sha256:<64 hex>", "defaultGrant": true}
 ```
 
 with the person's token. The director asks one question: may this person
 install apps in this tenant (`can_install_app` on `tenant:<t>`). Nothing is
 asked about the app or the tenant's right to it.
+
+**Installing for everyone.** Installing makes an app exist; who may open it is
+the membership of the app's group, decided separately. `"defaultGrant": true`
+makes the common answer — everyone — part of the install: it is written on the
+app's entry in the same commit (`spec.apps[].defaultGrant`), and the operator
+acts on it once the app's group exists. The people who are members of the
+tenant at that moment are added to the group, and the group is marked so that
+somebody invited later has the app pre-selected. The first is done **once per
+install** and noted in `Tenant.status.defaultGrantedApps`, so a person an
+administrator later takes out of the group stays out; the mark stays. Until it
+is done, and if it fails, the Tenant carries the condition
+`DefaultGrantsApplied=False` with the reason (`WaitingForAppGroup`,
+`GrantFailed`) and the operator tries again. No caller has to wait for the app
+and ask a second time.
+
+Because this gives people access, a request carrying `"defaultGrant": true` is
+asked a second question, `can_grant` on `tenant:<t>`, and must pass both; it is
+refused with `403` before anything is fetched or written when it does not. The
+realm is taken to be the tenant's name on this path, as it is for
+`provision-app` (§5).
 
 The sequence a store drives is: the tenant's administrator asks the store for
 the app; the store does whatever it does — a checkout, a contract, nothing at
@@ -63,14 +83,15 @@ confirmation is the store's own affair and is not shown to the cluster.
 |---|---|
 | `coordinate` | `<catalogue>/<app>`, optional. When the catalogue is one of the cluster's sources (§6), the profile bundle is fetched from it and committed before the install; the app named must be the `{profile}` in the path |
 | `digest` | optional, except when the bundle is fetched from a source: then it is required. Stated with or without capitals; recorded as `sha256:<lowercase hex>` |
+| `defaultGrant` | optional boolean. `true` installs for everyone and needs `can_grant` as well; `false` states that access is given per person and removes the key from an entry that had it; absent leaves an installed app's entry as it is, so moving a pin does not change who may open the app |
 
 | Answer | Meaning |
 |---|---|
 | `202 {"status":"installed","commit":…}` | committed to `gentian-deployments` |
-| `202 {"status":"updated","commit":…}` | the app was installed already, at another digest; the pin moved |
+| `202 {"status":"updated","commit":…}` | the app was installed already, and the pin moved or `defaultGrant` was stated with another value than the entry had |
 | `200 {"status":"already_installed"}` | nothing to change |
 | `400` | the digest is not a sha256 digest, a source install carries none, or the coordinate names another app |
-| `403` | the caller may not install in this tenant |
+| `403` | the caller may not install in this tenant, or asked to install for everyone and may not grant in it |
 | `404` | the source does not serve this entry |
 | `502` | the source could not be read, or served bytes that do not hash to the digest. Nothing was installed |
 
@@ -143,7 +164,11 @@ storage, secrets. It is refused with `409` while the tenant still has the app
 or while the cluster is still taking it down, so removing an app never takes
 its data with it by accident. Provisioning grants an installed app — or an
 add-on switched on inside one, by its own name — to everybody who is a member
-now, and marks it granted by default to whoever joins later.
+now, and marks it granted by default to whoever joins later. It works only once
+the app exists in the cluster; an install that should be for everyone says so
+in the install itself (`defaultGrant`, §3) and needs no second call. The action
+remains for an app that is already installed, and for an add-on, which has no
+entry of its own to carry the field.
 
 ## 6. Without the store
 
@@ -232,7 +257,7 @@ desktop → store   {"gentian":"store-bridge","v":1,"id":"<id>","ok":true,"statu
 | `addons.get` | `GET /apps/{p}/addons` | |
 | `resources.get` | usher: `GET /resources` | |
 | `catalogues.list`, `catalogues.entries` | `GET /catalogues`, `GET /catalogues/{s}/entries` | |
-| `apps.install` | `POST /apps/{p}` with the coordinate and the digest | yes |
+| `apps.install` | `POST /apps/{p}` with the coordinate and the digest, and `defaultGrant` when the person chose to install for everyone | yes |
 | `apps.uninstall` | `DELETE /apps/{p}` | yes |
 | `apps.purge` | `POST /actions/purge-app` | yes |
 | `apps.provision` | `POST /actions/provision-app` | yes |

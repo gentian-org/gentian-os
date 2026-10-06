@@ -271,3 +271,34 @@ func (s *Service) provisionAppGroupUsers(ctx context.Context, tenantName, profil
 
 	return nil
 }
+
+// GrantAppByDefault is ProvisionApp for a reconciler: what an app entry
+// declaring defaultGrant asks for, done when it can be.
+//
+// It waits for the app's group rather than making it. The group is created
+// with the tenant's identity, from what the profile declares, and a grant
+// that ran ahead of that would hand everybody a group nothing yet reads.
+// granted is false, with no error, while the group is not there; the caller
+// tries again.
+//
+// The realm is taken to be the tenant's name, as everywhere on this path.
+func (s *Service) GrantAppByDefault(ctx context.Context, tenantName, profile string) (granted bool, err error) {
+	defer s.lockApp(tenantName, profile)()
+
+	kcURL, kcUser, kcPass, err := s.loadKeycloakAdmin(ctx)
+	if err != nil {
+		return false, fmt.Errorf("load keycloak admin credentials: %w", err)
+	}
+	exists, err := authz.NewKeycloakAdminClient(kcURL, kcUser, kcPass).
+		GroupExists(ctx, tenantName, keycloak.TenantAppGroup(tenantName, profile))
+	if err != nil {
+		return false, fmt.Errorf("look up the app's group: %w", err)
+	}
+	if !exists {
+		return false, nil
+	}
+	if err := s.provisionAppGroupUsers(ctx, tenantName, profile); err != nil {
+		return false, err
+	}
+	return true, nil
+}

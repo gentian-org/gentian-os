@@ -48,7 +48,7 @@ type Authenticator interface {
 
 // Repository is the git backend.
 type Repository interface {
-	InstallFrom(ctx context.Context, tenant, profile, digest, catalogue string, meta gitops.Meta) (gitops.Result, error)
+	InstallFrom(ctx context.Context, tenant, profile, digest, catalogue string, defaultGrant *bool, meta gitops.Meta) (gitops.Result, error)
 	Uninstall(ctx context.Context, tenant, profile string, meta gitops.Meta) (gitops.Result, error)
 	SetAddons(ctx context.Context, tenant, profile string, addons []string, meta gitops.Meta) (gitops.Result, error)
 	Apps(ctx context.Context, tenant string) ([]gitops.App, error)
@@ -685,15 +685,26 @@ type installRequest struct {
 	// source that serves the bundle can fail an install and cannot change
 	// what is installed (AD-3). It is recorded with the install in git.
 	Digest string `json:"digest,omitempty"`
+	// DefaultGrant installs the app for everyone: every member of the tenant
+	// has access to it by default. It is written on the app's entry in the
+	// same commit, and the operator grants it once the app's group exists.
+	// Absent leaves an installed app's entry as it is; false states that
+	// access is given per person.
+	DefaultGrant *bool `json:"defaultGrant,omitempty"`
 }
 
 // install commits an app to a tenant's manifest.
 //
-// The one question asked is the route's own: may this person install apps in
+// The question asked is the route's own: may this person install apps in
 // this tenant (can_install_app). Nothing here decides whether the tenant is
 // licensed for the app. That is not the platform's to gate: whether the app
 // arrives is decided where its artefacts are pulled, by whether the tenant
 // holds a credential for the repository they come from.
+//
+// An install for everyone asks a second one. It gives people access to the
+// app, which is what can_grant on the tenant guards wherever else that is
+// done, so the request must pass both -- and is refused before anything is
+// fetched or written when it does not.
 func (s *Server) install(w http.ResponseWriter, r *http.Request, c call) {
 	ctx := r.Context()
 	tenant, profile := r.PathValue("t"), r.PathValue("p")
@@ -712,6 +723,21 @@ func (s *Server) install(w http.ResponseWriter, r *http.Request, c call) {
 			return
 		}
 		body.Digest = digest
+	}
+	if body.DefaultGrant != nil && *body.DefaultGrant {
+		target := authz.Tenant(tenant)
+		ok, err := s.cfg.Authz.Check(ctx, reqID(ctx), c.user, "can_grant", target)
+		if err != nil {
+			s.fail(w, r, http.StatusServiceUnavailable, "authorization unavailable")
+			return
+		}
+		if !ok {
+			s.fail(w, r, http.StatusForbidden,
+				"installing an app for everyone gives people access to it, which needs can_grant on the tenant; "+
+					"install it without defaultGrant, or ask somebody who may grant")
+			return
+		}
+		c.meta.Decision += " and can_grant " + target
 	}
 	// The profile itself, if this cluster materialises on reference (AD-3).
 	//
@@ -736,7 +762,7 @@ func (s *Server) install(w http.ResponseWriter, r *http.Request, c call) {
 		}
 	}
 
-	res, err := s.cfg.Repo.InstallFrom(ctx, tenant, profile, body.Digest, catalogueName, c.meta)
+	res, err := s.cfg.Repo.InstallFrom(ctx, tenant, profile, body.Digest, catalogueName, body.DefaultGrant, c.meta)
 	s.written(w, r, res, err)
 }
 

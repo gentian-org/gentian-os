@@ -397,7 +397,7 @@ var digestPattern = regexp.MustCompile(`^sha256:[a-f0-9]{64}$`)
 // Install adds profile to the tenant's manifest, pinned to digest when one is
 // given. It is InstallFrom with no catalogue to record.
 func (g *GitOps) Install(ctx context.Context, tenant, profile, digest string, meta Meta) (Result, error) {
-	return g.InstallFrom(ctx, tenant, profile, digest, "", meta)
+	return g.InstallFrom(ctx, tenant, profile, digest, "", nil, meta)
 }
 
 // InstallFrom adds profile to the tenant's manifest, pinned to digest when one
@@ -416,11 +416,21 @@ func (g *GitOps) Install(ctx context.Context, tenant, profile, digest string, me
 // source and saw it hash to the digest: the entry then says where the pinned
 // build came from, which nothing else in the cluster does.
 //
+// defaultGrant is whether every member of the tenant has access to the app
+// by default (Tenant.spec.apps[].defaultGrant). It is part of the install, so
+// it is written in the same commit: the operator grants the app once its
+// group exists, and no caller has to wait for the app and ask again. nil
+// leaves an entry as it is, so that moving a pin does not also change who
+// may open the app; true writes the key, false removes it.
+//
 // Installing an app that is already there at another digest moves the pin and
-// reports "updated"; with no digest, or the same one from the same catalogue,
-// nothing changes. A pin moved with no catalogue named loses the one it had,
-// because that one described the build it no longer points at.
-func (g *GitOps) InstallFrom(ctx context.Context, tenant, profile, digest, catalogue string, meta Meta) (Result, error) {
+// reports "updated", and so does stating a default grant the entry does not
+// already have; with neither, nothing changes. A pin moved with no catalogue
+// named loses the one it had, because that one described the build it no
+// longer points at.
+func (g *GitOps) InstallFrom(
+	ctx context.Context, tenant, profile, digest, catalogue string, defaultGrant *bool, meta Meta,
+) (Result, error) {
 	if !ValidName(profile) {
 		return Result{}, fmt.Errorf("%w: profile %q", ErrInvalidName, profile)
 	}
@@ -434,29 +444,67 @@ func (g *GitOps) InstallFrom(ctx context.Context, tenant, profile, digest, catal
 	if digest != "" {
 		msg = fmt.Sprintf("feat(%s): install %s at %s (via %s)", tenant, profile, shortDigest(digest), meta.actor())
 	}
+	forEveryone := defaultGrant != nil && *defaultGrant
+	if forEveryone {
+		msg = strings.Replace(msg, " (via ", " for everyone (via ", 1)
+	}
 	return g.apply(ctx, tenant, msg, meta, func(text string) (string, string, bool, error) {
 		lines := strings.Split(text, "\n")
 		if _, _, _, installed := appEntryExtent(lines, profile); !installed {
-			out, ok := insertAppProfile(text, profile, digest, catalogue)
+			out, ok := insertAppProfile(text, profile, digest, catalogue, forEveryone)
 			if !ok {
 				return "", "", false, errors.New("failed to update apps list")
 			}
 			return out, "installed", true, nil
 		}
-		if digest == "" {
+		changed := false
+		if digest != "" {
+			var moved bool
+			lines, moved = setAppEntryKey(lines, profile, "digest", digest, "")
+			if catalogue != "" || moved {
+				var recorded bool
+				lines, recorded = setAppEntryKey(lines, profile, "catalogue", catalogue, "digest")
+				moved = moved || recorded
+			}
+			changed = moved
+		}
+		if defaultGrant != nil {
+			value := ""
+			if forEveryone {
+				value = "true"
+			}
+			// Below what says which build this is, wherever that ends.
+			after := "digest"
+			if appEntryHasKey(lines, profile, "catalogue") {
+				after = "catalogue"
+			}
+			var stated bool
+			lines, stated = setAppEntryKey(lines, profile, appDefaultGrantKey, value, after)
+			changed = changed || stated
+		}
+		if !changed {
 			return text, "already_installed", false, nil
 		}
-		pinned, moved := setAppEntryKey(lines, profile, "digest", digest, "")
-		if catalogue != "" || moved {
-			var recorded bool
-			pinned, recorded = setAppEntryKey(pinned, profile, "catalogue", catalogue, "digest")
-			moved = moved || recorded
-		}
-		if !moved {
-			return text, "already_installed", false, nil
-		}
-		return strings.Join(pinned, "\n"), "updated", true, nil
+		return strings.Join(lines, "\n"), "updated", true, nil
 	})
+}
+
+// appDefaultGrantKey is the key of an app's entry that says every member of
+// the tenant has access to it by default.
+const appDefaultGrantKey = "defaultGrant"
+
+// appEntryHasKey reports whether an app's entry carries a scalar key.
+func appEntryHasKey(lines []string, profile, key string) bool {
+	start, end, keyIndent, ok := appEntryExtent(lines, profile)
+	if !ok {
+		return false
+	}
+	for i := start + 1; i < end; i++ {
+		if indentOf(lines[i]) == keyIndent && strings.HasPrefix(strings.TrimSpace(lines[i]), key+":") {
+			return true
+		}
+	}
+	return false
 }
 
 // setAppEntryKey makes one scalar key of an app's entry equal to value, and
@@ -519,13 +567,16 @@ func (g *GitOps) Uninstall(ctx context.Context, tenant, profile string, meta Met
 // it, as a new tenant's manifest has it.
 var emptyAppsList = regexp.MustCompile(`^  apps:\s*\[\s*\]\s*$`)
 
-func insertAppProfile(text, profile, digest, catalogue string) (string, bool) {
+func insertAppProfile(text, profile, digest, catalogue string, defaultGrant bool) (string, bool) {
 	entry := []string{"  - profile: " + profile}
 	if digest != "" {
 		entry = append(entry, "    digest: "+digest)
 	}
 	if catalogue != "" {
 		entry = append(entry, "    catalogue: "+catalogue)
+	}
+	if defaultGrant {
+		entry = append(entry, "    "+appDefaultGrantKey+": true")
 	}
 	lines := strings.Split(text, "\n")
 	for i, line := range lines {

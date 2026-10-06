@@ -220,7 +220,7 @@ func TestAnInstallFromACatalogueRecordsWhichOne(t *testing.T) {
 	first := "sha256:" + strings.Repeat("ab", 32)
 	next := "sha256:" + strings.Repeat("cd", 32)
 
-	if _, err := g.InstallFrom(ctx, "demo", "element", first, "main", meta("u-ada")); err != nil {
+	if _, err := g.InstallFrom(ctx, "demo", "element", first, "main", nil, meta("u-ada")); err != nil {
 		t.Fatal(err)
 	}
 	entry := "  - profile: element\n    digest: " + first + "\n    catalogue: main\n"
@@ -229,14 +229,14 @@ func TestAnInstallFromACatalogueRecordsWhichOne(t *testing.T) {
 	}
 
 	// The same build from the same catalogue is not a change.
-	res, err := g.InstallFrom(ctx, "demo", "element", first, "main", meta("u-ada"))
+	res, err := g.InstallFrom(ctx, "demo", "element", first, "main", nil, meta("u-ada"))
 	if err != nil || res.Changed {
 		t.Fatalf("a repeated install changed something: %+v %v", res, err)
 	}
 
 	// A pin moved with no catalogue vouched for loses the one it had: that
 	// one described the build the entry no longer points at.
-	if _, err := g.InstallFrom(ctx, "demo", "element", next, "", meta("u-ada")); err != nil {
+	if _, err := g.InstallFrom(ctx, "demo", "element", next, "", nil, meta("u-ada")); err != nil {
 		t.Fatal(err)
 	}
 	got := dt.RemoteFile(t, remote, dt.TenantPath("demo"))
@@ -246,7 +246,7 @@ func TestAnInstallFromACatalogueRecordsWhichOne(t *testing.T) {
 
 	// And one recorded later, for an entry that had a digest and no
 	// catalogue, is written without disturbing the pin.
-	if _, err := g.InstallFrom(ctx, "demo", "element", next, "main", meta("u-ada")); err != nil {
+	if _, err := g.InstallFrom(ctx, "demo", "element", next, "main", nil, meta("u-ada")); err != nil {
 		t.Fatal(err)
 	}
 	entry = "  - profile: element\n    digest: " + next + "\n    catalogue: main\n"
@@ -257,8 +257,92 @@ func TestAnInstallFromACatalogueRecordsWhichOne(t *testing.T) {
 	// A catalogue is a fact about a pinned build, so it is refused without
 	// one, and refused when it is not a name.
 	for _, bad := range [][2]string{{"", "main"}, {first, "Not A Name"}} {
-		if _, err := g.InstallFrom(ctx, "demo", "jitsi", bad[0], bad[1], meta("u")); !errors.Is(err, gitops.ErrInvalidName) {
+		if _, err := g.InstallFrom(ctx, "demo", "jitsi", bad[0], bad[1], nil, meta("u")); !errors.Is(err, gitops.ErrInvalidName) {
 			t.Fatalf("digest %q catalogue %q: err = %v", bad[0], bad[1], err)
 		}
+	}
+}
+
+// An install for everyone writes the grant on the entry in the same commit,
+// and stating it again for an app that is already there is a change of its
+// own: it is written, reported as "updated", and read back.
+func TestAnInstallForEveryoneIsWrittenOnTheEntry(t *testing.T) {
+	remote := dt.Remote(t, "demo")
+	g := gitops.NewGitOps(dt.Clone(t, remote), remote, dt.Cluster, director)
+	ctx := context.Background()
+	yes, no := true, false
+	digest := "sha256:" + strings.Repeat("ab", 32)
+	read := func() string { return dt.RemoteFile(t, remote, dt.TenantPath("demo")) }
+	granted := func(profile string) bool {
+		t.Helper()
+		apps, err := g.Apps(ctx, "demo")
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, a := range apps {
+			if a.Profile == profile {
+				return a.DefaultGrant
+			}
+		}
+		t.Fatalf("%s is not installed: %+v", profile, apps)
+		return false
+	}
+
+	// New, with a pin and a catalogue: the grant goes below both.
+	res, err := g.InstallFrom(ctx, "demo", "element", digest, "main", &yes, meta("u-ada"))
+	if err != nil || res.Status != "installed" {
+		t.Fatalf("install for everyone: %+v %v", res, err)
+	}
+	entry := "  - profile: element\n    digest: " + digest + "\n    catalogue: main\n    defaultGrant: true\n"
+	if got := read(); !strings.Contains(got, entry) {
+		t.Fatalf("the entry does not carry the grant:\n%s", got)
+	}
+	subject := dt.Git(t, "", "--git-dir", remote, "log", "-1", "--format=%s", "main")
+	if !strings.Contains(subject, "install element at ") || !strings.Contains(subject, " for everyone (via ") {
+		t.Fatalf("the commit does not say the install was for everyone: %s", subject)
+	}
+	if !granted("element") {
+		t.Fatal("the grant is not read back")
+	}
+
+	// The same again is not a change; neither is a pin moved by a caller
+	// that says nothing about the grant, which must leave it where it is.
+	if res, err := g.InstallFrom(ctx, "demo", "element", digest, "main", &yes, meta("u-ada")); err != nil || res.Changed {
+		t.Fatalf("a repeated install changed something: %+v %v", res, err)
+	}
+	if res, err := g.InstallFrom(ctx, "demo", "element", digest, "main", nil, meta("u-ada")); err != nil || res.Changed {
+		t.Fatalf("an install that states no grant changed something: %+v %v", res, err)
+	}
+	if !granted("element") {
+		t.Fatal("an install that stated no grant removed the one the entry had")
+	}
+
+	// Stated false, it is taken off the entry and nothing else is.
+	res, err = g.InstallFrom(ctx, "demo", "element", "", "", &no, meta("u-ada"))
+	if err != nil || res.Status != "updated" || !res.Changed {
+		t.Fatalf("withdrawing the grant: %+v %v", res, err)
+	}
+	if got := read(); strings.Contains(got, "defaultGrant") ||
+		!strings.Contains(got, "  - profile: element\n    digest: "+digest+"\n    catalogue: main\n") {
+		t.Fatalf("withdrawing the grant did not leave the entry as it was without it:\n%s", got)
+	}
+
+	// An app installed for particular people, then for everyone: "updated",
+	// with no digest to hang the key under.
+	if _, err := g.Install(ctx, "demo", "jitsi", "", meta("u-ada")); err != nil {
+		t.Fatal(err)
+	}
+	if granted("jitsi") {
+		t.Fatal("an ordinary install was read back as one for everyone")
+	}
+	res, err = g.InstallFrom(ctx, "demo", "jitsi", "", "", &yes, meta("u-ada"))
+	if err != nil || res.Status != "updated" || !res.Changed {
+		t.Fatalf("re-installing for everyone: %+v %v", res, err)
+	}
+	if got := read(); !strings.Contains(got, "  - profile: jitsi\n    defaultGrant: true\n") {
+		t.Fatalf("the grant was not written on the existing entry:\n%s", got)
+	}
+	if !granted("jitsi") || granted("element") {
+		t.Fatal("the grant landed on the wrong entry")
 	}
 }

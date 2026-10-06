@@ -121,6 +121,11 @@ type tenantReconcileState struct {
 	appsResult      ctrl.Result
 	privilegeResult ctrl.Result
 
+	// defaultGrantRetry is set when an app declaring defaultGrant has not
+	// been granted yet, so the reconcile is run again even when nothing else
+	// asks for it.
+	defaultGrantRetry bool
+
 	// statusAtEntry is the Tenant status as this reconcile found it, so a
 	// short-circuit can tell a write that changes something from one that
 	// changes nothing. Set by runTenantReconcileStages before any stage runs:
@@ -207,6 +212,9 @@ func (r *TenantReconciler) runTenantReconcileStages(ctx context.Context, state *
 	// Finalize has a return per data-plane stage; the pacing applies to all of
 	// them, so it is applied to what finalize returns rather than at each one.
 	finalRes, finalErr := r.reconcileTenantStageFinalize(ctx, state)
+	if finalErr == nil && finalRes.RequeueAfter == 0 && state.defaultGrantRetry {
+		finalRes.RequeueAfter = defaultGrantRetryAfter
+	}
 	if finalRes.RequeueAfter > 0 {
 		finalRes.RequeueAfter = tenantConvergenceRequeue(state.tenant, finalRes.RequeueAfter, time.Now())
 	}
@@ -491,6 +499,9 @@ func (r *TenantReconciler) reconcileTenantStageFinalize(ctx context.Context, sta
 	// A plan change that Argo CD has synced is recorded in the usage history
 	// here, before the status it is noted on is written.
 	r.recordResourcePlan(ctx, tenant)
+	// The same for an app installed for everyone: granted here, once, and
+	// noted on the status this writes.
+	state.defaultGrantRetry = r.applyDefaultGrants(ctx, tenant)
 	if err := r.Status().Update(ctx, tenant); err != nil {
 		return ctrl.Result{}, err
 	}
