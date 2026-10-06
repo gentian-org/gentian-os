@@ -11,7 +11,6 @@ SPDX-License-Identifier: MPL-2.0
 package registrar_test
 
 import (
-	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -20,16 +19,22 @@ import (
 	"sync"
 	"testing"
 
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+
 	dt "github.com/gentian-org/gentian-os/internal/director/directortest"
+	"github.com/gentian-org/gentian-os/internal/layout"
+	"github.com/gentian-org/gentian-os/internal/registrar"
 	"github.com/gentian-org/gentian-os/internal/registrar/identity"
 )
 
-// The registrar does not change who administers the platform, whoever asks.
+// The registrar does not change who holds a platform role, whoever asks.
 //
 // These run the real Keycloak client behind the real routes, against a realm
 // that answers like Keycloak, so what is shown is the whole path: a caller
 // the store ALLOWS asks for each thing the rule covers, is answered 403, and
-// nothing is written to the realm.
+// nothing is written to the realm. And they run once for every role the
+// Cluster claim's schema can name, with the group read off a claim the way
+// the registrar reads it: the rule is the same for all of them.
 //
 // The group here is named in the tenant's own subtree rather than
 // gentian:platform:admin. The routes compose a new group's name under the
@@ -104,7 +109,7 @@ func (k *realm) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		answer(out)
 	case strings.HasSuffix(path, "/groups") && strings.HasPrefix(path, "/users/"):
-		// root1 is one of the platform's administrators; u1 is in sales.
+		// root1 holds the platform role under test; u1 is in sales.
 		if strings.HasPrefix(path, "/users/root1/") {
 			answer(groups[:1])
 			return
@@ -123,16 +128,23 @@ func (k *realm) serve(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func startAgainstARealm(t *testing.T) (*harness, *realm) {
+// startAgainstARealm runs the routes against a realm whose group chiefs holds
+// the platform role the Cluster claim names it for under role, a field of
+// spec.platformRoles.
+func startAgainstARealm(t *testing.T, role string) (*harness, *realm) {
 	t.Helper()
 	k := &realm{}
 	kc := httptest.NewServer(http.HandlerFunc(k.serve))
 	t.Cleanup(kc.Close)
+	reader := fake.NewClientBuilder().WithScheme(scheme(t)).WithObjects(
+		claim("main", layout.Namespace(layout.Provisioning),
+			map[string]any{"platformRoles": map[string]any{role: chiefs}})).Build()
 	client, err := identity.New(identity.Config{
 		BaseURL: kc.URL,
 		Source:  identity.StaticSource{"demo": {Realm: "demo", ClientID: identity.ClientID, ClientSecret: "s"}},
-		// What the registrar reads off the Cluster claim.
-		Administrators: func(context.Context) ([]string, error) { return []string{chiefs}, nil },
+		// What the registrar reads off the Cluster claim, read the way it
+		// reads it.
+		PlatformRoleGroups: registrar.ClaimPlatformRoleGroups(reader),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -140,7 +152,13 @@ func startAgainstARealm(t *testing.T) (*harness, *realm) {
 	return startWithIdentity(t, client), k
 }
 
-func TestTheRoutesRefuseToChangeWhoAdministersThePlatform(t *testing.T) {
+func TestTheRoutesRefuseToChangeWhoHoldsAPlatformRole(t *testing.T) {
+	for _, role := range platformRoleFields(t) {
+		t.Run(role, func(t *testing.T) { theRoutesRefuse(t, role) })
+	}
+}
+
+func theRoutesRefuse(t *testing.T, role string) {
 	activate := "/v1/clusters/" + dt.Cluster + "/tenants/demo/actions/activate-admin"
 	for _, c := range []struct {
 		what, path, body string
@@ -156,17 +174,17 @@ func TestTheRoutesRefuseToChangeWhoAdministersThePlatform(t *testing.T) {
 		{"creating a group of that name", "create-group", `{"name":"chiefs"}`},
 		{"renaming another group to that name", "rename-group",
 			`{"group":"gentian:tenant:demo:sales","name":"chiefs"}`},
-		{"changing an administrator's address", "update-person",
+		{"changing a role holder's address", "update-person",
 			`{"person":"root1","email":"eve@example.com"}`},
-		{"disabling an administrator", "update-person", `{"person":"root1","enabled":false}`},
-		{"removing an administrator", "remove-person", `{"person":"root1"}`},
-		{"requiring a second factor of an administrator", "require-totp", `{"person":"root1","mail":true}`},
-		{"removing an administrator's second factor", "remove-totp", `{"person":"root1"}`},
-		{"mailing an administrator a password link", "send-password-reset", `{"person":"root1"}`},
-		{"issuing an activation link for an administrator's account", activate,
+		{"disabling a role holder", "update-person", `{"person":"root1","enabled":false}`},
+		{"removing a role holder", "remove-person", `{"person":"root1"}`},
+		{"requiring a second factor of a role holder", "require-totp", `{"person":"root1","mail":true}`},
+		{"removing a role holder's second factor", "remove-totp", `{"person":"root1"}`},
+		{"mailing a role holder a password link", "send-password-reset", `{"person":"root1"}`},
+		{"issuing an activation link for a role holder's account", activate,
 			`{"recoveryEmail":"eve@example.com"}`},
 	} {
-		h, k := startAgainstARealm(t)
+		h, k := startAgainstARealm(t, role)
 		// tom may manage demo's people and alice may configure the cluster:
 		// each is allowed the route, and refused what it would do.
 		token, path := h.token(t, "tenant-demo", "tom"), "/v1/tenants/demo/actions/"+c.path
@@ -177,7 +195,7 @@ func TestTheRoutesRefuseToChangeWhoAdministersThePlatform(t *testing.T) {
 		if status != http.StatusForbidden {
 			t.Errorf("%s: answered %d %v, want 403", c.what, status, body)
 		}
-		if msg, _ := body["error"].(string); !strings.Contains(msg, "administers the platform") || !strings.Contains(msg, chiefs) {
+		if msg, _ := body["error"].(string); !strings.Contains(msg, "holds a platform role") || !strings.Contains(msg, chiefs) {
 			t.Errorf("%s: the refusal should say why and name the group: %v", c.what, body)
 		}
 		if w := k.wrote(); len(w) != 0 {
@@ -186,8 +204,8 @@ func TestTheRoutesRefuseToChangeWhoAdministersThePlatform(t *testing.T) {
 	}
 }
 
-// The rule is about the administrators and nobody else: the same acts on
-// another person, and another group, go through.
+// The rule is about the holders of platform roles and nobody else: the same
+// acts on another person, and another group, go through.
 func TestEverybodyElseIsManagedAsBefore(t *testing.T) {
 	for _, c := range []struct {
 		what, path, body string
@@ -198,13 +216,13 @@ func TestEverybodyElseIsManagedAsBefore(t *testing.T) {
 		{"mailing somebody a password link", "send-password-reset", `{"person":"u1"}`},
 		{"putting somebody in another group", "set-membership",
 			`{"person":"u1","group":"gentian:tenant:demo:sales","member":true}`},
-		{"putting an administrator in another group", "set-membership",
+		{"putting a role holder in another group", "set-membership",
 			`{"person":"root1","group":"gentian:tenant:demo:sales","member":true}`},
 		{"inviting somebody", "invite-person",
 			`{"email":"eve@example.com","groups":["gentian:tenant:demo:sales"]}`},
 		{"deleting another group", "delete-group", `{"group":"gentian:tenant:demo:sales"}`},
 	} {
-		h, k := startAgainstARealm(t)
+		h, k := startAgainstARealm(t, "admin")
 		status, body := h.do(t, http.MethodPost, "/v1/tenants/demo/actions/"+c.path,
 			h.token(t, "tenant-demo", "tom"), c.body)
 		if status >= 300 {

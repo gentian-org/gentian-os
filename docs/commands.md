@@ -271,8 +271,8 @@ kubectl gentian tenants activate-admin <tenant> [--recovery-email <address>]
 ./install.sh --activate-admin                        # the cluster administrator
 ```
 
-The first asks the registrar, which changes nothing about a member of the
-platform administrators' group and answers 403 for the cluster administrator's
+The first asks the registrar, which changes nothing about a member of a
+group that holds a platform role and answers 403 for the cluster administrator's
 account. That account's link comes from the install host, with the installer's
 own credential — which is also the way in when nobody can sign in.
 

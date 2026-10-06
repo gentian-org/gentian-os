@@ -20,15 +20,18 @@ import (
 	"strings"
 )
 
-// Who administers the platform is not the registrar's to change.
+// Who holds a platform role is not the registrar's to change.
 //
-// The platform's administrators are the members of one Keycloak group, named
-// on the Cluster claim (spec.platformRoles.admin); the operator projects its
-// membership into the authorization store as the cluster's admin relation.
-// Whoever can change that group, or take over an account in it, decides who
-// administers the cluster. The registrar manages people for whoever the
-// store allows, and that is a far wider set of callers than the people who
-// may decide that -- so it refuses to be the way it is done, whoever asks.
+// A platform role -- administrator, security officer, auditor, service
+// administrator, shared-apps administrator, break-glass, and whatever the
+// Cluster claim's platformRoles names besides -- is held by the members of one
+// Keycloak group, named on the claim (spec.platformRoles.<role>); the operator
+// projects each into the authorization store as a relation on the cluster.
+// Whoever can change one of those groups, or take over an account in it,
+// decides who holds that role over the cluster. The registrar manages people
+// for whoever the store allows, and that is a far wider set of callers than
+// the people who may decide that -- so it refuses to be the way it is done,
+// whoever asks.
 //
 // The rule is applied in ONE place: guard, which doAt calls before every
 // request that is not a read. Every call this package makes to Keycloak
@@ -36,7 +39,7 @@ import (
 // about the rule, and a write whose shape guard does not recognise is refused
 // rather than let through.
 //
-// What is refused:
+// What is refused, for every one of those groups alike:
 //
 //   - adding somebody to the group or removing them from it, including
 //     creating a person already in it;
@@ -44,34 +47,33 @@ import (
 //     another group to it, or creating anything beneath it;
 //   - any write to a person who is in the group: their names, address and
 //     whether they may sign in, removing them, their second factor, a mailed
-//     password link, an activation link. Changing an administrator's address
+//     password link, an activation link. Changing a role holder's address
 //     and then mailing a reset is the same as replacing them.
 //
-// A member's membership of OTHER groups may still be changed: that does not
-// touch who administers the platform.
+// A member's membership of groups that hold no platform role may still be
+// changed: that does not touch who holds one.
 //
 // This is a rule in the registrar's code, not a property of its credential.
 // The Keycloak client it authenticates as holds manage-users in the realm,
 // and Keycloak would carry out any of the above for it.
 
-// ErrProtected is a write that would change who administers the platform.
-var ErrProtected = errors.New("the platform administrators are not managed here")
+// ErrProtected is a write that would change who holds a platform role.
+var ErrProtected = errors.New("the holders of the platform's roles are not managed here")
 
-// ErrGuardUnavailable means the rule could not be applied: the group's name
+// ErrGuardUnavailable means the rule could not be applied: the groups' names
 // could not be read. The write is refused, because letting it through would
 // be deciding without knowing.
-var ErrGuardUnavailable = errors.New("the platform administrators' group could not be determined")
+var ErrGuardUnavailable = errors.New("the platform role groups could not be determined")
 
 // ErrUnguarded is a write whose shape guard has no rule for. It is a mistake
 // in this package and never the caller's, and it is refused.
 var ErrUnguarded = errors.New("a write the registrar has no rule for")
 
-// AdminGroup answers the name of the group whose members administer the
-// platform, as the Cluster claim names it. Asked on every write rather than
-// read once: the claim can change, and the rule has to follow it. More than
-// one name is possible only where more than one claim exists; each is
-// protected.
-type AdminGroup func(ctx context.Context) ([]string, error)
+// RoleGroups answers the names of the groups whose members hold a platform
+// role, as the Cluster claim names them: every one, not the administrators'
+// alone. Asked on every write rather than read once: the claim can change,
+// and the rule has to follow it. Each name answered is protected.
+type RoleGroups func(ctx context.Context) ([]string, error)
 
 // change is what one request to Keycloak would change, as far as the rule
 // cares.
@@ -135,7 +137,7 @@ func unescape(s string) string {
 	return s
 }
 
-// guard refuses a write that would change who administers the platform.
+// guard refuses a write that would change who holds a platform role.
 //
 // Called by doAt for every request that is not a GET, and by nothing else.
 func (c *Client) guard(ctx context.Context, r Realm, method, rel string, body any) error {
@@ -143,7 +145,7 @@ func (c *Client) guard(ctx context.Context, r Realm, method, rel string, body an
 	if !ok {
 		return fmt.Errorf("%w: %s %s", ErrUnguarded, method, rel)
 	}
-	which, err := c.administrators(ctx)
+	which, err := c.roleGroups(ctx)
 	if err != nil {
 		return err
 	}
@@ -193,29 +195,29 @@ func (c *Client) guard(ctx context.Context, r Realm, method, rel string, body an
 	return nil
 }
 
-// administrators asks which groups are the platform administrators' and
-// returns the test for them: the administrators' group a path is, or is
-// beneath. It fails closed: no name is ErrGuardUnavailable, never "none".
-func (c *Client) administrators(ctx context.Context) (func(path string) (string, bool), error) {
-	if c.admins == nil {
+// roleGroups asks which groups hold a platform role and returns the test for
+// them: the role group a path is, or is beneath. It fails closed: no name is
+// ErrGuardUnavailable, never "none".
+func (c *Client) roleGroups(ctx context.Context) (func(path string) (string, bool), error) {
+	if c.roles == nil {
 		return nil, ErrGuardUnavailable
 	}
-	answered, err := c.admins(ctx)
+	answered, err := c.roles(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrGuardUnavailable, err)
 	}
-	var admins []string
+	var protected []string
 	for _, name := range answered {
 		if name = strings.TrimPrefix(strings.TrimSpace(name), "/"); name != "" {
-			admins = append(admins, name)
+			protected = append(protected, name)
 		}
 	}
-	if len(admins) == 0 {
+	if len(protected) == 0 {
 		return nil, ErrGuardUnavailable
 	}
 	return func(path string) (string, bool) {
 		path = strings.TrimPrefix(path, "/")
-		for _, name := range admins {
+		for _, name := range protected {
 			if path == name || strings.HasPrefix(path, name+"/") {
 				return name, true
 			}
@@ -225,13 +227,13 @@ func (c *Client) administrators(ctx context.Context) (func(path string) (string,
 }
 
 // notCustom is the answer for a group the platform composes, which is not
-// renamed or deleted from here. For the administrators' group it is
+// renamed or deleted from here. For a platform role's group it is
 // ErrProtected instead: that group is refused for the stronger reason, and a
 // caller told only "not a custom group" would not learn that nothing here
 // will ever change it. This decides which refusal is heard and nothing else
 // -- the request is refused either way, and guard is what stops the write.
 func (c *Client) notCustom(ctx context.Context, path string) error {
-	which, err := c.administrators(ctx)
+	which, err := c.roleGroups(ctx)
 	if err != nil {
 		return err
 	}

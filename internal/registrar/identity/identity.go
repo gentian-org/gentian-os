@@ -39,9 +39,9 @@ SPDX-License-Identifier: MPL-2.0
 // policed: to touch another tenant's realm the registrar would have to be
 // handed a credential it was never given.
 //
-// Who administers the platform is not the registrar's to change. Every write
+// Who holds a platform role is not the registrar's to change. Every write
 // leaves through one function, and that function refuses the ones that would
-// touch the platform administrators' group or a person in it: see guard.go.
+// touch a platform role's group or a person in it: see guard.go.
 package identity
 
 import (
@@ -141,11 +141,11 @@ type Config struct {
 	// BaseURL is Keycloak's root, without /admin or /realms.
 	BaseURL string
 	Source  CredentialSource
-	// Administrators names the group whose members administer the platform.
-	// Required: every write is checked against it (guard.go), and a client
-	// that did not know the name could only let everything through.
-	Administrators AdminGroup
-	Logger         *slog.Logger
+	// PlatformRoleGroups names the groups whose members hold a platform
+	// role. Required: every write is checked against them (guard.go), and a
+	// client that did not know the names could only let everything through.
+	PlatformRoleGroups RoleGroups
+	Logger             *slog.Logger
 	// HTTPClient is optional; the default has a timeout because an admin
 	// call on a request path must not outlive the request.
 	HTTPClient *http.Client
@@ -155,7 +155,7 @@ type Config struct {
 type Client struct {
 	base   string
 	source CredentialSource
-	admins AdminGroup
+	roles  RoleGroups
 	http   *http.Client
 	log    *slog.Logger
 
@@ -180,9 +180,9 @@ func New(cfg Config) (*Client, error) {
 	if _, err := url.Parse(base); err != nil {
 		return nil, fmt.Errorf("identity: BaseURL: %w", err)
 	}
-	if cfg.Administrators == nil {
-		return nil, errors.New("identity: Administrators is required: " +
-			"without the platform administrators' group no write can be judged")
+	if cfg.PlatformRoleGroups == nil {
+		return nil, errors.New("identity: PlatformRoleGroups is required: " +
+			"without the platform role groups no write can be judged")
 	}
 	if cfg.Source == nil {
 		cfg.Source = StaticSource{}
@@ -195,7 +195,7 @@ func New(cfg Config) (*Client, error) {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Client{base: base, source: cfg.Source, admins: cfg.Administrators, http: hc, log: log,
+	return &Client{base: base, source: cfg.Source, roles: cfg.PlatformRoleGroups, http: hc, log: log,
 		tokens: map[string]cachedToken{}}, nil
 }
 
@@ -298,7 +298,7 @@ func (c *Client) do(ctx context.Context, r Realm, method, path string, query url
 func (c *Client) doAt(ctx context.Context, r Realm, method, rel, label string, query url.Values, body any) (*http.Response, error) {
 	path := label
 	// The one place a write leaves from, and so the one place the rule about
-	// the platform's administrators is applied. See guard.go.
+	// the holders of the platform's roles is applied. See guard.go.
 	if method != http.MethodGet {
 		if err := c.guard(ctx, r, method, rel, body); err != nil {
 			return nil, err

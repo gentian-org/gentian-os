@@ -45,6 +45,9 @@ const platformTenant = "platform"
 // platform's administrators when the claim says nothing else.
 const defaultAdminGroup = "gentian:platform:admin"
 
+// adminRole is the field of spec.platformRoles that default belongs to.
+const adminRole = "admin"
+
 // Tenant is what the routes need to know about one tenant.
 type Tenant struct {
 	Name string
@@ -161,19 +164,25 @@ func (c *ClusterTenants) loginDomain(t *gentianov1alpha1.Tenant, realm string) s
 // that kind with the scheme, and the registrar needs one string from it.
 var clusterClaimList = schema.GroupVersionKind{Group: "gentianos.io", Version: "v1alpha1", Kind: "ClusterList"}
 
-// ClaimAdminGroups answers which group's members administer the platform:
-// spec.platformRoles.admin of the Cluster claim.
+// ClaimPlatformRoleGroups answers which groups' members hold a platform role:
+// every field of spec.platformRoles of the Cluster claim.
 //
-// The same field, from the same object, in the same namespace as the
-// operator's projection reads (AuthzProjectionReconciler.platformRoles): the
-// group the registrar refuses to touch has to be the group the operator
-// projects as the cluster's administrators, and two readings of two sources
-// would eventually differ. A claim that names none leaves the schema's
-// default, which is also where the install puts the first administrator.
+// The same map, from the same object, in the same namespace as the operator's
+// projection reads (AuthzProjectionReconciler.platformRoles): the groups the
+// registrar refuses to touch have to be the groups the operator projects as
+// the cluster's roles, and two readings of two sources would eventually
+// differ. The map is read whole rather than field by field, so a role the
+// schema gains is protected without this function learning its name.
+//
+// The one default is the schema's own: a claim that names no administrators'
+// group leaves gentian:platform:admin, which is also where the install puts
+// the first administrator. No other role has a default, and a role the claim
+// leaves unset has no group to protect.
 //
 // An error is an error: the caller refuses the write rather than assume a
-// name.
-func ClaimAdminGroups(reader client.Reader) func(ctx context.Context) ([]string, error) {
+// name. That includes a platformRoles that is not a map of strings, which the
+// schema does not admit and which could only be read in part.
+func ClaimPlatformRoleGroups(reader client.Reader) func(ctx context.Context) ([]string, error) {
 	return func(ctx context.Context) ([]string, error) {
 		list := &unstructured.UnstructuredList{}
 		list.SetGroupVersionKind(clusterClaimList)
@@ -182,12 +191,23 @@ func ClaimAdminGroups(reader client.Reader) func(ctx context.Context) ([]string,
 		}
 		seen := map[string]bool{}
 		var out []string
-		for i := range list.Items {
-			group, _, _ := unstructured.NestedString(list.Items[i].Object, "spec", "platformRoles", "admin")
+		add := func(group string) {
 			group = strings.TrimPrefix(strings.TrimSpace(group), "/")
 			if group != "" && !seen[group] {
 				seen[group] = true
 				out = append(out, group)
+			}
+		}
+		for i := range list.Items {
+			roles, _, err := unstructured.NestedStringMap(list.Items[i].Object, "spec", "platformRoles")
+			if err != nil {
+				return nil, fmt.Errorf("reading spec.platformRoles of the Cluster claim %s: %w", list.Items[i].GetName(), err)
+			}
+			for _, group := range roles {
+				add(group)
+			}
+			if strings.TrimSpace(roles[adminRole]) == "" {
+				add(defaultAdminGroup)
 			}
 		}
 		if len(out) == 0 {

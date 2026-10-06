@@ -22,7 +22,7 @@ SPDX-License-Identifier: MPL-2.0
 // It verifies a caller's token, asks the authorization store whether that
 // person may manage the people of the tenant they named, and only then acts
 // at Keycloak, as itself, recording whose act it was. It does not change who
-// administers the platform, whoever asks.
+// holds a platform role, whoever asks.
 package main
 
 import (

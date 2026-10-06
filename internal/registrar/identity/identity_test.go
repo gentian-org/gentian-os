@@ -218,15 +218,24 @@ func (f *fakeKeycloak) recorded() []recorded {
 	return append([]recorded(nil), f.calls...)
 }
 
-// platformAdmins is the group these tests protect, and adminGroup names it
-// the way the registrar's reading of the Cluster claim does.
+// platformAdmins is the group these tests protect unless they say otherwise,
+// and roleGroups names groups the way the registrar's reading of the Cluster
+// claim does.
 const platformAdmins = "gentian:platform:admin"
 
-func adminGroup(context.Context) ([]string, error) { return []string{platformAdmins}, nil }
+func roleGroups(names ...string) RoleGroups {
+	return func(context.Context) ([]string, error) { return names, nil }
+}
 
 func clientFor(t *testing.T, srv *httptest.Server, src CredentialSource) *Client {
 	t.Helper()
-	c, err := New(Config{BaseURL: srv.URL, Source: src, Administrators: adminGroup})
+	return clientProtecting(t, srv, src, platformAdmins)
+}
+
+// clientProtecting is a client told that these groups hold platform roles.
+func clientProtecting(t *testing.T, srv *httptest.Server, src CredentialSource, groups ...string) *Client {
+	t.Helper()
+	c, err := New(Config{BaseURL: srv.URL, Source: src, PlatformRoleGroups: roleGroups(groups...)})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

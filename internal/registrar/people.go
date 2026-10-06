@@ -132,17 +132,17 @@ func (s *Server) identityError(w http.ResponseWriter, r *http.Request, err error
 		s.fail(w, r, http.StatusServiceUnavailable, "this registrar holds no credential for that realm")
 	case errors.Is(err, identity.ErrProtected):
 		// Whoever asks. The caller holds the relation the route requires, and
-		// this is refused all the same: who administers the platform is not
+		// this is refused all the same: who holds a platform role is not
 		// changed through the registrar (identity/guard.go).
-		s.cfg.Log.WarnContext(r.Context(), "refused: the platform administrators are not managed here",
+		s.cfg.Log.WarnContext(r.Context(), "refused: the holders of the platform's roles are not managed here",
 			"request_id", reqID(r.Context()), "tenant", r.PathValue("t"), "reason", err.Error())
 		s.fail(w, r, http.StatusForbidden, "refused: "+err.Error()+
-			". Who administers the platform is not changed through the registrar.")
+			". Who holds a platform role is not changed through the registrar.")
 	case errors.Is(err, identity.ErrGuardUnavailable):
-		s.cfg.Log.ErrorContext(r.Context(), "the platform administrators' group could not be read; nothing was written",
+		s.cfg.Log.ErrorContext(r.Context(), "the platform role groups could not be read; nothing was written",
 			"request_id", reqID(r.Context()), "error", err.Error())
 		s.fail(w, r, http.StatusServiceUnavailable,
-			"the platform administrators' group could not be read from the Cluster claim, so nothing was changed")
+			"the platform role groups could not be read from the Cluster claim, so nothing was changed")
 	case errors.Is(err, identity.ErrUnguarded):
 		s.cfg.Log.ErrorContext(r.Context(), "a write the registrar has no rule for was refused",
 			"request_id", reqID(r.Context()), "error", err.Error())

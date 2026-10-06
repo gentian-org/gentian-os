@@ -27,7 +27,7 @@ SPDX-License-Identifier: MPL-2.0
 // ones the director served; a caller changes the address it calls and
 // nothing else.
 //
-// One thing it will not do for anybody: change who administers the platform.
+// One thing it will not do for anybody: change who holds a platform role.
 // That rule lives in internal/registrar/identity/guard.go, on the way every
 // write leaves.
 package registrar

@@ -13,7 +13,11 @@ package registrar_test
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"reflect"
+	"sort"
+	"strings"
 	"testing"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -23,6 +27,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
+	"sigs.k8s.io/yaml"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/layout"
@@ -114,9 +119,39 @@ func claim(name, namespace string, spec map[string]any) *unstructured.Unstructur
 	return u
 }
 
-// The group the registrar protects is the one the Cluster claim names as the
-// platform's administrators: the field the operator projects into the store.
-func TestTheAdministratorsGroupIsReadFromTheClusterClaim(t *testing.T) {
+// platformRoleFields is every field of spec.platformRoles the Cluster claim's
+// schema declares, read from the XRD itself: a role added there is a role
+// these tests then ask about, without anybody remembering to list it here.
+func platformRoleFields(t *testing.T) []string {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join("..", "..", "crossplane", "xrds", "cluster.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var xrd map[string]any
+	if err := yaml.Unmarshal(raw, &xrd); err != nil {
+		t.Fatal(err)
+	}
+	versions, _, _ := unstructured.NestedSlice(xrd, "spec", "versions")
+	var out []string
+	for _, v := range versions {
+		version, _ := v.(map[string]any)
+		fields, _, _ := unstructured.NestedMap(version,
+			"schema", "openAPIV3Schema", "properties", "spec", "properties", "platformRoles", "properties")
+		for name := range fields {
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
+	if len(out) < 6 {
+		t.Fatalf("the Cluster XRD declares platform roles %v; at least the six known ones were expected", out)
+	}
+	return out
+}
+
+// The groups the registrar protects are the ones the Cluster claim names for
+// its platform roles: the map the operator projects into the store, whole.
+func TestThePlatformRoleGroupsAreReadFromTheClusterClaim(t *testing.T) {
 	ns := layout.Namespace(layout.Provisioning)
 	named := map[string]any{"platformRoles": map[string]any{"admin": "acme:operators", "auditor": "acme:audit"}}
 
@@ -124,17 +159,56 @@ func TestTheAdministratorsGroupIsReadFromTheClusterClaim(t *testing.T) {
 		objects []client.Object
 		want    []string
 	}{
-		"the claim names it":     {[]client.Object{claim("main", ns, named)}, []string{"acme:operators"}},
-		"the claim names none":   {[]client.Object{claim("main", ns, map[string]any{})}, []string{"gentian:platform:admin"}},
-		"no claim yet":           {nil, []string{"gentian:platform:admin"}},
-		"a claim somewhere else": {[]client.Object{claim("stray", "default", named)}, []string{"gentian:platform:admin"}},
-		"written as a path":      {[]client.Object{claim("main", ns, map[string]any{"platformRoles": map[string]any{"admin": "/acme:operators"}})}, []string{"acme:operators"}},
+		"the claim names them": {[]client.Object{claim("main", ns, named)}, []string{"acme:audit", "acme:operators"}},
+		"the claim names none": {[]client.Object{claim("main", ns, map[string]any{})}, []string{"gentian:platform:admin"}},
+		"no claim yet":         {nil, []string{"gentian:platform:admin"}},
+		"a claim somewhere else": {[]client.Object{claim("stray", "default", named)},
+			[]string{"gentian:platform:admin"}},
+		"written as a path": {[]client.Object{claim("main", ns,
+			map[string]any{"platformRoles": map[string]any{"admin": "/acme:operators"}})}, []string{"acme:operators"}},
+		// The administrators' default is the schema's, and it holds beside
+		// whatever other role the claim names.
+		"a role and no administrators": {[]client.Object{claim("main", ns,
+			map[string]any{"platformRoles": map[string]any{"breakGlass": "acme:recovery"}})},
+			[]string{"acme:recovery", "gentian:platform:admin"}},
+		"two roles held by one group": {[]client.Object{claim("main", ns,
+			map[string]any{"platformRoles": map[string]any{"admin": "acme:all", "securityOfficer": "acme:all"}})},
+			[]string{"acme:all"}},
 	} {
 		reader := fake.NewClientBuilder().WithScheme(scheme(t)).WithObjects(c.objects...).Build()
-		got, err := registrar.ClaimAdminGroups(reader)(context.Background())
+		got, err := registrar.ClaimPlatformRoleGroups(reader)(context.Background())
 		if err != nil || !reflect.DeepEqual(got, c.want) {
 			t.Errorf("%s: %v, %v; want %v", name, got, err, c.want)
 		}
+	}
+}
+
+// Every role the schema can name is read, each to its own group: none is
+// left out because this package never heard of it.
+func TestEveryPlatformRoleOfTheSchemaIsRead(t *testing.T) {
+	roles := map[string]any{}
+	var want []string
+	for _, field := range platformRoleFields(t) {
+		roles[field] = "acme:" + strings.ToLower(field)
+		want = append(want, "acme:"+strings.ToLower(field))
+	}
+	sort.Strings(want)
+	reader := fake.NewClientBuilder().WithScheme(scheme(t)).WithObjects(
+		claim("main", layout.Namespace(layout.Provisioning), map[string]any{"platformRoles": roles})).Build()
+	got, err := registrar.ClaimPlatformRoleGroups(reader)(context.Background())
+	if err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v, %v; want %v", got, err, want)
+	}
+}
+
+// A platformRoles that cannot be read whole names nothing, and that is an
+// error: half the roles protected is a rule that looks applied.
+func TestPlatformRolesThatAreNotStringsAreAnError(t *testing.T) {
+	reader := fake.NewClientBuilder().WithScheme(scheme(t)).WithObjects(
+		claim("main", layout.Namespace(layout.Provisioning),
+			map[string]any{"platformRoles": map[string]any{"admin": "acme:operators", "auditor": int64(7)}})).Build()
+	if got, err := registrar.ClaimPlatformRoleGroups(reader)(context.Background()); err == nil {
+		t.Fatalf("got %v and no error", got)
 	}
 }
 
@@ -146,7 +220,7 @@ func TestAnUnreadableClaimIsAnErrorNotADefault(t *testing.T) {
 			return errors.New("the API server did not answer")
 		},
 	}).Build()
-	if got, err := registrar.ClaimAdminGroups(reader)(context.Background()); err == nil {
+	if got, err := registrar.ClaimPlatformRoleGroups(reader)(context.Background()); err == nil {
 		t.Fatalf("got %v and no error", got)
 	}
 }

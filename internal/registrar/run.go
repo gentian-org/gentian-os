@@ -74,11 +74,11 @@ func NewFromEnv(ctx context.Context, reader client.Reader, graph authz.Checker, 
 		// In-cluster. The public issuer refuses /admin by design.
 		BaseURL: envOr("REGISTRAR_IDENTITY_BASE_URL", issuer),
 		Source:  identity.NewDirectorySource(realmDir, identity.ClientID),
-		// The group whose members administer the platform, from the Cluster
-		// claim on every write. The registrar refuses to change it or anybody
-		// in it (identity/guard.go).
-		Administrators: ClaimAdminGroups(reader),
-		Logger:         log,
+		// The groups whose members hold a platform role, from the Cluster
+		// claim on every write. The registrar refuses to change any of them
+		// or anybody in one (identity/guard.go).
+		PlatformRoleGroups: ClaimPlatformRoleGroups(reader),
+		Logger:             log,
 	})
 	if err != nil {
 		return nil, nil, fmt.Errorf("identity: %w", err)

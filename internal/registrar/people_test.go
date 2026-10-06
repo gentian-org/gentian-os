@@ -59,9 +59,9 @@ func (f *fakeIdentity) Realm(name string) (identity.Realm, error) {
 	// The real client hands back an opaque token; a fake cannot construct one
 	// with the unexported field set, so it uses the real constructor.
 	c, err := identity.New(identity.Config{
-		BaseURL:        "https://unused.invalid",
-		Source:         identity.StaticSource{name: {Realm: name, ClientID: "x", ClientSecret: "y"}},
-		Administrators: func(context.Context) ([]string, error) { return []string{platformAdmins}, nil },
+		BaseURL:            "https://unused.invalid",
+		Source:             identity.StaticSource{name: {Realm: name, ClientID: "x", ClientSecret: "y"}},
+		PlatformRoleGroups: func(context.Context) ([]string, error) { return []string{platformAdmins}, nil },
 	})
 	if err != nil {
 		return identity.Realm{}, err

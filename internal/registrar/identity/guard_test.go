@@ -19,7 +19,8 @@ import (
 )
 
 // The realm these tests run in: the platform administrators' group, a group
-// beside it, a custom group, one administrator and one person who is not.
+// of the platform's that holds no role, a custom group, one administrator and
+// one person who is not.
 //
 // The administrators' group is marked custom here although the platform never
 // marks it so. That takes the older refusal -- "only a custom group is renamed
@@ -27,11 +28,18 @@ import (
 // about administrators and nothing that happens to stand in front of it.
 func guardedRealm(t *testing.T) (*fakeKeycloak, *Client, Realm) {
 	t.Helper()
+	return guardedRealmOf(t, platformAdmins, platformAdmins)
+}
+
+// guardedRealmOf is the same realm with root1 in group, and a client told
+// that protected are the groups holding platform roles.
+func guardedRealmOf(t *testing.T, group string, protected ...string) (*fakeKeycloak, *Client, Realm) {
+	t.Helper()
 	f, srv := newFake(t)
 	custom := map[string][]string{CustomGroupAttribute: {"true"}}
 	f.groups["kernel"] = []groupRep{
-		{ID: "g-admin", Name: platformAdmins, Path: "/" + platformAdmins, Attributes: custom},
-		{ID: "g-auditor", Name: "gentian:platform:auditor", Path: "/gentian:platform:auditor"},
+		{ID: "g-role", Name: group, Path: "/" + group, Attributes: custom},
+		{ID: "g-unnamed", Name: "gentian:platform:unnamed", Path: "/gentian:platform:unnamed"},
 		{ID: "g-ops", Name: "gentian:platform:ops", Path: "/gentian:platform:ops", Attributes: custom},
 	}
 	f.users["kernel"] = []userRep{
@@ -39,15 +47,18 @@ func guardedRealm(t *testing.T) (*fakeKeycloak, *Client, Realm) {
 		{ID: "user1", Username: "ada@k.example", Email: "ada@k.example", Enabled: true, EmailVerified: true},
 	}
 	f.memberOf = map[string][]string{
-		"root1": {"/" + platformAdmins},
+		"root1": {"/" + group},
 		"user1": {"/gentian:platform:ops"},
 	}
-	return guardedClient(t, f, srv)
+	return guardedClient(t, f, srv, protected...)
 }
 
-func guardedClient(t *testing.T, f *fakeKeycloak, srv *httptest.Server) (*fakeKeycloak, *Client, Realm) {
+func guardedClient(t *testing.T, f *fakeKeycloak, srv *httptest.Server, protected ...string) (*fakeKeycloak, *Client, Realm) {
 	t.Helper()
-	c := clientFor(t, srv, StaticSource{"kernel": {Realm: "kernel", ClientID: ClientID, ClientSecret: "s"}})
+	if len(protected) == 0 {
+		protected = []string{platformAdmins}
+	}
+	c := clientProtecting(t, srv, StaticSource{"kernel": {Realm: "kernel", ClientID: ClientID, ClientSecret: "s"}}, protected...)
 	r, err := c.Realm("kernel")
 	if err != nil {
 		t.Fatal(err)
@@ -161,7 +172,7 @@ func TestTheActivationLinkOfAnAdministratorIsRefusedOnItsOwnPath(t *testing.T) {
 
 func TestAnAdministratorsOtherGroupsMayStillChange(t *testing.T) {
 	f, c, r := guardedRealm(t)
-	if err := c.SetMembership(context.Background(), r, "root1", "gentian:platform:auditor", true); err != nil {
+	if err := c.SetMembership(context.Background(), r, "root1", "gentian:platform:unnamed", true); err != nil {
 		t.Fatalf("adding an administrator to another group: %v", err)
 	}
 	if w := f.writes(); len(w) != 1 || w[0].method != http.MethodPut {
@@ -184,7 +195,7 @@ func TestWithoutTheGroupsNameNothingIsWritten(t *testing.T) {
 	c, err := New(Config{
 		BaseURL: srv.URL,
 		Source:  StaticSource{"kernel": {Realm: "kernel", ClientID: ClientID, ClientSecret: "s"}},
-		Administrators: func(context.Context) ([]string, error) {
+		PlatformRoleGroups: func(context.Context) ([]string, error) {
 			return nil, errors.New("the Cluster claim could not be read")
 		},
 	})
@@ -206,7 +217,7 @@ func TestWithoutTheGroupsNameNothingIsWritten(t *testing.T) {
 	}
 
 	if _, err := New(Config{BaseURL: srv.URL}); err == nil {
-		t.Error("a client was built with nothing to name the administrators' group")
+		t.Error("a client was built with nothing to name the platform role groups")
 	}
 }
 
@@ -265,7 +276,7 @@ func TestThePlatformsOwnAdministratorsGroupIsRefusedAsProtectedNotAsNotCustom(t 
 	f, srv := newFake(t)
 	f.groups["kernel"] = []groupRep{
 		{ID: "g-admin", Name: platformAdmins, Path: "/" + platformAdmins},
-		{ID: "g-auditor", Name: "gentian:platform:auditor", Path: "/gentian:platform:auditor"},
+		{ID: "g-unnamed", Name: "gentian:platform:unnamed", Path: "/gentian:platform:unnamed"},
 	}
 	_, c, r := guardedClient(t, f, srv)
 	ctx := context.Background()
@@ -274,7 +285,83 @@ func TestThePlatformsOwnAdministratorsGroupIsRefusedAsProtectedNotAsNotCustom(t 
 	_, err := c.RenameGroup(ctx, r, platformAdmins, "gentian:platform:former")
 	refused(t, f, "renaming the group", err)
 
-	if err := c.DeleteGroup(ctx, r, "gentian:platform:auditor"); !errors.Is(err, ErrNotCustom) {
+	if err := c.DeleteGroup(ctx, r, "gentian:platform:unnamed"); !errors.Is(err, ErrNotCustom) {
 		t.Errorf("another group of the platform's: got %v, want ErrNotCustom", err)
+	}
+}
+
+// The rule is the same for every platform role, not the administrators'
+// alone: whichever group the Cluster claim names for a role, every refusal
+// above holds for it and for the people in it, while the client is told all
+// of the groups at once.
+func TestEveryPlatformRoleGroupIsProtectedAlike(t *testing.T) {
+	ctx := context.Background()
+	address, off := "eve@example.com", false
+	all := []string{
+		platformAdmins, "acme:security", "acme:audit", "acme:services", "acme:shared-apps", "acme:break-glass",
+	}
+	for _, group := range all {
+		for what, act := range map[string]func(*Client, Realm) error{
+			"adding somebody": func(c *Client, r Realm) error { return c.SetMembership(ctx, r, "user1", group, true) },
+			"removing somebody": func(c *Client, r Realm) error {
+				return c.SetMembership(ctx, r, "root1", group, false)
+			},
+			"inviting somebody into it": func(c *Client, r Realm) error {
+				_, err := c.Invite(ctx, r, Invitation{Email: address, Groups: []string{"gentian:platform:ops", group}})
+				return err
+			},
+			"renaming it": func(c *Client, r Realm) error {
+				_, err := c.RenameGroup(ctx, r, group, "acme:former")
+				return err
+			},
+			"deleting it": func(c *Client, r Realm) error { return c.DeleteGroup(ctx, r, group) },
+			"creating a group of that name": func(c *Client, r Realm) error {
+				_, err := c.CreateGroup(ctx, r, group)
+				return err
+			},
+			"renaming another group to that name": func(c *Client, r Realm) error {
+				_, err := c.RenameGroup(ctx, r, "gentian:platform:ops", group)
+				return err
+			},
+			"changing a member's address": func(c *Client, r Realm) error {
+				_, err := c.UpdatePerson(ctx, r, "root1", PersonUpdate{Email: &address})
+				return err
+			},
+			"disabling a member": func(c *Client, r Realm) error {
+				_, err := c.UpdatePerson(ctx, r, "root1", PersonUpdate{Enabled: &off})
+				return err
+			},
+			"removing a member": func(c *Client, r Realm) error { return c.RemovePerson(ctx, r, "root1") },
+			"requiring a second factor of a member": func(c *Client, r Realm) error {
+				return c.RequireTOTP(ctx, r, "root1", true, "", "")
+			},
+			"removing a member's second factor": func(c *Client, r Realm) error { return c.RemoveTOTP(ctx, r, "root1") },
+			"mailing a member a password link": func(c *Client, r Realm) error {
+				return c.SendPasswordReset(ctx, r, "root1", "", "")
+			},
+			"activating a member's account": func(c *Client, r Realm) error {
+				_, err := c.ActivateAccount(ctx, r, "root1", address, true, "", "")
+				return err
+			},
+		} {
+			f, c, r := guardedRealmOf(t, group, all...)
+			f.creds["root1"] = []map[string]string{{"id": "otp1", "type": "otp"}}
+			refused(t, f, group+": "+what, act(c, r))
+		}
+	}
+}
+
+// A group the claim names for no role is not protected because it looks like
+// one: the rule follows the claim, not the name.
+func TestAGroupTheClaimNamesForNoRoleIsManagedAsBefore(t *testing.T) {
+	f, c, r := guardedRealmOf(t, "acme:audit", platformAdmins)
+	if err := c.SetMembership(context.Background(), r, "user1", "acme:audit", true); err != nil {
+		t.Fatalf("adding somebody to a group that holds no role: %v", err)
+	}
+	if err := c.RemovePerson(context.Background(), r, "root1"); err != nil {
+		t.Fatalf("removing a member of a group that holds no role: %v", err)
+	}
+	if len(f.writes()) != 2 {
+		t.Fatalf("writes = %v, want two", f.writes())
 	}
 }
