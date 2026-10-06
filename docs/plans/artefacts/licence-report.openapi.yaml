@@ -1,11 +1,19 @@
+# Copyright The Gentian OS Authors.
+#
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at https://mozilla.org/MPL/2.0/.
+#
+# SPDX-License-Identifier: MPL-2.0
+
 openapi: 3.1.0
 info:
   title: Gentian OS licence report receiver
   version: "1"
   summary: The one request a reporting cluster makes, and what its receiver may answer.
   license:
-    name: Apache-2.0
-    identifier: Apache-2.0
+    name: Mozilla Public License 2.0
+    identifier: MPL-2.0
   description: |
     A Gentian OS cluster with licence reporting on sends one report a few
     minutes after its operator starts and one every 24 hours after that.

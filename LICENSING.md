@@ -12,7 +12,6 @@ says which is which, what each asks of you, and how a file tells you its own.
 | `api/` | **Apache-2.0** — [api/LICENSE](api/LICENSE) | the resource types and the bundle format: what another program imports |
 | `gentianos.io_*.yaml` in `config/crd/` and `charts/gentian-os/crds/` | **Apache-2.0** | generated from `api/`, and installed into clusters by anyone. The other CRDs beside them belong to the projects they come from |
 | `docs/design/store-contract.md` | **Apache-2.0** | a specification others implement |
-| `docs/plans/artefacts/store-api.md`, `store-api.openapi.yaml` and `licence-report.openapi.yaml` beside it | **Apache-2.0** | the formats of that specification |
 | `charts/infra/` | each chart's own | third-party charts carried here unchanged or with noted changes; see the `UPSTREAM.md` in each |
 
 A file's own notice wins over this table. Go files carry one at the top, ending

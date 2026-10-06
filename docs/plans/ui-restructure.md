@@ -29,8 +29,8 @@ The current target. The sections below give the detail and the reasons.
 | --- | --- | --- | --- | --- |
 | **Desktop** (§1) | on the cluster, per tenant | everyone | the tiles the signed-in person may open | opens them. Nothing else: no install, uninstall, add-on, access, repository or store logic |
 | **Admin console** (§2) | on the cluster, per tenant | administrators | people and groups, policies, resources, credentials, and under **Apps** every installed app: its state, who has access and whether it is for everyone, its integrations, its privileges | administers: gives and takes away access, sets "for everyone", approves privileges, uninstalls, purges. It installs nothing and lists no catalogue |
-| **App Store app** (§3) | on the cluster, per tenant; absent when the licence report is off or no store is named | people who may install apps in the tenant | the store's data: apps, descriptions, pictures, reviews, evaluations and reports, versions, prices, what the tenant has acquired | acquires from the store; installs through the director and sets the repository credential through the custodian |
-| **The store** | outside the cluster, run by a vendor | — | nothing on the cluster. It serves data to the App Store app | data and commerce only. It never calls the cluster |
+| **App Store app** (§3) | on the cluster, per tenant; absent when the licence report is off or no store is named | people who may install apps in the tenant | the store's data, at once and with no store account: apps, descriptions, pictures, reviews, evaluations and reports, versions, list prices. After a sign-in to the store: what the tenant has acquired | acquires from the store, which is what the sign-in to the store is for; installs through the director and sets the repository credential through the custodian |
+| **The store** | outside the cluster, run by a vendor | — | nothing on the cluster. It serves data to the App Store app: the catalogue to anyone who asks, with no token; a tenant's standing and acquisitions to a person signed in to it | data and commerce only. It never calls the cluster |
 | **Operations Console** | on the cluster, where installed | whoever looks after the cluster | [sovereignty-concept.md](sovereignty-concept.md) §5.1 | as described there; it is not changed by this document |
 | **Command line** | the administrator's machine | administrators | — | `kubectl gentian apps install …` through the director. With no store it is the only way to install an app |
 
@@ -275,9 +275,16 @@ repository beside the desktop and the admin console.
   the repository's credential through the custodian. Both ask of it what
   they ask of every other caller. Like every UI here it carries no
   authority: no ServiceAccount with write verbs, no credential of its own.
-- **It signs the person in to the store** separately, with their account at
-  the vendor, as a public client with no secret. That token is valid at the
-  store and nowhere on the cluster.
+- **It shows the catalogue at once.** Browsing needs no store account: the
+  store's catalogue reads take no token, and the app makes them anonymously.
+  An anonymous read tells the store only the address the request comes
+  from; the app sends no cluster or tenant identifier with it.
+- **It signs the person in to the store only for what concerns the tenant**
+  — acquiring, and seeing what the tenant has acquired — with their account
+  at the vendor, as a public client with no secret. That token is valid at
+  the store and nowhere on the cluster. Whether the store serves the tenant
+  is learned at that sign-in, not before; the catalogue is readable either
+  way.
 - **Not an entitlement issuer, and neither is the store.** The store decides
   nothing for the cluster and the cluster does no licence gating (AD-3).
   There is no signed grant, no store key on the Cluster claim, and no tuple
@@ -315,12 +322,12 @@ The licence report the store depends on is
 ```
 tenant admin ─(browser, edge session)─► App Store app, its own tile
 
-App Store app ─► store   GET /v1/meta, sign-in at the store's issuer (PKCE, tenant_url)
-              ─► store   GET /v1/tenant           served? notices? — shown as they are
-              ─► store   GET /v1/apps, …          rendered as data
+App Store app ─► store   GET /v1/meta, /v1/apps, …   no token, no sign-in — rendered as data
 
-  admin asks for app A
-App Store app ─► store   POST /v1/acquisitions {coordinate}
+  admin asks for app A — the first thing that needs the store account
+App Store app ─► store   sign-in at the store's issuer (PKCE, tenant_url)
+              ─► store   GET /v1/tenant           served? notices? — shown as they are
+              ─► store   POST /v1/acquisitions {coordinate}
        ◄─ 201 confirmation                        a free app, or no checkout needed
        ◄─ 202 {id, checkoutUrl}                   paid: the checkout opens in a separate window, at the store;
                                                   then GET /v1/acquisitions/{id} until it is confirmed

@@ -6,6 +6,10 @@ holds about apps, and lets a tenant's administrator acquire an app from the
 store and install it on the cluster. This document defines every request
 the app makes of the store and every answer it accepts.
 
+Copyright The Gentian OS Authors. This document and the two OpenAPI files
+beside it are under the Mozilla Public License 2.0
+([LICENSE](../../../LICENSE)); SPDX-License-Identifier: MPL-2.0.
+
 It can be read on its own. Three files say the same thing at different
 depths, and they must agree:
 
@@ -32,12 +36,47 @@ callback, the OAuth redirect in §3, is a redirect of the person's browser.
 (`spec.catalogue.storeUrl` on its Cluster claim), with no trailing slash.
 Every path below is appended to it: `https://store.example` + `/v1/apps`.
 
-**What a store receives.** The tenant's URL (at sign-in, and from then on in
-the token), the coordinates the person looks at or acquires, the language
-asked for, and the bearer token. No user of the tenant, no list of what is
-installed, no cluster configuration. The only personal data that reaches a
-store through this API is the store account the person signed in with,
-which the store already holds.
+**Open reads and signed-in calls.** The API has two halves, and the line
+between them is whether a call concerns a tenant.
+
+| | Calls | Token |
+|---|---|---|
+| **Open reads** | `GET /v1/meta`, `/v1/categories`, `/v1/apps`, `/v1/apps/{catalogue}/{app}` and its `/reviews` and `/reports` | none needed. What a store offers can be seen at once, by anyone, with no account. Never `401`, never `403` |
+| **Signed-in calls** | `GET /v1/tenant` and every `/v1/acquisitions` operation | required (§3) |
+
+A token *may* be presented on an open read. The store may then add what it
+knows of the token's tenant to the answer — today one member, `acquired`,
+on an app (§5). It is never required. A token the store cannot validate, or
+one for a tenant it does not serve, is ignored on an open read: the answer
+is the anonymous one, not an error.
+
+Whether a store serves a tenant (`tenant-refused`, §4) is a question of the
+signed-in calls only. An anonymous visitor sees the catalogue whatever the
+standing of their tenant, and learns at sign-in whether the store serves it.
+
+**What the App Store app does.** It shows the catalogue immediately, with no
+store account, from the open reads. It asks the person to sign in to the
+store only when they acquire something or open what the tenant has acquired.
+After a sign-in it asks `GET /v1/tenant` first, and shows the refusal or the
+notices it is given.
+
+**What a store receives.**
+
+| On | The store learns |
+|---|---|
+| an open read with no token | the path and query — which categories, apps and pages are looked at — the language asked for, and the address the request comes from, which is the cluster's outbound address. Nothing else |
+| a signed-in call, or an open read that carries a token | in addition the token, and thereby the store account and the tenant URL bound into it at sign-in |
+| an image or a document it serves | the address of the person's browser. The app sets `Referrer-Policy: no-referrer`, so the request does not name the tenant's host |
+
+On an anonymous call the app sends no cluster identifier, no tenant URL, no
+cookie, and no `Referer` or `Origin` naming a tenant; its `User-Agent` names
+the app and its version and nothing of the cluster. An anonymous read
+therefore tells the store only where the request came from.
+
+Never sent, signed in or not: who is in the tenant, what is installed, any
+configuration of the cluster. The only personal data that reaches a store
+through this API is the store account the person signed in with, which the
+store already holds.
 
 **Store content is data.** A text field is plain text unless this document
 says it is Markdown. The app renders text as text: it interprets no HTML,
@@ -81,8 +120,27 @@ value within `/v1`. Anything else is `/v2`.
 
 **Rate limiting.** Any answer may carry `RateLimit-Limit`,
 `RateLimit-Remaining` and `RateLimit-Reset` (seconds). A `429` carries
-`Retry-After` in seconds. The limit is per token, or per client address
-where there is none.
+`Retry-After` in seconds and the same three headers. A request with a valid
+token is counted per token; one without is counted per client address. One
+address is one cluster, not one person: every tenant of a cluster reaches
+the store from the cluster's outbound address. A store sizes the anonymous
+limit for a cluster's worth of administrators browsing, and the app caches
+open reads so that they share answers.
+
+**Caching.** An open read answered without regard to a token is the same for
+everybody who asks in the same language:
+
+| Answer | Headers |
+|---|---|
+| an open read, not personalised | `Cache-Control: public, max-age=<seconds>` (the store chooses; minutes for listings, longer for `/v1/meta`), `ETag`, `Vary: Accept-Language, Authorization` |
+| an open read the store personalised from a token | `Cache-Control: private, no-store`, no `ETag`, the same `Vary` |
+| every signed-in call | `Cache-Control: no-store` |
+
+The app may repeat an open read with `If-None-Match: <the ETag>`; the store
+answers `304` with no body when the answer still stands. A `304` counts
+against the rate limit like any request. Images and documents are served
+from the store's own origins under its own caching and are not part of this
+API.
 
 **Notation.** In the field tables, *Req.* says whether the member is always
 present. A type written `string \| null` is present and may be `null`.
@@ -91,19 +149,27 @@ present. A type written `string \| null` is present and may be `null`.
 
 | Method and path | Token | Answers |
 |---|---|---|
-| `GET /v1/meta` | none | The store's name, API version, issuer, client id, languages, allowed origins, features |
+| `GET /v1/meta` | **open** | The store's name, API version, issuer, client id, languages, allowed origins, features |
+| `GET /v1/categories` | **open** | The categories apps are filed under |
+| `GET /v1/apps` | **open** | A page of apps; filters `category`, `edition`, `q` |
+| `GET /v1/apps/{catalogue}/{app}` | **open** | One app in full: description, screenshots, versions with digests, add-ons, links |
+| `GET /v1/apps/{catalogue}/{app}/reviews` | **open** | A page of reviews and the summary of all of them |
+| `GET /v1/apps/{catalogue}/{app}/reports` | **open** | Evaluations and reports about the app |
 | `GET /v1/tenant` | `store.read` | Whether the store serves the tenant in the token, the reason if not, and notices to show |
-| `GET /v1/categories` | `store.read` | The categories apps are filed under |
-| `GET /v1/apps` | `store.read` | A page of apps; filters `category`, `edition`, `q` |
-| `GET /v1/apps/{catalogue}/{app}` | `store.read` | One app in full: description, screenshots, versions with digests, add-ons, links |
-| `GET /v1/apps/{catalogue}/{app}/reviews` | `store.read` | A page of reviews and the summary of all of them |
-| `GET /v1/apps/{catalogue}/{app}/reports` | `store.read` | Evaluations and reports about the app |
 | `GET /v1/acquisitions` | `store.read` | What this tenant has acquired; filter `status` |
 | `POST /v1/acquisitions` | `store.acquire` | Acquire an app: `201` confirmed, `202` checkout needed, `200` already acquired |
 | `GET /v1/acquisitions/{id}` | `store.read` | One acquisition; once confirmed, its confirmation with the credential |
 | `POST /v1/acquisitions/{id}/credential` | `store.acquire` | The confirmation again, with newly minted repository credentials |
 
+*Open* means no token is needed. One may be presented on the five catalogue
+reads, where it only adds `acquired`; `GET /v1/meta` ignores it.
+
 ## 3. Signing in
+
+Signing in is needed only for what concerns a tenant: `GET /v1/tenant` and
+the `/v1/acquisitions` operations. Browsing the catalogue needs none, and
+the app does not ask for it until the person acquires something or opens the
+tenant's acquisitions.
 
 A person signs in to the store with an account at the store. It is a
 different account from the one they are signed in to the cluster with, and
@@ -130,7 +196,7 @@ client id serves every cluster.
 6. app   → issuer  token endpoint
        grant_type=authorization_code  code  redirect_uri  client_id  code_verifier
    issuer → app    {"access_token": "…", "token_type": "Bearer", "expires_in": …}
-7. app   → store   every request:  Authorization: Bearer <access_token>
+7. app   → store   signed-in calls:  Authorization: Bearer <access_token>
 ```
 
 **`tenant_url`** is the address of the tenant the app is installed in:
@@ -153,14 +219,18 @@ validates it, so its form (a JWT, a reference) is the store's choice. A
 refresh token may be issued; it then rotates on use and stays bound to the
 same tenant URL. Lifetimes are the store's to set (§9).
 
-| Scope | Allows |
+| Scope | Covers |
 |---|---|
-| `store.read` | every `GET` |
-| `store.acquire` | `POST /v1/acquisitions`, `POST /v1/acquisitions/{id}/credential` |
+| `store.read` | Reading what concerns the token's tenant: `GET /v1/tenant` (its standing and notices), `GET /v1/acquisitions`, and `GET /v1/acquisitions/{id}` including the confirmation and the repository credential that is valid now. It is also what lets the store personalise an open read (`acquired`) |
+| `store.acquire` | Changing what the tenant has at the store: `POST /v1/acquisitions`, which may start a checkout, and `POST /v1/acquisitions/{id}/credential`, which mints a new credential |
+
+No scope is needed for the open reads and none covers them: they are
+answered with no token at all. The app asks for both scopes at sign-in.
 
 ### GET /v1/meta
 
-No token. Read before anything else; cacheable for the `max-age` it states.
+Open: it takes no token and ignores one. Read before anything else;
+cacheable for the `max-age` it states.
 
 ```jsonc
 {
@@ -197,13 +267,16 @@ No token. Read before anything else; cacheable for the `max-age` it states.
 
 A store that depends on licence reporting serves a tenant only when the
 reports it has received list that tenant's URL. The app asks once after
-sign-in and shows what it is told.
+each sign-in and shows what it is told. Standing governs the signed-in
+calls only: the catalogue stays readable to a tenant the store refuses, and
+to somebody who never signs in. A notice is likewise seen only after
+sign-in.
 
 ### GET /v1/tenant
 
-Answers for the tenant URL in the token. It is the one authenticated
-operation that never answers `403 tenant-refused`: a refusal is stated in
-the body, so the app has something to show.
+Answers for the tenant URL in the token. It is the one signed-in call that
+never answers `403 tenant-refused`: a refusal is stated in the body, so the
+app has something to show.
 
 A tenant the store serves, on a cluster with no subscription:
 
@@ -233,7 +306,7 @@ A tenant the store does not serve:
   "tenantUrl": "https://acme.example",
   "known": false,
   "lastReportAt": null,
-  "served": false,                           // every other authenticated operation now answers 403 tenant-refused
+  "served": false,                           // every /v1/acquisitions operation now answers 403 tenant-refused
   "refusal": {
     "reason": "no-reports-for-tenant",
     "detail": "No licence report names https://acme.example. The store serves tenants of clusters that report; ask the cluster's administrator whether reporting is on.",
@@ -286,6 +359,9 @@ installed keep running, and the command-line install does not ask a store.
 
 ## 5. Catalogue
 
+All five operations here are open reads (§1): no token, cacheable, never
+refused for a tenant's standing.
+
 An entry is identified by its **coordinate**, `<catalogue>/<app>`: the name
 of a catalogue source and the name of the app's profile in it, each a DNS
 label. It is the value the cluster's install request carries. A profile's
@@ -311,6 +387,8 @@ across languages; `name` is in the language of the request.
 | `q` | query | Free text, ≤ 200 characters, matched against name, summary and description in the language of the request. How it matches is the store's affair |
 | `cursor`, `limit` | query | Paging (§1) |
 | `Accept-Language` | header | §1 |
+| `If-None-Match` | header | Optional; §1, caching |
+| `Authorization` | header | Optional. With a valid token each entry may carry `acquired` |
 
 Filters combine with AND. The order is the store's and is stable across the
 pages of one listing.
@@ -335,7 +413,7 @@ pages of one listing.
       "latestVersion": "31.0.4",
       "price": {"model": "subscription", "amount": "4.50", "currency": "CHF",
                 "per": "user", "period": "month", "note": null},
-      "acquired": false,                     // for the tenant in the token
+      "acquired": false,                     // ONLY with a token: for the tenant in it. Absent from an anonymous answer
       "rating": {"count": 2, "average": 4.5,
                  "distribution": {"1": 0, "2": 0, "3": 0, "4": 1, "5": 1}}
     }
@@ -359,11 +437,14 @@ pages of one listing.
 | `editions` | `{edition, coordinate}[]` | yes | Every edition the app is offered in, each with the coordinate of the entry that is that edition |
 | `trustTier` | `platform` \| `certified` \| `experimental` | yes | Closed; the review level the entry's profile states |
 | `latestVersion` | string | yes | The newest version listed |
-| `price` | Price | yes | What acquiring costs this tenant |
-| `acquired` | boolean | yes | Whether the tenant in the token has a `confirmed` acquisition of this coordinate |
+| `price` | Price | yes | The list price |
+| `acquired` | boolean | no | Whether the tenant in the token has a `confirmed` acquisition of this coordinate. Present only on an answer to a request that carried a valid token of a tenant the store serves; absent from every anonymous answer. The app never depends on it: `GET /v1/acquisitions` says the same |
 | `rating` | Review summary \| null | no | `null` when the store carries no reviews |
 
-**Price** — shown, never computed with; what is charged is what the checkout says.
+**Price** — the **list price**: what the store asks of anybody, the same with a
+token and without. Shown, never computed with. What a tenant is charged — a
+contract rate, a discount, tax — is what the checkout says, and is not in
+this API.
 
 | Field | Type | Req. | Meaning |
 |---|---|---|---|
@@ -758,9 +839,9 @@ Every answer with a status of 400 or above is `application/problem+json`
 | Status | `code` | Meaning |
 |---|---|---|
 | 400 | `invalid-request` | A parameter or the body is malformed; `errors` names the fields. Also an expired cursor |
-| 401 | `unauthenticated` | No token, or one that is expired or not this store's. Carries `WWW-Authenticate: Bearer`. The app signs the person in again |
-| 403 | `insufficient-scope` | The token lacks the scope the operation needs |
-| 403 | `tenant-refused` | The store does not serve the tenant in the token; `reason` says why. Never from `GET /v1/tenant` |
+| 401 | `unauthenticated` | Signed-in calls only. No token, or one that is expired or not this store's. Carries `WWW-Authenticate: Bearer`. The app signs the person in again |
+| 403 | `insufficient-scope` | Signed-in calls only. The token lacks the scope the operation needs |
+| 403 | `tenant-refused` | `/v1/acquisitions` operations only. The store does not serve the tenant in the token; `reason` says why. Never from `GET /v1/tenant`, never from an open read |
 | 404 | `not-found` | No such app, acquisition or page — or one that is another tenant's |
 | 409 | `acquisition-not-confirmed` | A credential was asked for an acquisition that is not `confirmed` |
 | 409 | `idempotency-conflict` | The `Idempotency-Key` was used before with a different body |
@@ -813,6 +894,10 @@ choice was made that should be confirmed before the store is built on it.
 10. **User name convention.** A credential must carry a user name. Whether
     the store uses one fixed user name for every tenant, or one per tenant
     (as the examples show), is not defined.
-11. **Price display.** Whether `price` is the list price or already the
-    tenant's own (a contract rate), and whether tax is included, is the
-    store's to state in `note` until the format needs to say.
+11. **Tax in the list price.** `price` is the list price. Whether it
+    includes tax is the store's to state in `note` until the format needs
+    to say.
+12. **Open to whom.** The open reads take no token, so they are open to
+    anyone who can reach the store, not only to clusters; a store cannot
+    tell the two apart. Whether a store wants more than a rate limit in
+    front of them is its own decision and does not change this format.

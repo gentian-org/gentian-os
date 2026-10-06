@@ -22,7 +22,8 @@ trusted with. The format of every request and answer is in
 | [licence-report.openapi.yaml](../plans/artefacts/licence-report.openapi.yaml) | The report a cluster sends about itself, which a store depends on (§6.2). It is spelled out in [operations.md §6.2](operations.md) |
 
 This specification is licensed under Apache-2.0, so that anyone may implement
-it; see [LICENSING.md](../../LICENSING.md).
+it; see [LICENSING.md](../../LICENSING.md). The three format files in
+`plans/artefacts/` carry their own notice and are under MPL-2.0.
 
 ## 1. Direction
 
@@ -225,31 +226,76 @@ parameter, field and example — is in
 [store-api.openapi.yaml](../plans/artefacts/store-api.openapi.yaml), and it
 wins where the two differ.
 
-| Operation | Answers |
-|---|---|
-| `GET /v1/meta` | The store's name, the API version, and what is needed to sign a person in: issuer, client id, scopes. Also the origins images and checkout pages may be on. No token |
-| `GET /v1/tenant` | Whether the store serves the tenant in the token; if not, the reason; and notices to show (§6.2) |
-| `GET /v1/categories` | The categories apps are filed under |
-| `GET /v1/apps` | A page of apps, filtered by category, edition or text: coordinate, name, summary, icon, publisher, editions offered, trust tier, latest version, price, whether this tenant has acquired it |
-| `GET /v1/apps/{catalogue}/{app}` | One app in full: description, screenshots, versions each with its digest, release notes, requirements, add-ons, links, licence |
-| `GET /v1/apps/{catalogue}/{app}/reviews` | Reviews — rating, text, the author's name as the store shows it, date — and their summary |
-| `GET /v1/apps/{catalogue}/{app}/reports` | Evaluations and reports about the app: kind, title, issuer, date, summary, document address |
-| `GET /v1/acquisitions` | What this tenant has acquired |
-| `POST /v1/acquisitions` | Acquire an app. `201` with a confirmation; or `202` with a checkout address at the store; or `200` with the acquisition the tenant already has |
-| `GET /v1/acquisitions/{id}` | The outcome: `pending`, `confirmed`, `cancelled` or `failed`; once confirmed, the confirmation |
-| `POST /v1/acquisitions/{id}/credential` | The confirmation again, with newly minted repository credentials |
+**Browsing needs no sign-in.** The API has two halves, and the line between
+them is whether a call concerns a tenant. What a store offers is readable at
+once, with no account. A person signs in to the store only for what concerns
+their tenant.
 
-Common to all of them: answers in the language asked for
+| Operation | Token | Answers |
+|---|---|---|
+| `GET /v1/meta` | open | The store's name, the API version, and what is needed to sign a person in: issuer, client id, scopes. Also the origins images and checkout pages may be on |
+| `GET /v1/categories` | open | The categories apps are filed under |
+| `GET /v1/apps` | open | A page of apps, filtered by category, edition or text: coordinate, name, summary, icon, publisher, editions offered, trust tier, latest version, list price |
+| `GET /v1/apps/{catalogue}/{app}` | open | One app in full: description, screenshots, versions each with its digest, release notes, requirements, add-ons, links, licence |
+| `GET /v1/apps/{catalogue}/{app}/reviews` | open | Reviews — rating, text, the author's name as the store shows it, date — and their summary |
+| `GET /v1/apps/{catalogue}/{app}/reports` | open | Evaluations and reports about the app: kind, title, issuer, date, summary, document address |
+| `GET /v1/tenant` | `store.read` | Whether the store serves the tenant in the token; if not, the reason; and notices to show (§6.2) |
+| `GET /v1/acquisitions` | `store.read` | What this tenant has acquired |
+| `POST /v1/acquisitions` | `store.acquire` | Acquire an app. `201` with a confirmation; or `202` with a checkout address at the store; or `200` with the acquisition the tenant already has |
+| `GET /v1/acquisitions/{id}` | `store.read` | The outcome: `pending`, `confirmed`, `cancelled` or `failed`; once confirmed, the confirmation with its credential |
+| `POST /v1/acquisitions/{id}/credential` | `store.acquire` | The confirmation again, with newly minted repository credentials |
+
+**Open** means no token is needed, and the call is never answered `401` or
+`403`. A token may be presented on a catalogue read; the store may then mark
+what the token's tenant has acquired (`acquired`). That is optional
+information, present only with a token and never required, and a token the
+store cannot use is ignored there rather than refused.
+
+`store.read` covers reading what concerns the token's tenant — its standing,
+its acquisitions, and one acquisition with its confirmation and credential.
+`store.acquire` covers changing what the tenant has at the store — acquiring,
+and minting a new credential. No scope covers the open reads: they need
+none.
+
+What follows from the open half:
+
+* **A refusal applies to the signed-in calls only.** A store that does not
+  serve a tenant (§6.2) answers `tenant-refused` on the `/v1/acquisitions`
+  operations. The catalogue stays readable — to that tenant, and to somebody
+  who never signs in. A person learns at sign-in whether the store serves
+  their tenant, not before.
+* **Prices on open reads are list prices**, the same for everybody. What a
+  tenant is charged is what the checkout says.
+* **Open reads are cacheable.** An answer given without regard to a token
+  carries `Cache-Control: public, max-age=…` and an `ETag`, and the app may
+  ask again with `If-None-Match`. A signed-in answer is `no-store`.
+* **Anonymous reads are rate-limited by client address**, signed-in calls by
+  token, with `RateLimit-Limit`, `RateLimit-Remaining`, `RateLimit-Reset`,
+  and `Retry-After` on a `429`. An address is a cluster, not a person: all
+  of a cluster's tenants reach the store from one outbound address.
+* **The open half is open to anyone**, not only to clusters. A store cannot
+  tell the two apart, and the catalogue is not a secret.
+
+Common to all operations: answers in the language asked for
 (`Accept-Language` in, `Content-Language` out, falling back within a language
 and then to the store's default); lists paged by cursor; errors as
-`application/problem+json` with a stable `code`; rate-limit headers. All of
-it is in the artefact.
+`application/problem+json` with a stable `code`. All of it is in the
+artefact.
 
-**What the store receives.** The tenant's URL, the coordinates looked at or
-acquired, the language, and the person's store token. It is not sent who is
-in the tenant, what is installed, or any configuration of the cluster. The
-only personal data that reaches it is the store account the person signed in
-with.
+**What the store receives.**
+
+* *On an anonymous read:* which categories, apps and pages are looked at,
+  the language asked for, and the address the request comes from — the
+  cluster's outbound address. Nothing else. The App Store app sends no
+  cluster identifier and no tenant identifier on an anonymous call: no
+  tenant URL, no cookie, no `Referer` or `Origin` naming a tenant, and a
+  `User-Agent` that names the app and its version only. An anonymous read
+  tells the store only where the request came from.
+* *On a signed-in call:* in addition the person's store token, and thereby
+  their store account and the tenant URL bound into it.
+* *Never:* who is in the tenant, what is installed, or any configuration of
+  the cluster. The only personal data that reaches a store is the store
+  account the person signed in with.
 
 ## 6. The App Store app
 
@@ -258,8 +304,14 @@ tile is shown only to people who may install apps in that tenant. It is
 absent on a cluster whose licence report is off (§6.2) and on one that names
 no store.
 
+It **shows the catalogue immediately**, with no store account: the catalogue
+reads are open (§5), and the app makes them anonymously. It asks the person
+to sign in to the store only when they acquire something or open what the
+tenant has acquired.
+
 It has two sides and holds them apart. Toward the store it is a client of
-the API in §5, with the token of the person's store account. Toward the
+the API in §5 — anonymous for browsing, and with the token of the person's
+store account for what concerns the tenant. Toward the
 cluster it is a caller like any other: it asks the director and the
 custodian with the token of the person's cluster account, and is subject to
 the same checks as the command line. It has no authority of its own in
@@ -267,15 +319,16 @@ either direction.
 
 ### 6.1 Signing in to the store
 
-A person signs in to the store with an account at the store — not the
-account they are signed in to the cluster with. The flow is OAuth 2.0
+Needed only to acquire and to see the tenant's acquisitions; never to
+browse. A person signs in to the store with an account at the store — not
+the account they are signed in to the cluster with. The flow is OAuth 2.0
 authorization code with PKCE against the store's issuer. The app is a public
 client: it holds no client secret, because a secret shipped to every cluster
 is not one.
 
 The request carries `tenant_url`, the address of the tenant the app is
 installed in, and the issuer binds it into the token. From then on every
-answer is about that tenant. The issuer accepts a redirect only to a host
+signed-in answer is about that tenant. The issuer accepts a redirect only to a host
 under the tenant's own address, so a code for a tenant is delivered only to
 a page served there.
 
@@ -288,19 +341,25 @@ establishes no session with the platform.
 
 The store depends on the cluster's licence report
 ([operations.md §6.2](operations.md)). A cluster that does not report has no
-App Store app: the usher says so and no tile is shown.
+App Store app: the usher says so and no tile is shown. That is a condition
+on the app existing on a cluster, and it is unchanged by the catalogue being
+open: the cluster decides it from its own setting, without asking the store.
 
-After sign-in the app asks `GET /v1/tenant`. The store matches the tenant
+A store's judgement of a tenant, by contrast, comes only at sign-in. Until
+then the app shows the catalogue and no notice.
+
+After each sign-in the app asks `GET /v1/tenant`, before the call the person
+wanted. The store matches the tenant
 URL in the token against the tenant URLs in the reports it has received.
 
 | The store answers | The app |
 |---|---|
 | `served: true` | proceeds, and shows every notice it is given |
-| `served: false`, with a reason — `no-reports-for-tenant`, `tenant-not-claimed`, … | shows the reason in the store's words and offers nothing further |
+| `served: false`, with a reason — `no-reports-for-tenant`, `tenant-not-claimed`, … | shows the reason in the store's words and offers no acquiring. The catalogue stays readable |
 | a notice `free-licence-limit` — the cluster has no subscription | shows it: the free licence covers clusters of fewer than 50 users that are not operated for resale |
 
 **Nothing on the cluster is blocked by any of this.** A refusal means the
-store will not serve this tenant. Installed apps keep running, and an app
+store will not let this tenant acquire. Installed apps keep running, and an app
 can still be installed by command (§9).
 
 ### 6.3 Rendering
@@ -317,7 +376,10 @@ checkout open in a separate window.
 
 ```
 person            App Store app                      store                      cluster
+  │  browses            │  GET /v1/apps, …  (no token)  │                          │
+  │────────────────────►│──────────────────────────────►│                          │
   │  "get this app"     │                               │                          │
+  │  signs in to the store, once (§6.1); GET /v1/tenant │                          │
   │────────────────────►│  POST /v1/acquisitions        │                          │
   │                     │──────────────────────────────►│                          │
   │                     │  201 confirmation             │   free, or no checkout   │
@@ -423,9 +485,10 @@ not from what the App Store app is expected to do.
   reviews, reports, versions. It can show one app and confirm the coordinate
   of another. The bound on that is below.
 * **Refuse, or be absent.** It can serve no tenant, or none of the apps.
-* **Learn what the API is sent**: tenant URLs, which apps an administrator
-  looks at and acquires, the store account, and the addresses the requests
-  and the image loads come from.
+* **Learn what the API is sent** (§5): from anonymous browsing, which apps
+  are looked at from which address; after a sign-in, the tenant URL, the
+  store account and what is acquired; and the addresses image loads come
+  from.
 * **Hand over any repository address and any token.** The cluster then holds
   a credential for that address and presents it there. The token is of the
   store's own making, so this discloses nothing of the cluster's.
@@ -605,8 +668,8 @@ answers — what an app is, and what it costs — go unanswered.
 | What happens | What the cluster does |
 |---|---|
 | The store cannot be reached, or answers `5xx` | The App Store app says so. It offers nothing that needs the store. Nothing is retried in the background |
-| The store answers `401` | The app signs the person in to the store again |
-| The store refuses the tenant | The app shows the reason (§6.2) |
+| The store answers `401` on a signed-in call | The app signs the person in to the store again. Browsing is not interrupted: it needs no token |
+| The store refuses the tenant | The app shows the reason (§6.2) and offers no acquiring; the catalogue stays readable |
 | The store answers something that is not the format | The app treats it as unreachable. A confirmation that does not validate is not acted on in part |
 | A step on the cluster fails after a confirmation — the declaration, the credential, the install | The app shows the director's or the custodian's answer and stops. The acquisition is still the tenant's; the steps can be repeated, and each is safe to repeat |
 
