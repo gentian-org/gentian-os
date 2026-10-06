@@ -88,13 +88,19 @@ func composedDelivery(profile *gentianov1alpha1.ComponentProfile) bool {
 // Named after the component, in its namespace, and owned by it: removing the
 // Component removes the claim, and with it everything the Composition made.
 func (r *ComponentReconciler) ensureAppClaim(
-	ctx context.Context, comp *gentianov1alpha1.Component, tenant *gentianov1alpha1.Tenant, zone edgeZone,
+	ctx context.Context, comp *gentianov1alpha1.Component, tenant *gentianov1alpha1.Tenant, zone edgeZone, pull pullSecrets,
 ) (bool, string, error) {
 	spec := map[string]interface{}{
 		"compositionUpdatePolicy": "Automatic",
 		"profileRef":              map[string]interface{}{"name": comp.Spec.ProfileRef.Name},
 		"tenantNamespace":         comp.Namespace,
 		"domain":                  zone.domain,
+	}
+	// Which of the tenant's pull Secrets the Composition names on the release
+	// and in its values. Names, and the Composition looks for them in
+	// tenantNamespace only.
+	if claimed := appClaimPullSecrets(pull); len(claimed) > 0 {
+		spec["pullSecrets"] = claimed
 	}
 	if len(comp.Spec.Addons) > 0 {
 		addons := make([]interface{}, 0, len(comp.Spec.Addons))
@@ -161,7 +167,7 @@ func (r *ComponentReconciler) ensureAppClaim(
 	// the whole of it would find a difference on every pass.
 	patch := client.MergeFrom(existing.DeepCopy())
 	changed := false
-	for _, field := range []string{"profileRef", "tenantNamespace", "domain", "addons", "config", "compositionUpdatePolicy"} {
+	for _, field := range []string{"profileRef", "tenantNamespace", "domain", "addons", "config", "pullSecrets", "compositionUpdatePolicy"} {
 		want, wanted := spec[field]
 		have, has, _ := unstructured.NestedFieldNoCopy(existing.Object, "spec", field)
 		switch {
@@ -189,6 +195,11 @@ func (r *ComponentReconciler) ensureAppClaim(
 		}
 	}
 	if !appClaimIsReady(existing) {
+		// The provider's own account of a release that is failing, when it
+		// has one: "waiting" is no answer to a chart that cannot be pulled.
+		if failure := r.composedReleaseMessage(ctx, existing); failure != "" {
+			return false, failure, nil
+		}
 		return false, "waiting for the app to be composed and its release to deploy", nil
 	}
 	return true, "composed and deployed", nil

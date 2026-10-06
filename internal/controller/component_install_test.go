@@ -164,7 +164,7 @@ func TestAComposedComponentWritesItsClaim(t *testing.T) {
 	r := &ComponentReconciler{Client: c, Scheme: scheme, KernelDomain: "k.example", KernelRealm: "kernel"}
 	zone := edgeZone{domain: "acme.k.example"}
 
-	ready, _, err := r.ensureAppClaim(ctx, comp, tenant, zone)
+	ready, _, err := r.ensureAppClaim(ctx, comp, tenant, zone, pullSecrets{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -207,7 +207,7 @@ func TestAComposedComponentWritesItsClaim(t *testing.T) {
 	if err := c.Update(ctx, claim); err != nil {
 		t.Fatal(err)
 	}
-	ready, _, err = r.ensureAppClaim(ctx, comp, tenant, zone)
+	ready, _, err = r.ensureAppClaim(ctx, comp, tenant, zone, pullSecrets{})
 	if err != nil || !ready {
 		t.Fatalf("ready = %v, err = %v", ready, err)
 	}
@@ -215,7 +215,7 @@ func TestAComposedComponentWritesItsClaim(t *testing.T) {
 	// The addon is deactivated and the configuration dropped: the claim
 	// follows, losing the fields rather than keeping the last value.
 	comp.Spec.Addons, comp.Spec.Config = nil, nil
-	if _, _, err := r.ensureAppClaim(ctx, comp, tenant, zone); err != nil {
+	if _, _, err := r.ensureAppClaim(ctx, comp, tenant, zone, pullSecrets{}); err != nil {
 		t.Fatal(err)
 	}
 	if err := c.Get(ctx, types.NamespacedName{Name: comp.Name, Namespace: comp.Namespace}, claim); err != nil {
@@ -253,7 +253,7 @@ func TestAClaimSomethingElseControlsIsNotTaken(t *testing.T) {
 
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(held).Build()
 	r := &ComponentReconciler{Client: c, Scheme: scheme}
-	ready, message, err := r.ensureAppClaim(ctx, comp, tenant, edgeZone{domain: "acme.k.example"})
+	ready, message, err := r.ensureAppClaim(ctx, comp, tenant, edgeZone{domain: "acme.k.example"}, pullSecrets{})
 	if err != nil || ready || !strings.Contains(message, "XTenant acme-x") {
 		t.Fatalf("ready=%v message=%q err=%v", ready, message, err)
 	}

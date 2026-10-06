@@ -1,0 +1,196 @@
+---
+apiVersion: gentianos.io/v1alpha1
+kind: XRepository
+metadata:
+  name: borrowed-q4m9z
+status:
+  artefacts:
+  - credreq-borrowed-q4m9z
+  - credprobe-borrowed-q4m9z
+  - argocd-repo-borrowed-q4m9z
+  - appproject-source-borrowed-q4m9z
+  conditions:
+  - lastTransitionTime: "2024-01-01T00:00:00Z"
+    message: 'Unready resources: appproject-source-borrowed-q4m9z, argocd-repo-borrowed-q4m9z,
+      and credprobe-borrowed-q4m9z'
+    reason: Creating
+    status: "False"
+    type: Ready
+  credentialMessage: credential present at gentian-os/tenants/globex/repositories/vendor-apps
+  credentialSatisfied: true
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: appproject-source-borrowed-q4m9z
+  generateName: borrowed-q4m9z-
+  labels:
+    crossplane.io/claim-name: borrowed
+    crossplane.io/claim-namespace: kernel-provisioning
+    crossplane.io/composite: borrowed-q4m9z
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XRepository
+    name: borrowed-q4m9z
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: argoproj.io/v1alpha1
+      kind: AppProject
+      metadata:
+        name: gentianos-tenants
+        namespace: argocd
+      spec:
+        sourceRepos:
+        - https://registry.vendor.example
+  managementPolicies:
+  - Observe
+  - Create
+  - Update
+  providerConfigRef:
+    name: kubernetes
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: argocd-repo-borrowed-q4m9z
+  generateName: borrowed-q4m9z-
+  labels:
+    crossplane.io/claim-name: borrowed
+    crossplane.io/claim-namespace: kernel-provisioning
+    crossplane.io/composite: borrowed-q4m9z
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XRepository
+    name: borrowed-q4m9z
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: external-secrets.io/v1
+      kind: ExternalSecret
+      metadata:
+        name: repo-borrowed-q4m9z
+        namespace: argocd
+      spec:
+        data:
+        - remoteRef:
+            key: gentian-os/tenants/globex/repositories/vendor-apps
+            property: username
+          secretKey: username
+        - remoteRef:
+            key: gentian-os/tenants/globex/repositories/vendor-apps
+            property: password
+          secretKey: password
+        refreshInterval: 1h
+        secretStoreRef:
+          kind: ClusterSecretStore
+          name: openbao
+        target:
+          name: repo-borrowed-q4m9z
+          template:
+            data:
+              enableOCI: "true"
+              password: '{{ .password }}'
+              type: helm
+              url: https://registry.vendor.example
+              username: '{{ .username }}'
+            metadata:
+              labels:
+                argocd.argoproj.io/secret-type: repository
+  providerConfigRef:
+    name: kubernetes
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: credprobe-borrowed-q4m9z
+  generateName: borrowed-q4m9z-
+  labels:
+    crossplane.io/claim-name: borrowed
+    crossplane.io/claim-namespace: kernel-provisioning
+    crossplane.io/composite: borrowed-q4m9z
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XRepository
+    name: borrowed-q4m9z
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: external-secrets.io/v1
+      kind: ExternalSecret
+      metadata:
+        labels:
+          gentianos.io/credential-requirement: borrowed-q4m9z
+        name: credreq-repository-borrowed-q4m9z
+        namespace: gentian-system
+      spec:
+        data:
+        - remoteRef:
+            key: gentian-os/tenants/globex/repositories/vendor-apps
+            property: username
+          secretKey: username
+        - remoteRef:
+            key: gentian-os/tenants/globex/repositories/vendor-apps
+            property: password
+          secretKey: password
+        refreshInterval: 1h
+        secretStoreRef:
+          kind: ClusterSecretStore
+          name: openbao
+        target:
+          creationPolicy: None
+  providerConfigRef:
+    name: kubernetes
+---
+apiVersion: gentianos.io/v1alpha1
+kind: CredentialRequirement
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: credreq-borrowed-q4m9z
+  labels:
+    crossplane.io/claim-name: borrowed
+    crossplane.io/claim-namespace: kernel-provisioning
+    crossplane.io/composite: borrowed-q4m9z
+    gentianos.io/credential-phase: runtime
+    gentianos.io/credential-scope: tenant
+    gentianos.io/tenant: acme
+  name: repository-borrowed-q4m9z
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XRepository
+    name: borrowed-q4m9z
+    uid: ""
+spec:
+  consumedBy:
+  - kind: XRepository
+    name: borrowed-q4m9z
+  description: ""
+  displayName: Credentials for borrowed
+  fields:
+  - format: string
+    key: username
+    secret: false
+  - format: password
+    key: password
+    secret: true
+  optional: false
+  phase: runtime
+  scope: tenant
+  tenant: acme
+  validate:
+    type: noop
+  vaultPath: gentian-os/tenants/globex/repositories/vendor-apps

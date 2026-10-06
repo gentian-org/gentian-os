@@ -702,6 +702,15 @@ spec:
             {{- if eq (len $imagePull) 0 }}
             {{- $imagePull = list "registry-credentials" }}
             {{- end }}
+            {{- /* The pull Secrets of the repositories this tenant declared, named
+                 by the operator on the claim. After the cluster's own, by the
+                 same two values, so a chart that takes one takes the other.
+                 They are Secrets in this namespace; nothing here can name one
+                 anywhere else. */}}
+            {{- $pullSecrets := default dict $spec.pullSecrets }}
+            {{- range $name := (default list $pullSecrets.images) }}
+            {{- if not (has $name $imagePull) }}{{- $imagePull = append $imagePull $name }}{{- end }}
+            {{- end }}
             {{- $profileMeta := default dict (dig "metadata" dict $profile) }}
             {{- $profileAnnos := default dict (dig "annotations" dict $profileMeta) }}
             {{- $standardPull := eq (dig "gentianos.io/standard-image-pull-secrets" "false" $profileAnnos) "true" }}
@@ -1274,6 +1283,16 @@ spec:
                   repository: {{ $chart.repository }}
                   name: {{ $chart.name }}
                   version: {{ $chart.version | quote }}
+                  {{- /* A chart inside a repository the tenant declared is pulled
+                       with that repository's credential. The namespace is this
+                       app's own and is not taken from the claim. */}}
+                  {{- range $c := (default list $pullSecrets.charts) }}
+                  {{- if eq $c.repository $chart.repository }}
+                  pullSecretRef:
+                    name: {{ $c.secretName }}
+                    namespace: {{ $ns }}
+                  {{- end }}
+                  {{- end }}
                 namespace: {{ $ns }}
                 # Wait for the release's workloads, not just for Helm to have
                 # applied the manifests.
@@ -1783,6 +1802,13 @@ spec:
                   repository: {{ $sc.chart.repository }}
                   name: {{ $sc.chart.name }}
                   version: {{ $sc.chart.version | quote }}
+                  {{- range $c := (default list $pullSecrets.charts) }}
+                  {{- if eq $c.repository $sc.chart.repository }}
+                  pullSecretRef:
+                    name: {{ $c.secretName }}
+                    namespace: {{ $ns }}
+                  {{- end }}
+                  {{- end }}
                 namespace: {{ $ns }}
                 # Wait for the release's workloads, not just for Helm to have
                 # applied the manifests.

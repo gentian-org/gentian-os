@@ -98,6 +98,12 @@ spec:
                     This is what keeps a tenant-proprietary repository's
                     credential out of every other tenant's credential list —
                     scope alone says "a tenant may see this", not which one.
+
+                    It is also where the credential may be pulled with. A
+                    tenant's registry repository yields one Secret,
+                    repository-<name>-pull, in that tenant's namespace and in
+                    no other, which the tenant's apps pull their chart and
+                    their images with.
                 writable:
                   type: boolean
                   description: >
@@ -107,9 +113,14 @@ spec:
                 namespaceSelector:
                   type: object
                   description: >
-                    Which namespaces receive the image pull Secret. A selector
-                    rather than a list, so adding a tenant does not add a Git
-                    object. OCI repositories only.
+                    Which namespaces receive the image pull Secret of a
+                    repository that belongs to the cluster. A selector rather
+                    than a list, so adding a tenant does not add a Git object.
+                    OCI repositories only.
+
+                    Not read for a repository that names a tenant: that one's
+                    pull Secret goes to its tenant's namespace, whatever is
+                    written here.
                   properties:
                     matchLabels:
                       type: object

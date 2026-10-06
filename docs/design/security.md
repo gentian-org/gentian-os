@@ -425,6 +425,8 @@ gentian-os/
         │       ├── smtp              #   user, password
         │       ├── imap              #   host, port, credentials
         │       └── cache             #   host, port, password
+        ├── repositories/
+        │   └── {repository-name}     #   username, password of a declared repository
         ├── contracts/
         │   └── {contract-name}/      #   endpoint, auth, shared credentials
         └── mail/
@@ -436,6 +438,46 @@ OpenBao policies are generated per tenant (`<tenant>-tenant-policy`,
 composed by `tenant-default`): no tenant can read another tenant's
 secrets. Per-`(tenant, app)` policies, so that no app can read a sibling
 app's paths, are a target — the layout above is shaped for them.
+
+### 5.1 Repository pull credentials
+
+A tenant's registry repository (`Repository`, `type: oci`, `spec.tenant` set
+by the director from the authorised route) has its credential at
+`gentian-os/tenants/{tenant}/repositories/{name}`. `repository-default`
+materialises it as one Secret, `repository-{name}-pull`, through a
+`ClusterExternalSecret` whose selector is exactly
+`gentianos.io/tenant: {tenant}` and `gentianos.io/tier: tenant` — the
+namespace that tenant's apps run in, not its DMZ and no other tenant's. The
+Secret is a `dockerconfigjson` that also carries `username` and `password`,
+so a kubelet and provider-helm read the same object.
+
+The component reconciler names that Secret, never its content: as
+`chart.pullSecretRef` on the Release of a chart whose address lies inside
+exactly one repository the tenant declared (same host and port, the
+repository's path a prefix by whole segments), and in `imagePullSecrets` /
+`global.imagePullSecrets` of every chart the tenant installs, after
+`registry-credentials`.
+
+What this does not give:
+
+- **The store is not the boundary.** ESO reads through the one
+  `ClusterSecretStore`, whose role reads every tenant's `repositories/*`.
+  What keeps a credential to its tenant is the Composition: the selector
+  above, and its refusal to make a pull Secret for a tenant's repository
+  whose path is outside that tenant's `repositories/`.
+- **provider-helm is one process for all tenants**, and runs as
+  cluster-admin. It keeps pulled charts in a cache keyed by chart name and
+  version and stays logged in to a registry host once any Release has
+  presented a credential for it. A chart one tenant pulled can therefore be
+  installed by another whose profile names the same chart, until the
+  provider restarts. The credential is not disclosed; the chart is.
+- **An image already on a node** is started for any pod with
+  `imagePullPolicy: IfNotPresent` without a pull, so without asking for a
+  credential.
+- **A chart must take `imagePullSecrets` or `global.imagePullSecrets`** as
+  a value. One that takes neither pulls its images without the tenant's
+  credential, as it does without the cluster's.
+- A bearer credential yields no pull Secret: both readers need a username.
 
 ## 6. Secret Generation Mode
 

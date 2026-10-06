@@ -243,19 +243,40 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// "installed" means differs for each. Two of them run nothing at all, and
 	// that is not a gap to refuse -- it is the answer.
 	releaseReady, releaseMessage := true, ""
+	// What the tenant declared it installs from, and so which of its pull
+	// credentials this component's chart and pods are told about. Names
+	// only: the Secrets are the repository Composition's, in this namespace.
+	var pull pullSecrets
+	if profile.Spec.Package.Chart != nil {
+		repos, err := r.tenantPullRepositories(ctx, tenant.Name)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		var refusal string
+		if pull, refusal = resolvePullSecrets(profile, repos); refusal != "" {
+			return r.status(ctx, comp, metav1.ConditionFalse, "RepositoryAmbiguous", refusal, componentRequeue)
+		}
+	}
 	switch {
 	case composed:
 		var err error
-		releaseReady, releaseMessage, err = r.ensureAppClaim(ctx, comp, tenant, zone)
+		releaseReady, releaseMessage, err = r.ensureAppClaim(ctx, comp, tenant, zone, pull)
 		if err != nil {
 			return ctrl.Result{}, err
+		}
+		if !releaseReady {
+			releaseMessage = pull.withPullHint(releaseMessage, profile)
 		}
 
 	case profile.Spec.Package.Chart != nil:
 		var err error
-		releaseReady, releaseMessage, err = r.ensureRelease(ctx, comp, profile, values)
+		valuesWithPullSecrets(values, profile, pull.images)
+		releaseReady, releaseMessage, err = r.ensureRelease(ctx, comp, profile, values, pull)
 		if err != nil {
 			return ctrl.Result{}, err
+		}
+		if !releaseReady {
+			releaseMessage = pull.withPullHint(releaseMessage, profile)
 		}
 
 	case profile.Spec.Package.Addon != nil:
@@ -558,16 +579,23 @@ func (r *ComponentReconciler) zoneReady(ctx context.Context, zone edgeZone) (boo
 }
 
 // ensureRelease keeps the provider-helm Release the profile's chart becomes.
-func (r *ComponentReconciler) ensureRelease(ctx context.Context, comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile, values map[string]interface{}) (bool, string, error) {
+func (r *ComponentReconciler) ensureRelease(ctx context.Context, comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile, values map[string]interface{}, pull pullSecrets) (bool, string, error) {
 	chart := profile.Spec.Package.Chart
+	chartSpec := map[string]interface{}{
+		"repository": chart.Repository,
+		"name":       chart.Name,
+		"version":    chart.Version,
+	}
+	// A chart inside a repository the tenant declared is pulled with that
+	// repository's credential, read by the provider from the component's own
+	// namespace and from nowhere else.
+	if c := pull.chart(chart.Repository); c != nil {
+		chartSpec["pullSecretRef"] = map[string]interface{}{"name": c.secretName, "namespace": comp.Namespace}
+	}
 	spec := map[string]interface{}{
 		"rollbackLimit": int64(3),
 		"forProvider": map[string]interface{}{
-			"chart": map[string]interface{}{
-				"repository": chart.Repository,
-				"name":       chart.Name,
-				"version":    chart.Version,
-			},
+			"chart": chartSpec,
 			"namespace":   comp.Namespace,
 			"wait":        true,
 			"waitTimeout": "10m",
@@ -625,6 +653,15 @@ func releaseName(comp *gentianov1alpha1.Component) string {
 }
 
 func releaseMessageOf(obj *unstructured.Unstructured) string {
+	if msg := releaseFailureOf(obj); msg != "" {
+		return msg
+	}
+	return "waiting for the release to be ready"
+}
+
+// releaseFailureOf is what the provider says is wrong with a release, or
+// nothing when it has said nothing.
+func releaseFailureOf(obj *unstructured.Unstructured) string {
 	conds, _, _ := unstructured.NestedSlice(obj.Object, "status", "conditions")
 	for _, c := range conds {
 		m, _ := c.(map[string]interface{})
@@ -634,7 +671,7 @@ func releaseMessageOf(obj *unstructured.Unstructured) string {
 			}
 		}
 	}
-	return "waiting for the release to be ready"
+	return ""
 }
 
 func componentLabels(comp *gentianov1alpha1.Component) map[string]string {

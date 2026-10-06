@@ -1,0 +1,19 @@
+# A tenant's registry whose credential is declared at a path that is not
+# under that tenant's prefix -- here another tenant's. The director never
+# writes this; a hand-edited claim could. No pull Secret is made from it.
+apiVersion: gentianos.io/v1alpha1
+kind: XRepository
+metadata:
+  name: borrowed-q4m9z
+  labels:
+    crossplane.io/claim-name: borrowed
+    crossplane.io/claim-namespace: kernel-provisioning
+spec:
+  type: oci
+  role: apps
+  tenant: acme
+  endpoints:
+    inCluster: https://registry.vendor.example
+  credential:
+    vaultPath: gentian-os/tenants/globex/repositories/vendor-apps
+    displayName: "Credentials for borrowed"

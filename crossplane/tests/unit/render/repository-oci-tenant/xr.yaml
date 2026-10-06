@@ -1,0 +1,25 @@
+# A tenant's private registry, as the director declares it: spec.tenant from
+# the route, the vault path derived under that tenant's prefix. Its pull
+# Secret goes to namespaces labelled as tenant acme's and to no other --
+# there is no selector here another tenant's namespace could satisfy, and
+# spec.namespaceSelector, which a cluster repository is scoped by, is ignored.
+apiVersion: gentianos.io/v1alpha1
+kind: XRepository
+metadata:
+  name: vendor-apps-x7k2p
+  labels:
+    crossplane.io/claim-name: vendor-apps
+    crossplane.io/claim-namespace: kernel-provisioning
+spec:
+  type: oci
+  role: apps
+  tenant: acme
+  writable: false
+  endpoints:
+    inCluster: oci://registry.vendor.example/acme
+  namespaceSelector:
+    matchLabels:
+      gentianos.io/tenant: globex
+  credential:
+    vaultPath: gentian-os/tenants/acme/repositories/vendor-apps
+    displayName: "Credentials for vendor-apps"

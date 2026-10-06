@@ -510,11 +510,103 @@ spec:
                 name: kubernetes
             {{- end }}
 
-            {{- if and $isOci $hasCred }}
+            {{- if and $isOci $hasCred (ne $tenant "") }}
+            {{- /* A TENANT's registry repository: its credential goes to that
+                 tenant's namespace and to no other.
+
+                 Whose it is is spec.tenant, which the director writes from the
+                 route the caller was authorised on, and the selector below is
+                 an exact match on it. Nothing a declaration can carry widens
+                 it: spec.namespaceSelector is not read for a tenant's
+                 repository, and there is no label a namespace can opt in
+                 with. The tier is matched as well, so the Secret reaches the
+                 namespace the tenant's apps run in and not its DMZ, where
+                 only the platform's own proxy runs.
+
+                 The store the ExternalSecret reads through is the cluster's
+                 one, whose role reads every path: there is no store of the
+                 tenant's own. What keeps this to the tenant's secrets is
+                 therefore checked here, on the path -- a tenant's repository
+                 whose credential is declared outside that tenant's repositories
+                 gets no pull Secret at all.
+
+                 One Secret, two readers. A kubelet reads .dockerconfigjson;
+                 provider-helm reads username and password, by those names,
+                 from the Secret a Release's chart.pullSecretRef names. A
+                 dockerconfigjson Secret may carry further keys, so the
+                 credential is in the namespace once rather than twice.
+
+                 Named after the repository's NAME, because a release and a
+                 pod refer to it by name before it exists.
+
+                 Not for a bearer credential: it has no username, and neither
+                 reader pulls without one. And no ImageConfig: that is how
+                 Crossplane pulls its own packages, which are the cluster's
+                 and never a tenant's. */}}
+            {{- $registry := trimSuffix "/" (regexReplaceAll "^[a-zA-Z][a-zA-Z0-9+.-]*://" $url "") }}
+            {{- $ownPath := hasPrefix (printf "gentian-os/tenants/%s/repositories/" $tenant) $cred.vaultPath }}
+            {{- if and $ownPath (not $bearer) }}
             ---
-            # dockerconfigjson for kubelet, in every matching namespace present
-            # and future. A ClusterExternalSecret rather than one per namespace,
-            # so adding a tenant does not add a Git object.
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                {{ setResourceNameAnnotation (printf "pull-secret-%s" $name) }}
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: external-secrets.io/v1
+                  kind: ClusterExternalSecret
+                  metadata:
+                    name: pull-{{ $name }}
+                    labels:
+                      gentianos.io/tenant: {{ $tenant | quote }}
+                  spec:
+                    externalSecretName: repository-{{ $claimName }}-pull
+                    namespaceSelectors:
+                      - matchLabels:
+                          gentianos.io/tenant: {{ $tenant | quote }}
+                          gentianos.io/tier: tenant
+                    refreshTime: 1h
+                    externalSecretSpec:
+                      refreshInterval: 1h
+                      secretStoreRef:
+                        name: openbao
+                        kind: ClusterSecretStore
+                      target:
+                        name: repository-{{ $claimName }}-pull
+                        creationPolicy: Owner
+                        template:
+                          type: kubernetes.io/dockerconfigjson
+                          metadata:
+                            labels:
+                              gentianos.io/tenant: {{ $tenant | quote }}
+                              gentianos.io/repository: {{ $claimName | quote }}
+                          data:
+                            .dockerconfigjson: |
+                              {"auths":{ {{- $registry | toJson -}} :{"username":{{ `{{ .username | toJson }}` }},"password":{{ `{{ .password | toJson }}` }}}}}
+                            username: "{{ `{{ .username }}` }}"
+                            password: "{{ `{{ .password }}` }}"
+                      data:
+                        - secretKey: username
+                          remoteRef:
+                            key: {{ $cred.vaultPath | quote }}
+                            property: username
+                        - secretKey: password
+                          remoteRef:
+                            key: {{ $cred.vaultPath | quote }}
+                            property: password
+              providerConfigRef:
+                name: kubernetes
+            {{- end }}
+            {{- end }}
+
+            {{- if and $isOci $hasCred (eq $tenant "") }}
+            ---
+            # The CLUSTER's registry repository. dockerconfigjson for kubelet,
+            # in every matching namespace present and future. A
+            # ClusterExternalSecret rather than one per namespace, so adding a
+            # tenant does not add a Git object.
             apiVersion: kubernetes.crossplane.io/v1alpha2
             kind: Object
             metadata:

@@ -66,6 +66,37 @@ spec:
                         Arbitrary Helm values deep-merged over the profile's
                         extraValues. Must not contain secrets.
                       x-kubernetes-preserve-unknown-fields: true
+                pullSecrets:
+                  type: object
+                  description: >
+                    Which of the tenant's repository pull Secrets this app is
+                    pulled with. Set by the operator from the repositories the
+                    owning tenant declared; names only, and every one of them
+                    is looked for in tenantNamespace and nowhere else.
+                  properties:
+                    images:
+                      type: array
+                      description: >
+                        Secrets added to the chart's imagePullSecrets, after
+                        the cluster's own.
+                      items:
+                        type: string
+                    charts:
+                      type: array
+                      description: >
+                        The Secret a chart repository of the profile is pulled
+                        with. A repository not listed is pulled without one.
+                      items:
+                        type: object
+                        required:
+                          - repository
+                          - secretName
+                        properties:
+                          repository:
+                            type: string
+                            description: The chart repository, exactly as the profile states it.
+                          secretName:
+                            type: string
                 addons:
                   type: array
                   description: |
