@@ -154,8 +154,13 @@ kubectl gentian apps list --tenant demo
 kubectl gentian apps install xwiki-ce --tenant demo
 kubectl gentian apps install xwiki-ce --tenant demo --for-everyone   # and grants it to every member
 kubectl gentian apps uninstall xwiki-ce --tenant demo            # keeps its data
-kubectl gentian apps uninstall xwiki-ce --tenant demo --purge    # removes it with its data
+kubectl gentian apps uninstall xwiki-ce --tenant demo --purge    # destroys the data of an app already uninstalled
 ```
+
+Uninstalling and purging are two different acts. Uninstalling removes the app
+and keeps its data. `--purge` sends only the purge, which destroys the data
+of an app that is no longer installed and is refused while it still is; it
+cannot be undone.
 
 `--for-everyone` writes `defaultGrant: true` on the app's entry in the same
 commit. Every member of the tenant then has the app by default: the people who
