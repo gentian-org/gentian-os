@@ -62,6 +62,41 @@ What the platform does decide is who may change a tenant: installing is asked
 of the person (§3). And it decides *which build* is installed, by content
 digest (§4).
 
+**How a credential is used.** The tenant declares the repository — a
+`Repository` of `type: oci` — through the director and sets its user name
+and password at the custodian. From that the platform makes one Secret,
+`repository-<name>-pull`, in that tenant's app namespace and in no other. The
+namespace is selected by an exact match on the tenant the director recorded
+from the route the caller was authorised on, not by anything a declaration
+can carry.
+
+| The chart's address | What happens |
+|---|---|
+| lies inside exactly one repository the tenant declared — same host and port, the repository's path a prefix by whole path segments | the chart is pulled with that repository's Secret |
+| lies inside more than one | the app is not installed until the tenant narrows or removes one. The platform does not guess which credential is meant |
+| lies inside none | the chart is pulled without a credential |
+
+The tenant's apps are given all of the tenant's pull Secrets for their
+images, after the cluster's own.
+
+**What this does not guarantee.** Holding the credential is what makes a
+private app arrive. It is not a guarantee that the app cannot be run
+elsewhere on the same cluster:
+
+* **A credential is a user name and a password.** A token with no user name
+  fails at the chart installer.
+* **Images are pulled with it only through the chart.** The credential
+  reaches a pod through a chart that takes `imagePullSecrets` or
+  `global.imagePullSecrets`. A chart that takes neither pulls its images
+  without it.
+* **A pulled chart is shared.** The chart installer is one process for the
+  cluster and caches charts by name and version. A chart one tenant has
+  pulled can be installed by another tenant whose profile names the same
+  chart, until that process restarts. The credential is not disclosed; the
+  chart is.
+* **A pulled image is shared.** An image already present on a node can be
+  started by any pod that does not force a pull.
+
 ## 3. Installing
 
 ```
@@ -334,9 +369,9 @@ outcome. The store does not tell the cluster.
 | `version` | for a person to read. The cluster does not pin it |
 | `digest` | **what the cluster pins and verifies** (§4) |
 | `repository.name` | the name the repository is declared under. Unique per tenant, and the same each time for the same tenant |
-| `repository.type` | `oci`, and nothing else from a store (§7) |
-| `repository.url` | the registry the bundle's chart and images are in |
-| `repository.credential` | **opaque to the cluster.** A user name and a token the store minted for this tenant and the store's repository checks on pull. `expiresAt` may be `null` |
+| `repository.type` | `oci`, and nothing else: it is the only type a tenant's app charts and images are pulled from with a credential today (§2), and the only one accepted from a store (§7) |
+| `repository.url` | the registry the bundle's chart and images are in. It must contain the chart's address — same host and port, its path a prefix by whole segments — and must not overlap another repository the tenant has declared (§2) |
+| `repository.credential` | **opaque to the cluster.** A user name **and** a token, both required, which the store minted for this tenant and the store's repository checks on pull. `expiresAt` may be `null` |
 | `addons` | add-ons the acquisition includes, each an entry of its own |
 
 A free app's confirmation carries no repository and no credential.
@@ -446,6 +481,11 @@ property of the design rather than of this contract:
   publish a bundle and name its digest. What stands then is what stands for
   any profile: its validation, its admission policies, and the approval of
   every privilege it asks for.
+* **One cluster is one audience for what it has pulled.** Charts and images
+  a tenant pulled with its credential can be used by other tenants of the
+  same cluster (§2). The repository controls the first pull into a cluster.
+  What runs on it afterwards is stated by the licence report, not enforced
+  by the credential.
 * **The repository decides what a tag is.** The digest pins the profile, not
   the chart or image the profile names by tag (§4). Whoever controls the
   repository an app is pulled from controls what runs. That is where supply
@@ -587,6 +627,12 @@ the *repository*, for pulls, with the credential the tenant holds.
 * **No uninstall notice.** The store is not told when an app is removed.
 * **No store content executed.** No HTML, script, style sheet or frame.
 * **No payment data on the cluster.**
+* **No exclusivity on the cluster.** A private chart is shared across the
+  tenants of a cluster through the chart installer's cache, and a pulled
+  image through the node it is on (§2). The contract is that a tenant
+  without the credential cannot *fetch* a private app from the repository.
+  It is not that a second tenant of the same cluster can never run what a
+  first one fetched.
 * **No writing of reviews** in this version of the API.
 * **How a store ties an account to a tenant**, what it asks of an account
   before it confirms an app, and how it prices, are the store's own.

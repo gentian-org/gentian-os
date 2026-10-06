@@ -1952,7 +1952,9 @@ components:
           description: |
             The kind of repository, in the cluster's own spelling. Only
             `oci` is accepted from a store: an OCI registry holding charts
-            and images. The cluster's director also knows `git`, and a
+            and images. It is the only type a cluster pulls a tenant's app
+            charts and images from with a credential today. The cluster's
+            director also knows `git`, and a
             client refuses it in a confirmation — on a cluster a git
             repository of apps is a source of profiles, which is exactly
             what a store may not supply. Closed.
@@ -1961,15 +1963,16 @@ components:
           type: string
           description: |
             The registry address, `oci://<host>[/<path>]`, with no
-            credentials in it and no trailing slash. It must be the
-            repository the entry's profile bundle itself names for its
-            chart, or a prefix of it by whole path segments on the same
-            host: the cluster pulls from where the verified bundle says,
-            and this declaration only supplies the credential for that
-            address. A store hands one tenant one repository per address:
-            the cluster refuses a chart whose address lies inside two of a
-            tenant's repositories rather than guess which credential is
-            meant.
+            credentials in it and no trailing slash. It must contain the
+            address the entry's profile bundle itself names for its chart:
+            the same host and port, and a path that is a prefix of the
+            chart's by whole segments. The cluster pulls from where the
+            verified bundle says, and this declaration only supplies the
+            credential for that address. It must not overlap another
+            repository the same tenant has declared: the cluster does not
+            install a chart whose address lies inside two of a tenant's
+            repositories, rather than guess which credential is meant. A
+            chart inside none is pulled with no credential.
           pattern: "^oci://[^\\s/@]+(/[^\\s@]+)?$"
           examples: ["oci://registry.store.example/apps"]
         credential:
@@ -1983,12 +1986,25 @@ components:
         custodian, hands it to what pulls, and never interprets, logs or
         returns it.
 
+        Holding it is what makes a private app arrive on a cluster. It does
+        not keep the app to one tenant of that cluster: the cluster's chart
+        installer caches charts by name and version, so a chart one tenant
+        pulled can be installed by another tenant of the same cluster until
+        that process restarts, and an image already on a node can be started
+        by any pod that does not force a pull. The credential is not
+        disclosed by either; the artefact is. Image credentials reach a pod
+        only through a chart that takes `imagePullSecrets` or
+        `global.imagePullSecrets`.
+
         Absent from a `Repository` in `GET /v1/acquisitions`.
       required: [username, token, expiresAt]
       properties:
         username:
           type: string
-          description: The user name the registry expects with the token.
+          description: |
+            The user name the registry expects with the token. Required: the
+            cluster's chart installer needs a user name and a password, and
+            a token with no user name fails there.
           minLength: 1
           maxLength: 255
         token:

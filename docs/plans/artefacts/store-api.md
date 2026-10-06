@@ -677,15 +677,15 @@ A free app's confirmation:
 | Field | Type | Req. | Meaning |
 |---|---|---|---|
 | `name` | DNS label ≤ 40 | yes | The name the repository is declared under on the cluster. On a cluster a repository name is one object whoever declares it, so a store must hand each tenant URL a name it hands no other, and the same tenant the same name for the same repository every time. A form that does both: `<a short name of the store's>-<first 10 hex of the SHA-256 of the tenant URL>` |
-| `type` | `oci` | yes | Closed, one value: an OCI registry of charts and images. The cluster's director also knows `git`; the app refuses it from a store, because on a cluster a git repository of apps is a source of profiles, which is what a store may not supply |
-| `url` | `oci://<host>[/<path>]` | yes | No credentials in it, no trailing slash. It must be the repository the entry's profile bundle names for its chart, or a prefix of it by whole path segments on the same host: the cluster pulls from where the verified bundle says, and this only supplies the credential for that address. One repository per address for a tenant: the cluster refuses a chart whose address lies inside two of a tenant's repositories rather than guess which credential is meant |
+| `type` | `oci` | yes | Closed, one value: an OCI registry of charts and images. It is the only type a cluster pulls a tenant's app charts and images from with a credential today. The cluster's director also knows `git`; the app refuses it from a store, because on a cluster a git repository of apps is a source of profiles, which is what a store may not supply |
+| `url` | `oci://<host>[/<path>]` | yes | No credentials in it, no trailing slash. It must contain the address the entry's profile bundle names for its chart: the same host and port, and a path that is a prefix of the chart's by whole segments. The cluster pulls from where the verified bundle says, and this only supplies the credential for that address. It must not overlap another repository the same tenant has declared: the cluster does not install a chart whose address lies inside two of a tenant's repositories, rather than guess which credential is meant. A chart inside none is pulled with no credential |
 | `credential` | Credential | no | Absent in `GET /v1/acquisitions` |
 
 **Credential**
 
 | Field | Type | Req. | Meaning |
 |---|---|---|---|
-| `username` | string 1–255 | yes | The user name the registry expects with the token |
+| `username` | string 1–255 | yes | The user name the registry expects with the token. **Required**: the cluster's chart installer needs a user name and a password, and a token with no user name fails there |
 | `token` | string 1–4096 | yes | The secret. No leading or trailing whitespace |
 | `expiresAt` | date-time \| null | yes | When the repository stops accepting it; `null` when it does not expire. A store that sets it serves the renewal operation |
 
@@ -694,6 +694,20 @@ tenant and the store's repository checks it on every pull; that check is
 where "this tenant may have this app" is enforced, and it is the only place.
 The cluster stores the token in its vault, hands it to what pulls, and never
 interprets, logs or returns it.
+
+**What holding the credential does not guarantee.** It is what makes a
+private app arrive on a cluster. It does not keep the app to one tenant of
+that cluster:
+
+| Limit on the cluster | Consequence for a store |
+|---|---|
+| The chart installer is one process for the cluster and caches charts by name and version | A chart one tenant pulled can be installed by another tenant of the same cluster whose profile names the same chart, until that process restarts. The credential is not disclosed; the chart is |
+| An image already on a node can be started by any pod that does not force a pull | The same, for images |
+| Image credentials reach a pod only through a chart that takes `imagePullSecrets` or `global.imagePullSecrets` | A private app's chart must take one of them, or its images must be public |
+
+A store's repository therefore controls the first pull into a cluster. What
+runs on a cluster after that is stated by the cluster's licence report, not
+enforced by the credential.
 
 The confirmation is a statement of facts. It is not signed, the cluster
 verifies nothing about where it came from beyond the TLS connection, and it
@@ -796,6 +810,9 @@ choice was made that should be confirmed before the store is built on it.
    today, so what an add-on's digest pins is still to be built.
 9. **How stale is stale.** After how long without a report a store answers
    `reports-stale`, as a notice or as a refusal.
-10. **Price display.** Whether `price` is the list price or already the
+10. **User name convention.** A credential must carry a user name. Whether
+    the store uses one fixed user name for every tenant, or one per tenant
+    (as the examples show), is not defined.
+11. **Price display.** Whether `price` is the list price or already the
     tenant's own (a contract rate), and whether tax is included, is the
     store's to state in `note` until the format needs to say.
