@@ -1636,9 +1636,8 @@ _claim_catalogue_section() {
     printf '  # gentian, at the digest the install asks for -- the source itself is\n'
     printf '  # not trusted.\n'
     printf '  #\n'
-    printf '  # A source is open to the tenants listed on it: the cluster then lists\n'
-    printf '  # its entries to them as installable from here, without the App Store.\n'
-    printf '  # Nothing is open by default, and removing a tenant closes it again.\n'
+    printf '  # A source named here is offered to every tenant: the cluster lists its\n'
+    printf '  # entries to them as installable from here, without the App Store.\n'
     printf '  # This is not a licence: whether an app arrives is decided by whether\n'
     printf '  # the tenant holds a credential for the repository it is pulled from.\n'
     printf '  catalogue:\n'
@@ -1658,10 +1657,8 @@ _claim_catalogue_section() {
     # The public catalogue of the gentian-apps repository, which is where the
     # ce and pe profiles are published. GENTIAN_CATALOGUE_URL names another.
     printf '        url: %s\n' "${GENTIAN_CATALOGUE_URL:-https://gentian-org.github.io/gentian-apps}"
-    printf '        # tenants: [demo]\n'
     printf '      # - name: in-house\n'
     printf '      #   url: https://git.example.com/profiles\n'
-    printf '      #   tenants: [demo]\n'
 }
 
 # ensure_claim_catalogue_section <claim file>
@@ -1675,13 +1672,14 @@ _claim_catalogue_section() {
 # says anything at all there is left alone, and that is how a cluster goes
 # without a store: `catalogue: {}` is a decision somebody wrote down, where an
 # absent key is only a key nobody wrote. The one edit made to an existing
-# section is removing a field the schema no longer has
-# (_claim_drop_catalogue_access).
+# section is removing the fields the schema no longer has
+# (_claim_drop_catalogue_access, _claim_drop_catalogue_tenants).
 ensure_claim_catalogue_section() {
     local claim="$1"
     [[ -f "${claim}" ]] || return 0
     if yq_get '.spec.catalogue' "${claim}" >/dev/null 2>&1; then
         _claim_drop_catalogue_access "${claim}"
+        _claim_drop_catalogue_tenants "${claim}"
         # A store somebody named stays named: the claim is theirs. The desktop
         # is told the store is unavailable all the same, by the usher.
         if [[ "$(gentian_licence_report_enabled)" != "true" ]] \
@@ -1713,9 +1711,8 @@ ensure_claim_catalogue_section() {
 # _claim_drop_catalogue_access <claim file>
 #
 # A catalogue source used to say `access: entitled` or `access: open`. The
-# schema no longer has the field -- a source is open to the tenants it lists
-# and that is all -- and a claim still carrying it is refused when it is
-# applied, because an unknown field is an error rather than something ignored.
+# schema no longer has the field, and a claim still carrying it is refused
+# when it is applied, because an unknown field is an error rather than something ignored.
 # So the lines are removed from a claim written before, and only there: under
 # spec.catalogue, at a source's own indent.
 _claim_drop_catalogue_access() {
@@ -1729,7 +1726,52 @@ _claim_drop_catalogue_access() {
         { print }
     ' "${claim}" > "${tmp}" && cat "${tmp}" > "${claim}"
     rm -f "${tmp}"
-    info "claims/cluster.yaml: removed 'access' from its catalogue sources; a source is open to the tenants it lists."
+    info "claims/cluster.yaml: removed 'access' from its catalogue sources; the schema no longer has the field."
+}
+
+# _claim_drop_catalogue_tenants <claim file>
+#
+# A catalogue source used to list the tenants it was open to. The list gated
+# nothing -- an install asks whether the person may install apps in the
+# tenant, and never asked about the source -- so the schema no longer has it:
+# a source the claim names is offered to every tenant. A claim still carrying
+# `tenants:` under a source is refused when it is applied, for the same reason
+# as `access` above, so it is removed from a claim written before.
+#
+# The value may be written on the key's line (`tenants: [demo]`), or as a
+# list below it, and the key may be the first of its source (`- tenants:`).
+# In that last case the dash moves to the source's next key, which would
+# otherwise belong to the source before it.
+_claim_drop_catalogue_tenants() {
+    local claim="$1" tmp
+    grep -qE '^    +(- +)?tenants:' "${claim}" || return 0
+    tmp="$(mktemp)"
+    awk '
+        function indent(line) { match(line, /^ */); return RLENGTH }
+        /^  catalogue:/         { inside = 1; skipping = 0; dash = ""; print; next }
+        inside && /^  [A-Za-z]/ { inside = 0; skipping = 0; dash = "" }
+        inside && skipping {
+            # The value of the key being dropped: anything indented deeper
+            # than the key, and list items written at the key own indent.
+            if ($0 !~ /^ *$/ && (indent($0) > key || (indent($0) == key && $0 ~ /^ *- /))) next
+            skipping = 0
+        }
+        inside && /^      +tenants:/ { key = indent($0); skipping = 1; next }
+        inside && /^    +- +tenants:/ {
+            match($0, /^ *- +/); key = RLENGTH; dash = substr($0, 1, RLENGTH)
+            skipping = 1; next
+        }
+        inside && dash != "" {
+            if ($0 !~ /^ *$/ && indent($0) == key) $0 = dash substr($0, key + 1)
+            dash = ""
+        }
+        { print }
+    ' "${claim}" > "${tmp}"
+    if ! cmp -s "${tmp}" "${claim}"; then
+        cat "${tmp}" > "${claim}"
+        info "claims/cluster.yaml: removed 'tenants' from its catalogue sources; a source is offered to every tenant."
+    fi
+    rm -f "${tmp}"
 }
 
 # _claim_default_line <field> <value> <default> <explanation>

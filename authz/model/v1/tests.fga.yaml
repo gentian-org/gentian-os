@@ -138,14 +138,6 @@ tests:
       - {user: user:audrey, object: app:demo/nextcloud, assertions: {can_read_credential: true, can_write_credential: false}}
       - {user: user:mia,    object: app:demo/nextcloud, assertions: {can_read_credential: false}}
 
-  - name: a catalogue source is open to the tenants named on it and to no other
-    tuples:
-      - {user: tenant:demo, relation: open, object: catalogue_source:in-house}
-    check:
-      - {user: tenant:demo, object: catalogue_source:in-house, assertions: {open: true}}
-      - {user: tenant:solo, object: catalogue_source:in-house, assertions: {open: false}}
-      - {user: tenant:demo, object: catalogue_source:gentian,  assertions: {open: false}}
-
   - name: a contract is consumed only by the apps the tenant allowed
     check:
       - {user: app:demo/openproject, object: contract:demo/file-store, assertions: {can_consume: true}}

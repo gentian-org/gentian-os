@@ -871,8 +871,7 @@ tenant's blast radius. The escape hatch never creates a cluster-scoped object.
    service. The class says a Postgres exists, not which. Needs a default per
    contract on the Cluster claim, or an explicit selector.
 2. **The authorization vocabulary.** One OpenFGA type per CRD kind, with test
-   cases. The model names things `app`, `contract`, `catalogue_source`,
-   `shared_instance`. Renaming the kind moves that vocabulary with it.
+   cases. The model names things `app`, `contract`, `shared_instance`. Renaming the kind moves that vocabulary with it.
 3. **May services consume each other's contracts?** None do today, which is why
    services can be provisioned in one pass after the kernel converges. If that
    changes, provisioning needs a topological sort. Worth stating as a rule

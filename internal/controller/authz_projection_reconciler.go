@@ -109,14 +109,6 @@ func (r *AuthzProjectionReconciler) Reconcile(ctx context.Context, _ ctrl.Reques
 		return ctrl.Result{}, fmt.Errorf("project tenants: %w", err)
 	}
 
-	sources, err := r.openCatalogueSources(ctx)
-	if err != nil {
-		return ctrl.Result{}, fmt.Errorf("read catalogue sources from the Cluster claim: %w", err)
-	}
-	if err := r.Graph.ReconcileCatalogueSources(ctx, tenants, sources); err != nil {
-		return ctrl.Result{}, fmt.Errorf("project catalogue sources: %w", err)
-	}
-
 	// What each tenant has installed, so that an app's tile and its route can
 	// be asked about: the app attached to its tenant, and entitled by the
 	// Keycloak group the identity reconciler creates for it.
@@ -129,7 +121,7 @@ func (r *AuthzProjectionReconciler) Reconcile(ctx context.Context, _ ctrl.Reques
 	}
 
 	logger.V(1).Info("authorization structure projected",
-		"cluster", r.Cluster, "roles", len(roles), "tenants", len(tenants), "openCatalogues", len(sources))
+		"cluster", r.Cluster, "roles", len(roles), "tenants", len(tenants))
 	return ctrl.Result{RequeueAfter: authzProjectionRequeue}, nil
 }
 
@@ -159,51 +151,6 @@ func (r *AuthzProjectionReconciler) platformRoles(ctx context.Context) (map[stri
 				out[role] = group
 			}
 		}
-	}
-	return out, nil
-}
-
-// openCatalogueSources is spec.catalogue.sources from the Cluster claim,
-// reduced to the tenants each source is open to (AD-14).
-//
-// A source produces a tuple for each tenant the platform administrator names
-// on it, and for nobody else. It is that naming being a commit on the claim
-// rather than an environment variable that makes opening a catalogue
-// something one can review after the fact.
-func (r *AuthzProjectionReconciler) openCatalogueSources(ctx context.Context) (map[string][]string, error) {
-	list := &unstructured.UnstructuredList{}
-	list.SetGroupVersionKind(schema.GroupVersionKind{
-		Group: clusterClaimGVK.Group, Version: clusterClaimGVK.Version, Kind: clusterClaimGVK.Kind + "List",
-	})
-	if err := r.List(ctx, list, client.InNamespace(clusterConfigNamespace)); err != nil {
-		return nil, err
-	}
-	out := map[string][]string{}
-	for i := range list.Items {
-		sources, found, err := unstructured.NestedSlice(list.Items[i].Object, "spec", "catalogue", "sources")
-		if err != nil || !found {
-			continue
-		}
-		for _, raw := range sources {
-			entry, ok := raw.(map[string]any)
-			if !ok {
-				continue
-			}
-			name, _ := entry["name"].(string)
-			if name == "" {
-				continue
-			}
-			tenants, _, err := unstructured.NestedStringSlice(entry, "tenants")
-			if err != nil || len(tenants) == 0 {
-				// Open to nobody is the default and is not a mistake: it is
-				// a source declared before anyone is let into it.
-				continue
-			}
-			out[name] = append(out[name], tenants...)
-		}
-	}
-	for name := range out {
-		sort.Strings(out[name])
 	}
 	return out, nil
 }

@@ -185,8 +185,8 @@ Specified in [authorization-model.md](authorization-model.md) and
 
 - [ ] **Decide who projects into OpenFGA**, once the director stops (WP-1).
       Three things need a writer: the store and model at first start,
-      structure projected from git (cluster roles, tenants, tenant roles,
-      open catalogue sources), and membership projected from Keycloak's events.
+      structure projected from git (cluster roles, tenants, tenant roles),
+      and membership projected from Keycloak's events.
       All three are "turn a declared state into cluster state", which is what
       the operator does. The fourth, session revocation on back-channel
       logout, is a runtime signal rather than a projection and could belong to
@@ -826,11 +826,11 @@ person's token. It signs nothing the cluster reads.
       digest recorded. The same test later runs against a real director in
       phase 2.
 - [x] **The store is optional (AD-14).** In `os`: `catalogue.sources[]` on
-      the Cluster claim with `tenants`; the director reads each source's
-      index and serves `GET /v1/tenants/{t}/catalogues[/{source}/entries]`
-      under `can_view`, marking an entry installable for the tenants the
-      source is open to; the operator projects `catalogue_source#open` from
-      the claim. Model v1: `catalogue_source#open`, tested. `[ ]` In `ui`:
+      the Cluster claim, each offered to every tenant; the director reads
+      each source's index and serves
+      `GET /v1/tenants/{t}/catalogues[/{source}/entries]` under `can_view`,
+      marking an entry installable when it states its digest. Nothing about
+      a source is in the authorization model. `[ ]` In `ui`:
       the store screen renders the director's index — name, version,
       install — when the store is unreachable or not configured, and the
       store's listings on top of it when it is.

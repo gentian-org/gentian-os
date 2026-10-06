@@ -218,8 +218,8 @@ func run(log *slog.Logger) error {
 	// Catalogue sources: where a profile is fetched from when a tenant
 	// installs it (AD-3), read from the Cluster claim in git (AD-14).
 	//
-	// On the claim and not in this process's environment, because opening a
-	// catalogue to a tenant is a decision about what software may enter the
+	// On the claim and not in this process's environment, because naming a
+	// catalogue source is a decision about what software may enter the
 	// cluster. On the claim it is a commit with an author and a date, next to
 	// everything else the cluster is; in an environment variable it is a
 	// value that changed when somebody rolled a Deployment, and the only
@@ -227,10 +227,9 @@ func run(log *slog.Logger) error {
 	//
 	// The list is read once, at start. A source added to the claim reaches
 	// the director when its Deployment next starts -- which is what an Argo
-	// sync of a changed claim produces anyway -- and the tuples that say
-	// WHICH tenant a source is open to are the operator's, reconciled
-	// continuously. Without any source, this cluster's profiles arrive some
-	// other way and nothing is materialised on reference.
+	// sync of a changed claim produces anyway. A source is offered to every
+	// tenant. Without any source, this cluster's profiles arrive some other
+	// way and nothing is materialised on reference.
 	var entries *catalogue.Fetcher
 	var declared []gitops.CatalogueSource
 	var storeURL string
@@ -248,7 +247,7 @@ func run(log *slog.Logger) error {
 		sources := make(map[string]string, len(declared))
 		for _, src := range declared {
 			sources[src.Name] = src.URL
-			log.Info("catalogue source", "catalogue", src.Name, "url", src.URL, "openTo", len(src.Tenants))
+			log.Info("catalogue source", "catalogue", src.Name, "url", src.URL)
 		}
 		entries = catalogue.NewFetcher(sources)
 	}

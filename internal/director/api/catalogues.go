@@ -15,7 +15,6 @@ import (
 	"net/http"
 
 	"github.com/gentian-org/gentian-os/internal/director/catalogue"
-	"github.com/gentian-org/gentian-os/internal/director/gitops"
 )
 
 // What a cluster can say about its own catalogues, and what it deliberately
@@ -35,16 +34,12 @@ import (
 // is a relationship with a supplier is not something a cluster can describe
 // usefully, so it is counted and named to the store instead.
 //
-// None of this is a licence check. A source being open to a tenant says the
-// cluster offers that source's entries to it here; it does not decide whether
-// an install is allowed, which is the person's can_install_app and nothing
-// else.
+// None of this is a licence check. A source named on the Cluster claim is
+// offered to every tenant; whether an install is allowed is the person's
+// can_install_app and nothing else.
 
 type catalogueOut struct {
 	Name string `json:"name"`
-	// Open says the Cluster claim opens this source to THIS tenant. Straight
-	// from the claim, which is what decides it.
-	Open bool `json:"open"`
 }
 
 type entryOut struct {
@@ -56,20 +51,20 @@ type entryOut struct {
 	// Digest is the build the source lists: what an install of this entry
 	// from here sends back.
 	Digest string `json:"digest,omitempty"`
-	// Installable says the cluster offers this entry to the tenant from this
-	// list: the source is open to it and the entry states its digest. False
+	// Installable says this entry can be installed from this list: it states
+	// its digest, which is what an install from a source is pinned to. False
 	// sends the person to the store.
 	Installable bool `json:"installable"`
 }
 
-// source finds a declared source by name.
-func (s *Server) source(name string) (gitops.CatalogueSource, bool) {
+// declared reports whether the Cluster claim names a source.
+func (s *Server) declared(name string) bool {
 	for _, src := range s.cfg.CatalogueSources {
 		if src.Name == name {
-			return src, true
+			return true
 		}
 	}
-	return gitops.CatalogueSource{}, false
+	return false
 }
 
 // listCatalogues answers what this cluster could install from at all.
@@ -77,7 +72,7 @@ func (s *Server) listCatalogues(w http.ResponseWriter, r *http.Request, _ call) 
 	tenant := r.PathValue("t")
 	out := make([]catalogueOut, 0, len(s.cfg.CatalogueSources))
 	for _, src := range s.cfg.CatalogueSources {
-		out = append(out, catalogueOut{Name: src.Name, Open: src.Open(tenant)})
+		out = append(out, catalogueOut{Name: src.Name})
 	}
 	s.json(w, http.StatusOK, map[string]any{
 		"tenant": tenant, "storeUrl": s.cfg.StoreURL, "catalogues": out,
@@ -87,12 +82,10 @@ func (s *Server) listCatalogues(w http.ResponseWriter, r *http.Request, _ call) 
 // listCatalogueEntries answers what is in one of them.
 func (s *Server) listCatalogueEntries(w http.ResponseWriter, r *http.Request, _ call) {
 	tenant, name := r.PathValue("t"), r.PathValue("s")
-	src, ok := s.source(name)
-	if !ok {
+	if !s.declared(name) {
 		s.fail(w, r, http.StatusNotFound, "this cluster has no catalogue by that name")
 		return
 	}
-	open := src.Open(tenant)
 	listing, err := s.cfg.Catalogue.Index(r.Context(), name)
 	switch {
 	case errors.Is(err, catalogue.ErrNotFound):
@@ -117,13 +110,13 @@ func (s *Server) listCatalogueEntries(w http.ResponseWriter, r *http.Request, _ 
 			Edition:    string(e.Edition),
 			TrustTier:  e.TrustTier,
 			Digest:     e.Digest,
-			// Offered from here exactly when the claim opened this source to
-			// this tenant; otherwise the store is the route.
-			Installable: open && e.Digest != "",
+			// Without a digest there is nothing to pin an install to, and
+			// the store is the route.
+			Installable: e.Digest != "",
 		})
 	}
 	s.json(w, http.StatusOK, map[string]any{
-		"tenant": tenant, "catalogue": name, "open": open,
+		"tenant": tenant, "catalogue": name,
 		"storeUrl": s.cfg.StoreURL, "entries": entries, "storeOnly": listing.StoreOnly,
 	})
 }

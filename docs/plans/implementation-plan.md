@@ -1242,7 +1242,7 @@ and does the thing the app is for.
 
 | | what has to be true | where it lives | state |
 |---|---|---|---|
-| M4.1 | The catalogue offers the entry and the tenant's administrator may install it | `catalogue_source`, `can_install_app` | exercised on v4 |
+| M4.1 | The catalogue offers the entry and the tenant's administrator may install it | `spec.catalogue.sources[]`, `can_install_app` | exercised on v4 |
 | M4.2 | Installing is a commit and the App composes | director `POST /v1/tenants/{t}/apps/{p}`, `app-default` | exercised on v4 |
 | M4.3 | Its database and storage are fulfilled | the app composition's claims | exercised on v4 |
 | M4.4 | Its OIDC client exists and the zone session reaches it | `app-default` keycloak client, the edge | exercised on v4 |
@@ -1468,8 +1468,8 @@ per-cluster: the authorization **model** is a file in the repository and
 changes only when the model version does, and the **relation structure** —
 that a cluster has tenants, that a tenant has admins, members and a perimeter
 group, which relation each role implies — is the model, not data. What is
-genuinely per-cluster is small: which groups exist, who is in them, which
-tenants this cluster has, and which catalogue sources are open to them. So the graph
+genuinely per-cluster is small: which groups exist, who is in them, and
+which tenants this cluster has. So the graph
 should arrive mostly built, with only names, memberships and facts written at
 runtime. That is less code and a smaller blast radius: a bug in a projector
 can then add or remove a membership, but it cannot invent a relation that was

@@ -434,9 +434,8 @@ surfaces the OS already has, so the OS still installs and runs without them:
 - **The store.** Step 0's scaffold of the Cluster claim sets `catalogue.storeUrl`
   and lists the Gentian catalogue source rather than commenting them out.
   The App Store tile is a link component the desktop shows. The source is
-  listed and open to no tenant until the platform administrator names one on
-  it; nothing the store says decides what a tenant may install, and the
-  cluster does no licence gating (AD-3, AD-14).
+  offered to every tenant; nothing the store says decides what a tenant may
+  install, and the cluster does no licence gating (AD-3, AD-14).
 - **The Operations Console.** Its two entries (§5.2) are `defaultForTenants`
   apps and a service the installer declares on the Cluster claim's default
   components. The `apiExtensions` grant the service needs is written into the

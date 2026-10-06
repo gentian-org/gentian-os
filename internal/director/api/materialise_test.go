@@ -20,7 +20,6 @@ import (
 	"testing"
 
 	dt "github.com/gentian-org/gentian-os/internal/director/directortest"
-	"github.com/gentian-org/gentian-os/internal/director/gitops"
 )
 
 const elementProfile = `apiVersion: gentianos.io/v1alpha1
@@ -190,16 +189,14 @@ func TestTheCoordinateMustNameTheAppBeingInstalled(t *testing.T) {
 	}
 }
 
-// Whether a source is open to a tenant decides what the cluster lists for it,
-// not whether an install is allowed: a tenant the Cluster claim opened the
-// source to nobody for still installs from it, on can_install_app alone.
-func TestInstallingFromASourceDoesNotDependOnItBeingOpen(t *testing.T) {
+// An install from a source is asked of the person and of nothing else: there
+// is no question about the source, which the Cluster claim offers to every
+// tenant.
+func TestInstallingFromASourceAsksOnlyWhetherThePersonMayInstall(t *testing.T) {
 	src := catalogueSource(t, elementProfile)
-	h := startWithCatalogue(t, src, map[string]string{"main": src.URL},
-		gitops.CatalogueSource{Name: "main", URL: src.URL, Tenants: []string{"demo"}})
+	h := startWithCatalogue(t, src, map[string]string{"main": src.URL})
 	body := fmt.Sprintf(`{"coordinate":"main/element","digest":%q}`, sha(elementProfile))
 
-	// solo is not named on the source.
 	tina := h.token(t, "tenant-solo", "tina")
 	h.asked.reset()
 	if code, out := h.do(t, "POST", "/v1/tenants/solo/apps/element", tina, body); code != http.StatusAccepted {

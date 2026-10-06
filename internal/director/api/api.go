@@ -122,8 +122,8 @@ type Config struct {
 	// deployment naming no catalogue source is saying.
 	Catalogue *catalogue.Fetcher
 	// CatalogueSources is spec.catalogue.sources from the Cluster claim: the
-	// same list the Fetcher was built from, kept whole because the index
-	// routes need the tenants each source is open to.
+	// same list the Fetcher was built from, in the claim's order, which is
+	// the order the index routes list them in.
 	CatalogueSources []gitops.CatalogueSource
 	// StoreURL is spec.catalogue.storeUrl: where a person is sent for
 	// everything this cluster does not list for itself. Empty is a cluster

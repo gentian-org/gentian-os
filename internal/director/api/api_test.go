@@ -92,8 +92,8 @@ func start(t *testing.T) *harness {
 // startWithCatalogue is the harness with catalogue sources, for the installs
 // that materialise a profile on reference (AD-3). The fetcher is given the
 // test server's own client, so it trusts that certificate and no other.
-// declared is what the Cluster claim says of the sources; without it each is
-// named and open to nobody.
+// declared is the sources in the Cluster claim's order; without it they are
+// the fetcher's, in no particular order.
 func startWithCatalogue(
 	t *testing.T, src *httptest.Server, sources map[string]string, declared ...gitops.CatalogueSource,
 ) *harness {

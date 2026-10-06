@@ -121,10 +121,17 @@ spec:
                     coordinate whose source is not listed here.
 
                     This lives on the claim rather than in the director's
-                    environment so that opening a catalogue to a tenant is a
+                    environment so that naming a catalogue source is a
                     reviewable commit with an author and a date, and so that
                     "what could this cluster install from" can be answered
                     without cluster access.
+
+                    A source named here is offered to every tenant: the
+                    cluster lists its entries to them as installable from
+                    here. That is what the cluster offers, not a licence.
+                    Whether an installed app arrives is decided where its
+                    artefacts are pulled, by the credential the tenant holds
+                    for their repository.
                   properties:
                     storeUrl:
                       type: string
@@ -162,22 +169,6 @@ spec:
                               bytes are untrusted -- the digest an install
                               asks for is what admits them -- so this may be
                               any host.
-                          tenants:
-                            type: array
-                            items:
-                              type: string
-                            description: >
-                              Tenants this source is open to: the cluster
-                              lists its entries to them as installable from
-                              here. Empty means none: nothing is open by
-                              default, and adding a tenant here is the act
-                              being made reviewable.
-
-                              This is what the cluster offers, not a licence.
-                              Whether an installed app arrives is decided
-                              where its artefacts are pulled, by the
-                              credential the tenant holds for their
-                              repository.
                 kernelDomain:
                   type: string
                   description: >

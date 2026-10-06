@@ -18,10 +18,10 @@ import (
 // Where a cluster's profiles may come from (AD-14).
 //
 // On the Cluster CLAIM, not in the director's environment. The difference is
-// not cosmetic: a source is where software enters this cluster, and opening
-// one to a tenant is the platform administrator's act. On the claim it is a
-// commit somebody reviewed, with an author and a date, next to everything
-// else the cluster is. In an environment variable it is a deployment setting
+// not cosmetic: a source is where software enters this cluster, and naming
+// one is the platform administrator's act. On the claim it is a commit
+// somebody reviewed, with an author and a date, next to everything else the
+// cluster is. In an environment variable it is a deployment setting
 // that changed when somebody rolled the Deployment, and the only record is
 // whatever the pod spec happens to say now.
 //
@@ -30,31 +30,17 @@ import (
 // and the one an environment variable answers worst.
 
 // CatalogueSource is one repository of profile bundles.
+//
+// A source the claim names is offered to every tenant of the cluster. It is
+// what the cluster offers, not a licence: an install is asked of the person
+// (can_install_app), and whether the app then arrives is decided where its
+// artefacts are pulled.
 type CatalogueSource struct {
 	// Name is the catalogue's slug: the first half of a coordinate, so
 	// "main/nextcloud-base-ce" is served by the source named main.
 	Name string `json:"name"`
 	// URL is where bundles are fetched from.
 	URL string `json:"url"`
-	// Tenants are the tenants this source is open to: the cluster lists the
-	// source's entries to them as installable from here. Empty means none --
-	// a source is open to somebody, never to all, and nothing is open by
-	// default.
-	//
-	// It is what the cluster offers, not a licence. An install is asked of
-	// the person (can_install_app), and whether the app then arrives is
-	// decided where its artefacts are pulled.
-	Tenants []string `json:"tenants,omitempty"`
-}
-
-// Open reports whether the Cluster claim opens this source to a tenant.
-func (s CatalogueSource) Open(tenant string) bool {
-	for _, t := range s.Tenants {
-		if t == tenant {
-			return true
-		}
-	}
-	return false
 }
 
 // CatalogueSettings is the claim's whole spec.catalogue.

@@ -182,11 +182,10 @@ Cluster claim:
 catalogue:
   storeUrl: https://…      # where people are sent for everything else
   sources:
-  - name: gentian          # listed; open to no tenant until one is named
+  - name: gentian
     url: https://…
   - name: in-house         # a platform administrator's own repository
     url: https://…
-    tenants: [demo]        # the tenants this source is open to; empty means none
 ```
 
 A source publishes `index.yaml` beside its `profiles/` directory, because an
@@ -211,19 +210,17 @@ they are the point rather than an omission:
 Every listed entry carries its digest, which is what an install of it from
 this list sends back (§3).
 
-**Open** is the one thing a source says about tenants. A source is open to the
-tenants named on it: for them the listing marks its entries `installable`, and
-the desktop offers the install from the cluster's own screen. For any other
-tenant the entries are listed and the store is where to go. Opening a source
-is the platform administrator's act, under `can_configure`, and it is recorded
-as a tuple (`catalogue_source:<source>#open@tenant:<t>`) the operator projects
-from the claim — the same path as the cluster's roles, and declarative the
-same way, so a tenant the claim stops naming loses it on the next pass.
-Nothing is open by default, and a source is opened per tenant, not per
-cluster.
+A source says nothing about tenants. One the claim names is offered to every
+tenant of the cluster: the listing marks an entry `installable` when it states
+its digest, and the desktop offers the install from the cluster's own screen.
+Naming a source is the platform administrator's act, a commit on the claim.
+There is no tuple for it and no per-tenant list: such a list gated nothing,
+because the install route asks whether the person may install apps in the
+tenant and never asked about the source (§3).
 
-Open is what the cluster offers, not a licence, and the install route does not
-ask it (§3). There is no access mode a store sets on a source.
+Offering a source is not a licence. Whether an installed app arrives is
+decided where its artefacts are pulled, by the credential the tenant holds for
+their repository. There is no access mode a store sets on a source.
 
 What does not change without the store: the install mechanism (fetch the
 bundle at the digest, apply the profile, commit as the person), the

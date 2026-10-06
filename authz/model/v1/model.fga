@@ -115,19 +115,12 @@ type tenant
     define can_write_credential: admin
     define can_read_credential: can_write_credential or can_audit from cluster
 
-# A catalogue source is a repository of profile bundles named on the Cluster
-# claim. Opening a source to a tenant is the platform administrator's act
-# (can_configure), recorded as a tuple: the cluster offers that source's
-# entries to that tenant. Nothing is open by default.
-#
-# There is no relation for a tenant's right to an app. Installing is asked of
-# the person (tenant#can_install_app); whether the app then arrives is decided
-# where its artefacts are pulled, by the credential the tenant holds for their
-# repository. The platform does no licence gating.
-type catalogue_source
-  relations
-    define open: [tenant]                         # written by the operator from the Cluster claim
-
+# There is no type for a catalogue source and no relation for a tenant's
+# right to an app. A source named on the Cluster claim is offered to every
+# tenant. Installing is asked of the person (tenant#can_install_app); whether
+# the app then arrives is decided where its artefacts are pulled, by the
+# credential the tenant holds for their repository. The platform does no
+# licence gating.
 type app
   relations
     define tenant: [tenant]

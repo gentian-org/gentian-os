@@ -38,8 +38,9 @@ func claimWith(t *testing.T, spec string) *gitops.GitOps {
 	return gitops.NewGitOps(dt.Clone(t, remote), remote, dt.Cluster, director)
 }
 
-// The list is the claim's, which is the whole point of AD-14: opening a
-// catalogue is a commit somebody can review, not a Deployment's environment.
+// The list is the claim's, which is the whole point of AD-14: naming a
+// catalogue source is a commit somebody can review, not a Deployment's
+// environment.
 func TestCatalogueSourcesComeFromTheClusterClaim(t *testing.T) {
 	g := claimWith(t, `  catalogue:
     sources:
@@ -47,7 +48,6 @@ func TestCatalogueSourcesComeFromTheClusterClaim(t *testing.T) {
         url: https://store.example.com/catalogue
       - name: in-house
         url: https://git.example.com/profiles
-        tenants: [demo]
 `)
 	got, err := g.CatalogueSources(context.Background())
 	if err != nil {
@@ -59,11 +59,8 @@ func TestCatalogueSourcesComeFromTheClusterClaim(t *testing.T) {
 	if got[0].Name != "main" || got[0].URL != "https://store.example.com/catalogue" {
 		t.Fatalf("first source = %+v", got[0])
 	}
-	if !got[1].Open("demo") {
-		t.Fatal("a source the claim opens to demo does not read as open to demo")
-	}
-	if got[1].Open("solo") || got[0].Open("demo") {
-		t.Fatalf("a source is open to somebody it does not name: %+v", got)
+	if got[1].Name != "in-house" || got[1].URL != "https://git.example.com/profiles" {
+		t.Fatalf("second source = %+v", got[1])
 	}
 }
 

@@ -59,8 +59,7 @@ principle 3 as a licence for a bypassable one.
 
 ## 4. The authorization vocabulary grows with the API, not with use cases
 
-One OpenFGA type per CRD kind (`cluster`, `tenant`, `app`, `catalogue_source`,
-`document`, …), one relation per verb a PEP exposes. A new kind ships with its
+One OpenFGA type per CRD kind (`cluster`, `tenant`, `app`, `document`, …), one relation per verb a PEP exposes. A new kind ships with its
 type and a case in `authz/model/*/tests.fga.yaml`, or it does not ship. Group
 membership is in the graph only as a projection of Keycloak, written by the
 director from Keycloak's events and reconciled toward Keycloak, never edited

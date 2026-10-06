@@ -107,9 +107,6 @@ func TestAnEdgeToAnotherObjectIsNotABinding(t *testing.T) {
 	if roles != "admin,member,perimeter_approver" {
 		t.Fatalf("tenant roles = %q: operated_by and cluster are edges, member is a role", roles)
 	}
-	if strings.Join(g.roles("catalogue_source"), ",") != "" {
-		t.Fatalf("catalogue_source has roles: %v", g.roles("catalogue_source"))
-	}
 	// And a tenant member's permissions are the member's, not the admin's.
 	if strings.Join(g.grantsOf("tenant", "member"), ",") != "can_enter,can_view" {
 		t.Fatalf("member grants = %v", g.grantsOf("tenant", "member"))
