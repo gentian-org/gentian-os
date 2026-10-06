@@ -260,9 +260,6 @@ func TestNoRouteReturnsASecretValue(t *testing.T) {
 		{"PUT", "/v1/backup-identity",
 			fmt.Sprintf(`{"identity":"AGE-SECRET-KEY-%s"}`, theSecretValue)},
 		{"GET", "/v1/repositories", ""},
-		{"PUT", "/v1/repositories/smtp-relay",
-			fmt.Sprintf(`{"role":"apps","type":"git","url":"https://git.example/x","confirm":%q}`, theSecretValue)},
-		{"DELETE", "/v1/repositories/smtp-relay?confirm=smtp-relay", ""},
 	}
 
 	for _, tc := range cases {
@@ -289,8 +286,6 @@ func TestEveryRouteIsEnumerated(t *testing.T) {
 		"GET /v1/backup-identity",
 		"PUT /v1/backup-identity",
 		"GET /v1/repositories",
-		"PUT /v1/repositories/{name}",
-		"DELETE /v1/repositories/{name}",
 	}
 	s, _ := newServer(t)
 	mux := s.Routes()
@@ -303,7 +298,7 @@ func TestEveryRouteIsEnumerated(t *testing.T) {
 	}
 	// And the reverse: a route registered but absent from the leak test's cases
 	// is what this is really guarding, so the two lists must be the same length.
-	if got, want := len(registered), 9; got != want {
+	if got, want := len(registered), 7; got != want {
 		t.Fatalf("route list changed (%d); update TestNoRouteReturnsASecretValue too", got)
 	}
 }

@@ -85,6 +85,8 @@ type Repository interface {
 	ClearAppGrant(ctx context.Context, tenant, app string, meta gitops.Meta) (gitops.Result, error)
 	PlatformSecurity(ctx context.Context) ([]gitops.MacWaiver, error)
 	SetPlatformSecurity(ctx context.Context, waivers []gitops.MacWaiver, meta gitops.Meta) (gitops.Result, error)
+	DeclareRepository(ctx context.Context, tenant, name string, d gitops.RepositoryDeclaration, meta gitops.Meta) (gitops.RepositoryResult, error)
+	RemoveRepository(ctx context.Context, tenant, name, confirm string, meta gitops.Meta) (gitops.Result, error)
 }
 
 // Lifecycle is the operator's listener as the director uses it: the commands
@@ -443,6 +445,24 @@ func (s *Server) routes() {
 	s.guarded("GET /v1/tenants/{t}/exposures", "can_view", tenantObject, s.tenantExposures)
 	s.guarded("PUT /v1/tenants/{t}/exposures/{inst}/{name}", "can_expose", tenantObject, s.publishExposure)
 	s.guarded("DELETE /v1/tenants/{t}/exposures/{inst}/{name}", "can_expose", tenantObject, s.withdrawExposure)
+
+	// Where software comes from: the repositories a tenant, or the cluster,
+	// installs from. The address is configuration -- it decides what may
+	// enter -- so declaring one and removing one are commits with an author.
+	// The password is not: it is set at the custodian, for a repository that
+	// is already declared, and never passes through here.
+	//
+	// can_write_credential, on the cluster for the cluster's and on the
+	// tenant for a tenant's: the relation the custodian asked when these
+	// were its routes, so the same people may do this and nobody else. It is
+	// also the relation that then lets them set the password, which is the
+	// other half of the same errand.
+	s.guarded("PUT /v1/tenants/{t}/repositories/{name}", "can_write_credential", tenantObject, s.declareTenantRepository)
+	s.guarded("DELETE /v1/tenants/{t}/repositories/{name}", "can_write_credential", tenantObject, s.removeTenantRepository)
+	if s.cfg.Cluster != "" {
+		s.guarded("PUT /v1/clusters/{c}/repositories/{name}", "can_write_credential", s.clusterObject, s.declareClusterRepository)
+		s.guarded("DELETE /v1/clusters/{c}/repositories/{name}", "can_write_credential", s.clusterObject, s.removeClusterRepository)
+	}
 
 	s.guarded("GET /v1/tenants/{t}/privileges", "can_view", tenantObject, s.tenantPrivileges)
 	s.guarded("PUT /v1/tenants/{t}/privileges/{inst}/{kind}/{name}", "can_view", tenantObject, s.grantPrivilege)

@@ -12,32 +12,35 @@ package custodian
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"sort"
-	"strings"
 
 	"github.com/gentian-org/gentian-os/internal/layout"
 
-	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// Repository claims are the tenant-facing half of app distribution: a tenant
-// adds its own private app repository alongside the cluster's, or points its
-// deployments at somewhere else entirely.
+// Repositories are where a tenant or the cluster installs software from: a
+// tenant's own private app repository alongside the cluster's.
 //
-// This lives beside the custodian rather than in the app-lifecycle API
-// because it needs an identity. That API takes its tenant from the request path
-// and its actor from a header, which is safe only while every caller is already
-// trusted. Declaring a repository is not that: replacing a tenant's deployments
-// repository redirects everything Argo CD reconciles for them, and "which tenant
-// is asking" therefore has to be established rather than stated.
+// The custodian does not declare them. Where software comes from is
+// configuration -- it decides what may enter -- so the address is a commit
+// the director makes, with an author, and Argo CD applies it. This process
+// once created, changed and deleted these objects in the cluster itself,
+// which left "who pointed this tenant at that address" in no commit at all
+// and made the keeper of the keys a second place configuration was decided.
 //
-// +kubebuilder:rbac:groups=gentianos.io,resources=repositories,verbs=get;list;watch;create;update;patch;delete
+// What is left here is what belongs to a credential. The list below says
+// which repositories exist and which credential belongs to each, read from
+// the objects Argo CD applied. Setting the password is the credentials route
+// (PUT /v1/credentials/repository-<name>): it works from the requirement the
+// composition emits for a repository that is declared, takes its vault path
+// from there, and has nothing to act on for one that is not.
+//
+// +kubebuilder:rbac:groups=gentianos.io,resources=repositories,verbs=get;list;watch
 
 var repositoryGVK = schema.GroupVersionKind{
 	Group:   "gentianos.io",
@@ -49,16 +52,8 @@ var repositoryGVK = schema.GroupVersionKind{
 // claims are, not because a tenant owns a namespace here.
 var repositoryNamespace = layout.Namespace(layout.Provisioning)
 
-// RepositoryRole distinguishes what losing a repository costs.
-//
-// `apps` is additive: a tenant's private catalogue sits alongside the cluster's
-// and removing it removes those apps. `deployments` is the tenant's source of
-// truth — repointing it changes what every one of their apps reconciles from,
-// which is why it is treated as destructive even when the object is new.
-const (
-	roleApps        = "apps"
-	roleDeployments = "deployments"
-)
+// roleApps is what a repository that states no role is listed as.
+const roleApps = "apps"
 
 // RepositoryView is what the API says about one repository. As everywhere in
 // this package there is no field capable of carrying a credential value — the
@@ -76,27 +71,14 @@ type RepositoryView struct {
 	// Owned is false for the cluster's own repositories, which a tenant admin
 	// can see but not change. The console greys those rather than hiding them:
 	// "you cannot edit this" is more useful than a list that omits the base
-	// repository everyone's apps come from.
+	// repository everyone's apps come from. Changing one is asked of the
+	// director.
 	Owned bool `json:"owned"`
 
 	// CredentialName ties this to the requirement that supplies its credential,
 	// so the console can link the two instead of making the operator match
 	// names by eye.
 	CredentialName string `json:"credentialName,omitempty"`
-}
-
-// repositoryRequest is the write body.
-type repositoryRequest struct {
-	Role     string `json:"role"`
-	Type     string `json:"type"`
-	URL      string `json:"url"`
-	Branch   string `json:"branch,omitempty"`
-	Writable bool   `json:"writable,omitempty"`
-
-	// Confirm must repeat the repository name for any change that is not purely
-	// additive. It is the API half of the console's danger zone: a confirmation
-	// enforced only in the UI is a confirmation a script skips.
-	Confirm string `json:"confirm,omitempty"`
 }
 
 func (s *Server) handleListRepositories(w http.ResponseWriter, r *http.Request) {
@@ -167,231 +149,14 @@ func (s *Server) repositoryView(item *unstructured.Unstructured, tenant string, 
 	}
 }
 
-func (s *Server) handleSetRepository(w http.ResponseWriter, r *http.Request) {
-	c, err := s.identify(r.Context(), r)
-	if err != nil {
-		writeErr(w, http.StatusUnauthorized, err)
-		return
-	}
-	name := r.PathValue("name")
-
-	var body repositoryRequest
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&body); err != nil {
-		writeErr(w, http.StatusBadRequest, fmt.Errorf("malformed body: %w", err))
-		return
-	}
-	if err := checkRepositoryRequest(name, &body); err != nil {
-		writeErr(w, http.StatusBadRequest, err)
-		return
-	}
-
-	existing := &unstructured.Unstructured{}
-	existing.SetGroupVersionKind(repositoryGVK)
-	getErr := s.Catalogue.Client.Get(r.Context(),
-		client.ObjectKey{Namespace: repositoryNamespace, Name: name}, existing)
-	found := getErr == nil
-	if getErr != nil && !errors.IsNotFound(getErr) {
-		writeErr(w, http.StatusInternalServerError, getErr)
-		return
-	}
-
-	// A caller with neither cluster authority nor a tenant has no scope to
-	// create anything in. Without this the owner below stays "" and the
-	// repository is created CLUSTER-owned — so a viewer whose tenant did not
-	// reach the token adds a catalogue for the whole cluster, which is more
-	// than the caller has anywhere else. It happened: a tenant admin's token
-	// carried no tenant metadata and their repository landed at a kernel path.
-	//
-	// Placed here rather than in canWriteRepository because that answers "may
-	// this caller write THIS repository" and the create path has no existing
-	// object to ask about.
-	if !c.view.ClusterAdmin && c.view.Tenant == "" {
-		writeErr(w, http.StatusForbidden,
-			fmt.Errorf("your token carries no tenant and no cluster authority, so there is "+
-				"no scope to create a repository in"))
-		return
-	}
-
-	owner := c.view.Tenant
-	if found {
-		existingTenant, _, _ := unstructured.NestedString(existing.Object, "spec", "tenant")
-		if !c.view.canWriteRepository(existingTenant) {
-			// 404 rather than 403: a tenant learning that a name is taken by
-			// another tenant is itself a disclosure.
-			writeErr(w, http.StatusNotFound, fmt.Errorf("no such repository: %s", name))
-			return
-		}
-		owner = existingTenant
-	} else if c.view.ClusterAdmin && c.view.Tenant == "" {
-		// A cluster admin with no tenant creates cluster-owned repositories.
-		owner = ""
-	}
-
-	if reason := repositoryNeedsConfirmation(existing, found, &body); reason != "" {
-		if body.Confirm != name {
-			writeJSON(w, http.StatusPreconditionRequired, map[string]any{
-				"error":          reason,
-				"confirmField":   "confirm",
-				"confirmWith":    name,
-				"dangerous":      true,
-				"requiresRetype": true,
-			})
-			return
-		}
-	}
-
-	obj := &unstructured.Unstructured{}
-	obj.SetGroupVersionKind(repositoryGVK)
-	obj.SetNamespace(repositoryNamespace)
-	obj.SetName(name)
-	spec := map[string]any{
-		"type":      body.Type,
-		"role":      body.Role,
-		"endpoints": map[string]any{"inCluster": body.URL},
-		"writable":  body.Writable,
-	}
-	if body.Branch != "" {
-		spec["branch"] = body.Branch
-	}
-	if owner != "" {
-		spec["tenant"] = owner
-	}
-	// The credential is declared by the composition, not here: it emits a
-	// CredentialRequirement whose scope follows spec.tenant. Supplying the value
-	// is a separate call to the same API, which is what keeps the value out of
-	// this request body.
-	spec["credential"] = map[string]any{
-		"displayName": fmt.Sprintf("Credentials for %s", name),
-		"vaultPath":   repositoryVaultPath(owner, name),
-	}
-	if err := unstructured.SetNestedMap(obj.Object, spec, "spec"); err != nil {
-		writeErr(w, http.StatusInternalServerError, err)
-		return
-	}
-
-	if found {
-		existing.Object["spec"] = spec
-		if err := s.Catalogue.Client.Update(r.Context(), existing); err != nil {
-			writeErr(w, http.StatusInternalServerError, err)
-			return
-		}
-	} else if err := s.Catalogue.Client.Create(r.Context(), obj); err != nil {
-		writeErr(w, http.StatusInternalServerError, err)
-		return
-	}
-
-	writeJSON(w, http.StatusOK, map[string]any{
-		"name":           name,
-		"tenant":         owner,
-		"role":           body.Role,
-		"credentialName": "repository-" + name,
-		"created":        !found,
-	})
-}
-
-func (s *Server) handleDeleteRepository(w http.ResponseWriter, r *http.Request) {
-	c, err := s.identify(r.Context(), r)
-	if err != nil {
-		writeErr(w, http.StatusUnauthorized, err)
-		return
-	}
-	name := r.PathValue("name")
-
-	obj := &unstructured.Unstructured{}
-	obj.SetGroupVersionKind(repositoryGVK)
-	if err := s.Catalogue.Client.Get(r.Context(),
-		client.ObjectKey{Namespace: repositoryNamespace, Name: name}, obj); err != nil {
-		writeErr(w, http.StatusNotFound, fmt.Errorf("no such repository: %s", name))
-		return
-	}
-	tenant, _, _ := unstructured.NestedString(obj.Object, "spec", "tenant")
-	if !c.view.canWriteRepository(tenant) {
-		writeErr(w, http.StatusNotFound, fmt.Errorf("no such repository: %s", name))
-		return
-	}
-
-	// Removal is always destructive — the apps it carried stop reconciling — so
-	// it always retypes, with no additive case to exempt.
-	if r.URL.Query().Get("confirm") != name {
-		writeJSON(w, http.StatusPreconditionRequired, map[string]any{
-			"error":          fmt.Sprintf("removing %q stops every app it provides from reconciling", name),
-			"confirmField":   "confirm",
-			"confirmWith":    name,
-			"dangerous":      true,
-			"requiresRetype": true,
-		})
-		return
-	}
-	if err := s.Catalogue.Client.Delete(r.Context(), obj); err != nil {
-		writeErr(w, http.StatusInternalServerError, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"name": name, "deleted": true})
-}
-
-// canWriteRepository reports whether the caller may change a repository: the
+// canWriteRepository reports whether a repository is the caller's own: the
 // cluster's, for whoever may set the cluster's credentials; a tenant's, for
-// whoever may set that tenant's.
+// whoever may set that tenant's. It marks the listing and decides nothing
+// else here. The director asks the store the same relation on the same object
+// before it commits a change to one.
 func (v Viewer) canWriteRepository(tenant string) bool {
 	if tenant == "" {
 		return v.canWrite(scopeCluster, "")
 	}
 	return v.canWrite(scopeTenant, tenant)
-}
-
-// repositoryNeedsConfirmation returns why an operation is dangerous, or "".
-//
-// Adding an apps repository is additive and needs no ceremony. Everything else
-// changes where something already running reconciles from, and a confirmation
-// that is easy to click through is not a confirmation.
-func repositoryNeedsConfirmation(existing *unstructured.Unstructured, found bool, body *repositoryRequest) string {
-	if body.Role == roleDeployments {
-		// Even when new: pointing a tenant's deployments somewhere else
-		// redirects everything Argo CD reconciles for them.
-		return "this repository is the source of truth for the tenant's deployments; " +
-			"changing it redirects everything reconciled from it"
-	}
-	if !found {
-		return ""
-	}
-	oldURL, _, _ := unstructured.NestedString(existing.Object, "spec", "endpoints", "inCluster")
-	if oldURL != "" && oldURL != body.URL {
-		return fmt.Sprintf("this replaces the existing source %q, and apps installed from it "+
-			"will resolve against the new one", oldURL)
-	}
-	return ""
-}
-
-// repositoryVaultPath keeps a tenant's repository credential inside the prefix
-// its OpenBao policy can write and ESO can read. Deriving it here rather than
-// accepting one from the caller is deliberate: a path outside that prefix
-// produces a requirement the tenant can see and cannot satisfy.
-func repositoryVaultPath(tenant, name string) string {
-	if tenant == "" {
-		return "gentian-os/kernel/repositories/" + name
-	}
-	return fmt.Sprintf("gentian-os/tenants/%s/repositories/%s", tenant, name)
-}
-
-func checkRepositoryRequest(name string, body *repositoryRequest) error {
-	if name == "" {
-		return fmt.Errorf("a repository name is required")
-	}
-	if strings.TrimSpace(body.URL) != body.URL || body.URL == "" {
-		return fmt.Errorf("url is required and must not have leading or trailing whitespace")
-	}
-	switch body.Type {
-	case "git", "oci":
-	default:
-		return fmt.Errorf("type must be git or oci, got %q", body.Type)
-	}
-	switch body.Role {
-	case roleApps, roleDeployments:
-	default:
-		return fmt.Errorf("role must be %s or %s, got %q", roleApps, roleDeployments, body.Role)
-	}
-	if body.Role == roleDeployments && body.Type != "git" {
-		return fmt.Errorf("a deployments repository must be git")
-	}
-	return nil
 }

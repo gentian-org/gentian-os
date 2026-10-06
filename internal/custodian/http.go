@@ -96,8 +96,8 @@ func (s *Server) Routes() *http.ServeMux {
 	mux.HandleFunc("GET /v1/backup-identity", s.handleGetBackupIdentity)
 	mux.HandleFunc("PUT /v1/backup-identity", s.handleSetBackupIdentity)
 	mux.HandleFunc("GET /v1/repositories", s.handleListRepositories)
-	mux.HandleFunc("PUT /v1/repositories/{name}", s.handleSetRepository)
-	mux.HandleFunc("DELETE /v1/repositories/{name}", s.handleDeleteRepository)
+	// No PUT and no DELETE: a repository is declared and removed by a commit
+	// the director makes (see repositories.go).
 	return mux
 }
 

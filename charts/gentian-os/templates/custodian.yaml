@@ -11,7 +11,7 @@
 
   What it may do in the cluster is listed below and is all it needs: read the
   catalogue of required credentials and whether each is satisfied, read the
-  tenants to tell whose realm a caller signed in to, keep the repositories a
+  tenants to tell whose realm a caller signed in to, read the repositories a
   tenant or the cluster installs from, and record that the write path works.
   Who may ask it for any of that is the authorization store's answer, asked
   with the caller's own verified token on every request.
@@ -45,11 +45,13 @@ rules:
   - apiGroups: ["gentianos.io"]
     resources: ["credentialrequirements", "tenants", "clusters"]
     verbs: ["get", "list", "watch"]
-  # The repositories a tenant or the cluster installs from, which are
-  # credentials with a little configuration around them.
+  # The repositories a tenant or the cluster installs from, to list which
+  # credential belongs to each. Read only: a repository's address is declared
+  # by a commit the director makes, and this process must not be a second
+  # place it can be changed.
   - apiGroups: ["gentianos.io"]
     resources: ["repositories"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+    verbs: ["get", "list", "watch"]
   # Whether each credential is satisfied, and the nudge that makes a stored
   # one be read again at once rather than at the next refresh interval.
   - apiGroups: ["external-secrets.io"]

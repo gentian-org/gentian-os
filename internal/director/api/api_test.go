@@ -525,6 +525,12 @@ var facts = dt.Table{
 	"user:tina can_install_app tenant:solo":      true,
 	"user:tina can_view tenant:solo":             true,
 	"user:tom can_approve_privilege tenant:demo": true,
+	// Declaring where software comes from is asked as can_write_credential,
+	// the relation the custodian asked when it kept the repositories. Tenant
+	// solo administers itself, so alice holds it on demo and not on solo.
+	"user:tom can_write_credential tenant:demo":   true,
+	"user:alice can_write_credential tenant:demo": true,
+	"user:tina can_write_credential tenant:solo":  true,
 	// can_expose is the perimeter approver's, and a tenant's admins hold it
 	// by default (AD-6). pat holds it and nothing else -- the model's own
 	// fixture for the role existing separately from running the tenant.
@@ -537,10 +543,11 @@ var facts = dt.Table{
 	"user:sam can_view tenant:demo":             true,
 	// alice configures the cluster and is not a security officer -- the
 	// model's own fixture says can_approve: false for her.
-	"user:alice can_audit cluster:demo-cluster":          true,
-	"user:alice can_configure cluster:demo-cluster":      true,
-	"user:audrey can_audit cluster:demo-cluster":         true,
-	"user:serge can_operate_system cluster:demo-cluster": true,
+	"user:alice can_audit cluster:demo-cluster":            true,
+	"user:alice can_configure cluster:demo-cluster":        true,
+	"user:alice can_write_credential cluster:demo-cluster": true,
+	"user:audrey can_audit cluster:demo-cluster":           true,
+	"user:serge can_operate_system cluster:demo-cluster":   true,
 }
 
 // checker returns what decides: a real OpenFGA holding model v1 when one is

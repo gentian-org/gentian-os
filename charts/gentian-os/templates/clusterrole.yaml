@@ -233,7 +233,6 @@ rules:
     - credentialrequirements
     - integrationbindings
     - platformsecuritypolicies
-    - repositories
     - tenantexports
     - tenantexportschedules
     - tenantrestores
@@ -285,6 +284,7 @@ rules:
     - clusters
     - componentprofiles
     - oidcpackcatalogs
+    - repositories
     - resourceplans
     - tenantdomains
     - xapps
