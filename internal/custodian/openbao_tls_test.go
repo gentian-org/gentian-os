@@ -24,6 +24,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -54,76 +56,106 @@ func serverCAPEM(t *testing.T, srv *httptest.Server) []byte {
 	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw})
 }
 
-// The regression: no CA, self-signed upstream, and the failure must be
-// reported as unreachable rather than as a rejected caller.
-func TestExchange_SelfSignedWithoutCA_IsUpstreamNotAuthz(t *testing.T) {
-	srv := newSelfSignedOpenBao(t)
-	b := NewOpenBao(srv.URL, "secret", "oidc", "kernel", []string{"cluster-admin-jwt"}, nil, false)
+// asCustodian points a client at a ServiceAccount token on disk, which is what
+// the custodian presents when it logs in as itself.
+func asCustodian(t *testing.T, b *OpenBao) *OpenBao {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "token")
+	if err := os.WriteFile(path, []byte("sa.jwt.token\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	b.ServiceAccountTokenPath = path
+	return b
+}
 
-	_, err := b.ExchangeToken(context.Background(), "a.jwt.token")
+// The regression: no CA, self-signed upstream, and the failure must be
+// reported as unreachable rather than as a refused login.
+func TestLogin_SelfSignedWithoutCA_IsUpstream(t *testing.T) {
+	srv := newSelfSignedOpenBao(t)
+	b := asCustodian(t, NewOpenBao(srv.URL, "secret", "gentian-os-custodian", nil, false))
+
+	_, err := b.Token(context.Background())
 	if err == nil {
-		t.Fatal("expected the exchange to fail against an untrusted certificate")
+		t.Fatal("expected the login to fail against an untrusted certificate")
 	}
 	if !errors.Is(err, ErrUpstream) {
-		t.Fatalf("a TLS failure must be reported as unreachable, not as a rejected token; got: %v", err)
+		t.Fatalf("a TLS failure must be reported as unreachable, not as a refused login; got: %v", err)
 	}
 }
 
 // With the CA supplied — what loadBaoCA reads out of openbao-tls — the same
-// exchange succeeds.
-func TestExchange_SelfSignedWithCA_Succeeds(t *testing.T) {
-	srv := newSelfSignedOpenBao(t)
-	b := NewOpenBao(srv.URL, "secret", "oidc", "kernel", []string{"cluster-admin-jwt"}, serverCAPEM(t, srv), false)
+// login succeeds, and the token is kept rather than fetched for every request.
+func TestLogin_SelfSignedWithCA_SucceedsAndIsKept(t *testing.T) {
+	logins := 0
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/auth/kubernetes/login" {
+			t.Errorf("the custodian logged in at %s", r.URL.Path)
+		}
+		body, _ := io.ReadAll(r.Body)
+		if !strings.Contains(string(body), `"role":"gentian-os-custodian"`) || !strings.Contains(string(body), `"jwt":"sa.jwt.token"`) {
+			t.Errorf("login body = %s", body)
+		}
+		logins++
+		_, _ = w.Write([]byte(`{"auth":{"client_token":"s.tok","lease_duration":3600}}`))
+	}))
+	defer srv.Close()
+	b := asCustodian(t, NewOpenBao(srv.URL, "secret", "gentian-os-custodian", serverCAPEM(t, srv), false))
 
-	id, err := b.ExchangeToken(context.Background(), "a.jwt.token")
-	if err != nil {
-		t.Fatalf("expected the exchange to succeed once the CA is trusted, got: %v", err)
+	for i := 0; i < 3; i++ {
+		tok, err := b.Token(context.Background())
+		if err != nil || tok != "s.tok" {
+			t.Fatalf("token = %q, %v", tok, err)
+		}
 	}
-	if id.Token != "s.tok" {
-		t.Errorf("token = %q, want s.tok", id.Token)
+	if logins != 1 {
+		t.Fatalf("logged in %d times for three requests", logins)
 	}
-	if len(id.Policies) != 1 || id.Policies[0] != "cluster-admin" {
-		t.Errorf("policies = %v, want [cluster-admin]", id.Policies)
+	// Told its token is no good, it logs in again.
+	b.forget()
+	if _, err := b.Token(context.Background()); err != nil || logins != 2 {
+		t.Fatalf("after forgetting: logins = %d, err = %v", logins, err)
 	}
 }
 
 // The escape hatch, for a cluster whose CA cannot be reached at all.
-func TestExchange_SkipVerify_Succeeds(t *testing.T) {
+func TestLogin_SkipVerify_Succeeds(t *testing.T) {
 	srv := newSelfSignedOpenBao(t)
-	b := NewOpenBao(srv.URL, "secret", "oidc", "kernel", []string{"cluster-admin-jwt"}, nil, true)
+	b := asCustodian(t, NewOpenBao(srv.URL, "secret", "gentian-os-custodian", nil, true))
 
-	if _, err := b.ExchangeToken(context.Background(), "a.jwt.token"); err != nil {
+	if _, err := b.Token(context.Background()); err != nil {
 		t.Fatalf("expected skip-verify to connect, got: %v", err)
 	}
 }
 
 // Garbage in the CA Secret must not silently disable TLS. Falling back to the
 // system roots fails closed; falling back to InsecureSkipVerify would not.
-func TestExchange_InvalidCAPEM_StillVerifies(t *testing.T) {
+func TestLogin_InvalidCAPEM_StillVerifies(t *testing.T) {
 	srv := newSelfSignedOpenBao(t)
-	b := NewOpenBao(srv.URL, "secret", "oidc", "kernel", []string{"cluster-admin-jwt"}, []byte("not a certificate"), false)
+	b := asCustodian(t, NewOpenBao(srv.URL, "secret", "gentian-os-custodian", []byte("not a certificate"), false))
 
-	_, err := b.ExchangeToken(context.Background(), "a.jwt.token")
+	_, err := b.Token(context.Background())
 	if !errors.Is(err, ErrUpstream) {
 		t.Fatalf("an unparseable CA must leave verification on; got: %v", err)
 	}
 }
 
-// A refusal by OpenBao is still a refusal — the new sentinel must not swallow
-// the case it was added to distinguish.
-func TestExchange_RoleRefusal_IsNotUpstream(t *testing.T) {
+// A vault that refuses the custodian's login is a fault of the installation:
+// it is not an unreachable vault, and what the vault said stays out of the
+// error a caller could be shown.
+func TestLogin_Refused_IsTheInstallationsFault(t *testing.T) {
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"errors":["role \"gentian-os-custodian\" could not be found; policy custodian-write"]}`))
 	}))
 	defer srv.Close()
-	b := NewOpenBao(srv.URL, "secret", "oidc", "kernel", []string{"cluster-admin-jwt"}, serverCAPEM(t, srv), false)
+	b := asCustodian(t, NewOpenBao(srv.URL, "secret", "gentian-os-custodian", serverCAPEM(t, srv), false))
 
-	_, err := b.ExchangeToken(context.Background(), "a.jwt.token")
-	if err == nil {
-		t.Fatal("expected a refusal")
+	_, err := b.Token(context.Background())
+	if !errors.Is(err, ErrVaultLogin) || errors.Is(err, ErrUpstream) {
+		t.Fatalf("a refused login = %v", err)
 	}
-	if errors.Is(err, ErrUpstream) {
-		t.Fatalf("a role refusal is not an upstream failure; got: %v", err)
+	if strings.Contains(err.Error(), "custodian-write") {
+		t.Fatalf("the vault's own words reached the error: %v", err)
 	}
 }
 
@@ -136,7 +168,7 @@ func TestWrite_RejectionCarriesOpenBaosAnswer(t *testing.T) {
 		_, _ = w.Write([]byte(`{"errors":["1 error occurred:\n\t* permission denied\n\n"]}`))
 	}))
 	defer srv.Close()
-	b := NewOpenBao(srv.URL, "secret", "oidc", "kernel", []string{"r"}, serverCAPEM(t, srv), false)
+	b := NewOpenBao(srv.URL, "secret", "gentian-os-custodian", serverCAPEM(t, srv), false)
 
 	err := b.Write(context.Background(), "s.tok", "gentian-os/kernel/mail/postfix", map[string]string{"k": "v"}, "admin")
 	if err == nil {
@@ -154,7 +186,7 @@ func TestWrite_RejectionCarriesOpenBaosAnswer(t *testing.T) {
 
 // And an unreachable OpenBao on the write path must not read as a policy problem.
 func TestWrite_UnreachableIsUpstream(t *testing.T) {
-	b := NewOpenBao("https://127.0.0.1:1", "secret", "oidc", "kernel", []string{"r"}, nil, false)
+	b := NewOpenBao("https://127.0.0.1:1", "secret", "gentian-os-custodian", nil, false)
 	err := b.Write(context.Background(), "s.tok", "gentian-os/kernel/mail/postfix", map[string]string{"k": "v"}, "admin")
 	if !errors.Is(err, ErrUpstream) {
 		t.Fatalf("expected an upstream failure; got: %v", err)
@@ -176,7 +208,7 @@ func TestWrite_SendsNoCheckAndSet(t *testing.T) {
 		_, _ = w.Write([]byte(`{"data":{"version":2}}`))
 	}))
 	defer srv.Close()
-	b := NewOpenBao(srv.URL, "secret", "oidc", "kernel", []string{"r"}, serverCAPEM(t, srv), false)
+	b := NewOpenBao(srv.URL, "secret", "gentian-os-custodian", serverCAPEM(t, srv), false)
 
 	if err := b.Write(context.Background(), "s.tok",
 		"gentian-os/kernel/mail/postfix", map[string]string{"relay_username": "u"}, ""); err != nil {
@@ -188,30 +220,5 @@ func TestWrite_SendsNoCheckAndSet(t *testing.T) {
 	data, _ := got["data"].(map[string]any)
 	if data["relay_username"] != "u" {
 		t.Errorf("data = %v, want the supplied fields", got["data"])
-	}
-}
-
-// The refusal a person is told about is the one that concerns them. Every
-// role is offered to the mount in turn, and a tenant's mount does not have
-// the cluster's role, so "the role does not exist" is always among the
-// answers and never the reason: here the tenant's own role refused the
-// audience, and that is what has to come back.
-func TestExchange_TheRefusalReportedIsTheOneAboutTheCaller(t *testing.T) {
-	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
-		w.WriteHeader(http.StatusBadRequest)
-		if strings.Contains(string(body), "cluster-admin-jwt") {
-			_, _ = w.Write([]byte(`{"errors":["role \"cluster-admin-jwt\" could not be found"]}`))
-			return
-		}
-		_, _ = w.Write([]byte(`{"errors":["error validating token: invalid audience (aud) claim: audience claim does not match any expected audience"]}`))
-	}))
-	defer srv.Close()
-	for _, roles := range [][]string{{"cluster-admin-jwt", "tenant-admin"}, {"tenant-admin", "cluster-admin-jwt"}} {
-		b := NewOpenBao(srv.URL, "secret", "oidc", "kernel", roles, serverCAPEM(t, srv), false)
-		_, err := b.ExchangeToken(context.Background(), "a.jwt.token")
-		if err == nil || !strings.Contains(err.Error(), "audience") || strings.Contains(err.Error(), "does not exist") {
-			t.Fatalf("roles %v: %v", roles, err)
-		}
 	}
 }

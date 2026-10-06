@@ -1,0 +1,284 @@
+{{- /*
+  The custodian: what sets a credential in the vault for the person entitled
+  to set it (operator-split-plan.md §3.10).
+
+  A Deployment of its own, with a ServiceAccount of its own, as the director
+  is. The director is the one thing that may push to git; the custodian is the
+  one thing that holds the vault role which writes a credential and cannot
+  read one. It used to run inside the operator, under the operator's
+  ServiceAccount, beside a vault role that reads every secret -- which made
+  its narrow role a statement of intent.
+
+  What it may do in the cluster is listed below and is all it needs: read the
+  catalogue of required credentials and whether each is satisfied, read the
+  tenants to tell whose realm a caller signed in to, keep the repositories a
+  tenant or the cluster installs from, and record that the write path works.
+  Who may ask it for any of that is the authorization store's answer, asked
+  with the caller's own verified token on every request.
+
+  ClusterIP only. Reaching it from outside the cluster is a routing decision
+  somebody makes explicitly, not a default this chart ships.
+*/ -}}
+{{- if .Values.custodian.enabled }}
+{{- $name := printf "%s-custodian" (include "gentian-os.fullname" .) }}
+{{- $deployments := .Values.appLifecycle.deployments | default dict }}
+{{- $vaultNamespace := (.Values.custodian).caSecretNamespace | default .Values.openbaoNamespace | default "kernel-secrets" }}
+{{- $caSecret := (.Values.custodian).caSecret | default "openbao-tls" }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "gentian-os.labels" . | nindent 4 }}
+    app.kubernetes.io/component: custodian
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "gentian-os.labels" . | nindent 4 }}
+    app.kubernetes.io/component: custodian
+rules:
+  # What credentials the platform requires, and whose realm is whose.
+  - apiGroups: ["gentianos.io"]
+    resources: ["credentialrequirements", "tenants", "clusters"]
+    verbs: ["get", "list", "watch"]
+  # The repositories a tenant or the cluster installs from, which are
+  # credentials with a little configuration around them.
+  - apiGroups: ["gentianos.io"]
+    resources: ["repositories"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Whether each credential is satisfied, and the nudge that makes a stored
+  # one be read again at once rather than at the next refresh interval.
+  - apiGroups: ["external-secrets.io"]
+    resources: ["externalsecrets"]
+    verbs: ["get", "list", "watch", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "gentian-os.labels" . | nindent 4 }}
+    app.kubernetes.io/component: custodian
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ $name }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $name }}
+    namespace: {{ .Release.Namespace }}
+---
+# The record that a person can set a credential, which the installer waits
+# for before it gives up its own token. One ConfigMap, in this namespace.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $name }}-handover
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "gentian-os.labels" . | nindent 4 }}
+    app.kubernetes.io/component: custodian
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "create", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $name }}-handover
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "gentian-os.labels" . | nindent 4 }}
+    app.kubernetes.io/component: custodian
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $name }}-handover
+subjects:
+  - kind: ServiceAccount
+    name: {{ $name }}
+    namespace: {{ .Release.Namespace }}
+---
+# The certificate the vault serves, so the custodian can verify it. That one
+# Secret, by name, in the vault's namespace: a Pod cannot mount a Secret from
+# another namespace, so it is read.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $name }}-vault-ca
+  namespace: {{ $vaultNamespace }}
+  labels:
+    {{- include "gentian-os.labels" . | nindent 4 }}
+    app.kubernetes.io/component: custodian
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: [{{ $caSecret | quote }}]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $name }}-vault-ca
+  namespace: {{ $vaultNamespace }}
+  labels:
+    {{- include "gentian-os.labels" . | nindent 4 }}
+    app.kubernetes.io/component: custodian
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $name }}-vault-ca
+subjects:
+  - kind: ServiceAccount
+    name: {{ $name }}
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "gentian-os.labels" . | nindent 4 }}
+    app.kubernetes.io/component: custodian
+spec:
+  selector:
+    {{- include "gentian-os.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: custodian
+  ports:
+    - name: custodian
+      port: {{ .Values.custodian.port }}
+      targetPort: custodian
+      protocol: TCP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "gentian-os.labels" . | nindent 4 }}
+    app.kubernetes.io/component: custodian
+spec:
+  replicas: {{ .Values.custodian.replicas | default 1 }}
+  selector:
+    matchLabels:
+      {{- include "gentian-os.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: custodian
+  template:
+    metadata:
+      labels:
+        {{- include "gentian-os.labels" . | nindent 8 }}
+        app.kubernetes.io/component: custodian
+    spec:
+      serviceAccountName: {{ $name }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: custodian
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/custodian"]
+          ports:
+            - name: custodian
+              containerPort: {{ .Values.custodian.port }}
+              protocol: TCP
+          env:
+            {{- include "gentian-os.layoutEnv" . | nindent 12 }}
+            {{- with .Values.trustAnchorSecret }}
+            # A credential is probed against its target before it is stored,
+            # and on a cluster with a private CA those targets are signed by
+            # it.
+            - name: SSL_CERT_FILE
+              value: /opt/gentian-trust-anchor/ca.crt
+            {{- end }}
+            - name: CUSTODIAN_ADDR
+              value: ":{{ .Values.custodian.port }}"
+            - name: CUSTODIAN_PROBE_NAMESPACE
+              value: {{ .Values.custodian.probeNamespace | default .Release.Namespace | quote }}
+            - name: HANDOVER_NAMESPACE
+              value: {{ .Release.Namespace | quote }}
+            - name: KERNEL_DOMAIN
+              value: {{ .Values.kernelDomain | quote }}
+            - name: KERNEL_REALM
+              value: {{ .Values.kernelRealm | default "kernel" | quote }}
+            # The cluster, as the authorization store names it: the object
+            # kernel and system credentials are asked about. The director's.
+            - name: GENTIAN_DEPLOYMENTS_CLUSTER_ID
+              value: {{ $deployments.cluster | default "" | quote }}
+            # How a caller's token is verified before the store is asked about
+            # them: the issuer it names, and where that issuer's keys are read
+            # inside the cluster. The audience is the zone token's, which a
+            # console relays here as it does to the director.
+            - name: CUSTODIAN_ISSUER_BASE_URL
+              value: {{ printf "https://id.%s/auth" .Values.kernelDomain | quote }}
+            - name: CUSTODIAN_JWKS_BASE_URL
+              value: {{ .Values.director.jwksBaseURL | default (printf "http://gentian-idp-keycloak-keycloakx-http.%s.svc.cluster.local:8080/auth" (.Values.layout.authentication | default .Values.servicesNamespace)) | quote }}
+            - name: CUSTODIAN_AUDIENCE
+              value: {{ .Values.director.audience | quote }}
+            # The authorization store, read and never written.
+            - name: OPENFGA_API_URL
+              value: {{ .Values.director.openfgaURL | default .Values.authzBridge.openfgaURL | quote }}
+            {{- if .Values.director.openfgaTokenSecretRef.name }}
+            - name: OPENFGA_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.director.openfgaTokenSecretRef.name }}
+                  key: {{ .Values.director.openfgaTokenSecretRef.key }}
+                  optional: true
+            {{- end }}
+            # The vault, and the custodian's own role at it: write and
+            # metadata on credential paths, no reading of values
+            # (cluster-default, custodian-write). It logs in with this pod's
+            # ServiceAccount token.
+            - name: BAO_ADDR
+              value: {{ .Values.openbao.address | quote }}
+            - name: CUSTODIAN_BAO_ROLE
+              value: {{ .Values.custodian.vaultRole | default "gentian-os-custodian" | quote }}
+            - name: BAO_CA_SECRET
+              value: {{ $caSecret | quote }}
+            - name: BAO_CA_SECRET_NAMESPACE
+              value: {{ $vaultNamespace | quote }}
+            {{- if (.Values.custodian).tlsSkipVerify }}
+            - name: BAO_TLS_SKIP_VERIFY
+              value: "true"
+            {{- end }}
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: custodian
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: custodian
+            periodSeconds: 20
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
+          resources:
+            {{- toYaml (.Values.custodian.resources | default (dict "requests" (dict "cpu" "20m" "memory" "48Mi") "limits" (dict "memory" "192Mi"))) | nindent 12 }}
+          {{- with .Values.trustAnchorSecret }}
+          volumeMounts:
+            - name: kernel-trust-anchor
+              mountPath: /opt/gentian-trust-anchor
+              readOnly: true
+          {{- end }}
+      {{- with .Values.trustAnchorSecret }}
+      volumes:
+        - name: kernel-trust-anchor
+          secret:
+            secretName: {{ . }}
+      {{- end }}
+{{- end }}

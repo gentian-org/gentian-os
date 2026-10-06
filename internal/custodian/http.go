@@ -50,8 +50,9 @@ var externalSecretGVK = schema.GroupVersionKind{
 
 // Server exposes the custodian API.
 //
-// It has no token field. That is not an oversight: every write takes the
-// caller's token, so there is no service authority for a bug to reach for.
+// It has no token field. The custodian's identity at the vault lives in the
+// vault client, which logs in as the service; nothing here holds a caller's
+// token past the request that brought it.
 type Server struct {
 	Addr      string
 	Catalogue *Catalogue
@@ -63,11 +64,11 @@ type Server struct {
 	// then nobody to ask and nothing else may answer.
 	Authz Authorizer
 
-	// Client and HandoverNamespace are how a successful exchange becomes a
-	// fact the rest of the cluster can read. See internal/handover: this
-	// service performs the only OIDC token exchange that happens anywhere, so
-	// it is the only thing in a position to observe that the human write path
-	// works. Nil Client disables recording rather than failing requests.
+	// Client and HandoverNamespace are how "a person can set a credential"
+	// becomes a fact the rest of the cluster can read. See internal/handover:
+	// this service is the human write path, so it is the only thing in a
+	// position to observe that the path works. Nil Client disables recording
+	// rather than failing requests.
 	Client            client.Client
 	HandoverNamespace string
 
@@ -189,22 +190,10 @@ func NewRunnableFromEnv(mgr manager.Manager, validator Validator, graph authz.Ch
 		Bao: NewOpenBao(
 			baoAddr,
 			envOr("BAO_KV_MOUNT", "secret"),
-			// The backend is enabled at -path=oidc, so this is the mount, not
-			// the plugin's default "jwt" name.
-			envOr("BAO_AUTH_MOUNT", "oidc"),
-			// The realm that mount trusts. A token from any other realm is
-			// routed to that realm's own mount, because one JWT mount verifies
-			// against exactly one issuer's keys.
-			envOr("KERNEL_REALM", "kernel"),
-			// JWT-typed roles, not the oidc-typed ones behind the browser flow:
-			// a role with role_type oidc refuses a direct token exchange.
-			//
-			// Both names are tried against whichever mount the token's issuer
-			// selects. cluster-admin-jwt exists only on the kernel mount and
-			// tenant-admin only on a tenant's, so the one that does not apply is
-			// refused as an unknown role — which costs a round trip and keeps
-			// this service from having to know the cluster's realm layout.
-			splitList(envOr("BAO_OIDC_ROLES", "cluster-admin-jwt,tenant-admin")),
+			// The custodian's own role at the vault: write and metadata on
+			// credential paths, no reading of values. Bound to this pod's
+			// ServiceAccount by the cluster's Composition.
+			envOr("CUSTODIAN_BAO_ROLE", "gentian-os-custodian"),
 			loadBaoCA(mgr),
 			os.Getenv("BAO_TLS_SKIP_VERIFY") == "true",
 		),
@@ -294,13 +283,13 @@ func loadBaoCA(mgr manager.Manager) []byte {
 	defer cancel()
 	if err := mgr.GetAPIReader().Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, sec); err != nil {
 		// An in-cluster address over https is a certificate no public root
-		// signs, so this is not the conditional warning it used to be: every
-		// token exchange WILL fail, and saying it at Info under an "if" is
+		// signs, so this is not the conditional warning it used to be: the
+		// custodian's login WILL fail, and saying it at Info under an "if" is
 		// how it scrolled past on a cluster where the Secret was simply
 		// being looked for in the wrong namespace.
 		if addr := os.Getenv("BAO_ADDR"); strings.HasPrefix(addr, "https://") &&
 			strings.Contains(addr, ".svc") {
-			log.Error(err, "OpenBao's CA was not found, so every token exchange will fail: "+
+			log.Error(err, "OpenBao's CA was not found, so the custodian cannot log in to it: "+
 				"nothing in the cluster can verify an in-cluster certificate against the public roots. "+
 				"Set custodian.caSecretNamespace to the namespace the vault runs in "+
 				"(it follows openbaoNamespace by default), or BAO_CACERT to a file.",
@@ -309,7 +298,7 @@ func loadBaoCA(mgr manager.Manager) []byte {
 		}
 		log.Info("no OpenBao CA available; verifying against the system roots instead. "+
 			"That is correct for a vault with a publicly trusted certificate, and fatal to "+
-			"every token exchange for one without.",
+			"the custodian's login for one without.",
 			"secret", namespace+"/"+name, "reason", err.Error())
 		return nil
 	}
@@ -326,18 +315,6 @@ func loadBaoCA(mgr manager.Manager) []byte {
 	return nil
 }
 
-// splitList parses a comma-separated env value, dropping blanks so a trailing
-// comma or an accidental double one does not become a role named "".
-func splitList(v string) []string {
-	var out []string
-	for _, part := range strings.Split(v, ",") {
-		if p := strings.TrimSpace(part); p != "" {
-			out = append(out, p)
-		}
-	}
-	return out
-}
-
 func envOr(key, def string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
@@ -347,21 +324,15 @@ func envOr(key, def string) string {
 
 // caller carries the authenticated identity for one request.
 type caller struct {
-	// bao is the exchanged OpenBao token and the identity that came with it.
-	bao OpenBaoIdentity
 	// name is the human recorded as having set a credential.
 	name string
-	// view is what this caller may see, derived from bao — never from the
-	// request.
+	// view is what this caller may see and set: the authorization store's
+	// answer, never the request's.
 	view Viewer
 }
 
-// OpenBaoIdentity is aliased so the handler signature reads as identity rather
-// than as a token string, which is what it used to be.
-type OpenBaoIdentity = Identity
-
 // bearer pulls the OIDC token out of the request. It performs no authorisation:
-// that is what the exchange is for.
+// that is the store's, asked in identify.
 func bearer(r *http.Request) (string, error) {
 	auth := r.Header.Get("Authorization")
 	if !strings.HasPrefix(auth, "Bearer ") {
@@ -377,20 +348,15 @@ func bearer(r *http.Request) (string, error) {
 // identify establishes who the caller is and what they may do.
 //
 // Scope and tenant were once read from a query parameter and a header, which
-// made them claims the caller made about itself. Then they were OpenBao's
-// verdict on the caller's token: a policy meant cluster administrator, a
-// mapped claim meant a tenant. That was verified, but it was a second place
-// rights were decided, from a group in a token.
+// made them claims the caller made about itself. Then the caller's token was
+// exchanged at the vault and the vault's verdict was taken: a policy meant
+// cluster administrator, a mapped claim meant a tenant. That was verified,
+// but it made a group written into a token a second source of rights.
 //
 // Now the token is verified here and the authorization store is asked, as at
-// every other enforcement point. Only then is the token exchanged at OpenBao
-// -- for the token the write is made with, whose policy bounds the paths it
-// reaches. What OpenBao says about the caller is used for nothing but the
-// name under which a credential is recorded as set.
-//
-// The token is never logged and never stored. It lives for the duration of one
-// request, which is the longest a credential that can write secrets should
-// exist anywhere in this process.
+// every other enforcement point, and that is the whole of it. The token is
+// not passed on to the vault or to anything else, is never logged and never
+// stored: it lives for the duration of one request.
 func (s *Server) identify(ctx context.Context, r *http.Request) (caller, error) {
 	tok, err := bearer(r)
 	if err != nil {
@@ -407,45 +373,37 @@ func (s *Server) identify(ctx context.Context, r *http.Request) (caller, error) 
 	if err != nil {
 		return caller{}, err
 	}
-	id, err := s.Bao.ExchangeToken(ctx, tok)
-	if err != nil {
-		return caller{}, err
-	}
-
-	c := caller{bao: id, view: view, name: who.Name}
-	// The username from the role's user_claim, where OpenBao reports one: it
-	// is the name the person signs in with, which is what a record of who set
-	// a credential should say.
-	for _, k := range []string{"username", "preferred_username", "user"} {
-		if v := id.Metadata[k]; v != "" {
-			c.name = v
-			break
-		}
-	}
-
-	// The exchange above is the only proof that exists that a human can write
-	// to OpenBao at all — every other check in the installer establishes that
-	// the parts are present, not that they open. Recorded here, at the one
-	// point every handler passes through, so no future endpoint can be added
-	// that authenticates without proving.
+	c := caller{view: view, name: who.Name}
 	s.recordHandover(ctx, c)
 	return c, nil
 }
 
-// recordHandover notes a successful cluster-admin exchange, best effort.
+// recordHandover notes that the human write path works, best effort.
 //
-// Never fails the request. A caller who has just authenticated should not be
+// The installer's bootstrap token is only given up once something else has
+// been seen to be able to write to the vault. That something is this: a
+// cluster administrator, verified and allowed by the store, reached the
+// custodian, and the custodian logged in to the vault as itself. Every other
+// check in the installer establishes that the parts are present; this one
+// establishes that they open.
+//
+// Never fails the request. A caller who has just been authorised should not be
 // refused because a ConfigMap write lost a conflict — and the next request
-// records it anyway. The inverse would be worse than the gap it closes: the
-// service would deny writes when the cluster is healthy and the recorder is not.
+// records it anyway.
 func (s *Server) recordHandover(ctx context.Context, c caller) {
 	if s.Client == nil || s.HandoverNamespace == "" {
 		return
 	}
-	// Cluster admin only. A tenant admin's exchange proves their own role
-	// opens, which is worth having but is not the credential the bootstrap
-	// token is being traded for.
+	// Cluster admin only. A tenant admin setting a credential shows their own
+	// scope opens, which is worth having but is not what the bootstrap token
+	// is being traded for.
 	if !c.view.ClusterAdmin {
+		return
+	}
+	// The vault half of the proof. A custodian that cannot log in has not
+	// shown that anybody can write, however entitled the caller is.
+	if _, err := s.Bao.Token(ctx); err != nil {
+		ctrl.Log.WithName("custodian").Error(err, "the write path is not proven: the custodian cannot log in to OpenBao")
 		return
 	}
 	now := time.Now
@@ -470,12 +428,6 @@ func (s *Server) recordHandover(ctx context.Context, c caller) {
 // caller gets a deliberately vague message either way, and without a log an
 // operator has nothing at all to work from.
 func (s *Server) writeIdentityErr(w http.ResponseWriter, err error) {
-	if errors.Is(err, ErrUpstream) {
-		ctrl.Log.WithName("custodian").Error(err, "cannot reach OpenBao to authorise this request")
-		writeErr(w, http.StatusBadGateway,
-			fmt.Errorf("the custodian cannot reach OpenBao; this is not a problem with your account"))
-		return
-	}
 	if errors.Is(err, ErrAuthorizationUnavailable) {
 		// Nothing is assumed in the store's place, and the caller is told it
 		// is not about them.
@@ -485,6 +437,15 @@ func (s *Server) writeIdentityErr(w http.ResponseWriter, err error) {
 		return
 	}
 	writeErr(w, http.StatusUnauthorized, err)
+}
+
+// writeVaultErr answers a failure of the custodian's own access to the vault.
+// It is never about the caller, who has been authorised by the time it is
+// reached, and says so.
+func (s *Server) writeVaultErr(w http.ResponseWriter, err error) {
+	ctrl.Log.WithName("custodian").Error(err, "the custodian cannot use OpenBao")
+	writeErr(w, http.StatusBadGateway,
+		fmt.Errorf("the custodian cannot reach or log in to OpenBao; this is not a problem with your account"))
 }
 
 func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
@@ -524,8 +485,13 @@ func (s *Server) handleGet(w http.ResponseWriter, r *http.Request) {
 // the catalogue and ESO's satisfaction verdict, which is the useful part. A
 // failure here must not turn a working list into an error page.
 func (s *Server) decorate(ctx context.Context, c caller, items []Status) {
+	token, err := s.Bao.Token(ctx)
+	if err != nil {
+		ctrl.Log.WithName("custodian").Error(err, "credentials are listed without who set them")
+		return
+	}
 	for i := range items {
-		md, err := s.Bao.Metadata(ctx, c.bao.Token, items[i].VaultPath)
+		md, err := s.Bao.Metadata(ctx, token, items[i].VaultPath)
 		if err != nil {
 			continue
 		}
@@ -608,7 +574,12 @@ func (s *Server) handleSet(w http.ResponseWriter, r *http.Request) {
 	// payload, presented as a permissions problem and sent an operator to audit
 	// a policy that was already correct. The same collapse cost an afternoon
 	// one layer up, in identify.
-	if err := s.Bao.Write(r.Context(), c.bao.Token, req.VaultPath, body.Fields, c.name); err != nil {
+	token, err := s.Bao.Token(r.Context())
+	if err != nil {
+		s.writeVaultErr(w, err)
+		return
+	}
+	if err := s.Bao.Write(r.Context(), token, req.VaultPath, body.Fields, c.name); err != nil {
 		log := ctrl.Log.WithName("custodian")
 		if errors.Is(err, ErrUpstream) {
 			log.Error(err, "cannot reach OpenBao to store this credential", "path", req.VaultPath)

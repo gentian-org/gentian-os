@@ -306,19 +306,48 @@ expect "${ESO_TOKEN}" "allowed the destination credential in the same subtree" \
 expect "${ESO_TOKEN}" "DENIED paths outside gentian-os" \
     "secret/data/somewhere/else" "deny"
 
+# ── custodian-write ──────────────────────────────────────────────────────────
+# The custodian sets a credential for a person the authorization store allows,
+# as itself. What its identity may do is the whole of the argument for giving
+# it one: it writes, it reads and annotates metadata, and it cannot read a
+# value back or delete one. Asserted against a real bao, deny side included,
+# because "cannot read" is the property and a comment cannot check it.
+custodian_body="$(policy_from_golden custodian-write)"
+if [[ -z "${custodian_body}" || "${custodian_body}" == "null" ]]; then
+    echo "  ${RED}✗${NC} custodian-write — not present in ${GOLDEN}"
+    exit 1
+fi
+printf '%s\n' "${custodian_body}" > "${WORKDIR}/custodian-write.hcl"
+bao policy write custodian-write "${WORKDIR}/custodian-write.hcl" >/dev/null 2>&1 || {
+    echo "  ${RED}✗${NC} custodian-write — OpenBao rejected the policy"; exit 1; }
+CUSTODIAN_TOKEN="$(bao token create -policy=custodian-write -field=token 2>/dev/null)"
+
+echo ""
+echo "  custodian-write ${DIM}(the custodian's own identity)${NC}"
+expect "${CUSTODIAN_TOKEN}" "allowed setting a kernel credential, and NOT reading it" \
+    "secret/data/gentian-os/kernel/mail/relay" "create,update,patch"
+expect "${CUSTODIAN_TOKEN}" "allowed setting a tenant's credential, and NOT reading it" \
+    "secret/data/gentian-os/tenants/acme/mail" "create,update,patch"
+expect "${CUSTODIAN_TOKEN}" "allowed reading and recording who set it" \
+    "secret/metadata/gentian-os/tenants/acme/mail" "create,read,update"
+expect "${CUSTODIAN_TOKEN}" "DENIED anything outside the platform's tree" \
+    "secret/data/somewhere/else" "deny"
+expect "${CUSTODIAN_TOKEN}" "DENIED the auth backends" \
+    "auth/kubernetes/role/gentian-os-custodian" "deny"
+expect "${CUSTODIAN_TOKEN}" "DENIED minting tokens" \
+    "auth/token/create" "deny"
+
 # ── operator-write ───────────────────────────────────────────────────────────
 # Not from the golden render: this one is a kernel service manifest rather than
-# something the composition emits. It is here because it failed in the direction
-# the tests above do not look for — it DENIED what it meant to allow.
+# something the composition emits.
 #
-# The policy read as though it granted the tenant OIDC mounts. It used
-# "sys/auth/oidc-+", and OpenBao's + matches one whole path segment, so a literal
-# prefix with + glued to it matches nothing: every tenant reconcile stopped at
-# "configure auth mount oidc-<tenant>: HTTP 403" while the policy looked right.
-#
-# So these assert the allow side as well as the deny side. A policy that grants
-# nothing is as broken as one that grants everything; it just fails somewhere
-# less alarming.
+# It used to grant the operator the per-tenant OIDC auth mounts, which existed
+# so that a tenant administrator's token could be exchanged at the vault. The
+# custodian no longer shows the vault anybody's token, the mounts are gone, and
+# so is the operator's right to create them: these assert that it stayed gone,
+# beside the allow side that must still hold. A policy that grants nothing is
+# as broken as one that grants everything; it just fails somewhere less
+# alarming.
 OPERATOR_POLICY_FILE="kernel/services/openbao-config/manifests/templates/policy-operator-write.yaml"
 if [[ -f "${OPERATOR_POLICY_FILE}" ]]; then
     policy_body "${OPERATOR_POLICY_FILE}" operator-write > "${WORKDIR}/operator-write.hcl" 2>/dev/null || true
@@ -328,12 +357,12 @@ if [[ -f "${OPERATOR_POLICY_FILE}" ]]; then
 
         echo ""
         echo "  operator-write ${DIM}(the operator's own identity)${NC}"
-        expect "${OPERATOR_TOKEN}" "allowed creating a tenant OIDC mount" \
-            "sys/auth/oidc-acme" "create,read,update,delete,sudo"
-        expect "${OPERATOR_TOKEN}" "allowed configuring that mount" \
-            "auth/oidc-acme/config" "create,read,update,delete,list"
-        expect "${OPERATOR_TOKEN}" "allowed managing its roles" \
-            "auth/oidc-acme/role/tenant" "create,read,update,delete,list"
+        expect "${OPERATOR_TOKEN}" "DENIED creating an auth mount for a tenant" \
+            "sys/auth/oidc-acme" "deny"
+        expect "${OPERATOR_TOKEN}" "DENIED configuring one" \
+            "auth/oidc-acme/config" "deny"
+        expect "${OPERATOR_TOKEN}" "DENIED managing roles on one" \
+            "auth/oidc-acme/role/tenant" "deny"
         expect "${OPERATOR_TOKEN}" "DENIED the Kubernetes auth mount it authenticates with" \
             "auth/kubernetes/config" "deny"
         expect "${OPERATOR_TOKEN}" "DENIED enabling a non-OIDC auth backend" \

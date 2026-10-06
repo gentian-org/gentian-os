@@ -344,23 +344,16 @@ spec:
                  a group nobody was in, so no exchange granted cluster-admin
                  and the install's last step waited for a proof that could
                  never be written. */}}
-            {{- /* The audiences OpenBao's roles accept.
-                 
-                 The director's audience is not optional and is not part of
-                 additionalAudiences: every component behind the edge presents
-                 the zone's token, whose audience is the director's, so a
-                 cluster whose roles do not accept it cannot exchange a token
-                 at all -- which is the custodian refusing every
-                 caller and the install's last step waiting for a proof nobody
-                 can produce.
-                 
-                 It was in additionalAudiences, defaulted in the XRD. The
-                 default was later corrected to include it, and that reached
-                 no existing composite, because a changed default does not
-                 touch an object that already has the field. "additional" now
-                 means what it says: extra audiences on top of the ones the
-                 platform requires. */}}
-            {{- $requiredAudiences := list (default "openbao" $oidc.clientId) "gentian-director" }}
+            {{- /* The audiences OpenBao's roles accept: its own client's, which is
+                 what a person signing in to OpenBao's UI is issued, plus
+                 whatever the claim adds.
+
+                 The director's audience used to be required here as well,
+                 because the custodian presented the zone's token -- minted for
+                 the director -- to these roles. It presents nothing of a
+                 caller's any more, so a zone token is no longer something the
+                 vault accepts from anybody. */}}
+            {{- $requiredAudiences := list (default "openbao" $oidc.clientId) }}
             {{- range (default (list) $oidc.additionalAudiences) }}
             {{- if not (has . $requiredAudiences) }}
             {{- $requiredAudiences = append $requiredAudiences . }}
@@ -595,67 +588,16 @@ spec:
               providerConfigRef:
                 name: openbao
 
-            {{- /* ── The JWT-typed roles the custodian exchanges against ─
-                 The two roles above are role_type oidc: they serve the browser
-                 flow into OpenBao's own UI, and the JWT plugin refuses a direct
-                 token exchange against them ("role with oidc role_type is not
-                 allowed"). The custodian does exactly that exchange —
-                 it presents the caller's portal token — so it needs roles of
-                 role_type jwt, or it authenticates nobody at all.
-
-                 Added beside the oidc roles rather than replacing them, because
-                 oidc.externalUrl is configured and the browser flow is a real
-                 path. Bound claims and policies are deliberately identical to
-                 their oidc counterparts: these are the same two identities
-                 reached by a different mechanism, and a difference here would be
-                 a privilege discrepancy nobody would notice until it mattered.
-
-                 No allowedRedirectUris — a jwt role has no callback.
-              */}}
-            ---
-            apiVersion: jwt.vault.upbound.io/v1alpha1
-            kind: AuthBackendRole
-            metadata:
-              annotations:
-                gotemplating.fn.crossplane.io/composition-resource-name: vault-auth-jwt-role-cluster-admin
-              name: {{ $name }}-auth-jwt-cluster-admin
-            spec:
-              forProvider:
-                backend: oidc
-                roleName: cluster-admin-jwt
-                roleType: jwt
-                userClaim: preferred_username
-                # claimMappings puts the caller's NAME into the token's alias
-                # metadata. user_claim already decides the alias itself, but the
-                # custodian reads auth.metadata — so without this it saw
-                # an empty name, wrote credentials with no set_by, and recorded
-                # the handover proof against nobody. An audit trail that cannot
-                # say who is most of the reason writes go through a human
-                # identity at all.
-                claimMappings:
-                  preferred_username: username
-                boundAudiences:
-                  {{- range $requiredAudiences }}
-                  - {{ . | quote }}
-                  {{- end }}
-                boundClaimsType: string
-                boundClaims:
-                  groups: {{ $clusterAdminGroup | quote }}
-                tokenPolicies:
-                  - cluster-admin
-                tokenTtl: 1800
-                tokenMaxTtl: 3600
-              providerConfigRef:
-                name: openbao
-
-            {{- /* The tenant-admin JWT role that used to sit here is gone.
-                 A tenant member authenticates in their own realm, so their token
-                 is signed by that realm and is never presented to this mount —
-                 the role could not be reached by the people it was written for,
-                 and its presence read as coverage that did not exist. Each
-                 tenant realm now has its own mount and role, reconciled by the
-                 TenantReconciler; see internal/controller/openbao_tenant_auth.go.
-              */}}
+            {{- /* No JWT-typed role. There was one, cluster-admin-jwt, so that the
+                 custodian could exchange a caller's token for a vault token
+                 and write as that person. The custodian no longer shows the
+                 vault a caller's token at all: it asks the authorization
+                 store who may set a credential and writes as itself, by the
+                 Kubernetes role below. A role that turned anybody's zone
+                 token into a cluster-admin vault token is then a door with
+                 nothing left behind it but risk, and it is gone. The two
+                 roles above are role_type oidc and serve only a person
+                 signing in to OpenBao's own UI. */}}
 
             {{- /* ── The Keycloak side of the OIDC handshake ────────────────────
                  Everything above configures OpenBao to TRUST Keycloak. None of
@@ -882,23 +824,6 @@ spec:
                   path "auth/token/create"                    { capabilities = ["update"] }
                   path "auth/token/lookup-self"               { capabilities = ["read"] }
 
-                  # Per-tenant JWT auth mounts. A tenant member authenticates in
-                  # their own Keycloak realm — that is where their apps' OIDC
-                  # clients live — so their portal token is signed by that realm
-                  # and the kernel realm's mount cannot verify it. One mount per
-                  # realm is what makes the exchange possible.
-                  #
-                  # Deliberately NOT one mount trusting many keys, which would be
-                  # fewer objects and a privilege escalation: a tenant
-                  # administrator holds realm-admin in their own realm, so they
-                  # can mint a token carrying any groups claim, the cluster admin
-                  # group included. Isolation belongs at the mount boundary,
-                  # because claim values are precisely what they control.
-                  #
-                  # Glob, not the + segment wildcard: OpenBao's + matches one
-                  # whole path segment, so "oidc-+" matches nothing at all.
-                  path "sys/auth/oidc-*"                      { capabilities = ["create","read","update","delete","sudo"] }
-                  path "auth/oidc-*"                          { capabilities = ["create","read","update","delete","list"] }
               providerConfigRef:
                 name: openbao
 
@@ -919,6 +844,61 @@ spec:
                   - {{ $controlNs }}
                 tokenPolicies:
                   - operator-write
+                tokenTtl: 3600
+              providerConfigRef:
+                name: openbao
+
+            {{- /* ── The custodian's identity at the vault ──────────────────────
+                 The custodian sets a credential for a person the
+                 authorization store says may set it, and does so as itself:
+                 the director's pattern, with the vault where the director has
+                 git. This is that identity.
+
+                 What it may do is deliberately less than the operator beside
+                 it. It writes a credential and reads and annotates its
+                 metadata -- whether one is set, by whom, when -- and it has no
+                 capability to READ a stored value and none to delete one. The
+                 custodian returns no value on any route, and with this policy
+                 it could not if it tried.
+
+                 Bound to the custodian's own ServiceAccount and to nothing
+                 else. The custodian is a Deployment of its own for this
+                 reason: under the operator's ServiceAccount the same pod
+                 could have logged in to the operator's role as well, and the
+                 narrow policy would have bounded nothing. */}}
+            ---
+            apiVersion: vault.vault.upbound.io/v1alpha1
+            kind: Policy
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: vault-policy-custodian-write
+              name: {{ $name }}-policy-custodian-write
+            spec:
+              forProvider:
+                name: custodian-write
+                policy: |
+                  path "{{ $kvMount }}/data/gentian-os/*"     { capabilities = ["create","update","patch"] }
+                  path "{{ $kvMount }}/metadata/gentian-os/*" { capabilities = ["create","read","update"] }
+              providerConfigRef:
+                name: openbao
+
+            ---
+            apiVersion: kubernetes.vault.upbound.io/v1alpha1
+            kind: AuthBackendRole
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: vault-auth-role-custodian
+              name: {{ $name }}-auth-role-custodian
+            spec:
+              forProvider:
+                backend: {{ $authMount }}
+                roleName: gentian-os-custodian
+                boundServiceAccountNames:
+                  - gentian-os-custodian
+                boundServiceAccountNamespaces:
+                  - {{ $controlNs }}
+                tokenPolicies:
+                  - custodian-write
                 tokenTtl: 3600
               providerConfigRef:
                 name: openbao

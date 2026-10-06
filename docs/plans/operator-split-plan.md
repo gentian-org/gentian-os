@@ -451,7 +451,7 @@ the third is new, and is what the director's read routes become.
 | **Concierge** | Sends a person who has no session yet to the sign-in of the zone their address belongs to. | the platform tenant's DMZ (`tenant-platform-dmz`), as a perimeter surface of a platform-tenant component | nothing | `sign-in`, beside Keycloak |
 | **Bouncer** | Asks, for every request on the authenticated Gateway, whether this session may enter this host, and refuses when the answer is not yes. | `kernel-edge` | nothing; reads the route table and asks OpenFGA | `edge-authz`, "the shim" |
 | **Usher** | Tells a signed-in person what is here and what they may open. | `kernel-edge` | nothing; reads the operator's projections and asks OpenFGA | the director's `tiles`, `me` and status reads |
-| **Custodian** | Takes a credential from the person entitled to set it and puts it in the vault, without anyone being able to take one back out. | `kernel-control`, inside the operator's process | no vault token of its own; asks OpenFGA, then writes with the caller's own exchanged token | `credential manager` |
+| **Custodian** | Takes a credential from the person entitled to set it and puts it in the vault, without anyone being able to take one back out. | `kernel-control`, a Deployment and ServiceAccount of its own | an identity at the vault that can write a credential and cannot read one | `credential manager`, a part of the operator's process |
 
 The names are a cast on purpose: the concierge points you to the right
 door, the bouncer checks you at it, the usher shows you round inside, the
@@ -478,18 +478,17 @@ its own.
 - *The usher decides nothing either,* and changes nothing. Every answer is a
   projection the operator wrote, filtered by a question put to the store. It
   holds no git credential, no signing key and no Kubernetes write.
-- *The custodian hands nothing back and decides nothing.* No route returns
-  a credential's value, to anybody. Who may see that a credential is required
-  and who may set it are the store's answers -- `can_read_credential` and
+- *The custodian hands nothing back and decides nothing.* It is the
+  director's pattern with the vault where the director has git: it verifies
+  the caller's token, asks the store, and then acts under its own name,
+  recording whose act it was. Who may see that a credential is required and
+  who may set it are the store's answers -- `can_read_credential` and
   `can_write_credential`, on the cluster for kernel and system credentials
-  and on the tenant for a tenant's -- asked after the custodian has verified
-  the caller's token itself, and before the vault is reached. It once took
-  OpenBao's verdict on the token instead: a policy meant "cluster
-  administrator", a claim mapped into metadata meant "this tenant". That was
-  a second place rights were decided, from a group written into a token.
-  OpenBao is still given the caller's own token for the write, and its
-  policy still bounds the paths that token reaches; it can refuse what the
-  store allowed and can widen nothing.
+  and on the tenant for a tenant's. No route returns a credential's value, to
+  anybody, and its vault role has no capability to read one. The vault is
+  never shown a caller's token and is not asked who they are: an earlier
+  shape exchanged that token at the vault and took the vault's verdict, which
+  made a group written into a token a second source of rights.
 - *The director does not answer for the cluster.* It keeps the reads of
   declared state, for the people who may change it.
 
@@ -545,16 +544,14 @@ not mistaken for the controls.
    separation of privilege, not an enforcement point. The controls are the
    edge session, the bouncer, the publishing proxies, and the director's
    check before a commit.
-8. *The vault still judges the token a second time.* The custodian writes
-   with a token OpenBao issues in exchange for the caller's, and OpenBao
-   issues it only to a member of the group its role is bound to. The store
-   is asked first and is the only thing that grants; but the two can
-   disagree in one direction -- the store says yes and the vault says no --
-   and when they do the person is refused by the lock nobody reviews. The
-   alternative is a custodian with a vault identity of its own, bounded by
-   policy to credential paths, so that the store alone decides. That puts a
-   standing credential for every secret into a kernel process, which is the
-   thing the present shape was built to avoid; it is an open decision (§8).
+8. *The custodian can write any credential.* That is what it is for, and
+   it is the director's position exactly: one process whose own authority
+   covers everything it is ever asked to do for somebody, with the store as
+   the only thing between a request and that authority. A fault in its check
+   is therefore a fault with the whole of its vault role behind it. What
+   bounds that is that the role cannot read or delete, so the worst a
+   compromised custodian does is overwrite credentials, which is loud; and
+   that it is a process of its own, so nothing else runs under its identity.
 
 **What moves, and in what order.**
 
@@ -565,7 +562,7 @@ not mistaken for the controls.
 | Usher, the rest | `me` (the relations a person holds on a tenant and on the cluster), then status reads. Each leaves the director when its last caller has moved. The director's `GET /v1/clusters/{c}/tiles` — reachable only with a cluster relation, which is why a tenant's own people saw an empty desktop — goes with the first. |
 | Launch rights ✅ | Tiles of installed catalogue apps need `can_launch` on `app:<t>/<p>`. The operator's projection writes `app#tenant` and `app#entitled` from `Tenant.spec.apps`, by the rule the portal applied: an app's own group entitles it, and a base with activated addons is entitled by the addons' groups. Every entry of `spec.apps`, and every addon activated inside one, is a `Component` the tenant reconciler creates and removes; the Component writes the App claim the app Composition answers, routes the app's exposures behind the zone's session, and asks `can_use` on the app at them. |
 | Concierge to the DMZ ✅ | A component of the platform tenant with one perimeter surface, `authMode: none`, published from `tenant-platform-dmz` with an owner and a review date. The brand files it serves today move with the branding work, not with this. |
-| Custodian ✅ | `credential manager` → `custodian` (package, Service, values, environment, the profile key `custodianUrlKey`, the consoles that call it). It verifies the caller's token and asks the store `can_read_credential` or `can_write_credential` on the cluster or the tenant before it reaches the vault; what OpenBao reports about the token decides nothing. The tenant a caller stands in comes from the realm that issued their token, not from a claim. |
+| Custodian ✅ | `credential manager` → `custodian` (package, executable, Deployment and ServiceAccount, Service, values, environment, the profile key `custodianUrlKey`, the consoles that call it). It left the operator's process for one of its own. It verifies the caller's token, asks the store `can_read_credential` or `can_write_credential` on the cluster or the tenant, and writes as itself with a vault role that cannot read a value. The exchange of a caller's token at the vault is gone, and with it what existed only for it: the vault's JWT role for cluster administrators, the per-tenant auth mounts and their group-bound roles, the director's audience on the vault's roles, and the `groups` scope on the zone clients. |
 
 ## 4. Bootstrap: writing configuration before Keycloak exists
 
@@ -833,14 +830,6 @@ Cluster claim — in git, written through the director. The values never are.
 | Composition-emitted requirements, C-06 retired | C, with the credential split (§3.3) |
 
 ## 8. Open decisions
-
-- **Whether the custodian keeps exchanging the caller's token at the vault.**
-  Today the store decides and the vault bounds paths per person, by a role
-  bound to a Keycloak group (§3.10, weakness 8). Giving the custodian its own
-  vault identity would make the store the only judge and retire the tenant
-  mounts' group binding, the `groups` scope on the zone clients and the
-  director's audience on the vault's roles -- at the price of a kernel
-  process that can write every credential by itself.
 
 - **Signing key format.** GPG is what Argo verifies today; SSH signing is
   simpler to hold in OpenBao. Pick GPG unless Argo's SSH verification lands

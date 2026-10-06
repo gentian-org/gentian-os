@@ -71,7 +71,8 @@ _revoke_export_layout() {
 # _handover_proven — has anyone actually authenticated and been given the
 # cluster-admin policy?
 #
-# Written by the custodian on the first successful exchange. Read from
+# Written by the custodian the first time a cluster administrator reaches it
+# and it can log in to the vault. Read from
 # Kubernetes, not from OpenBao, so --status can answer it with no token — which
 # is the whole reason it is a ConfigMap and not a fact only OpenBao knows.
 _handover_proven() {
@@ -190,11 +191,10 @@ _token_is_root() {
 
 # _custodian_ready — is the thing that records the proof actually there?
 #
-# The proof this step waits for is written by the custodian, on the
-# first cluster-admin exchange it performs (e80a2193). It holds no token of its
-# own: it takes the caller's Keycloak token and exchanges it for a short-lived
-# OpenBao one. So if it is not deployed, no sign-in can be recorded, and no
-# amount of waiting will produce the record.
+# The proof this step waits for is written by the custodian, the first time a
+# cluster administrator the authorization store allows reaches it and it logs
+# in to OpenBao as itself. So if it is not deployed, no sign-in can be
+# recorded, and no amount of waiting will produce the record.
 #
 # That is not hypothetical. custodian.enabled defaults to false, and a
 # cluster installed without overriding it reaches this step with the whole write
@@ -213,7 +213,7 @@ _custodian_ready() {
 
     svc="$(kubectl get svc -n "${ns}" \
         -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null \
-        | grep -E -- '-credentials$' | head -1 || true)"
+        | grep -E -- '-custodian$' | head -1 || true)"
     [[ -n "${svc}" ]] || return 1
 
     kubectl get endpoints "${svc}" -n "${ns}" \

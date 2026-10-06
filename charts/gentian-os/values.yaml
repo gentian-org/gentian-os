@@ -534,42 +534,26 @@ custodian:
   # On by default, because the install cannot finish without it.
   #
   # E-03 revokes the installer's bootstrap token, and refuses to until something
-  # else has demonstrably written a credential. That proof is this service
-  # recording its first cluster-admin exchange — it holds no token of its own,
-  # it exchanges the caller's Keycloak one. Off, nothing records anything, and
-  # the last step of every install waits for a fact that cannot be produced.
+  # else has been seen to be able to write a credential. That proof is this
+  # service recording the first time a cluster administrator, allowed by the
+  # authorization store, reached it and it logged in to the vault as itself.
+  # Off, nothing records anything, and the last step of every install waits
+  # for a fact that cannot be produced.
   #
   # It was off by default and nothing turned it on, so that is what happened: an
   # operator was asked to sign in, did, and watched a timer run out.
   #
   # Turning it on costs nothing on a cluster that does not use it. The Service is
   # ClusterIP-only by deliberate design (see custodian-service.yaml), and
-  # the write path authorises the CALLER's OIDC token rather than holding one, so
-  # a running-but-unused custodian grants nobody anything.
+  # every request is verified and asked of the authorization store before the
+  # vault is touched, so a running-but-unused custodian grants nobody anything.
   enabled: true
   port: 9444
-  # Where the JWT/OIDC auth backend is enabled. Not "jwt": the installer enables
-  # it with -path=oidc, so the login endpoint is auth/oidc/login.
-  authMount: oidc
-  # Roles the caller's token is offered to, in order, until one accepts it.
-  #
-  # They must be role_type jwt. The identically-purposed oidc roles serve the
-  # browser flow into OpenBao's UI, and the plugin refuses a direct token
-  # exchange against those — a refusal this service cannot tell apart from "you
-  # are not authorised".
-  #
-  # Both are listed because the roles bind different group claims and OpenBao,
-  # not this service, decides which one a caller matches. Listing only the
-  # cluster role would leave every tenant admin unable to authenticate.
-  # Tried in order against whichever mount the token's issuer selects — which is
-  # why both names appear even though neither mount has both roles.
-  # cluster-admin-jwt exists only on the kernel mount, tenant-admin only on a
-  # tenant realm's mount, so the inapplicable one is refused as an unknown role.
-  # That costs one round trip and saves this service from having to know the
-  # cluster's realm layout.
-  oidcRoles:
-    - cluster-admin-jwt
-    - tenant-admin
+  # The role the custodian logs in to OpenBao with, by this pod's
+  # ServiceAccount. Its policy lets it write a credential and read and annotate
+  # its metadata, and nothing else: it cannot read a stored value. The cluster's
+  # Composition creates the role and the policy (custodian-write).
+  vaultRole: gentian-os-custodian
   # Namespace holding the ESO satisfaction probes it reads. Empty means the
   # namespace this chart is released into, which is where the operator runs
   # and where the catalogue step writes them.

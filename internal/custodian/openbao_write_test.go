@@ -77,7 +77,7 @@ func newKVBackedOpenBao(t *testing.T, kv *fakeKV) *OpenBao {
 	t.Helper()
 	srv := httptest.NewServer(kv.handler(t))
 	t.Cleanup(srv.Close)
-	return NewOpenBao(srv.URL, "secret", "oidc", "kernel", []string{"cluster-admin-jwt"}, nil, false)
+	return NewOpenBao(srv.URL, "secret", "gentian-os-custodian", nil, false)
 }
 
 // TestWriteLeavesUnsuppliedKeysAlone is the whole reason Write patches.

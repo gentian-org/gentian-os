@@ -18,7 +18,6 @@ package custodian
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -151,9 +150,13 @@ func newServerAs(t *testing.T, policies []string, meta map[string]string, objs .
 	}))
 	t.Cleanup(bao.Close)
 
+	vault := NewOpenBao(bao.URL, "secret", "gentian-os-custodian", nil, false)
+	// The custodian's own token at the stand-in vault. The caller's is
+	// "caller-oidc-token" (see do), and must never be what the vault is shown.
+	vault.SetStaticToken("custodian-token")
 	s := &Server{
 		Catalogue: &Catalogue{Client: c, ProbeNamespace: "gentian-system"},
-		Bao:       NewOpenBao(bao.URL, "secret", "oidc", "kernel", []string{"cluster-admin-jwt"}, nil, false),
+		Bao:       vault,
 		Validator: stubValidator{},
 		Authz:     storeFor(policies, meta),
 	}
@@ -330,7 +333,7 @@ func TestWriteRequiresCallerToken(t *testing.T) {
 // TestOpenBaoWriteRefusesEmptyToken guards the same property one layer down, so
 // a future handler that forgets the check still cannot write anonymously.
 func TestOpenBaoWriteRefusesEmptyToken(t *testing.T) {
-	b := NewOpenBao("http://openbao.invalid", "secret", "oidc", "kernel", []string{"cluster-admin-jwt"}, nil, false)
+	b := NewOpenBao("http://openbao.invalid", "secret", "gentian-os-custodian", nil, false)
 	err := b.Write(context.Background(), "", "gentian/x", map[string]string{"a": "b"}, "alice")
 	if err == nil {
 		t.Fatal("Write accepted an empty caller token")
@@ -537,188 +540,6 @@ func TestServerHasNoTokenField(t *testing.T) {
 	}
 }
 
-// TestExchangeUsesConfiguredMount pins the login path. The auth backend is
-// enabled at -path=oidc, so the endpoint is auth/oidc/login; the client used to
-// hardcode the plugin's default name and every exchange reached a mount that
-// does not exist. The fake here encoded the same wrong path, which is why the
-// suite stayed green while the UI could not authenticate at all.
-func TestExchangeUsesConfiguredMount(t *testing.T) {
-	var got []string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		got = append(got, r.URL.Path)
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"auth": map[string]any{"client_token": "t", "token_policies": []string{"cluster-admin"}},
-		})
-	}))
-	t.Cleanup(srv.Close)
-
-	b := NewOpenBao(srv.URL, "secret", "oidc", "kernel", []string{"cluster-admin-jwt"}, nil, false)
-	if _, err := b.ExchangeToken(context.Background(), "a.b.c"); err != nil {
-		t.Fatalf("exchange failed: %v", err)
-	}
-	if len(got) != 1 || got[0] != "/v1/auth/oidc/login" {
-		t.Fatalf("want a login at /v1/auth/oidc/login, got %v", got)
-	}
-}
-
-// TestExchangeFallsThroughToNextRole covers the tenant admin. Each role binds a
-// different group claim, so the role that does not match refuses the token —
-// which rules out that role, not the caller. With a single role configured, a
-// tenant admin could never authenticate.
-func TestExchangeFallsThroughToNextRole(t *testing.T) {
-	var tried []string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var body struct {
-			Role string `json:"role"`
-		}
-		_ = json.NewDecoder(r.Body).Decode(&body)
-		tried = append(tried, body.Role)
-		if body.Role != "tenant-admin-jwt" {
-			// What OpenBao returns when bound claims do not match.
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"auth": map[string]any{
-				"client_token":   "tenant-token",
-				"token_policies": []string{"tenant-admin"},
-				"metadata":       map[string]string{"tenant": "acme"},
-			},
-		})
-	}))
-	t.Cleanup(srv.Close)
-
-	b := NewOpenBao(srv.URL, "secret", "oidc", "kernel", []string{"cluster-admin-jwt", "tenant-admin-jwt"}, nil, false)
-	id, err := b.ExchangeToken(context.Background(), "a.b.c")
-	if err != nil {
-		t.Fatalf("exchange failed: %v", err)
-	}
-	if id.Metadata["tenant"] != "acme" {
-		t.Fatalf("want the tenant from the accepting role, got %q", id.Metadata["tenant"])
-	}
-	if len(tried) != 2 || tried[0] != "cluster-admin-jwt" || tried[1] != "tenant-admin-jwt" {
-		t.Fatalf("roles should be tried in order, got %v", tried)
-	}
-}
-
-// TestExchangeRejectedByEveryRole is the case the UI reports. It must stay an
-// error, and must not name the policies or paths OpenBao mentioned.
-func TestExchangeRejectedByEveryRole(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "policy \"cluster-admin\" denied on gentian/kernel/*", http.StatusBadRequest)
-	}))
-	t.Cleanup(srv.Close)
-
-	b := NewOpenBao(srv.URL, "secret", "oidc", "kernel", []string{"cluster-admin-jwt", "tenant-admin-jwt"}, nil, false)
-	_, err := b.ExchangeToken(context.Background(), "a.b.c")
-	if err == nil {
-		t.Fatal("exchange should fail when every role refuses")
-	}
-	if strings.Contains(err.Error(), "gentian/kernel") || strings.Contains(err.Error(), "policy") {
-		t.Fatalf("error leaked OpenBao's body: %v", err)
-	}
-}
-
-// TestRefusalNamesTheFailedCheck is the fix for three debugging rounds. Each
-// began by re-checking a group membership that was correct, because the message
-// named group membership and nothing else. A refusal must say which check
-// failed and must still not repeat OpenBao's body, which can name policies and
-// paths.
-func TestRefusalNamesTheFailedCheck(t *testing.T) {
-	cases := []struct {
-		name, openbaoSays, want string
-	}{
-		{"audience", `{"errors":["error validating token: invalid audience (aud) claim"]}`, "audience"},
-		{"claims", `{"errors":["error validating claims: claim \"groups\" does not match any associated bound claim values"]}`, "claims"},
-		{"role type", `{"errors":["role with oidc role_type is not allowed"]}`, "direct token exchange"},
-		{"missing role", `{"errors":["role \"cluster-admin-jwt\" could not be found"]}`, "does not exist"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				w.WriteHeader(http.StatusBadRequest)
-				_, _ = w.Write([]byte(tc.openbaoSays))
-			}))
-			t.Cleanup(srv.Close)
-
-			b := NewOpenBao(srv.URL, "secret", "oidc", "kernel", []string{"cluster-admin-jwt"}, nil, false)
-			_, err := b.ExchangeToken(context.Background(), "a.b.c")
-			if err == nil {
-				t.Fatal("a refused exchange must be an error")
-			}
-			if !strings.Contains(err.Error(), tc.want) {
-				t.Fatalf("error should name the failed check %q, got: %v", tc.want, err)
-			}
-			// The category is safe to show; OpenBao's own words are not.
-			if strings.Contains(err.Error(), "bound claim values") || strings.Contains(err.Error(), "errors") {
-				t.Fatalf("error echoed OpenBao's body: %v", err)
-			}
-		})
-	}
-}
-
-// TestRefusalOnAMountThatDoesNotExist covers the first of the three: a 404 is
-// not a permissions answer at all, and saying so would have ended that round in
-// one look.
-func TestRefusalOnAMountThatDoesNotExist(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusNotFound)
-		_, _ = w.Write([]byte(`{"errors":[]}`))
-	}))
-	t.Cleanup(srv.Close)
-
-	b := NewOpenBao(srv.URL, "secret", "jwt", "kernel", []string{"cluster-admin-jwt"}, nil, false)
-	_, err := b.ExchangeToken(context.Background(), "a.b.c")
-	if err == nil || !strings.Contains(err.Error(), "not mounted") {
-		t.Fatalf("a 404 should say the backend is not mounted where expected, got: %v", err)
-	}
-}
-
-// jwtWithIssuer builds an unsigned token carrying iss. Unsigned on purpose:
-// routing must not depend on the signature, and OpenBao verifies afterwards.
-func jwtWithIssuer(t *testing.T, iss string) string {
-	t.Helper()
-	payload := base64.RawURLEncoding.EncodeToString([]byte(`{"iss":"` + iss + `"}`))
-	return "eyJhbGciOiJSUzI1NiJ9." + payload + ".sig"
-}
-
-// TestExchangeRoutesByIssuer is the fix for tenant administrators. A tenant
-// member authenticates in their own realm, so their token is signed by that
-// realm — the kernel mount cannot verify it, and the refusal lands on the
-// signature before any claim is read. Each realm gets its own mount.
-func TestExchangeRoutesByIssuer(t *testing.T) {
-	cases := []struct {
-		name, iss, wantMount string
-	}{
-		{"kernel realm uses the configured mount", "https://id.example.test/auth/realms/kernel", "/v1/auth/oidc/login"},
-		{"tenant realm uses its own mount", "https://id.example.test/auth/realms/corp", "/v1/auth/oidc-corp/login"},
-		{"no issuer falls back to the kernel mount", "", "/v1/auth/oidc/login"},
-		{"a non-realm issuer falls back", "https://accounts.google.com", "/v1/auth/oidc/login"},
-		// A crafted issuer must not be able to name an arbitrary mount path.
-		{"a path-traversing realm falls back", "https://id.example.test/auth/realms/../../sys/auth", "/v1/auth/oidc/login"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			var got string
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				got = r.URL.Path
-				w.WriteHeader(http.StatusBadRequest)
-			}))
-			t.Cleanup(srv.Close)
-
-			token := "not.a.jwt"
-			if tc.iss != "" {
-				token = jwtWithIssuer(t, tc.iss)
-			}
-			b := NewOpenBao(srv.URL, "secret", "oidc", "kernel", []string{"tenant-admin"}, nil, false)
-			_, _ = b.ExchangeToken(context.Background(), token)
-			if got != tc.wantMount {
-				t.Fatalf("want login at %s, got %s", tc.wantMount, got)
-			}
-		})
-	}
-}
-
 // multiFieldRequirement declares two fields, so a single bad submission can
 // violate more than one at once.
 func multiFieldRequirement(name string) *gentianv1alpha1.CredentialRequirement {
@@ -817,45 +638,6 @@ func TestValidateHostReachesTheCatalogue(t *testing.T) {
 	}
 	if len(items) != 1 || items[0].ValidateHost != "https://registry.example.test" {
 		t.Fatalf("expected ValidateHost to carry the requirement's declared host, got %+v", items)
-	}
-}
-
-// When every role refuses, the caller is told the refusal that says something
-// about them — not the last one.
-//
-// The roles are tried in order, and the last is often a role whose type cannot
-// accept a direct exchange at all: true before the caller arrived, and no help
-// whatever. On a real cluster that buried the answer. The administrator was
-// told "the role does not permit a direct token exchange" while the role that
-// could have worked had refused the token's AUDIENCE two lines earlier, and
-// the audience was the thing that was actually wrong.
-func TestTheSummaryPrefersARefusalThatIsAboutTheCaller(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var body struct {
-			Role string `json:"role"`
-		}
-		_ = json.NewDecoder(r.Body).Decode(&body)
-		w.WriteHeader(http.StatusBadRequest)
-		if body.Role == "cluster-admin-jwt" {
-			_, _ = w.Write([]byte(`{"errors":["error validating token: invalid audience (aud) claim"]}`))
-			return
-		}
-		// The last role tried, and the least informative refusal there is.
-		_, _ = w.Write([]byte(`{"errors":["role with oidc role_type is not allowed"]}`))
-	}))
-	defer srv.Close()
-
-	b := NewOpenBao(srv.URL, "secret", "oidc", "kernel",
-		[]string{"cluster-admin-jwt", "tenant-admin"}, nil, false)
-	_, err := b.ExchangeToken(context.Background(), "a.b.c")
-	if err == nil {
-		t.Fatal("every role refused; want an error")
-	}
-	if !strings.Contains(err.Error(), "audience") {
-		t.Fatalf("the summary lost the useful refusal: %v", err)
-	}
-	if strings.Contains(err.Error(), "does not permit a direct token exchange") {
-		t.Fatalf("the summary kept the refusal that is about the role, not the caller: %v", err)
 	}
 }
 

@@ -35,6 +35,11 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -o bouncer ./cmd/boun
 # process that holds nothing but the two things the bouncer holds.
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -o usher ./cmd/usher
 
+# The custodian: what sets a credential in the vault for the person entitled
+# to. Its own process and ServiceAccount, so the identity that can write a
+# secret is not shared with anything that can read one.
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -o custodian ./cmd/custodian
+
 # ── Runtime stage ──────────────────────────────────────────────────────────────
 FROM debian:bookworm-slim
 
@@ -50,6 +55,7 @@ COPY --from=builder /workspace/manager /manager
 COPY --from=builder /workspace/director /director
 COPY --from=builder /workspace/bouncer /bouncer
 COPY --from=builder /workspace/usher /usher
+COPY --from=builder /workspace/custodian /custodian
 
 USER 65532:65532
 

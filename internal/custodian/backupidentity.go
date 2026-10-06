@@ -36,11 +36,10 @@ import (
 // have to be defeated in the one respect that makes it useful.
 //
 // So it is written here instead, by the same rule the rest of this service
-// follows: the caller's own exchanged token performs the write, and the path is
-// derived from the tenant in the verified claim rather than from anything the
-// request says. A tenant admin can escrow into their own subtree and nowhere
-// else, and that is a property of OpenBao's policy engine rather than of a check
-// in this file.
+// follows: the authorization store says whether the caller may set their
+// tenant's credentials, and the path is derived from the tenant whose realm
+// signed them in rather than from anything the request says. A tenant admin
+// can escrow into their own subtree and nowhere else.
 const (
 	// backupIdentityField is the key at that path.
 	backupIdentityField = "identity"
@@ -87,10 +86,10 @@ func (s *Server) handleSetBackupIdentity(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// The tenant comes from the exchanged identity, never from the request. A
-	// name in the body would let any tenant admin escrow a key into another
-	// tenant's subtree, and the write would succeed for whichever of them
-	// OpenBao's policy happened to allow.
+	// The tenant is the one whose realm signed the caller in and whose
+	// credentials the store lets them write, never one named in the request.
+	// A name in the body would let any tenant admin escrow a key into
+	// another tenant's subtree.
 	tenant := c.view.Tenant
 	if tenant == "" {
 		writeErr(w, http.StatusForbidden,
@@ -128,7 +127,12 @@ func (s *Server) handleSetBackupIdentity(w http.ResponseWriter, r *http.Request)
 	path := BackupIdentityPath(tenant)
 	fields := map[string]string{backupIdentityField: identity}
 	meta := map[string]string{"recipient": recipient}
-	if err := s.Bao.WriteWithMetadata(r.Context(), c.bao.Token, path, fields, c.name, meta); err != nil {
+	token, err := s.Bao.Token(r.Context())
+	if err != nil {
+		s.writeVaultErr(w, err)
+		return
+	}
+	if err := s.Bao.WriteWithMetadata(r.Context(), token, path, fields, c.name, meta); err != nil {
 		log := ctrl.Log.WithName("custodian")
 		if errors.Is(err, ErrUpstream) {
 			log.Error(err, "cannot reach OpenBao to escrow this backup key", "tenant", tenant)
@@ -176,7 +180,12 @@ func (s *Server) handleGetBackupIdentity(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	md, err := s.Bao.Metadata(r.Context(), c.bao.Token, BackupIdentityPath(tenant))
+	token, err := s.Bao.Token(r.Context())
+	if err != nil {
+		s.writeVaultErr(w, err)
+		return
+	}
+	md, err := s.Bao.Metadata(r.Context(), token, BackupIdentityPath(tenant))
 	if err != nil {
 		writeErr(w, http.StatusBadGateway,
 			errors.New("the custodian cannot reach OpenBao"))

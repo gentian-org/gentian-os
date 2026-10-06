@@ -15,24 +15,34 @@ limitations under the License.
 */
 
 // Package custodian serves the custodian: a view over the
-// CredentialRequirement catalogue and ESO's satisfaction status, plus a write
-// path that writes as the requesting user.
+// CredentialRequirement catalogue and ESO's satisfaction status, plus the one
+// write path by which a person sets a credential.
 //
-// Two constraints shape every type in this package, and both are structural
-// rather than conventional — they are enforced by what the code can express,
-// not by reviewers remembering them.
+// It follows the director's pattern. The director holds the credential to
+// push to git, asks the authorization store whether a person may make a
+// change, and then makes it under its own name, recording whose intent it
+// was. The custodian holds an identity at the vault, asks the same store
+// whether a person may set a credential, and then sets it under its own
+// name, recording who set it. A secret is the one thing that must never be a
+// commit, so it has a keeper of its own; in every other respect the two are
+// the same shape.
 //
-// # The service holds no OpenBao token of its own
+// Three constraints shape the package.
 //
-// It exchanges the caller's Keycloak OIDC token for a short-lived OpenBao token
-// through the JWT auth backend, and the *user's* identity performs the write.
-// The alternative — the service holding broad write credentials and doing
-// authorisation itself — creates one component able to write every secret in
-// the cluster, and records the service rather than the human in the audit
-// device. That weakens the audit guarantee instead of strengthening it.
+// # The store decides, and nothing else does
 //
-// Enforced by [Writer] having no field that could hold a service token: every
-// write takes the caller's token as an argument.
+// Who may see that a credential is required and who may set it are the
+// authorization store's answers (authorize.go). The vault is not asked who
+// the caller is and is never shown the caller's token: an earlier design
+// exchanged that token at the vault and took the vault's verdict, which made
+// a group written into a token a second source of rights.
+//
+// # Its identity at the vault cannot read a value
+//
+// The custodian logs in as itself, by its ServiceAccount, to a role whose
+// policy lets it write a credential and read and annotate its metadata, and
+// nothing else. It is given no capability to read a stored value, so a fault
+// in this service cannot disclose one.
 //
 // # Write-only, no read-back
 //
@@ -50,45 +60,44 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
+	"sync"
 	"time"
 
 	ctrl "sigs.k8s.io/controller-runtime"
 )
 
-// OpenBao is a minimal client. It deliberately implements only the four calls
-// this service needs; a fuller client would make it easy to add a read path
-// that the design forbids.
+// OpenBao is a minimal client. It deliberately implements only the calls this
+// service needs; a fuller client would make it easy to add a read path that
+// the design forbids.
 type OpenBao struct {
 	Addr    string
 	KVMount string
-	// AuthMount is the path the JWT/OIDC auth backend is enabled at for the
-	// KERNEL realm. It is not "jwt": the backend is enabled with -path=oidc, so
-	// the login endpoint is auth/oidc/login. Hardcoding the plugin's default
-	// name here meant every exchange hit a mount that does not exist.
-	AuthMount string
 
-	// KernelRealm names the realm AuthMount trusts. A token from any other
-	// realm is routed to that realm's own mount instead — see mountForToken.
-	KernelRealm string
-	// OIDCRoles are the auth backend roles a caller's token is offered to, in
-	// order, until one accepts it. The roles, not this service, decide who a
-	// caller is: each binds a different group claim, and the policies on
-	// whichever token comes back are what the viewer is derived from. A single
-	// role would mean only that role's group could ever use this service.
-	OIDCRoles []string
+	// KubernetesMount is where the Kubernetes auth backend is enabled, and
+	// Role the role the custodian logs in to with its ServiceAccount token.
+	// The role's policy is what bounds the custodian: write and metadata on
+	// credential paths, and no reading of values.
+	KubernetesMount string
+	Role            string
+	// ServiceAccountTokenPath is the projected token this pod presents.
+	ServiceAccountTokenPath string
 
 	HTTP *http.Client
+
+	mu       sync.Mutex
+	token    string
+	tokenExp time.Time
 }
 
 // ErrUpstream marks a failure to REACH OpenBao, as opposed to OpenBao
-// declining the caller.
+// declining a request.
 //
 // The distinction is the whole reason this exists. Every transport failure used
 // to arrive at the handler as an ordinary error and leave as 401, so the portal
@@ -110,7 +119,7 @@ var ErrUpstream = errors.New("openbao unreachable")
 //
 // An empty caCert keeps the system roots, which is right for a cluster that
 // gave OpenBao a publicly trusted certificate.
-func NewOpenBao(addr, kvMount, authMount, kernelRealm string, oidcRoles []string, caCert []byte, skipVerify bool) *OpenBao {
+func NewOpenBao(addr, kvMount, role string, caCert []byte, skipVerify bool) *OpenBao {
 	tlsConf := &tls.Config{MinVersion: tls.VersionTLS12}
 	if skipVerify {
 		// An escape hatch, not a mode. Named so it appears in the Deployment
@@ -126,11 +135,11 @@ func NewOpenBao(addr, kvMount, authMount, kernelRealm string, oidcRoles []string
 		}
 	}
 	return &OpenBao{
-		Addr:        strings.TrimSuffix(addr, "/"),
-		KVMount:     kvMount,
-		AuthMount:   authMount,
-		KernelRealm: kernelRealm,
-		OIDCRoles:   oidcRoles,
+		Addr:                    strings.TrimSuffix(addr, "/"),
+		KVMount:                 kvMount,
+		KubernetesMount:         "kubernetes",
+		Role:                    role,
+		ServiceAccountTokenPath: "/var/run/secrets/kubernetes.io/serviceaccount/token",
 		HTTP: &http.Client{
 			Timeout:   15 * time.Second,
 			Transport: &http.Transport{TLSClientConfig: tlsConf},
@@ -138,254 +147,77 @@ func NewOpenBao(addr, kvMount, authMount, kernelRealm string, oidcRoles []string
 	}
 }
 
-// Identity is OpenBao's verdict on a caller's token.
+// ErrVaultLogin is the custodian failing to log in to the vault as itself.
+// It is a fault of the installation -- the role, its policy, or the binding to
+// this ServiceAccount -- and never of the person asking.
+var ErrVaultLogin = errors.New("the custodian could not log in to OpenBao")
+
+// Token returns the custodian's own token at the vault, logging in with its
+// ServiceAccount when it has none or the one it has is about to expire.
 //
-// Every field here was decided by OpenBao after it verified the JWT's
-// signature, issuer and audience and applied the role's bound claims. None of
-// it is asserted by the caller, which is the point: the alternative is this
-// service parsing the JWT itself, which would make it a second identity
-// authority that can disagree with the one enforcing the write.
-type Identity struct {
-	// Token is the short-lived OpenBao token the write is performed with.
-	Token string
-	// Policies are the policies OpenBao attached, from the role the token
-	// matched. This is what "is this caller a cluster admin" is read from.
-	Policies []string
-	// Metadata carries the role's claim mappings — the tenant among them.
-	Metadata map[string]string
-}
-
-// ExchangeToken trades the caller's OIDC token for a short-lived OpenBao token
-// and the identity that came with it.
-//
-// This is the whole of the service's authorisation model: it does not decide
-// what the caller may write. OpenBao's policy engine does, based on the claims
-// in the presented token, and the resulting token is what performs the write —
-// so the audit device records the human.
-
-// refusalReason turns OpenBao's rejection into the name of the check that
-// failed.
-//
-// This exists because the absence of it cost three separate debugging rounds.
-// The service reported "OpenBao refused the token" and the console added "check
-// that you are in the cluster-admin group" — while the actual causes were, in
-// order, a login against a mount that does not exist, a role whose type forbids
-// direct token exchange, and a token with no audience the role accepts. Group
-// membership was correct every time, and it was the one thing the message named.
-//
-// The returned string is safe to show a caller: it names a category, never a
-// policy, path or role. The detail goes to the log instead.
-// reasonWrongRoleType is the one refusal that says nothing about the caller:
-// a role with role_type oidc can never accept a direct exchange, whoever is
-// asking. Named so the summary can prefer any other refusal over it.
-const reasonWrongRoleType = "the auth backend role does not permit a direct token exchange"
-
-// reasonRoleMissing is the other refusal that is about the role and not about
-// the caller: a role tried on a mount that does not have it. The roles are
-// offered to every mount in turn, and a tenant's mount has the tenant's role
-// and not the cluster's, so on a tenant's token this refusal is always there
-// and never the answer.
-const reasonRoleMissing = "the auth backend role does not exist on this cluster"
-
-// aboutTheRole reports a refusal that would have been the same whoever asked.
-func aboutTheRole(reason string) bool {
-	return reason == reasonWrongRoleType || reason == reasonRoleMissing
-}
-
-func refusalReason(status int, body string) string {
-	b := strings.ToLower(body)
-	switch {
-	case strings.Contains(b, "audience"):
-		return "the token's audience is not one this cluster's roles accept"
-	case strings.Contains(b, "bound claim"), strings.Contains(b, "claim"):
-		return "the token's claims do not match any role — typically the group claim"
-	case strings.Contains(b, "role_type"), strings.Contains(b, "not allowed"):
-		return reasonWrongRoleType
-	case strings.Contains(b, "could not be found"), strings.Contains(b, "unknown role"):
-		return reasonRoleMissing
-	case status == http.StatusNotFound:
-		return "the auth backend is not mounted where this service expects it"
-	case strings.Contains(b, "signature"), strings.Contains(b, "expired"), strings.Contains(b, "validating token"):
-		return "the token did not validate — signature, issuer or expiry"
-	default:
-		return "OpenBao refused it and the reason is in the custodian's log"
+// This is the only token the custodian ever presents to the vault. A caller's
+// token is verified here and goes no further.
+func (b *OpenBao) Token(ctx context.Context) (string, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.token != "" && (b.tokenExp.IsZero() || time.Until(b.tokenExp) > 60*time.Second) {
+		return b.token, nil
 	}
-}
-
-// mountForToken picks the auth mount from the token's issuer.
-//
-// One JWT mount trusts one issuer. Tenant members authenticate in their own
-// Keycloak realm — that is where their apps' OIDC clients live, so that is where
-// the SSO session must exist — which means their token is signed by that realm
-// and the kernel realm's mount cannot verify it. Each tenant realm therefore has
-// its own mount, and this decides which one a token goes to.
-//
-// The issuer is read WITHOUT verifying the signature, and that is safe because
-// it is used only to route. OpenBao then verifies against the chosen mount's
-// JWKS, so a forged issuer merely picks a mount that refuses the token; it can
-// never make one mount accept another realm's key. Nothing here is an
-// authorisation decision.
-func (b *OpenBao) mountForToken(oidcToken string) string {
-	realm := realmFromUnverifiedToken(oidcToken)
-	if realm == "" || realm == b.KernelRealm {
-		return b.AuthMount
-	}
-	return "oidc-" + realm
-}
-
-// realmFromUnverifiedToken reads the realm out of a JWT's iss claim without
-// checking the signature. Returns "" when the token is not a JWT, the claim is
-// absent, or the issuer is not a Keycloak realm URL — every one of which falls
-// back to the kernel mount rather than inventing a mount name from attacker
-// input.
-func realmFromUnverifiedToken(token string) string {
-	parts := strings.Split(token, ".")
-	if len(parts) != 3 {
-		return ""
-	}
-	raw, err := base64.RawURLEncoding.DecodeString(parts[1])
+	jwt, err := os.ReadFile(b.ServiceAccountTokenPath)
 	if err != nil {
-		return ""
+		return "", fmt.Errorf("%w: reading the ServiceAccount token: %v", ErrVaultLogin, err)
 	}
-	var claims struct {
-		Iss string `json:"iss"`
-	}
-	if err := json.Unmarshal(raw, &claims); err != nil {
-		return ""
-	}
-	i := strings.LastIndex(claims.Iss, "/realms/")
-	if i < 0 {
-		return ""
-	}
-	realm := strings.Trim(claims.Iss[i+len("/realms/"):], "/")
-	// A mount path is one segment. Anything else is not a realm name, and
-	// concatenating it would address a different mount entirely.
-	if realm == "" || strings.ContainsAny(realm, "/?#%") {
-		return ""
-	}
-	return realm
-}
-
-func (b *OpenBao) ExchangeToken(ctx context.Context, oidcToken string) (Identity, error) {
-	if oidcToken == "" {
-		return Identity{}, fmt.Errorf("no OIDC token presented")
-	}
-	roles := b.OIDCRoles
-	if len(roles) == 0 {
-		return Identity{}, fmt.Errorf("no auth backend roles configured")
-	}
-	// Offered to each role in turn. A role whose bound claims do not match
-	// refuses the token, which is a 400 rather than a fact about the caller —
-	// so a refusal only rules out that role, not the request.
-	log := ctrl.LoggerFrom(ctx)
-	mount := b.mountForToken(oidcToken)
-	var lastStatus int
-	var lastReason string
-	for _, role := range roles {
-		id, status, body, err := b.exchangeWithRole(ctx, oidcToken, role, mount)
-		if err != nil {
-			return Identity{}, err
-		}
-		if status == http.StatusOK {
-			return id, nil
-		}
-		lastStatus = status
-		reason := refusalReason(status, body)
-		// Keep the most useful refusal, not the most recent one.
-		//
-		// The roles are tried in order and the last one is often a role whose
-		// type cannot accept a direct exchange at all -- a fact about that
-		// role, true before the caller arrived, and no help whatever. It
-		// buried the real answer: on this cluster the caller was told "the
-		// role does not permit a direct token exchange" while the role that
-		// could have worked had refused the token's AUDIENCE two lines
-		// earlier.
-		//
-		// The same held for a role the mount does not have: a tenant
-		// administrator was told "the auth backend role does not exist"
-		// because the cluster's role was tried on the tenant's mount first,
-		// while the tenant's own role had refused the audience.
-		if lastReason == "" || (aboutTheRole(lastReason) && !aboutTheRole(reason)) {
-			lastReason = reason
-		}
-		// The log gets OpenBao's own words. Without this every refusal was a
-		// dead end: the response cannot carry them, so nothing anywhere did,
-		// and each cause had to be found by reading code instead.
-		log.Info("OpenBao refused a token exchange",
-			"role", role, "mount", mount, "status", status,
-			"reason", reason, "openbao", truncate(body, 300))
-	}
-	// The category, not OpenBao's body: that can name policies and paths the
-	// caller has no business learning from a failed login. Naming the failed
-	// check is not the same as naming what it protects.
-	return Identity{}, fmt.Errorf("token exchange rejected by every configured role: %s (last HTTP %d)",
-		lastReason, lastStatus)
-}
-
-// exchangeWithRole performs one login attempt. A non-200 is returned as a
-// status rather than an error, because the caller has another role to try; a
-// transport failure is an error, because it says nothing about the token.
-func (b *OpenBao) exchangeWithRole(ctx context.Context, oidcToken, role, mount string) (Identity, int, string, error) {
-	body, _ := json.Marshal(map[string]string{
-		"role": role,
-		"jwt":  oidcToken,
-	})
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		fmt.Sprintf("%s/v1/auth/%s/login", b.Addr, mount), bytes.NewReader(body))
+	body, _ := json.Marshal(map[string]string{"role": b.Role, "jwt": strings.TrimSpace(string(jwt))})
+	url := fmt.Sprintf("%s/v1/auth/%s/login", b.Addr, b.KubernetesMount)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
-		return Identity{}, 0, "", err
+		return "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
-
 	resp, err := b.HTTP.Do(req)
 	if err != nil {
-		// ErrUpstream, not a bare error: http.go distinguishes "could not reach
-		// OpenBao" from "OpenBao said no", and the two must not read alike to a
-		// caller — one is an outage, the other is an answer.
-		return Identity{}, 0, "", fmt.Errorf("%w: %w", ErrUpstream, err)
+		return "", fmt.Errorf("%w: %v", ErrUpstream, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
-
 	if resp.StatusCode != http.StatusOK {
-		// Read it here or lose it: the caller cannot, once the body is closed,
-		// and this is the only place OpenBao ever says why.
-		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return Identity{}, resp.StatusCode, string(raw), nil
+		// OpenBao's own words go to the log and not to the caller: they can
+		// name roles and policies, and the caller can do nothing about them.
+		detail := strings.TrimSpace(readCapped(resp.Body, 512))
+		ctrl.Log.WithName("custodian").Info("OpenBao refused the custodian's login",
+			"role", b.Role, "mount", b.KubernetesMount, "status", resp.StatusCode, "openbao", detail)
+		return "", fmt.Errorf("%w: role %q answered HTTP %d", ErrVaultLogin, b.Role, resp.StatusCode)
 	}
 	var out struct {
 		Auth struct {
-			ClientToken   string            `json:"client_token"`
-			TokenPolicies []string          `json:"token_policies"`
-			Policies      []string          `json:"policies"`
-			Metadata      map[string]string `json:"metadata"`
+			ClientToken   string `json:"client_token"`
+			LeaseDuration int    `json:"lease_duration"`
 		} `json:"auth"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return Identity{}, 0, "", fmt.Errorf("malformed token exchange response: %w", err)
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil || out.Auth.ClientToken == "" {
+		return "", fmt.Errorf("%w: the login answer carried no token", ErrVaultLogin)
 	}
-	if out.Auth.ClientToken == "" {
-		return Identity{}, 0, "", fmt.Errorf("token exchange returned no token")
+	b.token = out.Auth.ClientToken
+	b.tokenExp = time.Now().Add(time.Hour)
+	if out.Auth.LeaseDuration > 0 {
+		b.tokenExp = time.Now().Add(time.Duration(out.Auth.LeaseDuration) * time.Second)
 	}
-	policies := out.Auth.TokenPolicies
-	if len(policies) == 0 {
-		// Older OpenBao releases report the same list under "policies".
-		policies = out.Auth.Policies
-	}
-	return Identity{
-		Token:    out.Auth.ClientToken,
-		Policies: policies,
-		Metadata: out.Auth.Metadata,
-	}, http.StatusOK, "", nil
+	return b.token, nil
 }
 
-// truncate bounds what reaches the log. OpenBao's errors are short; a
-// pathological body should not become a megabyte of log line.
-func truncate(s string, n int) string {
-	s = strings.TrimSpace(s)
-	if len(s) <= n {
-		return s
-	}
-	return s[:n] + "…"
+// forget drops the cached token, so the next call logs in again. Called when
+// the vault refuses a token it issued: it was revoked, or the vault restarted.
+func (b *OpenBao) forget() {
+	b.mu.Lock()
+	b.token, b.tokenExp = "", time.Time{}
+	b.mu.Unlock()
+}
+
+// SetStaticToken makes Token return tok without logging in. For tests against
+// a stand-in vault.
+func (b *OpenBao) SetStaticToken(tok string) {
+	b.mu.Lock()
+	b.token, b.tokenExp = tok, time.Time{}
+	b.mu.Unlock()
 }
 
 // PathMetadata is what the API is allowed to say about a stored credential.
@@ -451,7 +283,7 @@ func (b *OpenBao) Metadata(ctx context.Context, token, path string) (PathMetadat
 	return md, nil
 }
 
-// Write stores a credential using the CALLER's token.
+// Write stores a credential with the token given, which is the custodian's own.
 //
 // The token is a parameter rather than client state precisely so this cannot be
 // called on the service's own authority — there is no service authority to call

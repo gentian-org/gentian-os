@@ -20,7 +20,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -177,5 +179,44 @@ func TestTheTenantOfARealm(t *testing.T) {
 	}
 	if _, ok := a.Object(scopeTenant, ""); ok {
 		t.Error("a tenant scope with no tenant has an object")
+	}
+}
+
+// The vault is shown the custodian's token and never the caller's. Every
+// request the stand-in vault receives is looked at: a write, the metadata
+// that records who set it, the reads behind a listing.
+func TestTheCallersTokenNeverReachesTheVault(t *testing.T) {
+	var seen []string
+	vault := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen = append(seen, r.Method+" "+r.URL.Path+" token="+r.Header.Get("X-Vault-Token")+" auth="+r.Header.Get("Authorization"))
+		body, _ := io.ReadAll(r.Body)
+		if strings.Contains(string(body), "caller-oidc-token") {
+			t.Errorf("the caller's token was sent to the vault in a body: %s %s", r.Method, r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`{"data":{"current_version":1,"custom_metadata":{}}}`))
+	}))
+	defer vault.Close()
+
+	s, _ := newServer(t, requirement("smtp-relay", "cluster", "gentian-os/kernel/mail/relay", 0))
+	b := NewOpenBao(vault.URL, "secret", "gentian-os-custodian", nil, false)
+	b.SetStaticToken("custodian-token")
+	s.Bao = b
+
+	if w := do(t, s, http.MethodPut, "/v1/credentials/smtp-relay", `{"fields":{"password":"correct-horse"}}`); w.Code != http.StatusOK {
+		t.Fatalf("set = %d %s", w.Code, w.Body.String())
+	}
+	if code, _ := listed(t, s); code != http.StatusOK {
+		t.Fatalf("list = %d", code)
+	}
+	if len(seen) == 0 {
+		t.Fatal("the vault was never reached, so this test showed nothing")
+	}
+	for _, req := range seen {
+		if strings.Contains(req, "caller-oidc-token") {
+			t.Errorf("the caller's token reached the vault: %s", req)
+		}
+		if !strings.Contains(req, "token=custodian-token") {
+			t.Errorf("a request to the vault was not made as the custodian: %s", req)
+		}
 	}
 }

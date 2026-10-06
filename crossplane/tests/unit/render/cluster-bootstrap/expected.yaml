@@ -7,7 +7,7 @@ status:
   conditions:
   - lastTransitionTime: "2024-01-01T00:00:00Z"
     message: 'Unready resources: argocd-appproject-tenants, eso-cluster-secret-store,
-      gentian-cluster-config, and 23 more'
+      gentian-cluster-config, and 25 more'
     reason: Creating
     status: "False"
     type: Ready
@@ -478,6 +478,35 @@ apiVersion: kubernetes.vault.upbound.io/v1alpha1
 kind: AuthBackendRole
 metadata:
   annotations:
+    crossplane.io/composition-resource-name: vault-auth-role-custodian
+  labels:
+    crossplane.io/composite: dev-cluster
+  name: dev-cluster-auth-role-custodian
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XCluster
+    name: dev-cluster
+    uid: ""
+spec:
+  forProvider:
+    backend: kubernetes
+    boundServiceAccountNames:
+    - gentian-os-custodian
+    boundServiceAccountNamespaces:
+    - kernel-control
+    roleName: gentian-os-custodian
+    tokenPolicies:
+    - custodian-write
+    tokenTtl: 3600
+  providerConfigRef:
+    name: openbao
+---
+apiVersion: kubernetes.vault.upbound.io/v1alpha1
+kind: AuthBackendRole
+metadata:
+  annotations:
     crossplane.io/composition-resource-name: vault-auth-role-eso
   labels:
     crossplane.io/composite: dev-cluster
@@ -797,6 +826,30 @@ apiVersion: vault.vault.upbound.io/v1alpha1
 kind: Policy
 metadata:
   annotations:
+    crossplane.io/composition-resource-name: vault-policy-custodian-write
+  labels:
+    crossplane.io/composite: dev-cluster
+  name: dev-cluster-policy-custodian-write
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XCluster
+    name: dev-cluster
+    uid: ""
+spec:
+  forProvider:
+    name: custodian-write
+    policy: |
+      path "secret/data/gentian-os/*"     { capabilities = ["create","update","patch"] }
+      path "secret/metadata/gentian-os/*" { capabilities = ["create","read","update"] }
+  providerConfigRef:
+    name: openbao
+---
+apiVersion: vault.vault.upbound.io/v1alpha1
+kind: Policy
+metadata:
+  annotations:
     crossplane.io/composition-resource-name: vault-policy-eso-read
   labels:
     crossplane.io/composite: dev-cluster
@@ -913,23 +966,5 @@ spec:
       path "secret/metadata/gentian-os/*" { capabilities = ["list","read","delete"] }
       path "auth/token/create"                    { capabilities = ["update"] }
       path "auth/token/lookup-self"               { capabilities = ["read"] }
-
-      # Per-tenant JWT auth mounts. A tenant member authenticates in
-      # their own Keycloak realm — that is where their apps' OIDC
-      # clients live — so their portal token is signed by that realm
-      # and the kernel realm's mount cannot verify it. One mount per
-      # realm is what makes the exchange possible.
-      #
-      # Deliberately NOT one mount trusting many keys, which would be
-      # fewer objects and a privilege escalation: a tenant
-      # administrator holds realm-admin in their own realm, so they
-      # can mint a token carrying any groups claim, the cluster admin
-      # group included. Isolation belongs at the mount boundary,
-      # because claim values are precisely what they control.
-      #
-      # Glob, not the + segment wildcard: OpenBao's + matches one
-      # whole path segment, so "oidc-+" matches nothing at all.
-      path "sys/auth/oidc-*"                      { capabilities = ["create","read","update","delete","sudo"] }
-      path "auth/oidc-*"                          { capabilities = ["create","read","update","delete","list"] }
   providerConfigRef:
     name: openbao

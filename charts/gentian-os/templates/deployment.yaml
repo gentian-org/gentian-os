@@ -165,28 +165,6 @@ spec:
             silently does nothing. A boolean that cannot be turned off is worse
             than no switch, because the operator believes it is off.
             */}}
-            {{- /*
-            OpenBao serves a self-signed certificate, so the custodian
-            has to be told what signs it or every token exchange fails at TLS —
-            and used to report that as "not authorised".
-            Read from the Secret rather than mounted: a Pod cannot mount a
-            Secret from another namespace, which is why ESO's ClusterSecretStore
-            uses a caProvider for the same certificate.
-            */}}
-            - name: BAO_CA_SECRET
-              value: {{ (.Values.custodian).caSecret | default "openbao-tls" | quote }}
-            {{- /* Where that Secret is: the vault's own namespace, which this
-                 chart is already told. It defaulted to the literal "openbao",
-                 which is the v4 name -- so on a v5 cluster the certificate was
-                 looked for in a namespace that does not exist, the CA was not
-                 found, and every token exchange failed at TLS while the log
-                 said only that it was verifying against the system roots. */}}
-            - name: BAO_CA_SECRET_NAMESPACE
-              value: {{ (.Values.custodian).caSecretNamespace | default .Values.openbaoNamespace | default "kernel-secrets" | quote }}
-            {{- if (.Values.custodian).tlsSkipVerify }}
-            - name: BAO_TLS_SKIP_VERIFY
-              value: "true"
-            {{- end }}
             - name: HANDOVER_GATE_TENANTS
               value: {{ if hasKey (.Values.handover | default dict) "gateTenants" }}{{ .Values.handover.gateTenants | quote }}{{ else }}"true"{{ end }}
             - name: TENANT_DNS01_CLUSTER_ISSUER
@@ -347,29 +325,6 @@ spec:
               value: {{ .Values.stage | default "dev" | quote }}
             - name: LLM_SUPPORT
               value: {{ .Values.llmSupport | default false | quote }}
-            {{- if .Values.custodian.enabled }}
-            - name: CUSTODIAN_ENABLED
-              value: "true"
-            - name: CUSTODIAN_ADDR
-              value: ":{{ .Values.custodian.port }}"
-            - name: CUSTODIAN_PROBE_NAMESPACE
-              value: {{ .Values.custodian.probeNamespace | default .Release.Namespace | quote }}
-            - name: BAO_AUTH_MOUNT
-              value: {{ .Values.custodian.authMount | quote }}
-            - name: BAO_OIDC_ROLES
-              value: {{ join "," .Values.custodian.oidcRoles | quote }}
-            # How the custodian verifies a caller's token before it asks the
-            # authorization store about them: the issuer the token names, and
-            # where its keys are read inside the cluster. The audience is the
-            # zone token's, which a console relays here as it does to the
-            # director.
-            - name: CUSTODIAN_ISSUER_BASE_URL
-              value: {{ printf "https://id.%s/auth" .Values.kernelDomain | quote }}
-            - name: CUSTODIAN_JWKS_BASE_URL
-              value: {{ .Values.director.jwksBaseURL | default (printf "http://gentian-idp-keycloak-keycloakx-http.%s.svc.cluster.local:8080/auth" (.Values.layout.authentication | default .Values.servicesNamespace)) | quote }}
-            - name: CUSTODIAN_AUDIENCE
-              value: {{ .Values.director.audience | quote }}
-            {{- end }}
             {{- /* Renamed keys: a cluster overlay still setting the old ones would
                    otherwise render a commerce block pointing at nothing, and the
                    operator would fail every install-grant exchange at runtime. */}}
@@ -491,11 +446,6 @@ spec:
             {{- if .Values.membershipListener.keysSecretRef.name }}
             - name: membership
               containerPort: {{ .Values.membershipListener.port }}
-              protocol: TCP
-            {{- end }}
-            {{- if .Values.custodian.enabled }}
-            - name: custodian
-              containerPort: {{ .Values.custodian.port }}
               protocol: TCP
             {{- end }}
             {{- if $webhookEnabled }}
