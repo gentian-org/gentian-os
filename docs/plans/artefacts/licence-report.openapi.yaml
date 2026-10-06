@@ -67,8 +67,19 @@ info:
 
     Counts and addresses of things, never of people: no name, e-mail
     address, user id, group name, tenant display name or administrator's
-    address, and nothing about an app that was not installed at a stated
-    digest.
+    address, and nothing about an app or an add-on that was not installed
+    at a stated digest.
+
+    ## Changes to the format
+
+    `version` is raised when a report can no longer be read by a receiver
+    built to the version before. A member added to an object does not do
+    that: no schema here forbids members it does not name, and a receiver
+    should ignore one it does not know rather than refuse the report.
+
+    * `apps[].addons` was added under `version` 1. It lists the app's
+      add-ons that are pinned to a digest. A report made before it existed
+      has no such member; one made since always has it.
 
     ## What a store does with it
 
@@ -126,9 +137,14 @@ paths:
                         - coordinate: gentian/nextcloud-base-ee
                           digest: sha256:3f6c0a1e5b7d9c2a4e6f8091a3b5c7d9e1f20314253647586970a1b2c3d4e5f6
                           users: 25
+                          addons:
+                            - coordinate: gentian/nextcloud-talk
+                              digest: sha256:7a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f9
+                              users: 7
                         - coordinate: null
                           digest: sha256:5d4c3b2a19087f6e5d4c3b2a19087f6e5d4c3b2a19087f6e5d4c3b2a19087f6e
                           users: null
+                          addons: []
                   publicKey: 7Yq0b1J2k3L4m5N6o7P8q9R0s1T2u3V4w5X6y7Z8a9A=
       responses:
         "2XX":
@@ -208,7 +224,7 @@ components:
             $ref: "#/components/schemas/App"
     App:
       type: object
-      required: [coordinate, digest, users]
+      required: [coordinate, digest, users, addons]
       properties:
         coordinate:
           type: [string, "null"]
@@ -224,3 +240,30 @@ components:
           type: [integer, "null"]
           minimum: 0
           description: The number of people entitled to the app — the members of its group. `null` when they could not be counted.
+        addons:
+          type: array
+          description: |
+            The app's add-ons that are pinned to a digest, sorted by
+            `digest`. An add-on activated with no build named is not listed,
+            and an add-on of an app that is itself not listed is not
+            reported at all. Always sent; empty for an app with none.
+          items:
+            $ref: "#/components/schemas/Addon"
+    Addon:
+      type: object
+      required: [coordinate, digest, users]
+      properties:
+        coordinate:
+          type: [string, "null"]
+          description: |
+            `<catalogue>/<add-on>`. `null` when the pin did not record which
+            catalogue its build was fetched from; `digest` still says which
+            build it is.
+        digest:
+          type: string
+          description: The content digest the add-on is pinned to.
+          pattern: "^sha256:[0-9a-f]{64}$"
+        users:
+          type: [integer, "null"]
+          minimum: 0
+          description: The number of people entitled to the add-on — the members of its own group. `null` when they could not be counted.

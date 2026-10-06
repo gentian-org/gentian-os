@@ -41,6 +41,11 @@ const (
 	namespace = "kernel-control"
 	storeApp  = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	unsourced = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	// The addons' digests are out of order against their names and against
+	// the order the entry lists them in, so that the sorting is seen.
+	addonTalk   = "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+	addonOffice = "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+	addonStray  = "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
 )
 
 // fakeCounter answers from fixed numbers, and fails for what it is told to.
@@ -112,12 +117,27 @@ func tenants() []client.Object {
 			Spec: gentianov1alpha1.TenantSpec{
 				DisplayName: "Acme Widgets of Zurich",
 				Apps: []gentianov1alpha1.TenantApp{
-					{Profile: "nextcloud-base-ee", Digest: storeApp, Catalogue: "gentian"},
+					{
+						Profile: "nextcloud-base-ee", Digest: storeApp, Catalogue: "gentian",
+						Addons: []string{"nextcloud-talk", "nextcloud-office", "nextcloud-deck"},
+						AddonPins: []gentianov1alpha1.AddonPin{
+							{Name: "nextcloud-talk", Digest: addonTalk, Catalogue: "gentian"},
+							{Name: "nextcloud-office", Digest: addonOffice},
+							// Pins an addon the entry does not activate:
+							// pins nothing, and is not reported.
+							{Name: "nextcloud-forms", Digest: addonStray, Catalogue: "gentian"},
+						},
+					},
 					{Profile: "odoo-base-ee", Digest: unsourced},
 					// Arrived with the kernel, or named with no build: not a
 					// store install, and not reported.
 					{Profile: "admin-console"},
-					{Profile: "element"},
+					// No build of its own, so it is not listed, and the addon
+					// pinned inside it has no entry to be listed under.
+					{
+						Profile: "element", Addons: []string{"element-call"},
+						AddonPins: []gentianov1alpha1.AddonPin{{Name: "element-call", Digest: addonStray, Catalogue: "gentian"}},
+					},
 				},
 			},
 			Status: gentianov1alpha1.TenantStatus{AdminEmail: "ada.lovelace@acme.example"},
@@ -151,7 +171,11 @@ func newClient(t *testing.T, objs ...client.Object) client.Client {
 func counter() *fakeCounter {
 	return &fakeCounter{
 		tenants: map[string]int{"acme": 40, "beta": 3},
-		apps:    map[string]int{"acme/nextcloud-base-ee": 25, "acme/odoo-base-ee": 4},
+		apps: map[string]int{
+			"acme/nextcloud-base-ee": 25, "acme/odoo-base-ee": 4,
+			"acme/nextcloud-talk": 7, "acme/nextcloud-office": 9, "acme/nextcloud-deck": 2,
+			"acme/nextcloud-forms": 5, "acme/element-call": 6,
+		},
 		failing: map[string]bool{},
 	}
 }
@@ -224,6 +248,8 @@ func TestTheBodyCarriesNoPersonalData(t *testing.T) {
 		"cluster", "cluster.id", "cluster.url",
 		"tenants", "tenants.url", "tenants.users",
 		"tenants.apps", "tenants.apps.coordinate", "tenants.apps.digest", "tenants.apps.users",
+		"tenants.apps.addons", "tenants.apps.addons.coordinate", "tenants.apps.addons.digest",
+		"tenants.apps.addons.users",
 	}
 	var have []string
 	for k := range got {
@@ -293,6 +319,65 @@ func TestOnlyAppsThatCarryADigestAreListed(t *testing.T) {
 	}
 }
 
+// An app's pinned addons are listed under it, and only those: one activated
+// with no pin is not, as an app with no digest is not, and neither is a pin
+// for an addon the entry does not activate. An addon pinned inside an app
+// that is not listed is not reported anywhere.
+func TestOnlyPinnedAddonsAreListedUnderTheirApp(t *testing.T) {
+	c := newClient(t, tenants()...)
+	count := counter()
+	count.failing["acme/nextcloud-office"] = true
+	got, err := Build(context.Background(), c, count,
+		Identity{ClusterID: "demo-cluster", KernelDomain: "k.example", TenancyMode: "multi"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(got[0].Apps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Sorted by digest, whatever order the entry has them in. The one whose
+	// pin recorded no catalogue has a null coordinate, and the one whose
+	// people could not be counted has null users.
+	want := `[{"coordinate":"gentian/nextcloud-base-ee","digest":"` + storeApp + `","users":25,"addons":[` +
+		`{"coordinate":null,"digest":"` + addonOffice + `","users":null},` +
+		`{"coordinate":"gentian/nextcloud-talk","digest":"` + addonTalk + `","users":7}]},` +
+		`{"coordinate":null,"digest":"` + unsourced + `","users":4,"addons":[]}]`
+	if string(raw) != want {
+		t.Fatalf("acme's apps are\n %s\nwant\n %s", raw, want)
+	}
+	for _, absent := range []string{addonStray, "nextcloud-deck", "nextcloud-forms", "element"} {
+		if strings.Contains(string(raw), absent) {
+			t.Errorf("%q is reported and should not be:\n%s", absent, raw)
+		}
+	}
+}
+
+// Two addons pinned to one digest are in the order of their names, so the
+// same cluster always says the same bytes.
+func TestAddonsOfOneDigestAreOrderedByName(t *testing.T) {
+	c := newClient(t, &gentianov1alpha1.Tenant{
+		ObjectMeta: metav1.ObjectMeta{Name: "acme"},
+		Spec: gentianov1alpha1.TenantSpec{Apps: []gentianov1alpha1.TenantApp{{
+			Profile: "nextcloud-base-ee", Digest: storeApp, Catalogue: "gentian",
+			Addons: []string{"zeta", "alpha"},
+			AddonPins: []gentianov1alpha1.AddonPin{
+				{Name: "zeta", Digest: addonTalk, Catalogue: "gentian"},
+				{Name: "alpha", Digest: addonTalk, Catalogue: "gentian"},
+			},
+		}}},
+	})
+	got, err := Build(context.Background(), c, counter(),
+		Identity{ClusterID: "demo-cluster", KernelDomain: "k.example", TenancyMode: "multi"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	addons := got[0].Apps[0].Addons
+	if len(addons) != 2 || *addons[0].Coordinate != "gentian/alpha" || *addons[1].Coordinate != "gentian/zeta" {
+		t.Fatalf("addons = %+v", addons)
+	}
+}
+
 // A count that cannot be had is null, which is not the same as none, and the
 // report still goes.
 func TestACountThatCannotBeHadIsNull(t *testing.T) {
@@ -307,7 +392,7 @@ func TestACountThatCannotBeHadIsNull(t *testing.T) {
 	if !strings.Contains(body, `{"url":"https://acme.k.example","users":null,`) {
 		t.Errorf("uncounted accounts are not null:\n%s", body)
 	}
-	if !strings.Contains(body, `"digest":"`+unsourced+`","users":null}`) {
+	if !strings.Contains(body, `"digest":"`+unsourced+`","users":null,"addons":[]}`) {
 		t.Errorf("uncounted entitlements are not null:\n%s", body)
 	}
 	if !strings.Contains(body, `"users":25`) {

@@ -62,8 +62,10 @@ func (c *LicenceReportCounts) TenantUsers(ctx context.Context, tenant *gentianov
 	return kc.CountRealmUsers(ctx, keycloakRealmName(tenant))
 }
 
-// AppUsers is the number of enabled members of the app's entitlement group. A
-// group that does not exist yet has nobody in it.
+// AppUsers is the number of enabled members of the app's entitlement group,
+// or of an addon's: the identity reconciler makes a group for each addon an
+// app activates, under the name it would have as an app. A group that does
+// not exist yet has nobody in it.
 func (c *LicenceReportCounts) AppUsers(ctx context.Context, tenant *gentianov1alpha1.Tenant, profile string) (int, error) {
 	kc, err := c.keycloak(ctx)
 	if err != nil {

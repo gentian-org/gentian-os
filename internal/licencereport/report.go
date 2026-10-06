@@ -20,7 +20,7 @@ SPDX-License-Identifier: MPL-2.0
 // cluster's id and address, each tenant's address and how many accounts its
 // realm holds, and for each app installed through the App Store its
 // coordinate, the digest it is pinned to, and how many people are entitled to
-// it. No name, e-mail address, user id, group name, tenant display name or
+// it, and the same three for each addon of it that is pinned. No name, e-mail address, user id, group name, tenant display name or
 // administrator's address is in it, and the types below have nowhere to put
 // one.
 //
@@ -128,6 +128,21 @@ type App struct {
 	// Users is how many people are entitled to the app. Null when they could
 	// not be counted.
 	Users *int `json:"users"`
+	// Addons is the addons of the app that are pinned to a build. Always
+	// sent, and empty for an app with none, so that the key set is the same
+	// for every app.
+	Addons []Addon `json:"addons"`
+}
+
+// Addon is one pinned addon of a listed app.
+type Addon struct {
+	// Coordinate is <catalogue>/<addon>. Null when the pin did not record
+	// which catalogue its build was fetched from.
+	Coordinate *string `json:"coordinate"`
+	Digest     string  `json:"digest"`
+	// Users is how many people are entitled to the addon. Null when they
+	// could not be counted.
+	Users *int `json:"users"`
 }
 
 // Counter says how many people there are. It answers numbers and nothing
@@ -135,7 +150,9 @@ type App struct {
 type Counter interface {
 	// TenantUsers is the number of accounts in the tenant's realm.
 	TenantUsers(ctx context.Context, tenant *gentianov1alpha1.Tenant) (int, error)
-	// AppUsers is the number of people entitled to one of the tenant's apps.
+	// AppUsers is the number of people entitled to one of the tenant's apps,
+	// or to an addon of one: an addon is a profile too, and has a group of
+	// its own under the same name an app's has.
 	AppUsers(ctx context.Context, tenant *gentianov1alpha1.Tenant, profile string) (int, error)
 }
 
@@ -156,6 +173,12 @@ type Identity struct {
 // which is what the App Store's confirmation and a catalogue source's listing
 // do; an app that arrived with the kernel, or was named with no build, has
 // none and is not reported.
+//
+// An addon is listed by the same rule, under the app it is activated in: the
+// ones that app's entry pins to a digest, and no others. An addon pinned
+// inside an app that has no digest itself is not reported, because the app it
+// would be listed under is not: the report has no entry for a build nobody
+// stated, and does not make one up to hang an addon on.
 //
 // A count that cannot be had is sent as null and the report still goes: a
 // number that is missing is said to be missing, and is never replaced by a
@@ -194,7 +217,7 @@ func Build(ctx context.Context, c client.Reader, counter Counter, id Identity, u
 			if profile == "" && app.ProfileRef != nil {
 				profile = app.ProfileRef.Name
 			}
-			listed := App{Digest: app.Digest}
+			listed := App{Digest: app.Digest, Addons: pinnedAddons(ctx, counter, tenant, app, uncounted)}
 			if app.Catalogue != "" && profile != "" {
 				coordinate := app.Catalogue + "/" + profile
 				listed.Coordinate = &coordinate
@@ -213,6 +236,48 @@ func Build(ctx context.Context, c client.Reader, counter Counter, id Identity, u
 	}
 	sort.SliceStable(out, func(a, b int) bool { return out[a].URL < out[b].URL })
 	return out, nil
+}
+
+// pinnedAddons is the addons one app's entry both activates and pins, sorted
+// by digest and then by name.
+//
+// A pin that names an addon the entry does not activate pins nothing, and is
+// not reported.
+func pinnedAddons(
+	ctx context.Context, counter Counter, tenant *gentianov1alpha1.Tenant, app gentianov1alpha1.TenantApp,
+	uncounted func(what string, err error),
+) []Addon {
+	active := map[string]bool{}
+	for _, name := range app.Addons {
+		active[name] = true
+	}
+	pins := []gentianov1alpha1.AddonPin{}
+	for _, pin := range app.AddonPins {
+		if pin.Digest != "" && active[pin.Name] {
+			pins = append(pins, pin)
+		}
+	}
+	sort.SliceStable(pins, func(a, b int) bool {
+		if pins[a].Digest != pins[b].Digest {
+			return pins[a].Digest < pins[b].Digest
+		}
+		return pins[a].Name < pins[b].Name
+	})
+	out := make([]Addon, 0, len(pins))
+	for _, pin := range pins {
+		listed := Addon{Digest: pin.Digest}
+		if pin.Catalogue != "" {
+			coordinate := pin.Catalogue + "/" + pin.Name
+			listed.Coordinate = &coordinate
+		}
+		if n, err := counter.AppUsers(ctx, tenant, pin.Name); err != nil {
+			uncounted("the people entitled to an addon", err)
+		} else {
+			listed.Users = &n
+		}
+		out = append(out, listed)
+	}
+	return out
 }
 
 // ErrNoKey is a cluster that has no signing key to report with.

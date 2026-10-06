@@ -850,8 +850,8 @@ the *repository*, for pulls, with the credential the tenant holds.
 * **No signed statement.** No entitlement, no revocation, no licence file,
   no key of a store's on a cluster.
 * **No cluster state sent to the store.** What is installed, who is in the
-  tenant, the plan and its use are not sent. A store learns which apps a
-  tenant runs from the licence report, which is a separate, open, signed
+  tenant, the plan and its use are not sent. A store learns which apps and
+  pinned add-ons a tenant runs from the licence report, which is a separate, open, signed
   statement the cluster makes on its own schedule.
 * **No uninstall notice.** The store is not told when an app is removed.
 * **No store content executed.** No HTML, script, style sheet or frame.

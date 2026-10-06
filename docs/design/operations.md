@@ -160,7 +160,9 @@ one hour. No failure stops anything else.
  "cluster": {"id": "<cluster id>", "url": "https://<kernel domain>"},
  "tenants": [{"url": "https://<the tenant's host>", "users": 40,
               "apps": [{"coordinate": "<catalogue>/<app>",
-                        "digest": "sha256:…", "users": 25}]}],
+                        "digest": "sha256:…", "users": 25,
+                        "addons": [{"coordinate": "<catalogue>/<addon>",
+                                    "digest": "sha256:…", "users": 7}]}]}],
  "publicKey": "<base64 Ed25519 public key>"}
 ```
 
@@ -168,13 +170,27 @@ one hour. No failure stops anything else.
 - `apps` lists only the apps installed through the App Store: the entries of
   `Tenant.spec.apps` that carry a `digest`. `users` is the number of people
   entitled to the app, the members of its group.
+- `addons` lists, under each listed app, the add-ons of it that are pinned to
+  a build: the entries of that app's `addonPins` whose add-on is in its
+  `addons`. `users` is the number of people entitled to the add-on, the
+  members of its own group, counted as an app's are. The key is always sent,
+  `[]` for an app with none. An add-on activated with no pin is not listed,
+  as an app with no `digest` is not. An add-on pinned inside an app that has
+  no `digest` is not reported at all: the app it would be listed under is not
+  in the report, and no entry is made up for it.
 - `coordinate` is `null` for an entry whose install did not record its
-  catalogue (`spec.apps[].catalogue`), and a count that could not be had is
-  `null` rather than a smaller number.
+  catalogue (`spec.apps[].catalogue`, `addonPins[].catalogue`), and a count
+  that could not be had is `null` rather than a smaller number.
+- Apps are sorted by `digest`, and an app's add-ons by `digest` and then by
+  name, so a cluster whose state has not changed says the same thing again.
+
+`addons` was added without raising `version`: the format does not forbid
+members a receiver does not know, and a receiver that reads only the members
+it knows reads a report with `addons` exactly as it read one without.
 
 **What is not sent.** No names, e-mail addresses, user ids, group names, tenant
-display names or administrators' addresses, and nothing about apps that were
-not installed through the App Store.
+display names or administrators' addresses, and nothing about apps or add-ons
+that were not installed at a stated build.
 
 **Signing.** Each cluster has an Ed25519 key pair. The installer writes 32
 random bytes to the vault (`gentian-os/kernel/licence-report`, `signing_seed`),
