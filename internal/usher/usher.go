@@ -67,6 +67,9 @@ type Config struct {
 	// the reads of live state unregistered: an usher with no operator to ask
 	// has nothing to answer them with.
 	Lifecycle Lifecycle
+	// LicenceReporting is whether this cluster reports what it runs. The App
+	// Store is offered only where it does, and the tiles answer says which.
+	LicenceReporting bool
 }
 
 // Lifecycle is the operator's listener, as far as the usher may use it: two
@@ -248,7 +251,34 @@ func (s *Server) tenantTiles(w http.ResponseWriter, r *http.Request, c call) {
 			}
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"tenant": c.tenant, "tiles": out})
+	writeJSON(w, http.StatusOK, map[string]any{"tenant": c.tenant, "tiles": out, "appStore": s.appStore()})
+}
+
+// appStoreReasonNoLicenceReport is why a cluster that does not report offers
+// no App Store.
+const appStoreReasonNoLicenceReport = "licence-report-disabled"
+
+type appStoreOut struct {
+	// Available is whether a desktop may offer the App Store at all.
+	Available bool `json:"available"`
+	// Reason says why not, for a console to put into words: the App Store
+	// needs licence reporting, which is turned off on this cluster.
+	Reason string `json:"reason,omitempty"`
+}
+
+// appStore answers whether the App Store may be offered on this cluster.
+//
+// It is not a tile: where the store is comes from the cluster's catalogue
+// settings, and whether a person may install is asked when they do. This is
+// the one thing in front of both. An app installed through the store is what
+// the licence report lists, so a cluster that sends no report does not offer
+// the store, and says so here instead of leaving a desktop to show a store
+// that is merely absent.
+func (s *Server) appStore() appStoreOut {
+	if s.cfg.LicenceReporting {
+		return appStoreOut{Available: true}
+	}
+	return appStoreOut{Available: false, Reason: appStoreReasonNoLicenceReport}
 }
 
 func writeJSON(w http.ResponseWriter, code int, body any) {

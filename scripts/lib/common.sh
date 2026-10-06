@@ -445,6 +445,15 @@ INSTALL_CLUSTER_INFRA="${INSTALL_CLUSTER_INFRA:-1}"
 # Operations Console and the API-extension grant its service needs. 1 leaves
 # them out of the scaffold; the OS installs and runs the same either way.
 GENTIAN_DISABLE_API_EXTENSIONS="${GENTIAN_DISABLE_API_EXTENSIONS:-0}"
+# A vanilla installation reports what it runs to the licence report address,
+# once a day (docs/design/operations.md). 1 turns that off: nothing is sent,
+# and the App Store is not offered. The address itself is the bootstrap
+# chart's default (kernel/bootstrap/chart/values.yaml) unless
+# GENTIAN_LICENCE_REPORT_URL names another.
+# Unset says nothing either way, and a cluster that already has the report
+# turned off then keeps it off (gentian_licence_report_enabled); 0 turns it on.
+GENTIAN_NO_LICENCE_REPORT="${GENTIAN_NO_LICENCE_REPORT:-}"
+GENTIAN_LICENCE_REPORT_URL="${GENTIAN_LICENCE_REPORT_URL:-}"
 # The profiles a vanilla installation materialises for every tenant: files
 # or https URLs, comma separated. Unset means the Operations Console from the
 # Gentian catalogue source; empty means none.
@@ -505,6 +514,8 @@ INPUT_HIERARCHY_VARS=(
     GENTIAN_NONINTERACTIVE
     INSTALL_CLUSTER_INFRA
     GENTIAN_DISABLE_API_EXTENSIONS
+    GENTIAN_NO_LICENCE_REPORT
+    GENTIAN_LICENCE_REPORT_URL
     GENTIAN_DEFAULT_PROFILES
     GENTIAN_MANAGED_CERT_MANAGER
     CF_API_TOKEN
@@ -542,6 +553,8 @@ Options:
 Environment overrides:
   INSTALL_CLUSTER_INFRA=1|0
   GENTIAN_DISABLE_API_EXTENSIONS=1|0
+  GENTIAN_NO_LICENCE_REPORT=1|0
+  GENTIAN_LICENCE_REPORT_URL=https://...
   GENTIAN_DEFAULT_PROFILES=<file-or-url>[,...]
   INSTALL_CONFIG_FILE=/path/to/install.env
   INSTALL_VALIDATE_ONLY=1
@@ -2191,6 +2204,32 @@ gentian_mail_service_mode() {
         return 0
     fi
     xrd_default mail.serviceMode
+}
+
+# =============================================================================
+# gentian_licence_report_enabled — "true" or "false": does this cluster report
+# what it runs?
+#
+# --no-licence-report (GENTIAN_NO_LICENCE_REPORT=1) says no and
+# GENTIAN_NO_LICENCE_REPORT=0 says yes. A run that says neither keeps what the
+# cluster has: the flag is typed once, and a later run of one step without it
+# must not start sending reports from a cluster whose owner turned them off.
+# A cluster that has no operator Application yet has said nothing, and
+# reports.
+# =============================================================================
+gentian_licence_report_enabled() {
+    case "${GENTIAN_NO_LICENCE_REPORT:-}" in
+        1) echo false; return 0 ;;
+        0) echo true; return 0 ;;
+    esac
+    local have
+    have="$(kubectl get application gentian-os -n "$(ns_kernel gitops)" \
+        -o jsonpath='{.spec.sources[0].helm.valuesObject.licenceReport.enabled}' 2>/dev/null || true)"
+    if [[ "${have}" == "false" ]]; then
+        echo false
+    else
+        echo true
+    fi
 }
 
 # =============================================================================

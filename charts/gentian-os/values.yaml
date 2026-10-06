@@ -798,6 +798,34 @@ commerce:
   apiToken: ""
   meteringInterval: ""
 
+# The licence report. The software is free under a usage limit that is
+# enforced legally and not technically, so a cluster says, in the open, what
+# it runs: once shortly after the operator starts and once a day after that,
+# the operator POSTs a signed JSON body to `url`. The body holds the cluster's
+# id and address, each tenant's address and number of accounts, and each app
+# installed through the App Store with its digest and the number of people
+# entitled to it -- no names, addresses of people, user ids or group names.
+# Nothing in the cluster is blocked by the answer, and the last report is
+# kept, exactly as sent, in the ConfigMap `gentian-licence-report` beside the
+# operator.
+#
+# Off and with no address by default: this chart and the operator build and
+# run without one, and then nothing is sent, ever. The installer is what turns
+# it on and names an address (docs/design/operations.md). Off also withholds
+# the App Store, whose installs are what the report lists.
+licenceReport:
+  enabled: false
+  # Where reports go. https only; anything else counts as no address.
+  url: ""
+  signingKey:
+    # The Secret the operator reads its signing key from, materialised from
+    # the vault by the ExternalSecret this chart renders while reporting is
+    # on. Only the 32-byte private seed is stored; the key pair is derived
+    # from it, and the public half is in every report.
+    secretName: gentian-os-licence-report-key
+    openbaoPath: gentian-os/kernel/licence-report
+    property: signing_seed
+
 # LLM serving support. Fallback only: the operator decides from the claim's
 # llm.enabled (read via the gentian-cluster-config ConfigMap) and consults
 # this — as the LLM_SUPPORT env var — only while that ConfigMap does not

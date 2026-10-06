@@ -679,6 +679,52 @@ seed_secrets_remaining() {
     # kv_put_once and writes only the paths the Cluster XR does not cover.
     seed_secrets
     seed_repository_credentials
+    seed_licence_report_key
+}
+
+# =============================================================================
+# seed_licence_report_key — the key this cluster signs its licence reports with
+# =============================================================================
+# 32 random bytes, as hex, under their own path. The operator derives an
+# Ed25519 key pair from them (internal/licencereport): the private half signs
+# each report and the public half travels in it, so the address the reports go
+# to can tell one cluster's reports from anybody else's without having been
+# given anything first.
+#
+# Random and not derived from the master password, because it must not be
+# reproducible from anything else the cluster holds. Written once and never
+# again: a new seed is a new identity, and every report after it would look
+# like another cluster's. So an existing value is left alone, including by a
+# run that cannot read it.
+#
+# Not written at all where the report is turned off: a cluster that sends
+# nothing is given no key to send it with. Turning the report on later means
+# running this step again while the installer can still write to the vault.
+#
+# The path sits under gentian-os/kernel/ for the reason the repository
+# credentials do: it is the one prefix ESO may read.
+# =============================================================================
+seed_licence_report_key() {
+    local path="gentian-os/kernel/licence-report" have
+    if [[ "$(gentian_licence_report_enabled)" != "true" ]]; then
+        info "Licence report is off: no signing key is seeded."
+        return 0
+    fi
+    have="$(bao kv get -mount=secret -field=signing_seed "${path}" 2>/dev/null || true)"
+    if [[ -n "${have}" ]]; then
+        info "Licence report signing key already present; left as it is."
+        return 0
+    fi
+    # Absent, or unreadable. `kv put` with check-and-set 0 writes only when
+    # the path has never been written, so a path this run merely failed to
+    # read is not replaced.
+    if ! bao kv put -mount=secret -cas=0 "${path}" \
+        "signing_seed=$(openssl rand -hex 32)" >/dev/null 2>&1; then
+        warn "The licence report signing key could not be written to OpenBao."
+        warn "  No report is sent without it; the operator records that it has no key."
+        return 0
+    fi
+    success "Licence report signing key stored."
 }
 
 # =============================================================================
@@ -1599,7 +1645,14 @@ _claim_catalogue_section() {
     printf '    # Where people are sent for everything the cluster does not list\n'
     printf '    # itself: the maintained (me) and licensed (ee) editions. A cluster\n'
     printf '    # lists only ce and pe from its own sources.\n'
-    printf '    storeUrl: %s\n' "${GENTIAN_STORE_URL:-https://gentian.org/apps}"
+    if [[ "$(gentian_licence_report_enabled)" == "true" ]]; then
+        printf '    storeUrl: %s\n' "${GENTIAN_STORE_URL:-https://gentian.org/apps}"
+    else
+        printf '    #\n'
+        printf '    # Not named here: the App Store needs licence reporting, which is\n'
+        printf '    # turned off on this cluster (--no-licence-report).\n'
+        printf '    # storeUrl: %s\n' "${GENTIAN_STORE_URL:-https://gentian.org/apps}"
+    fi
     printf '    sources:\n'
     printf '      - name: gentian\n'
     printf '        url: %s\n' "${GENTIAN_STORE_CATALOGUE_URL:-https://store.gentian.org/catalogue}"
@@ -1627,6 +1680,14 @@ ensure_claim_catalogue_section() {
     [[ -f "${claim}" ]] || return 0
     if yq_get '.spec.catalogue' "${claim}" >/dev/null 2>&1; then
         _claim_drop_catalogue_access "${claim}"
+        # A store somebody named stays named: the claim is theirs. The desktop
+        # is told the store is unavailable all the same, by the usher.
+        if [[ "$(gentian_licence_report_enabled)" != "true" ]] \
+            && yq_get '.spec.catalogue.storeUrl' "${claim}" >/dev/null 2>&1; then
+            warn "claims/cluster.yaml names an App Store, and licence reporting is off:"
+            warn "  the App Store is not offered on this cluster. Remove spec.catalogue.storeUrl"
+            warn "  to say so in the claim as well."
+        fi
         return 0
     fi
     # Appended to the file, which is only inside spec while spec is the last

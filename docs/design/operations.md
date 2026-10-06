@@ -138,6 +138,83 @@ and logged; the others are unaffected. One tenant's database being unreachable
 never stops the pass, because a single broken tenant must not become a
 cluster-wide gap in the billing record.
 
+### 6.2 Licence report
+
+Gentian OS is free under a usage limit that is enforced legally, not
+technically. So a cluster says, in the open, what it runs, and nothing on the
+cluster is blocked by the answer: the operator reads the HTTP status of the
+reply and nothing else.
+
+**When.** A leader-elected worker in the operator sends one report a few
+minutes after the operator starts and one every 24 hours after that. A report
+that does not arrive is retried with a doubling wait, from one minute up to
+one hour. No failure stops anything else.
+
+**Where.** An HTTP `POST` to one `https` address fixed at install time
+(`licenceReport.url` in the operator chart). A redirect is not followed.
+
+**What is sent.**
+
+```json
+{"version": 1, "sequence": 12, "sentAt": "2026-03-04T05:06:07Z",
+ "cluster": {"id": "<cluster id>", "url": "https://<kernel domain>"},
+ "tenants": [{"url": "https://<the tenant's host>", "users": 40,
+              "apps": [{"coordinate": "<catalogue>/<app>",
+                        "digest": "sha256:…", "users": 25}]}],
+ "publicKey": "<base64 Ed25519 public key>"}
+```
+
+- `tenants[].users` is the number of enabled accounts in the tenant's realm.
+- `apps` lists only the apps installed through the App Store: the entries of
+  `Tenant.spec.apps` that carry a `digest`. `users` is the number of people
+  entitled to the app, the members of its group.
+- `coordinate` is `null` for an entry whose install did not record its
+  catalogue (`spec.apps[].catalogue`), and a count that could not be had is
+  `null` rather than a smaller number.
+
+**What is not sent.** No names, e-mail addresses, user ids, group names, tenant
+display names or administrators' addresses, and nothing about apps that were
+not installed through the App Store.
+
+**Signing.** Each cluster has an Ed25519 key pair. The installer writes 32
+random bytes to the vault (`gentian-os/kernel/licence-report`, `signing_seed`),
+an ExternalSecret hands them to the operator, and the operator derives the pair.
+The exact request body is signed: `X-Gentian-Signature: ed25519=<base64>`, with
+`X-Gentian-Key-Id` naming the key (the first 16 hex characters of the SHA-256 of
+the public key, which is in the body). The seed is never sent or logged. A
+cluster without the seed sends nothing and records why.
+
+**Seeing it.** The last report exactly as sent, and what became of the last
+attempt, are in the ConfigMap `gentian-licence-report` in the control
+namespace. The usher serves the same to whoever holds `can_audit` on the
+cluster:
+
+```
+GET /v1/clusters/{cluster}/licence-report
+{"enabled": true, "url": "https://…",
+ "attempt": {"at": "…", "outcome": "accepted", "httpStatus": 202, "nextAt": "…"},
+ "report":  {"sequence": 12, "body": "<the request body, byte for byte>",
+             "signature": "ed25519=…", "keyId": "…"}}
+```
+
+`outcome` is `accepted`, `failed` (sent, and refused or not delivered; see
+`reason`, `httpStatus`, `error`), `not-sent` (`reason` is
+`signing-key-absent`, `signing-key-invalid` or `inventory-unavailable`) or
+`sending`. A cluster that does not report answers `{"enabled": false}`.
+
+**Turning it off.** `./install.sh --no-licence-report`, or
+`GENTIAN_NO_LICENCE_REPORT=1` in `install.env`; a later run that says neither
+leaves it off. The operator chart's own default is off with no address, so a
+cluster installed without the installer reports nowhere. Off, nothing is sent,
+ever, and no signing key is created.
+
+**What turning it off costs.** The App Store is not offered. Its installs are
+what the report lists, so the usher's tiles answer
+(`GET /v1/tenants/{tenant}/tiles`) carries
+`"appStore": {"available": false, "reason": "licence-report-disabled"}` and a
+desktop shows no store; the installer also leaves `catalogue.storeUrl` out of
+a new Cluster claim. Everything else runs as before.
+
 ## 7. Image Updates via ArgoCD Image Updater
 
 ### 7.1 Philosophy

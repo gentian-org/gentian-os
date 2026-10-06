@@ -467,6 +467,15 @@ GENTIAN_KIT_RECIPIENT=age1... ./install.sh --export-recovery-kit kit.age
 GENTIAN_KIT_IDENTITY=~/.age/key.txt ./install.sh --recover kit.age
 ```
 
+### Turning the licence report off
+
+By default the cluster tells a report address once a day what it runs: its
+tenants, how many accounts each has, and the apps installed through the App
+Store — no personal data. `./install.sh --no-licence-report` (or
+`GENTIAN_NO_LICENCE_REPORT=1` in `install.env`) turns that off; nothing is then
+sent, and the App Store is not offered. What is sent, and where to read the
+last report, is in [docs/design/operations.md §6.2](docs/design/operations.md).
+
 ### Running one step, or stopping early
 
 ```bash

@@ -27,6 +27,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 
 	"github.com/gentian-org/gentian-os/internal/layout"
+	"github.com/gentian-org/gentian-os/internal/licencereport"
 )
 
 // Runnable serves the app lifecycle HTTP API inside the operator manager.
@@ -52,6 +53,7 @@ func NewRunnableFromEnv(mgr manager.Manager) (*Runnable, error) {
 		OperatorNamespace: envOrDefault("POD_NAMESPACE", layout.Namespace(layout.Control)),
 		OperatorSA:        envOrDefault("OPERATOR_SA", "gentian-os"),
 		MetricsEnabled:    os.Getenv("METRICS_SERVER_ENABLED") == "true",
+		LicenceReport:     licencereport.SettingsFromEnv(),
 	})
 	if err != nil {
 		return nil, err

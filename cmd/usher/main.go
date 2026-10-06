@@ -96,6 +96,10 @@ func run(log *slog.Logger) error {
 		Authn: verifier, Authz: store, Log: log,
 		TilesPath: envOr("USHER_TILES_PATH", "/etc/gentian/tiles/tiles.yaml"),
 		Cluster:   os.Getenv("GENTIAN_DEPLOYMENTS_CLUSTER_ID"),
+		// Whether the cluster reports what it runs, as the chart rendered it
+		// for the operator: on only with an address to report to. Unset is
+		// off, and off withholds the App Store.
+		LicenceReporting: os.Getenv("USHER_LICENCE_REPORT_ENABLED") == "true",
 	}
 	// The operator's listener, for reads of live state. The token is the
 	// reader's, handed over by the operator in a mounted file and read on

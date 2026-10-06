@@ -18,6 +18,7 @@ import (
 	"net/http"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/licencereport"
 )
 
 // What the cluster knows about backups, for the director to relay.
@@ -171,6 +172,19 @@ func (h *HTTPServer) registerPlatformRoutes(mux router) {
 	mux.Read("GET /v1/tenants/{tenant}/integrations", h.handleIntegrations)
 	mux.Read("GET /v1/platform-security", h.handlePlatformSecurity)
 	mux.Read("GET /v1/customizations", h.handleCustomizationDebt)
+	// What this cluster last told the receiving endpoint about itself, and
+	// what became of it. Open to the reader because it is the cluster's own
+	// statement, shown to whoever may audit the cluster.
+	mux.Read("GET /v1/licence-report", h.handleLicenceReport)
+}
+
+func (h *HTTPServer) handleLicenceReport(w http.ResponseWriter, r *http.Request) {
+	view, err := licencereport.Read(r.Context(), h.Service.client, h.Service.opts.OperatorNamespace, h.Service.opts.LicenceReport)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, view)
 }
 
 func (h *HTTPServer) handleIntegrations(w http.ResponseWriter, r *http.Request) {

@@ -304,6 +304,21 @@ func (c *KeycloakAdminClient) ListRealmUsers(ctx context.Context, realm string) 
 	return out, nil
 }
 
+// CountRealmUsers answers how many enabled accounts a realm holds, as Keycloak
+// counts them. A number and nothing about who.
+func (c *KeycloakAdminClient) CountRealmUsers(ctx context.Context, realm string) (int, error) {
+	token, err := c.adminToken(ctx)
+	if err != nil {
+		return 0, err
+	}
+	var n int
+	path := fmt.Sprintf("/admin/realms/%s/users/count?enabled=true", url.PathEscape(realm))
+	if err := c.getAdminJSON(ctx, token, path, &n); err != nil {
+		return 0, fmt.Errorf("keycloak count users: %w", err)
+	}
+	return n, nil
+}
+
 // ListGroupMembers returns enabled users in a Keycloak group by group name.
 func (c *KeycloakAdminClient) ListGroupMembers(ctx context.Context, realm, groupName string) ([]KeycloakUser, error) {
 	groupID, err := c.findGroupID(ctx, realm, groupName)

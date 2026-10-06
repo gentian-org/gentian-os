@@ -201,3 +201,29 @@ func TestNothingButReadsIsRouted(t *testing.T) {
 		}
 	}
 }
+
+// The App Store is offered only on a cluster that reports what it runs. The
+// tiles answer says which this is, and why not, so a console can put the
+// reason into words instead of showing a store that is merely missing.
+func TestTheAppStoreIsWithheldWhereTheClusterDoesNotReport(t *testing.T) {
+	store := &fakeStore{held: map[string]bool{"user:ada can_enter tenant:acme": true}}
+	for _, c := range []struct {
+		reporting bool
+		want      map[string]any
+	}{
+		{true, map[string]any{"available": true}},
+		{false, map[string]any{"available": false, "reason": "licence-report-disabled"}},
+	} {
+		s := New(Config{
+			Authn: fakeAuthn{"ada": "ada"}, Authz: store, TilesPath: catalogueFile(t),
+			LicenceReporting: c.reporting,
+		})
+		code, body := ask(t, s, "/v1/tenants/acme/tiles", "ada")
+		if code != http.StatusOK {
+			t.Fatalf("reporting %v: status %d", c.reporting, code)
+		}
+		if got := fmt.Sprint(body["appStore"]); got != fmt.Sprint(c.want) {
+			t.Errorf("reporting %v: appStore = %s, want %v", c.reporting, got, c.want)
+		}
+	}
+}

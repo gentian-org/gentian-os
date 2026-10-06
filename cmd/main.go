@@ -39,6 +39,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/director/authz"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"github.com/gentian-org/gentian-os/internal/layout"
+	"github.com/gentian-org/gentian-os/internal/licencereport"
 	"github.com/gentian-org/gentian-os/internal/usage"
 	"github.com/gentian-org/gentian-os/internal/webhook"
 )
@@ -511,6 +512,29 @@ func main() {
 			os.Exit(1)
 		}
 		setupLog.Info("app lifecycle API enabled", "addr", lifecycle.Server.Addr)
+	}
+
+	// The licence report: what this cluster runs, told to the receiving
+	// endpoint once a day, signed, and recorded where it can be read. Added
+	// whether or not reporting is on, so that the log of every operator says
+	// which it is; off, it sends nothing and starts no timer.
+	if err := mgr.Add(&licencereport.Reporter{
+		Client:    mgr.GetClient(),
+		Reader:    mgr.GetAPIReader(),
+		Namespace: envOrDefault("POD_NAMESPACE", layout.Namespace(layout.Control)),
+		Settings:  licencereport.SettingsFromEnv(),
+		Identity: licencereport.Identity{
+			ClusterID:    os.Getenv("GENTIAN_DEPLOYMENTS_CLUSTER_ID"),
+			KernelDomain: os.Getenv("KERNEL_DOMAIN"),
+			TenancyMode:  tenancyMode,
+		},
+		Counter: &controller.LicenceReportCounts{Client: mgr.GetClient()},
+		Key: func() (*licencereport.Key, error) {
+			return licencereport.KeyFromFile(envOrDefault("LICENCE_REPORT_KEY_FILE", "/etc/gentian/licence-report/signing_seed"))
+		},
+	}); err != nil {
+		setupLog.Error(err, "unable to add the licence reporter to manager")
+		os.Exit(1)
 	}
 
 	// No custodian here. It was a runnable of this manager, which put the

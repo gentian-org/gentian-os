@@ -94,3 +94,14 @@ on its own; a v5 install passes the whole map from kernel/namespaces.yaml.
 {{- end }}
 {{- end }}
 {{- end }}
+
+{{/*
+Whether this cluster reports what it runs: reporting is on AND there is an
+https address to report to. One definition, because three things follow it and
+must not disagree -- the operator sending, the Secret its key arrives in, and
+the usher withholding the App Store.
+*/}}
+{{- define "gentian-os.licenceReporting" -}}
+{{- $r := .Values.licenceReport | default dict -}}
+{{- if and (eq (toString $r.enabled) "true") (hasPrefix "https://" (toString ($r.url | default ""))) -}}true{{- end -}}
+{{- end }}

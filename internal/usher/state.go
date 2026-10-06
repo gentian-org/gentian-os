@@ -75,6 +75,11 @@ func (s *Server) stateRoutes() {
 		s.guarded("GET /v1/clusters/{c}/backup-schedules", "can_audit", clusterObject, s.relayCluster("/v1/backup-schedules"))
 		s.guarded("GET /v1/clusters/{c}/platform-security", "can_audit", clusterObject, s.relayCluster("/v1/platform-security"))
 		s.guarded("GET /v1/clusters/{c}/customizations", "can_audit", clusterObject, s.relayCluster("/v1/customizations"))
+		// What the cluster last reported about itself, exactly as sent, and
+		// what became of it; {"enabled":false} on a cluster that does not
+		// report. The operator's answer, like the rest: it is the one that
+		// sends.
+		s.guarded("GET /v1/clusters/{c}/licence-report", "can_audit", clusterObject, s.relayCluster("/v1/licence-report"))
 	}
 }
 

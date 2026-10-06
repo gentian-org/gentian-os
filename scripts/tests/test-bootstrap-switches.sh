@@ -28,7 +28,7 @@ render() {
         --set-string "kernelDomain=k.example" \
         --set-string "cluster=c" \
         --set-string "versions.headlamp.chart=0.0.0" \
-        --set-string "versions.headlamp.repo=https://example.invalid" 2>&1
+        --set-string "versions.headlamp.repo=https://example.invalid" "${@:4}" 2>&1
 }
 
 has() { grep -qE "$2" <<<"$1"; }
@@ -62,6 +62,22 @@ on="$(render true true true)"
 check "D-03 (all \"true\"): gentian-appsets Application"      "$(has "${on}" 'name: gentian-appsets$' && echo 1 || echo 0)"
 check "D-03 (all \"true\"): operator Application"             "$(has "${on}" 'name: gentian-os$' && echo 1 || echo 0)"
 check "D-03 (all \"true\"): Headlamp reads headlamp-oidc"     "$(has "${on}" 'headlamp-oidc' && echo 1 || echo 0)"
+
+# The licence report. The address is the bootstrap chart's default and nobody
+# else's; the installer's "off" arrives as the string "false" like every other
+# switch, and must reach the operator's chart as a boolean false.
+report_on="$(render true true true)"
+check "licence report: on by default, at the default address" \
+    "$(grep -A2 '^        licenceReport:$' <<<"${report_on}" | grep -q '^          enabled: true$' && has "${report_on}" 'url: "https://corp\.gentian-os\.org/api/v1/licence-reports"$' && echo 1 || echo 0)"
+report_off="$(render true true true --set-string licenceReport.enabled=false)"
+check "licence report: --no-licence-report renders enabled: false" \
+    "$(grep -A2 '^        licenceReport:$' <<<"${report_off}" | grep -q '^          enabled: false$' && echo 1 || echo 0)"
+report_else="$(render true true true --set-string licenceReport.url=https://reports.example/r)"
+check "licence report: another address replaces the default" \
+    "$(has "${report_else}" 'url: "https://reports\.example/r"$' && ! has "${report_else}" 'corp\.gentian-os\.org' && echo 1 || echo 0)"
+report_unset="$(render true true true --set-string licenceReport.url=)"
+check "licence report: an empty address from the installer is the default" \
+    "$(has "${report_unset}" 'url: "https://corp\.gentian-os\.org/api/v1/licence-reports"$' && echo 1 || echo 0)"
 
 echo ""
 if (( fail > 0 )); then

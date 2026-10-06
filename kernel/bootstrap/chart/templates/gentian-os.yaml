@@ -168,6 +168,12 @@ spec:
         # for whoever edits the wrong one.
         platformSecurityPolicy:
           create: false
+        # The licence report: whether this cluster says what it runs, and
+        # to where. Always stated, both ways, so that the claim of a cluster
+        # that reports nothing is as readable as one that does.
+        licenceReport:
+          enabled: {{ eq (toString .Values.licenceReport.enabled) "true" }}
+          url: {{ .Values.licenceReport.url | default .Values.licenceReport.defaultUrl | quote }}
         # The vault's namespace, for the Role that lets the operator exec into
         # its pod during bootstrap.
         openbaoNamespace: {{ include "ns" (list . "secrets") }}

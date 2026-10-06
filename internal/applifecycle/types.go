@@ -10,6 +10,8 @@ SPDX-License-Identifier: MPL-2.0
 
 package applifecycle
 
+import "github.com/gentian-org/gentian-os/internal/licencereport"
+
 // Options configures the lifecycle service.
 type Options struct {
 	OpenBaoNamespace  string
@@ -19,6 +21,9 @@ type Options struct {
 	// metrics.k8s.io. Off in a cluster without metrics-server, where the
 	// resources API still reports the ceiling and what is committed under it.
 	MetricsEnabled bool
+	// LicenceReport is whether this cluster reports what it runs, and to
+	// where: what the read of the last report answers from.
+	LicenceReport licencereport.Settings
 }
 
 // Result is returned from install/uninstall operations.

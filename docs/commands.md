@@ -111,7 +111,8 @@ Tenant admins install apps from the **App Store** (preferred) or the CLI.
 ### The App Store tile
 
 An administrator's desktop carries an **App Store** tile whenever the Cluster
-claim names a store (`catalogue.storeUrl`). It opens the store in a window.
+claim names a store (`catalogue.storeUrl`) and the cluster's licence report is
+on ([design/operations.md §6.2](design/operations.md)). It opens the store in a window.
 Nothing of the store runs in the cluster: what it shows of this tenant —
 what is installed, how it is doing, how much of the plan is used — and what it
 does to it — install, remove, purge, add-ons — it asks of the desktop, which

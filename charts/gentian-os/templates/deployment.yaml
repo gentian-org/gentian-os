@@ -6,6 +6,7 @@ kind: Deployment
 {{- $imageDigest := .Values.image.digest | default "" }}
 {{- $imageTag := .Values.image.tag | default .Chart.AppVersion }}
 {{- $lifecycleDeployments := .Values.appLifecycle.deployments | default dict }}
+{{- $licenceReporting := include "gentian-os.licenceReporting" . }}
 {{- $usage := .Values.usage | default dict }}
 {{- $usageSampler := $usage.sampler | default dict }}
 {{- $metricsServer := $usage.metricsServer | default dict }}
@@ -334,6 +335,18 @@ spec:
               value: {{ .Values.commerce.meteringInterval | quote }}
             {{- end }}
             {{- end }}
+            {{- if include "gentian-os.licenceReporting" . }}
+            # The licence report: on, and where it goes. Absent, the operator
+            # sends nothing and starts no timer. The signing key is a file,
+            # mounted below, so that it is found without a restart once the
+            # Secret exists.
+            - name: LICENCE_REPORT_ENABLED
+              value: "true"
+            - name: LICENCE_REPORT_URL
+              value: {{ .Values.licenceReport.url | quote }}
+            - name: LICENCE_REPORT_KEY_FILE
+              value: /etc/gentian/licence-report/{{ .Values.licenceReport.signingKey.property }}
+            {{- end }}
             {{- with .Values.kernelServices.smtpHost }}
             - name: MAIL_SMTP_HOST
               value: {{ . | quote }}
@@ -436,8 +449,13 @@ spec:
             {{- else }}
             {}
             {{- end }}
-          {{- if or $webhookEnabled .Values.trustAnchorSecret }}
+          {{- if or $webhookEnabled .Values.trustAnchorSecret $licenceReporting }}
           volumeMounts:
+            {{- if $licenceReporting }}
+            - name: licence-report-key
+              mountPath: /etc/gentian/licence-report
+              readOnly: true
+            {{- end }}
             {{- with .Values.trustAnchorSecret }}
             - name: kernel-trust-anchor
               mountPath: /opt/gentian-trust-anchor
@@ -461,8 +479,18 @@ spec:
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- if or $webhookEnabled .Values.trustAnchorSecret }}
+      {{- if or $webhookEnabled .Values.trustAnchorSecret $licenceReporting }}
       volumes:
+        {{- if $licenceReporting }}
+        # Optional: the pod starts while the vault path or the Secret is still
+        # missing, and the operator then records that it has no key instead
+        # of sending anything unsigned.
+        - name: licence-report-key
+          secret:
+            secretName: {{ .Values.licenceReport.signingKey.secretName | quote }}
+            optional: true
+            defaultMode: 0440
+        {{- end }}
         {{- with .Values.trustAnchorSecret }}
         - name: kernel-trust-anchor
           secret:

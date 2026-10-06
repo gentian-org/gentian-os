@@ -129,6 +129,10 @@ spec:
             # The cluster's id: the object cluster relations are asked about.
             - name: GENTIAN_DEPLOYMENTS_CLUSTER_ID
               value: {{ $deployments.cluster | default "" | quote }}
+            # Whether this cluster reports what it runs. The App Store is
+            # offered only where it does; the tiles answer says which.
+            - name: USHER_LICENCE_REPORT_ENABLED
+              value: {{ include "gentian-os.licenceReporting" . | default "false" | quote }}
             {{- if $readToken }}
             # The operator's listener, for reads of live state, and where the
             # reader's token is mounted.

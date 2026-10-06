@@ -93,6 +93,7 @@ func TestEachReadAsksItsRelationOnItsObject(t *testing.T) {
 		{"/v1/clusters/demo/backup-schedules", "can_audit", "cluster:demo", "/v1/backup-schedules"},
 		{"/v1/clusters/demo/platform-security", "can_audit", "cluster:demo", "/v1/platform-security"},
 		{"/v1/clusters/demo/customizations", "can_audit", "cluster:demo", "/v1/customizations"},
+		{"/v1/clusters/demo/licence-report", "can_audit", "cluster:demo", "/v1/licence-report"},
 	} {
 		t.Run(c.path, func(t *testing.T) {
 			op := &fakeOperator{}
@@ -259,5 +260,26 @@ func TestTheUsherHasNoCommandAndNoBundle(t *testing.T) {
 	bare := New(Config{Authn: fakeAuthn{"ada": "ada"}, Authz: &fakeStore{held: map[string]bool{"user:ada can_view tenant:acme": true}}})
 	if code, _ := ask(t, bare, "/v1/tenants/acme/backups", "ada"); code != http.StatusNotFound {
 		t.Fatalf("live state without an operator: %d", code)
+	}
+}
+
+// The last licence report is the operator's record, passed through as it
+// came: the body exactly as it was sent, or the plain statement that this
+// cluster does not report.
+func TestTheLicenceReportIsTheOperatorsRecord(t *testing.T) {
+	for _, record := range []string{
+		`{"enabled":false}`,
+		`{"enabled":true,"url":"https://reports.example/v1","attempt":{"at":"2026-01-02T03:04:05Z","outcome":"accepted","httpStatus":202},` +
+			`"report":{"sequence":7,"body":"{\"version\":1}","signature":"ed25519=c2ln","keyId":"0011223344556677"}}`,
+	} {
+		op := &fakeOperator{status: http.StatusOK, body: record}
+		s, _ := stateServer(op, "user:aud can_audit cluster:demo")
+		req := httptest.NewRequest(http.MethodGet, "/v1/clusters/demo/licence-report", nil)
+		req.Header.Set("Authorization", "Bearer aud")
+		rec := httptest.NewRecorder()
+		s.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK || rec.Body.String() != record {
+			t.Fatalf("answer = %d %s, want the record as the operator gave it", rec.Code, rec.Body.String())
+		}
 	}
 }

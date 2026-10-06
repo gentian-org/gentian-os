@@ -22,6 +22,8 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	"github.com/gentian-org/gentian-os/internal/licencereport"
 )
 
 // What a tenant is meant to have is declared in git by the director. The
@@ -194,5 +196,36 @@ func TestTheReadersTokenIsMintedOnceAndKept(t *testing.T) {
 	filled, err := ensureReadToken(ctx, c, c, "kernel-edge", "empty")
 	if err != nil || filled == "" || filled == first {
 		t.Fatalf("an empty Secret was not given a token of its own: %q, %v", filled, err)
+	}
+}
+
+// The last licence report is read with the reader's token, and a cluster
+// that does not report says exactly that.
+func TestTheReaderIsToldWhetherTheClusterReports(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).Build()
+	h := &HTTPServer{Token: "director", Service: &Service{client: c, opts: Options{OperatorNamespace: "kernel-control"}}}
+	h.SetReadToken("reader")
+
+	ask := func() (int, string) {
+		r := httptest.NewRequest("GET", "/v1/licence-report", nil)
+		r.Header.Set("Authorization", "Bearer reader")
+		w := httptest.NewRecorder()
+		h.routes().ServeHTTP(w, r)
+		return w.Code, strings.TrimSpace(w.Body.String())
+	}
+	if code, body := ask(); code != http.StatusOK || body != `{"enabled":false}` {
+		t.Fatalf("reporting off: %d %s", code, body)
+	}
+
+	h.Service.opts.LicenceReport = licencereport.Settings{Enabled: true, URL: "https://reports.example/v1"}
+	if code, body := ask(); code != http.StatusOK || body != `{"enabled":true,"url":"https://reports.example/v1"}` {
+		t.Fatalf("reporting on, nothing sent yet: %d %s", code, body)
+	}
+	if got := answer(h.routes(), "GET", "/v1/licence-report", ""); got != http.StatusUnauthorized {
+		t.Fatalf("no token: %d", got)
 	}
 }
