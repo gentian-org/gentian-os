@@ -463,6 +463,10 @@ func (g *GitOps) Uninstall(ctx context.Context, tenant, profile string, meta Met
 	})
 }
 
+// emptyAppsList is the tenant's app list written in flow form with nothing in
+// it, as a new tenant's manifest has it.
+var emptyAppsList = regexp.MustCompile(`^  apps:\s*\[\s*\]\s*$`)
+
 func insertAppProfile(text, profile, digest string) (string, bool) {
 	entry := []string{"  - profile: " + profile}
 	if digest != "" {
@@ -470,6 +474,14 @@ func insertAppProfile(text, profile, digest string) (string, bool) {
 	}
 	lines := strings.Split(text, "\n")
 	for i, line := range lines {
+		// A tenant is written with an empty list, `apps: []`, and that line
+		// is the head of the list as much as the block form is. Appending a
+		// second `apps:` beside it is a duplicate key, which no tool that
+		// builds the tenant will read.
+		if emptyAppsList.MatchString(line) {
+			lines[i] = "  apps:"
+			line = lines[i]
+		}
 		if line == "  apps:" {
 			out := append([]string{}, lines[:i+1]...)
 			out = append(out, entry...)
