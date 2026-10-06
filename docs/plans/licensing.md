@@ -1,4 +1,4 @@
-# Gentian OS Licensing Proposal
+# Gentian OS Licensing
 
 ## Objective
 
@@ -52,11 +52,12 @@ schedules, remote destinations, retention, recovery on a click, converters
 from other workspace products — is an add-on that calls those functions. A
 tenant can always leave without it.
 
-**Today's state.** The repository's `LICENSE` file is AGPL-3.0 and its Go
-source headers say Apache-2.0; the app template is Apache-2.0; the desktop
-and the Admin Console are moving to MPL 2.0. Adopting this proposal changes
-the core to MPL 2.0, which needs the agreement of everyone who has
-contributed to it.
+**Where this stands.** Adopted for this repository: the core is MPL 2.0,
+`api/` is Apache 2.0, and [LICENSING.md](../../LICENSING.md) is the map. The
+desktop and the Admin Console are MPL 2.0 with their design system and
+console kit under Apache 2.0, and the app template is Apache 2.0. Still open
+are the items under Open Decisions, and the conformance suite, which does not
+exist yet.
 
 ## Excluded Licenses
 
@@ -151,6 +152,5 @@ files there are published.
 
 | Decision | Options | Trade-off |
 |---|---|---|
-| Core license | MPL 2.0 / Apache 2.0 | Visible modifications vs. maximum acceptance |
 | Default object store | Replace MinIO / make it an install-time choice | One less service to choose vs. a default install free of AGPLv3 |
 | Conformance scope | Minimal API set / APIs plus data formats | Ease of certification vs. strength of the portability guarantee |

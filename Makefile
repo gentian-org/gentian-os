@@ -8,7 +8,7 @@ CONTROLLER_GEN ?= controller-gen
 KUBECONFORM ?= kubeconform
 
 CRD_OPTIONS ?= crd
-BOILERPLATE := hack/boilerplate.go.txt
+BOILERPLATE := api/hack/boilerplate.go.txt
 
 IMG ?= ghcr.io/gentian-org/gentian-os:latest
 
@@ -136,7 +136,9 @@ verify: verify-gen lint validate-steps test test-unit
 
 ## Run golangci-lint (install from https://golangci-lint.run/usage/install/)
 lint-go:
-	golangci-lint run ./... ./api/...
+	golangci-lint run ./...
+	@# The API module carries its own license header and its own config for it.
+	cd api && golangci-lint run ./...
 
 ## Run yamllint over the repo, as .github/workflows/ci.yaml does
 lint-yaml:
