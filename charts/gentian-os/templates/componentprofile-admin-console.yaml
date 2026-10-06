@@ -45,6 +45,9 @@ spec:
         # Where a person's own credential writes go. Naming it is also what
         # opens this component's way to the control namespace.
         custodianUrlKey: custodian.url
+        # Where the people screens go: inviting somebody, their groups, the
+        # realm's password policy. The paths are the ones the director served.
+        registrarUrlKey: registrar.url
         clusterKey: director.cluster
         tenantKey: platform.tenant
         kernelDomainKey: platform.kernelDomain

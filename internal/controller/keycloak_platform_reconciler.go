@@ -58,12 +58,12 @@ func (r *KeycloakPlatformReconciler) Reconcile(ctx context.Context, _ reconcile.
 		return reconcile.Result{RequeueAfter: 30 * time.Second}, err
 	}
 
-	// The director's per-realm credentials. Here rather than in the tenant
+	// The registrar's per-realm credentials. Here rather than in the tenant
 	// reconciler because the set is per REALM and several tenants may share
 	// one, and because the kernel realm needs a credential before any tenant
 	// exists -- this loop is the only thing that walks every realm.
-	if err := r.ensureDirectorRealmCredentials(ctx); err != nil {
-		logger.Error(err, "director realm credentials failed")
+	if err := r.ensureRegistrarRealmCredentials(ctx); err != nil {
+		logger.Error(err, "registrar realm credentials failed")
 		return reconcile.Result{RequeueAfter: 30 * time.Second}, err
 	}
 

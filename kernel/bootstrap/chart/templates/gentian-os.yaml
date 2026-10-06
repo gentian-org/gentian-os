@@ -155,6 +155,12 @@ spec:
             key: keys
         director:
           enabled: true
+        # What keeps the list of people, at Keycloak (§3.10). The director
+        # served those routes and held the credential for them; it does
+        # neither now, so a cluster with a director and no registrar has no
+        # people screens.
+        registrar:
+          enabled: true
         # The waiver allowlist is the director's to write, into the claims,
         # where the console's changes to it are commits. The chart would
         # otherwise create a second copy of the same object from its own

@@ -618,6 +618,17 @@ type PlatformValueMapping struct {
 	// exactly as it does with the director.
 	// +optional
 	CustodianURLKey string `json:"custodianUrlKey,omitempty"`
+
+	// RegistrarURLKey receives the registrar's in-cluster URL: where a
+	// console relays, with the person's own token, the managing of a
+	// tenant's people and groups. Like the two above, naming it is what
+	// opens the component's egress to the control namespace.
+	//
+	// The registrar serves the paths the director served for people, so a
+	// component that called the director for them changes the address and
+	// nothing else.
+	// +optional
+	RegistrarURLKey string `json:"registrarUrlKey,omitempty"`
 	// ClusterKey receives the id the director knows this cluster by.
 	// +optional
 	ClusterKey string `json:"clusterKey,omitempty"`

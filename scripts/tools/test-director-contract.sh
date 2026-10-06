@@ -29,14 +29,14 @@ for _ in $(seq 1 60); do
 done
 curl -fsS "${URL}/healthz" >/dev/null || { echo "FAIL — OpenFGA did not become healthy." >&2; docker logs "${NAME}" | tail -20 >&2; exit 1; }
 
-echo "== director contract tests, decisions by ${OPENFGA_IMAGE}"
+echo "== director and registrar contract tests, decisions by ${OPENFGA_IMAGE}"
 if command -v go >/dev/null 2>&1; then
-  (cd "${ROOT}" && DIRECTOR_TEST_OPENFGA_URL="${URL}" go test -count=1 ./internal/director/...)
+  (cd "${ROOT}" && DIRECTOR_TEST_OPENFGA_URL="${URL}" go test -count=1 ./internal/director/... ./internal/registrar/...)
 else
   docker run --rm --network host \
     -v "${ROOT}:/src" -w /src \
     -v "${GOMODCACHE_DIR:-director-contract-gomod}:/go/pkg/mod" \
     -v "${GOCACHE_DIR:-director-contract-gocache}:/root/.cache/go-build" \
     -e GOFLAGS=-buildvcs=false -e DIRECTOR_TEST_OPENFGA_URL="${URL}" \
-    "${GO_IMAGE}" go test -count=1 ./internal/director/...
+    "${GO_IMAGE}" go test -count=1 ./internal/director/... ./internal/registrar/...
 fi

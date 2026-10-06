@@ -595,7 +595,7 @@ func (c *Client) DeleteGroup(ctx context.Context, r Realm, path string) error {
 		return err
 	}
 	if !groups[0].Custom {
-		return fmt.Errorf("%w: %q", ErrNotCustom, groups[0].Path)
+		return c.notCustom(ctx, groups[0].Path)
 	}
 	return c.call(ctx, r, http.MethodDelete, "/groups/"+url.PathEscape(groups[0].ID), nil, nil, nil)
 }
@@ -765,7 +765,7 @@ func (c *Client) RenameGroup(ctx context.Context, r Realm, path, newPath string)
 		return Group{}, err
 	}
 	if !groups[0].Custom {
-		return Group{}, fmt.Errorf("%w: %q", ErrNotCustom, groups[0].Path)
+		return Group{}, c.notCustom(ctx, groups[0].Path)
 	}
 	var cur map[string]any
 	if err := c.call(ctx, r, http.MethodGet, "/groups/"+url.PathEscape(groups[0].ID), nil, nil, &cur); err != nil {
@@ -828,7 +828,7 @@ func (c *Client) PasswordPolicy(ctx context.Context, r Realm) (string, error) {
 // A partial representation, not a read-modify-write of the whole realm.
 // Keycloak applies the fields a representation names and leaves the rest, so
 // sending the whole realm back would make every unrelated setting this
-// director happens to have read a setting it now asserts -- and a field it
+// registrar happens to have read a setting it now asserts -- and a field it
 // did not understand would be rewritten with whatever it decoded.
 func (c *Client) SetPasswordPolicy(ctx context.Context, r Realm, policy string) error {
 	body := map[string]any{"realm": r.name, "passwordPolicy": policy}

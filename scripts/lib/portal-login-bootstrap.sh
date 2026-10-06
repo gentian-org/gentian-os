@@ -1820,8 +1820,7 @@ issue_platform_admin_activation() {
     # that has a password, which is how a holder who lost it gets back in.
     if [[ "${has_pw}" == "true" && "${GENTIAN_ACTIVATE_FORCE:-0}" != "1" ]]; then
         info "  ${username} is activated: sign in with the password its holder chose."
-        info "  Lost it? A new link: kubectl gentian tenants activate-admin platform,"
-        info "  or, when nobody can sign in, ./install.sh --activate-admin"
+        info "  Lost it? A new link: ./install.sh --activate-admin"
         return 0
     fi
 

@@ -182,23 +182,6 @@ director:
   committer:
     name: gentian-director
     email: director@gentian.invalid
-  # Where the director records WHO WAS ALLOWED to ask for a change to a person
-  # (S7A.17). Keycloak's own admin event says what changed; it sees only the
-  # director's service account, so it cannot say who asked or what permitted
-  # the call. The two join on a request id.
-  #
-  # A database rather than a commit, deliberately: git's append-only history is
-  # what makes it right for configuration and wrong for a record about people.
-  # retention is how long a row is kept, as a Go duration; empty means the
-  # director's own default of 400 days — long enough to answer an audit of the
-  # previous financial year.
-  #
-  # Empty secretName means no record: the director starts, warns, and keeps the
-  # log line only. Taking the console down over an audit trail is worse.
-  recordDatabase:
-    secretName: gentian-os-director-database
-    secretKey: uri
-    retention: ""
   openfgaTokenSecretRef:
     name: gentian-os-director-openfga-token
     key: token
@@ -210,6 +193,52 @@ director:
       memory: 96Mi
     limits:
       memory: 256Mi
+
+# The registrar: what keeps the list of people -- invites them, puts them in
+# groups, removes them -- at Keycloak, for the person the authorization store
+# allows. A Deployment of its own with a ServiceAccount of its own, which may
+# read the tenants and the Cluster claim and nothing else in the cluster. It
+# holds the per-realm Keycloak credential the operator hands it
+# (Secret gentian-registrar-realms), and the director holds none.
+#
+# It verifies a caller's token the way the director does and shares the
+# director's settings for that: director.audience, director.jwksBaseURL,
+# director.openfgaURL and director.openfgaTokenSecretRef.
+#
+# Off by default, like the director whose people routes it serves; the v5
+# bootstrap turns both on.
+registrar:
+  enabled: false
+  port: 9445
+  replicas: 1
+  # Where a tenant's desktop API answers, %s for the tenant: the settings
+  # templates an invitation may apply live there. Empty derives it from the
+  # desktop component's Service in the tenant's namespace.
+  desktopAPI: ""
+  # Where the registrar records WHO WAS ALLOWED to ask for a change to a person
+  # (S7A.17). Keycloak's own admin event says what changed; it sees only the
+  # registrar's service account, so it cannot say who asked or what permitted
+  # the call. The two join on a request id.
+  #
+  # A database rather than a commit, deliberately: git's append-only history is
+  # what makes it right for configuration and wrong for a record about people.
+  # retention is how long a row is kept, as a Go duration; empty means the
+  # registrar's own default of 400 days — long enough to answer an audit of the
+  # previous financial year.
+  #
+  # Empty secretName means no record: the registrar starts, warns, and keeps
+  # the log line only. Taking the people screens down over an audit trail is
+  # worse.
+  recordDatabase:
+    secretName: gentian-os-registrar-database
+    secretKey: uri
+    retention: ""
+  resources:
+    requests:
+      cpu: 20m
+      memory: 48Mi
+    limits:
+      memory: 192Mi
 
 # The desktop: the one component the OS ships itself, installed per tenant
 # from this chart by the component reconciler. Off by default; the v5

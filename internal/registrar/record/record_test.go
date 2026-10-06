@@ -18,7 +18,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gentian-org/gentian-os/internal/director/record"
+	"github.com/gentian-org/gentian-os/internal/registrar/record"
 )
 
 // A real Postgres, because the thing under test is SQL.
@@ -40,7 +40,7 @@ func postgres(t *testing.T) string {
 	}
 	name := fmt.Sprintf("gentian-record-test-%d", time.Now().UnixNano())
 	out, err := exec.Command("docker", "run", "-d", "--rm", "--name", name,
-		"-e", "POSTGRES_PASSWORD=test", "-e", "POSTGRES_DB=director",
+		"-e", "POSTGRES_PASSWORD=test", "-e", "POSTGRES_DB=registrar",
 		"-P", "postgres:16-alpine").CombinedOutput()
 	if err != nil {
 		t.Skipf("could not start postgres: %v: %s", err, out)
@@ -55,7 +55,7 @@ func postgres(t *testing.T) string {
 	if i := strings.LastIndex(hostPort, ":"); i >= 0 {
 		hostPort = hostPort[i+1:]
 	}
-	dsn := fmt.Sprintf("postgres://postgres:test@127.0.0.1:%s/director?sslmode=disable", hostPort)
+	dsn := fmt.Sprintf("postgres://postgres:test@127.0.0.1:%s/registrar?sslmode=disable", hostPort)
 
 	// Wait until a real query succeeds, not until pg_isready says yes.
 	//
@@ -68,7 +68,7 @@ func postgres(t *testing.T) string {
 	deadline := time.Now().Add(90 * time.Second)
 	for time.Now().Before(deadline) {
 		err := exec.Command("docker", "exec", name,
-			"psql", "-U", "postgres", "-d", "director", "-c", "SELECT 1").Run()
+			"psql", "-U", "postgres", "-d", "registrar", "-c", "SELECT 1").Run()
 		if err == nil {
 			return dsn
 		}
@@ -118,7 +118,7 @@ func TestTheRecordSurvivesARoundTrip(t *testing.T) {
 	}
 }
 
-// Opening twice must be safe: the director restarts, and a schema that could
+// Opening twice must be safe: the registrar restarts, and a schema that could
 // only be created once would make the second start fail.
 func TestOpeningTwiceIsSafe(t *testing.T) {
 	ctx := context.Background()
@@ -176,7 +176,7 @@ func TestPruneRemovesWhatIsPastTheHorizon(t *testing.T) {
 }
 
 // A store that was never opened is not an error at every call site. The
-// director runs without one on a cluster that has not provisioned the
+// registrar runs without one on a cluster that has not provisioned the
 // database, and an invite must not fail because the record cannot be kept.
 func TestANilStoreIsSilent(t *testing.T) {
 	var store *record.Store

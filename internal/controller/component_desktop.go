@@ -89,6 +89,7 @@ func (r *ComponentReconciler) platformValues(profile *gentianov1alpha1.Component
 		m.DirectorURLKey:  r.directorURL(),
 		m.UsherURLKey:     r.usherURL(),
 		m.CustodianURLKey: r.custodianURL(),
+		m.RegistrarURLKey: r.registrarURL(),
 		m.ClusterKey:      r.Cluster,
 		m.TenantKey:       tenant.Name,
 		m.KernelDomainKey: r.KernelDomain,
@@ -126,6 +127,12 @@ func wantsUsher(profile *gentianov1alpha1.ComponentProfile) bool {
 // that relays to either is allowed to reach it.
 func wantsCustodian(profile *gentianov1alpha1.ComponentProfile) bool {
 	return platformMapping(profile) != nil && platformMapping(profile).CustodianURLKey != ""
+}
+
+// wantsRegistrar reports the same for the registrar, which is in the control
+// namespace too.
+func wantsRegistrar(profile *gentianov1alpha1.ComponentProfile) bool {
+	return platformMapping(profile) != nil && platformMapping(profile).RegistrarURLKey != ""
 }
 
 func platformMapping(profile *gentianov1alpha1.ComponentProfile) *gentianov1alpha1.PlatformValueMapping {

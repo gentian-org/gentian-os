@@ -26,8 +26,8 @@ import (
 type fakeRealm struct {
 	mu sync.Mutex
 
-	// director is nil until it is created.
-	director *keycloakClientRecord
+	// registrar is nil until it is created.
+	registrar *keycloakClientRecord
 	// granted is the set of realm-management roles the service account holds.
 	granted map[string]bool
 	// scoped is the set the client's scope maps, i.e. what its tokens carry.
@@ -40,13 +40,15 @@ type fakeRealm struct {
 	updatedBody map[string]any
 	// noManagement makes the realm answer with no realm-management client.
 	noManagement bool
+	// retired says the realm still has the client the director used to hold.
+	retired bool
 }
 
 func newFakeRealm() *fakeRealm {
 	return &fakeRealm{granted: map[string]bool{}, scoped: map[string]bool{}}
 }
 
-// allRealmManagementRoles is what a real realm offers; the director must take
+// allRealmManagementRoles is what a real realm offers; the registrar must take
 // only its five from it.
 var allRealmManagementRoles = []string{
 	"view-users", "query-users", "query-groups", "manage-users", "manage-realm",
@@ -69,9 +71,9 @@ func (f *fakeRealm) server(t *testing.T) *httptest.Server {
 
 		case r.URL.Path == "/admin/realms/demo/clients" && r.Method == http.MethodGet:
 			switch r.URL.Query().Get("clientId") {
-			case DirectorClientID:
+			case RegistrarClientID:
 				f.mu.Lock()
-				d := f.director
+				d := f.registrar
 				f.mu.Unlock()
 				if d == nil {
 					_, _ = w.Write([]byte(`[]`))
@@ -85,6 +87,16 @@ func (f *fakeRealm) server(t *testing.T) *httptest.Server {
 				}
 				_ = json.NewEncoder(w).Encode([]keycloakClientRecord{
 					{ID: "mgmt-uuid", ClientID: "realm-management"}})
+			case RetiredDirectorClientID:
+				f.mu.Lock()
+				still := f.retired
+				f.mu.Unlock()
+				if !still {
+					_, _ = w.Write([]byte(`[]`))
+					return
+				}
+				_ = json.NewEncoder(w).Encode([]keycloakClientRecord{
+					{ID: "director-uuid", ClientID: RetiredDirectorClientID, Enabled: true}})
 			default:
 				_, _ = w.Write([]byte(`[]`))
 			}
@@ -92,27 +104,27 @@ func (f *fakeRealm) server(t *testing.T) *httptest.Server {
 		case r.URL.Path == "/admin/realms/demo/clients" && r.Method == http.MethodPost:
 			f.mu.Lock()
 			_ = json.Unmarshal(body, &f.createdBody)
-			f.director = &keycloakClientRecord{
-				ID: "director-uuid", ClientID: DirectorClientID, Enabled: true,
+			f.registrar = &keycloakClientRecord{
+				ID: "registrar-uuid", ClientID: RegistrarClientID, Enabled: true,
 				PublicClient: false, ServiceAccountsEnabled: true, StandardFlowEnabled: false,
 			}
 			f.mu.Unlock()
 			w.WriteHeader(http.StatusCreated)
 
-		case r.URL.Path == "/admin/realms/demo/clients/director-uuid" && r.Method == http.MethodPut:
+		case r.URL.Path == "/admin/realms/demo/clients/registrar-uuid" && r.Method == http.MethodPut:
 			f.mu.Lock()
 			_ = json.Unmarshal(body, &f.updatedBody)
-			if f.director != nil {
-				f.director.Enabled = true
-				f.director.PublicClient = false
-				f.director.ServiceAccountsEnabled = true
-				f.director.StandardFlowEnabled = false
+			if f.registrar != nil {
+				f.registrar.Enabled = true
+				f.registrar.PublicClient = false
+				f.registrar.ServiceAccountsEnabled = true
+				f.registrar.StandardFlowEnabled = false
 			}
 			f.mu.Unlock()
 			w.WriteHeader(http.StatusNoContent)
 
-		case r.URL.Path == "/admin/realms/demo/clients/director-uuid/service-account-user":
-			_, _ = w.Write([]byte(`{"id":"sa-uuid","username":"service-account-gentian-director-admin"}`))
+		case r.URL.Path == "/admin/realms/demo/clients/registrar-uuid/service-account-user":
+			_, _ = w.Write([]byte(`{"id":"sa-uuid","username":"service-account-gentian-registrar-admin"}`))
 
 		case r.URL.Path == "/admin/realms/demo/users/sa-uuid/role-mappings/clients/mgmt-uuid/available":
 			f.mu.Lock()
@@ -138,7 +150,7 @@ func (f *fakeRealm) server(t *testing.T) *httptest.Server {
 			f.mu.Unlock()
 			w.WriteHeader(http.StatusNoContent)
 
-		case r.URL.Path == "/admin/realms/demo/clients/director-uuid/scope-mappings/clients/mgmt-uuid/available":
+		case r.URL.Path == "/admin/realms/demo/clients/registrar-uuid/scope-mappings/clients/mgmt-uuid/available":
 			f.mu.Lock()
 			out := []keycloakRoleRecord{}
 			for _, name := range allRealmManagementRoles {
@@ -149,7 +161,7 @@ func (f *fakeRealm) server(t *testing.T) *httptest.Server {
 			f.mu.Unlock()
 			_ = json.NewEncoder(w).Encode(out)
 
-		case r.URL.Path == "/admin/realms/demo/clients/director-uuid/scope-mappings/clients/mgmt-uuid" && r.Method == http.MethodPost:
+		case r.URL.Path == "/admin/realms/demo/clients/registrar-uuid/scope-mappings/clients/mgmt-uuid" && r.Method == http.MethodPost:
 			var roles []keycloakRoleRecord
 			_ = json.Unmarshal(body, &roles)
 			f.mu.Lock()
@@ -159,12 +171,18 @@ func (f *fakeRealm) server(t *testing.T) *httptest.Server {
 			f.mu.Unlock()
 			w.WriteHeader(http.StatusNoContent)
 
-		case r.URL.Path == "/admin/realms/demo/clients/director-uuid/client-secret":
+		case r.URL.Path == "/admin/realms/demo/clients/registrar-uuid/client-secret":
 			_, _ = w.Write([]byte(`{"type":"secret","value":"s3cr3t"}`))
+
+		case r.URL.Path == "/admin/realms/demo/clients/registrar-uuid" && r.Method == http.MethodDelete:
+			f.mu.Lock()
+			f.registrar = nil
+			f.mu.Unlock()
+			w.WriteHeader(http.StatusNoContent)
 
 		case r.URL.Path == "/admin/realms/demo/clients/director-uuid" && r.Method == http.MethodDelete:
 			f.mu.Lock()
-			f.director = nil
+			f.retired = false
 			f.mu.Unlock()
 			w.WriteHeader(http.StatusNoContent)
 
@@ -199,13 +217,13 @@ func (f *fakeRealm) heldRoles() []string {
 	return out
 }
 
-func TestEnsureDirectorRealmClient_CreatesAConfidentialServiceAccount(t *testing.T) {
+func TestEnsureRegistrarRealmClient_CreatesAConfidentialServiceAccount(t *testing.T) {
 	t.Parallel()
 	f := newFakeRealm()
 	srv := f.server(t)
 	c := testAdminClient(srv, "admin", "pw")
 
-	secret, err := c.EnsureDirectorRealmClient(context.Background(), "demo")
+	secret, err := c.EnsureRegistrarRealmClient(context.Background(), "demo")
 	if err != nil {
 		t.Fatalf("ensure: %v", err)
 	}
@@ -235,23 +253,23 @@ func TestEnsureDirectorRealmClient_CreatesAConfidentialServiceAccount(t *testing
 	}
 }
 
-// The list of roles IS the security statement: everything the director can do
+// The list of roles IS the security statement: everything the registrar can do
 // in a realm is on it, so anything else turning up is a change nobody made
 // deliberately.
-func TestEnsureDirectorRealmClient_TakesOnlyItsOwnRoles(t *testing.T) {
+func TestEnsureRegistrarRealmClient_TakesOnlyItsOwnRoles(t *testing.T) {
 	t.Parallel()
 	f := newFakeRealm()
 	srv := f.server(t)
 	c := testAdminClient(srv, "admin", "pw")
 
-	if _, err := c.EnsureDirectorRealmClient(context.Background(), "demo"); err != nil {
+	if _, err := c.EnsureRegistrarRealmClient(context.Background(), "demo"); err != nil {
 		t.Fatal(err)
 	}
 	held := map[string]bool{}
 	for _, r := range f.heldRoles() {
 		held[r] = true
 	}
-	for _, want := range directorRealmRoles {
+	for _, want := range registrarRealmRoles {
 		if !held[want] {
 			t.Errorf("role %q was not granted", want)
 		}
@@ -263,27 +281,27 @@ func TestEnsureDirectorRealmClient_TakesOnlyItsOwnRoles(t *testing.T) {
 	// realm-admin is the one that would make the whole design pointless.
 	for _, r := range f.heldRoles() {
 		if r == "realm-admin" || r == "impersonation" {
-			t.Fatalf("the director holds %q", r)
+			t.Fatalf("the registrar holds %q", r)
 		}
 	}
 }
 
 // A second pass must not re-create, re-grant or rotate anything. This is what
 // a reconciler does on every loop.
-func TestEnsureDirectorRealmClient_IsIdempotent(t *testing.T) {
+func TestEnsureRegistrarRealmClient_IsIdempotent(t *testing.T) {
 	t.Parallel()
 	f := newFakeRealm()
 	srv := f.server(t)
 	c := testAdminClient(srv, "admin", "pw")
 
-	if _, err := c.EnsureDirectorRealmClient(context.Background(), "demo"); err != nil {
+	if _, err := c.EnsureRegistrarRealmClient(context.Background(), "demo"); err != nil {
 		t.Fatal(err)
 	}
 	f.mu.Lock()
 	f.calls = nil
 	f.mu.Unlock()
 
-	secret, err := c.EnsureDirectorRealmClient(context.Background(), "demo")
+	secret, err := c.EnsureRegistrarRealmClient(context.Background(), "demo")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -296,10 +314,10 @@ func TestEnsureDirectorRealmClient_IsIdempotent(t *testing.T) {
 	if f.did(http.MethodPost, "/admin/realms/demo/users/sa-uuid/role-mappings/clients/mgmt-uuid") {
 		t.Error("roles were granted again when they were already held")
 	}
-	if f.did(http.MethodPut, "/admin/realms/demo/clients/director-uuid") {
+	if f.did(http.MethodPut, "/admin/realms/demo/clients/registrar-uuid") {
 		t.Error("a client already in the right shape was rewritten")
 	}
-	if f.did(http.MethodPost, "/admin/realms/demo/clients/director-uuid/scope-mappings/clients/mgmt-uuid") {
+	if f.did(http.MethodPost, "/admin/realms/demo/clients/registrar-uuid/scope-mappings/clients/mgmt-uuid") {
 		t.Error("the scope was mapped again when it already carried the roles")
 	}
 }
@@ -309,25 +327,25 @@ func TestEnsureDirectorRealmClient_IsIdempotent(t *testing.T) {
 // account held all five roles and Keycloak answered every People call 403.
 // The scope must carry exactly the granted five -- realm-admin in it would
 // undo the point of the narrow scope.
-func TestEnsureDirectorRealmClient_TokensCarryTheGrantedRoles(t *testing.T) {
+func TestEnsureRegistrarRealmClient_TokensCarryTheGrantedRoles(t *testing.T) {
 	t.Parallel()
 	f := newFakeRealm()
 	srv := f.server(t)
 	c := testAdminClient(srv, "admin", "pw")
 
-	if _, err := c.EnsureDirectorRealmClient(context.Background(), "demo"); err != nil {
+	if _, err := c.EnsureRegistrarRealmClient(context.Background(), "demo"); err != nil {
 		t.Fatal(err)
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	for _, want := range directorRealmRoles {
+	for _, want := range registrarRealmRoles {
 		if !f.scoped[want] {
 			t.Errorf("role %q is held but not in the client's scope: its tokens will not carry it", want)
 		}
 	}
 	for name := range f.scoped {
 		wanted := false
-		for _, w := range directorRealmRoles {
+		for _, w := range registrarRealmRoles {
 			wanted = wanted || w == name
 		}
 		if !wanted {
@@ -338,20 +356,20 @@ func TestEnsureDirectorRealmClient_TokensCarryTheGrantedRoles(t *testing.T) {
 
 // A client somebody turned into a public one is a credential that silently
 // stopped being one. The flags are re-asserted, not assumed.
-func TestEnsureDirectorRealmClient_RepairsAClientThatWasChanged(t *testing.T) {
+func TestEnsureRegistrarRealmClient_RepairsAClientThatWasChanged(t *testing.T) {
 	t.Parallel()
 	f := newFakeRealm()
-	f.director = &keycloakClientRecord{
-		ID: "director-uuid", ClientID: DirectorClientID, Enabled: true,
+	f.registrar = &keycloakClientRecord{
+		ID: "registrar-uuid", ClientID: RegistrarClientID, Enabled: true,
 		PublicClient: true, ServiceAccountsEnabled: false, StandardFlowEnabled: true,
 	}
 	srv := f.server(t)
 	c := testAdminClient(srv, "admin", "pw")
 
-	if _, err := c.EnsureDirectorRealmClient(context.Background(), "demo"); err != nil {
+	if _, err := c.EnsureRegistrarRealmClient(context.Background(), "demo"); err != nil {
 		t.Fatal(err)
 	}
-	if !f.did(http.MethodPut, "/admin/realms/demo/clients/director-uuid") {
+	if !f.did(http.MethodPut, "/admin/realms/demo/clients/registrar-uuid") {
 		t.Fatal("the client was left public")
 	}
 	f.mu.Lock()
@@ -365,26 +383,26 @@ func TestEnsureDirectorRealmClient_RepairsAClientThatWasChanged(t *testing.T) {
 // A realm with no realm-management client cannot grant anything, and the
 // answer has to name the realm: a credential that exists and can do nothing is
 // harder to diagnose than one that was never made.
-func TestEnsureDirectorRealmClient_SaysWhichRealmHasNoManagementClient(t *testing.T) {
+func TestEnsureRegistrarRealmClient_SaysWhichRealmHasNoManagementClient(t *testing.T) {
 	t.Parallel()
 	f := newFakeRealm()
 	f.noManagement = true
 	srv := f.server(t)
 	c := testAdminClient(srv, "admin", "pw")
 
-	_, err := c.EnsureDirectorRealmClient(context.Background(), "demo")
+	_, err := c.EnsureRegistrarRealmClient(context.Background(), "demo")
 	if err == nil || !strings.Contains(err.Error(), "demo") {
 		t.Fatalf("got %v, want an error naming the realm", err)
 	}
 }
 
-func TestEnsureDirectorRealmClient_RefusesARealmNameThatIsAPath(t *testing.T) {
+func TestEnsureRegistrarRealmClient_RefusesARealmNameThatIsAPath(t *testing.T) {
 	t.Parallel()
 	f := newFakeRealm()
 	srv := f.server(t)
 	c := testAdminClient(srv, "admin", "pw")
 
-	if _, err := c.EnsureDirectorRealmClient(context.Background(), "../master"); err == nil {
+	if _, err := c.EnsureRegistrarRealmClient(context.Background(), "../master"); err == nil {
 		t.Fatal("expected a refusal")
 	}
 	f.mu.Lock()
@@ -394,24 +412,52 @@ func TestEnsureDirectorRealmClient_RefusesARealmNameThatIsAPath(t *testing.T) {
 	}
 }
 
-func TestDeleteDirectorRealmClient(t *testing.T) {
+func TestDeleteRegistrarRealmClient(t *testing.T) {
 	t.Parallel()
 	f := newFakeRealm()
 	srv := f.server(t)
 	c := testAdminClient(srv, "admin", "pw")
 
-	if _, err := c.EnsureDirectorRealmClient(context.Background(), "demo"); err != nil {
+	if _, err := c.EnsureRegistrarRealmClient(context.Background(), "demo"); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.DeleteDirectorRealmClient(context.Background(), "demo"); err != nil {
+	if err := c.DeleteRegistrarRealmClient(context.Background(), "demo"); err != nil {
 		t.Fatal(err)
 	}
-	if !f.did(http.MethodDelete, "/admin/realms/demo/clients/director-uuid") {
+	if !f.did(http.MethodDelete, "/admin/realms/demo/clients/registrar-uuid") {
 		t.Fatal("the client was not deleted")
 	}
 	// Deleting what is already gone is not an error: a retired tenant may be
 	// reconciled more than once.
-	if err := c.DeleteDirectorRealmClient(context.Background(), "demo"); err != nil {
+	if err := c.DeleteRegistrarRealmClient(context.Background(), "demo"); err != nil {
 		t.Fatalf("second delete: %v", err)
+	}
+}
+
+// The credential the director held is removed from a realm, and only that
+// one: the registrar's own client is a different client and stays.
+func TestTheDirectorsFormerClientIsRetired(t *testing.T) {
+	t.Parallel()
+	f := newFakeRealm()
+	f.retired = true
+	srv := f.server(t)
+	c := testAdminClient(srv, "admin", "pw")
+
+	if _, err := c.EnsureRegistrarRealmClient(context.Background(), "demo"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.DeleteRetiredDirectorRealmClient(context.Background(), "demo"); err != nil {
+		t.Fatal(err)
+	}
+	if !f.did(http.MethodDelete, "/admin/realms/demo/clients/director-uuid") {
+		t.Fatal("the director's former client was not deleted")
+	}
+	if f.did(http.MethodDelete, "/admin/realms/demo/clients/registrar-uuid") {
+		t.Fatal("the registrar's own client was deleted")
+	}
+
+	// Gone already, or never there: nothing to do, and not an error.
+	if err := c.DeleteRetiredDirectorRealmClient(context.Background(), "demo"); err != nil {
+		t.Fatalf("a realm without the former client: %v", err)
 	}
 }

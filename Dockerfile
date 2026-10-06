@@ -40,6 +40,11 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -o usher ./cmd/usher
 # secret is not shared with anything that can read one.
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -o custodian ./cmd/custodian
 
+# The registrar: what keeps the list of people at Keycloak. Its own process
+# and ServiceAccount, so the credential that manages who may sign in is not
+# held by the process that pushes to git.
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -o registrar ./cmd/registrar
+
 # ── Runtime stage ──────────────────────────────────────────────────────────────
 FROM debian:bookworm-slim
 
@@ -56,6 +61,7 @@ COPY --from=builder /workspace/director /director
 COPY --from=builder /workspace/bouncer /bouncer
 COPY --from=builder /workspace/usher /usher
 COPY --from=builder /workspace/custodian /custodian
+COPY --from=builder /workspace/registrar /registrar
 
 USER 65532:65532
 

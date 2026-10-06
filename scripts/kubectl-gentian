@@ -3,10 +3,12 @@
 #
 # A client of the director, like the admin console: every command signs in as
 # the person running it and asks the director, which checks that person
-# against the authorization graph, commits to git or acts on the identity
-# provider in their name, and records who asked. Nothing here writes to git,
-# reads OpenBao or applies manifests itself -- a tool that did would be a way
-# around every check the director makes.
+# against the authorization graph, commits to git in their name, and records
+# who asked. The one command about a person -- activating a tenant's
+# administrator -- asks the registrar, which makes the same check and acts on
+# the identity provider. Nothing here writes to git, reads OpenBao or applies
+# manifests itself -- a tool that did would be a way around every check those
+# two make.
 #
 # Usage:
 #   kubectl gentian login                       sign in (a code to confirm in a browser)
@@ -34,7 +36,8 @@
 # Which cluster is the current kubectl context's. The director is found there
 # (the Deployment labelled app.kubernetes.io/component=director) and reached
 # through a port-forward for the length of one command; its own settings say
-# which identity provider to sign in with and which cluster it serves.
+# which identity provider to sign in with and which cluster it serves. The
+# registrar is found the same way, beside it.
 
 set -euo pipefail
 
@@ -226,29 +229,74 @@ _disconnect() {
     if [[ -n "${_PF_PID}" ]]; then
         kill "${_PF_PID}" 2>/dev/null || true
     fi
+    if [[ -n "${_REG_PF_PID}" ]]; then
+        kill "${_REG_PF_PID}" 2>/dev/null || true
+    fi
+}
+
+# The registrar: the Deployment labelled app.kubernetes.io/component=registrar
+# in the director's namespace, on the port its Service names.
+_REG_PF_PID=""
+_REG_BASE=""
+
+_connect_registrar() {
+    [[ -n "${_REG_BASE}" ]] && return 0
+    _discover
+    local deploy target port
+    deploy="$(kubectl get deploy -n "${_DIR_NS}" -l app.kubernetes.io/component=registrar \
+        -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
+    [[ -n "${deploy}" ]] || die "no registrar in ${_DIR_NS}: people are managed there, and this cluster does not run one"
+    target="$(kubectl get deploy "${deploy}" -n "${_DIR_NS}" \
+        -o jsonpath='{.spec.template.spec.containers[0].ports[0].containerPort}' 2>/dev/null || true)"
+    [[ -n "${target}" ]] || die "the registrar in ${_DIR_NS} names no port"
+    port="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')"
+    kubectl port-forward -n "${_DIR_NS}" "deploy/${deploy}" "${port}:${target}" >/dev/null 2>&1 &
+    _REG_PF_PID=$!
+    trap '_disconnect' EXIT
+    local _i
+    for _i in $(seq 1 30); do
+        if curl -s -o /dev/null --max-time 1 "http://127.0.0.1:${port}/healthz"; then
+            _REG_BASE="http://127.0.0.1:${port}"
+            return 0
+        fi
+        kill -0 "${_REG_PF_PID}" 2>/dev/null || break
+        sleep 0.5
+    done
+    die "the registrar in ${_DIR_NS} could not be reached"
 }
 
 # _call <method> <path> [json-body] — the director's answer on stdout; a
 # refusal is printed as the director worded it and ends the command.
 _call() {
-    local method="$1" path="$2" body="${3:-}" token out status
+    _connect
+    _ask director "${_DIR_BASE}" "$@"
+}
+
+# _call_registrar <method> <path> [json-body] — the same, of the registrar.
+_call_registrar() {
+    _connect_registrar
+    _ask registrar "${_REG_BASE}" "$@"
+}
+
+# _ask <who> <base-url> <method> <path> [json-body]
+_ask() {
+    local who="$1" base="$2" method="$3" path="$4" body="${5:-}" token out status
     need curl jq python3
     token="$(_access_token)"
-    _connect
     out="$(mktemp)"
     if [[ -n "${body}" ]]; then
         status="$(curl -sS -o "${out}" -w '%{http_code}' -X "${method}" \
             -H "Authorization: Bearer ${token}" -H "Content-Type: application/json" \
-            -d "${body}" "${_DIR_BASE}${path}")"
+            -d "${body}" "${base}${path}")"
     else
         status="$(curl -sS -o "${out}" -w '%{http_code}' -X "${method}" \
-            -H "Authorization: Bearer ${token}" "${_DIR_BASE}${path}")"
+            -H "Authorization: Bearer ${token}" "${base}${path}")"
     fi
     if [[ "${status}" -ge 300 ]]; then
         local msg
         msg="$(jq -r '.error // .message // empty' "${out}" 2>/dev/null || true)"
         rm -f "${out}"
-        die "the director answered ${status}: ${msg:-no detail}"
+        die "the ${who} answered ${status}: ${msg:-no detail}"
     fi
     cat "${out}"
     rm -f "${out}"
@@ -303,19 +351,31 @@ cmd_tenants_activate_admin() {
     done
     [[ -n "${name}" ]] || die "usage: kubectl gentian tenants activate-admin <name> [--recovery-email <address>]"
     _discover
+    # Declared at all? The director knows, from git. The registrar reads the
+    # cluster, where a tenant just created has not arrived yet -- so without
+    # this a mistyped name would be waited for like a new tenant.
+    _call GET "/v1/clusters/${_CLUSTER}/tenants" |
+        jq -e --arg n "${name}" '.tenants[]? | select(.name == $n)' >/dev/null ||
+        die "no tenant named ${name}"
     local body answer deadline
     body="$(jq -n --arg e "${email}" 'if $e == "" then {} else {recoveryEmail:$e} end')"
     # A tenant just created is still being provisioned; its realm and account
     # appear within minutes. Waited for here rather than reported as a failure.
     deadline=$(( SECONDS + wait_secs ))
     while :; do
-        if answer="$( (_call POST "/v1/clusters/${_CLUSTER}/tenants/${name}/actions/activate-admin" "${body}") 2>&1)"; then
+        if answer="$( (_call_registrar POST "/v1/clusters/${_CLUSTER}/tenants/${name}/actions/activate-admin" "${body}") 2>&1)"; then
             break
         fi
-        if [[ "${answer}" == *"still being provisioned"* ]] && (( SECONDS < deadline )); then
+        if [[ "${answer}" == *"still being provisioned"* || "${answer}" == *"tenant not found"* ]] && (( SECONDS < deadline )); then
             echo "  waiting for ${name} to be provisioned…" >&2
             sleep 15
             continue
+        fi
+        # The platform's own administrators are not the registrar's to change:
+        # it refuses a link for one of them as it refuses everything else
+        # about them. That account is handed over by the installer.
+        if [[ "${answer}" == *"administers the platform"* ]]; then
+            die "${answer#error: } For the cluster administrator's account, run ./install.sh --activate-admin on the install host."
         fi
         die "${answer#error: }"
     done

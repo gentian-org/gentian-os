@@ -12,6 +12,8 @@ SPDX-License-Identifier: MPL-2.0
 // It authenticates every request against Keycloak, asks OpenFGA whether the
 // caller may make the change, and commits it as the caller. It holds the git
 // push credential and no cluster credential; the operator holds the reverse.
+// It holds no Keycloak credential either: people are the registrar's
+// (cmd/registrar).
 package main
 
 import (
@@ -30,9 +32,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/director/authz"
 	"github.com/gentian-org/gentian-os/internal/director/catalogue"
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
-	"github.com/gentian-org/gentian-os/internal/director/identity"
 	"github.com/gentian-org/gentian-os/internal/director/lifecycle"
-	"github.com/gentian-org/gentian-os/internal/director/record"
 )
 
 func main() {
@@ -201,72 +201,15 @@ func run(log *slog.Logger) error {
 		}
 		lc = lifecycle.New(u, token)
 	}
-	// The same OpenFGA client answers both questions, and the two are
-	// separate interfaces on purpose: Check is the hot path, ViewOf is a
-	// How this director speaks for Keycloak (S7A.17).
+	// No Keycloak credential, and no record of identity actions.
 	//
-	// One credential per realm, handed over by the operator as a mounted
-	// Secret with a key per realm. The director holds no Kubernetes identity
-	// and does not go and look for them, the same division as the tile
-	// catalogue above: the operator holds the administrative credential and
-	// gives this service exactly what it may use.
-	//
-	// A cluster whose operator has not written the Secret yet has no realms
-	// here, and the people and realm-settings routes are simply not
-	// registered -- which a console shows as those screens being absent
-	// rather than as screens that should have worked.
-	var ident api.Identity
-	realmDir := envOr("DIRECTOR_REALM_CREDENTIALS_PATH", "/etc/gentian/realms")
-	idClient, err := identity.New(identity.Config{
-		BaseURL: envOr("DIRECTOR_IDENTITY_BASE_URL", issuerBase),
-		Source:  identity.NewDirectorySource(realmDir, envOr("DIRECTOR_IDENTITY_CLIENT_ID", identity.ClientID)),
-		Logger:  log,
-	})
-	if err != nil {
-		return fmt.Errorf("identity: %w", err)
-	}
-	// Registered on CONFIGURATION, not on contents.
-	//
-	// Gating this on "are there credentials right now" was wrong and would
-	// have failed exactly the case it has to work for: on a first install the
-	// operator writes the Secret minutes after this process starts, and a
-	// director that decided at boot would never serve the screens no matter
-	// how many realms arrived. The source re-reads; what a realm without a
-	// credential gets is a 503 naming it, from the route.
-	//
-	// DIRECTOR_REALM_CREDENTIALS_PATH set to the empty string is how a
-	// deployment says this director speaks for nothing at all, and then the
-	// routes genuinely do not exist.
-	if realmDir == "" {
-		log.Warn("this director speaks for no realm: people and realm settings are not served here",
-			"setting", "DIRECTOR_REALM_CREDENTIALS_PATH")
-	} else {
-		ident = idClient
-		if realms := idClient.Realms(); len(realms) == 0 {
-			log.Info("no realm credentials yet; the operator writes one per realm",
-				"path", realmDir)
-		} else {
-			log.Info("speaking for realms", "realms", realms, "path", realmDir)
-		}
-	}
-
-	// person reviewing who holds what. Neither can write through the API.
-	// The durable record of who was allowed to ask for a change to a person
-	// (S7A.17). Optional on purpose: a cluster whose director database has
-	// not been provisioned yet keeps the log line and starts anyway, because
-	// refusing to serve at all would take the console down over an audit
-	// trail. The warning says which it is.
-	var authorityRecord *record.Store
-	if dsn := os.Getenv("DIRECTOR_DATABASE_URL"); dsn != "" {
-		authorityRecord, err = record.Open(context.Background(), dsn, recordRetention(log))
-		if err != nil {
-			return fmt.Errorf("director database: %w", err)
-		}
-		defer authorityRecord.Close()
-		go pruneRecord(authorityRecord, log)
-	} else {
-		log.Warn("DIRECTOR_DATABASE_URL is not set; identity actions are logged but not recorded")
-	}
+	// This process spoke for Keycloak once: it held a client credential for
+	// every realm and served the people, group and realm-settings routes
+	// beside the ones that commit to git. One process could then change both
+	// what the cluster runs and who may sign in to it. Those routes, the
+	// credential and the database that records who was allowed to ask are
+	// the registrar's now (cmd/registrar), and what is left here verifies a
+	// caller's token against the issuer's public keys and nothing more.
 
 	// Catalogue sources: where a profile is fetched from when a tenant
 	// installs it (AD-3), read from the Cluster claim in git (AD-14).
@@ -313,18 +256,15 @@ func run(log *slog.Logger) error {
 			"setting", "spec.catalogue.storeUrl")
 	}
 
+	// The same OpenFGA client answers both questions, and the two are
+	// separate interfaces on purpose: Check is the hot path, ViewOf is a
+	// person reviewing who holds what. Neither can write through the API.
 	handler, err := api.New(api.Config{Authn: verifier, Authz: checker, Viewer: checker, Repo: repo, Log: log,
-		Record:           authorityRecord,
 		Catalogue:        entries,
 		CatalogueSources: declared,
 		StoreURL:         storeURL,
 		Cluster:          cluster,
-		Lifecycle:        lc, Identity: ident,
-		InviteClientID:    os.Getenv("DIRECTOR_INVITE_CLIENT_ID"),
-		InviteRedirectURI: os.Getenv("DIRECTOR_INVITE_REDIRECT_URI"),
-		// Where a tenant's desktop API answers, %s for the tenant: the
-		// settings templates an invitation may apply live there.
-		DesktopAPI: os.Getenv("DIRECTOR_DESKTOP_API_URL")})
+		Lifecycle:        lc})
 	if err != nil {
 		return err
 	}
@@ -359,42 +299,4 @@ func run(log *slog.Logger) error {
 		return err
 	}
 	return nil
-}
-
-// recordRetention is how long an authority record is kept, from
-// DIRECTOR_RECORD_RETENTION (a Go duration). Personal data needs a horizon
-// somebody chose, and an unparseable value is a misconfiguration worth saying
-// out loud rather than silently becoming the default.
-func recordRetention(log *slog.Logger) time.Duration {
-	raw := os.Getenv("DIRECTOR_RECORD_RETENTION")
-	if raw == "" {
-		return record.DefaultRetention
-	}
-	d, err := time.ParseDuration(raw)
-	if err != nil || d <= 0 {
-		log.Warn("DIRECTOR_RECORD_RETENTION is not a duration; using the default",
-			"value", raw, "default", record.DefaultRetention.String())
-		return record.DefaultRetention
-	}
-	return d
-}
-
-// pruneRecord removes what is past the horizon, once at start and daily after.
-//
-// In the process rather than a CronJob: it is one DELETE against a database
-// only this process has a credential for, and a CronJob would need its own
-// copy of that credential to run it.
-func pruneRecord(store *record.Store, log *slog.Logger) {
-	for {
-		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-		n, err := store.Prune(ctx)
-		cancel()
-		switch {
-		case err != nil:
-			log.Error("could not prune the authority record", "error", err.Error())
-		case n > 0:
-			log.Info("pruned authority records past their retention", "rows", n)
-		}
-		time.Sleep(24 * time.Hour)
-	}
 }

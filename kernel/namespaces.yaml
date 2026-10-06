@@ -32,7 +32,7 @@ kernel:
     holds: OpenFGA; reachable from enforcement points only
   - name: kernel-control
     function: control
-    holds: the operator, the director, the custodian, job-gc
+    holds: the operator, the director, the custodian, the registrar, job-gc
   - name: kernel-edge
     function: edge
     holds: Envoy Gateway, both Gateway objects, cert-manager, external-dns, cloudflared

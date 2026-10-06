@@ -18,21 +18,21 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/gentian-org/gentian-os/internal/director/identity"
+	"github.com/gentian-org/gentian-os/internal/registrar/identity"
 )
 
-// The director's administrative credential in one realm.
+// The registrar's administrative credential in one realm.
 //
-// The director speaks for Keycloak on a caller's behalf (S7A.17) and holds one
+// The registrar speaks for Keycloak on a caller's behalf (S7A.17) and holds one
 // credential PER REALM rather than one that can reach every realm. That is the
-// whole security argument: the director authorises per tenant, so a missed
+// whole security argument: the registrar authorises per tenant, so a missed
 // check should not be able to reach a realm the caller has nothing to do with,
 // and a credential that only exists for one realm makes that structural rather
 // than policed.
 //
-// This is the operator's work, not the director's, and not Crossplane's.
+// This is the operator's work, not the registrar's, and not Crossplane's.
 //
-//   - Not the director's: it would have to hold a credential that can create
+//   - Not the registrar's: it would have to hold a credential that can create
 //     administrative clients in order to create the one it is allowed to use,
 //     which is the privilege the split exists to avoid.
 //   - Not Crossplane's: provider-keycloak's ClientServiceAccountRole needs the
@@ -42,14 +42,14 @@ import (
 //     external-name with. Looking it up is a runtime step, so it belongs in a
 //     reconciler.
 
-// DirectorClientID is the client the director authenticates as. Taken from
-// the director's own package rather than spelled again here: the operator
-// writes this credential and the director asks for it by name, and a name the
-// two disagree about produces a realm the director cannot speak for with no
+// RegistrarClientID is the client the registrar authenticates as. Taken from
+// the registrar's own package rather than spelled again here: the operator
+// writes this credential and the registrar asks for it by name, and a name the
+// two disagree about produces a realm the registrar cannot speak for with no
 // error anywhere to say why.
-const DirectorClientID = identity.ClientID
+const RegistrarClientID = identity.ClientID
 
-// directorRealmRoles are the realm-management roles the director is granted,
+// registrarRealmRoles are the realm-management roles the registrar is granted,
 // and the list is the security statement: everything it can do in a realm is
 // here, and anything else is a change somebody has to make deliberately.
 //
@@ -61,10 +61,10 @@ const DirectorClientID = identity.ClientID
 //     to a second client and this list loses its last broad entry.
 //
 // Deliberately NOT here: manage-clients, manage-identity-providers,
-// manage-authorization, impersonation, view-events. The director configures no
+// manage-authorization, impersonation, view-events. The registrar configures no
 // clients (compositions do), brokers no identities, and reads events through
 // its own read path rather than by holding the role that can also clear them.
-var directorRealmRoles = []string{
+var registrarRealmRoles = []string{
 	"view-users",
 	"query-users",
 	"query-groups",
@@ -72,10 +72,10 @@ var directorRealmRoles = []string{
 	"manage-realm",
 }
 
-// DirectorRealmRoles is the list, for a caller that wants to report or assert
+// RegistrarRealmRoles is the list, for a caller that wants to report or assert
 // it rather than re-spell it.
-func DirectorRealmRoles() []string {
-	out := append([]string(nil), directorRealmRoles...)
+func RegistrarRealmRoles() []string {
+	out := append([]string(nil), registrarRealmRoles...)
 	sort.Strings(out)
 	return out
 }
@@ -96,15 +96,15 @@ type keycloakRoleRecord struct {
 	Name string `json:"name"`
 }
 
-// EnsureDirectorRealmClient makes the director's credential for one realm
+// EnsureRegistrarRealmClient makes the registrar's credential for one realm
 // exist, and returns its secret.
 //
 // Idempotent: it is what a reconciler calls on every pass. It does not rotate
 // the secret -- a rotation is a deliberate act with a window in which the
-// director must be handed the new value before the old one stops working, and
+// registrar must be handed the new value before the old one stops working, and
 // doing it silently on a reconcile would sign people out of a screen halfway
 // through using it.
-func (c *KeycloakAdminClient) EnsureDirectorRealmClient(ctx context.Context, realm string) (string, error) {
+func (c *KeycloakAdminClient) EnsureRegistrarRealmClient(ctx context.Context, realm string) (string, error) {
 	if realm == "" || strings.ContainsAny(realm, "/?#") {
 		return "", fmt.Errorf("not a realm name: %q", realm)
 	}
@@ -113,20 +113,20 @@ func (c *KeycloakAdminClient) EnsureDirectorRealmClient(ctx context.Context, rea
 		return "", err
 	}
 
-	client, err := c.findClient(ctx, token, realm, DirectorClientID)
+	client, err := c.findClient(ctx, token, realm, RegistrarClientID)
 	if err != nil {
 		return "", err
 	}
 	if client == nil {
-		if err := c.createDirectorClient(ctx, token, realm); err != nil {
+		if err := c.createRegistrarClient(ctx, token, realm); err != nil {
 			return "", err
 		}
-		client, err = c.findClient(ctx, token, realm, DirectorClientID)
+		client, err = c.findClient(ctx, token, realm, RegistrarClientID)
 		if err != nil {
 			return "", err
 		}
 		if client == nil {
-			return "", fmt.Errorf("keycloak realm %s: created %s and cannot find it", realm, DirectorClientID)
+			return "", fmt.Errorf("keycloak realm %s: created %s and cannot find it", realm, RegistrarClientID)
 		}
 	}
 
@@ -134,10 +134,10 @@ func (c *KeycloakAdminClient) EnsureDirectorRealmClient(ctx context.Context, rea
 	// somebody turned into a public one, or whose service account was
 	// disabled, is a credential that silently stops working -- and in the
 	// public case, one that stops being a credential at all.
-	if err := c.assertDirectorClientShape(ctx, token, realm, client); err != nil {
+	if err := c.assertRegistrarClientShape(ctx, token, realm, client); err != nil {
 		return "", err
 	}
-	if err := c.grantDirectorRoles(ctx, token, realm, client.ID); err != nil {
+	if err := c.grantRegistrarRoles(ctx, token, realm, client.ID); err != nil {
 		return "", err
 	}
 	return c.clientSecret(ctx, token, realm, client.ID)
@@ -161,11 +161,11 @@ func (c *KeycloakAdminClient) findClient(ctx context.Context, token, realm, clie
 	return nil, nil
 }
 
-func (c *KeycloakAdminClient) createDirectorClient(ctx context.Context, token, realm string) error {
+func (c *KeycloakAdminClient) createRegistrarClient(ctx context.Context, token, realm string) error {
 	body := map[string]any{
-		"clientId":    DirectorClientID,
-		"name":        "Gentian director (administrative)",
-		"description": "The director acts for a caller the platform has already authorised. Its authority is the caller's; this credential is only how it reaches this realm.",
+		"clientId":    RegistrarClientID,
+		"name":        "Gentian registrar (administrative)",
+		"description": "The registrar acts for a caller the platform has already authorised. Its authority is the caller's; this credential is only how it reaches this realm.",
 		"enabled":     true,
 		// Confidential with a service account, and nothing else. No browser
 		// flow, no direct grant: nobody signs in as this, and a credential
@@ -186,13 +186,13 @@ func (c *KeycloakAdminClient) createDirectorClient(ctx context.Context, token, r
 	return err
 }
 
-// assertDirectorClientShape re-states the flags that make this a credential.
-func (c *KeycloakAdminClient) assertDirectorClientShape(ctx context.Context, token, realm string, client *keycloakClientRecord) error {
+// assertRegistrarClientShape re-states the flags that make this a credential.
+func (c *KeycloakAdminClient) assertRegistrarClientShape(ctx context.Context, token, realm string, client *keycloakClientRecord) error {
 	if !client.PublicClient && client.ServiceAccountsEnabled && client.Enabled && !client.StandardFlowEnabled {
 		return nil
 	}
 	body := map[string]any{
-		"clientId":                  DirectorClientID,
+		"clientId":                  RegistrarClientID,
 		"enabled":                   true,
 		"publicClient":              false,
 		"serviceAccountsEnabled":    true,
@@ -207,13 +207,13 @@ func (c *KeycloakAdminClient) assertDirectorClientShape(ctx context.Context, tok
 	return err
 }
 
-// grantDirectorRoles gives the client's service account the realm-management
-// roles in directorRealmRoles, and only those.
+// grantRegistrarRoles gives the client's service account the realm-management
+// roles in registrarRealmRoles, and only those.
 //
 // Additive against what is already there, by design: Keycloak's grant endpoint
 // adds, and a role somebody granted by hand is not this function's to remove
 // silently. What it guarantees is that the five are present.
-func (c *KeycloakAdminClient) grantDirectorRoles(ctx context.Context, token, realm, clientUUID string) error {
+func (c *KeycloakAdminClient) grantRegistrarRoles(ctx context.Context, token, realm, clientUUID string) error {
 	// The client that PROVIDES the roles. Its internal id is generated with
 	// the realm, which is why this whole operation is a runtime step and not
 	// a composition.
@@ -232,10 +232,10 @@ func (c *KeycloakAdminClient) grantDirectorRoles(ctx context.Context, token, rea
 	if err := c.getAdminJSON(ctx, token, fmt.Sprintf(
 		"/admin/realms/%s/clients/%s/service-account-user",
 		url.PathEscape(realm), url.PathEscape(clientUUID)), &account); err != nil {
-		return fmt.Errorf("keycloak realm %s: service account for %s: %w", realm, DirectorClientID, err)
+		return fmt.Errorf("keycloak realm %s: service account for %s: %w", realm, RegistrarClientID, err)
 	}
 	if account.ID == "" {
-		return fmt.Errorf("keycloak realm %s: %s has no service account", realm, DirectorClientID)
+		return fmt.Errorf("keycloak realm %s: %s has no service account", realm, RegistrarClientID)
 	}
 
 	var available []keycloakRoleRecord
@@ -245,7 +245,7 @@ func (c *KeycloakAdminClient) grantDirectorRoles(ctx context.Context, token, rea
 		return err
 	}
 	wanted := map[string]bool{}
-	for _, r := range directorRealmRoles {
+	for _, r := range registrarRealmRoles {
 		wanted[r] = true
 	}
 	var grant []keycloakRoleRecord
@@ -264,10 +264,10 @@ func (c *KeycloakAdminClient) grantDirectorRoles(ctx context.Context, token, rea
 			return err
 		}
 	}
-	return c.scopeDirectorRoles(ctx, token, realm, clientUUID, management.ID)
+	return c.scopeRegistrarRoles(ctx, token, realm, clientUUID, management.ID)
 }
 
-// scopeDirectorRoles puts the same roles into the client's scope, so its
+// scopeRegistrarRoles puts the same roles into the client's scope, so its
 // tokens carry them.
 //
 // Holding a role is not enough. The client is fullScopeAllowed: false, on
@@ -276,15 +276,15 @@ func (c *KeycloakAdminClient) grantDirectorRoles(ctx context.Context, token, rea
 // reads roles from the token, so the service account held all five and every
 // People call answered 403. Mapped here are exactly the granted five, which
 // keeps the narrow scope the flag exists for.
-func (c *KeycloakAdminClient) scopeDirectorRoles(ctx context.Context, token, realm, clientUUID, managementUUID string) error {
+func (c *KeycloakAdminClient) scopeRegistrarRoles(ctx context.Context, token, realm, clientUUID, managementUUID string) error {
 	base := fmt.Sprintf("/admin/realms/%s/clients/%s/scope-mappings/clients/%s",
 		url.PathEscape(realm), url.PathEscape(clientUUID), url.PathEscape(managementUUID))
 	var available []keycloakRoleRecord
 	if err := c.getAdminJSON(ctx, token, base+"/available", &available); err != nil {
-		return fmt.Errorf("keycloak realm %s: scope of %s: %w", realm, DirectorClientID, err)
+		return fmt.Errorf("keycloak realm %s: scope of %s: %w", realm, RegistrarClientID, err)
 	}
 	wanted := map[string]bool{}
-	for _, r := range directorRealmRoles {
+	for _, r := range registrarRealmRoles {
 		wanted[r] = true
 	}
 	var scope []keycloakRoleRecord
@@ -312,22 +312,37 @@ func (c *KeycloakAdminClient) clientSecret(ctx context.Context, token, realm, cl
 		return "", err
 	}
 	if out.Value == "" {
-		return "", fmt.Errorf("keycloak realm %s: %s has no secret", realm, DirectorClientID)
+		return "", fmt.Errorf("keycloak realm %s: %s has no secret", realm, RegistrarClientID)
 	}
 	return out.Value, nil
 }
 
-// DeleteDirectorRealmClient removes the credential for one realm.
+// RetiredDirectorClientID is the name this credential had while the director
+// held it. The registrar's is a new client rather than the old one renamed,
+// so that no secret the director ever mounted opens anything.
+const RetiredDirectorClientID = "gentian-director-admin"
+
+// DeleteRetiredDirectorRealmClient removes the director's former credential
+// from one realm. Absent is the ordinary answer and not an error.
+func (c *KeycloakAdminClient) DeleteRetiredDirectorRealmClient(ctx context.Context, realm string) error {
+	return c.deleteRealmClient(ctx, realm, RetiredDirectorClientID)
+}
+
+// DeleteRegistrarRealmClient removes the credential for one realm.
 //
 // The counterpart to Ensure, for a tenant that is retired while its realm
-// outlives it: the director should stop being able to reach a realm it no
+// outlives it: the registrar should stop being able to reach a realm it no
 // longer serves, and that is one deletion rather than a rotation.
-func (c *KeycloakAdminClient) DeleteDirectorRealmClient(ctx context.Context, realm string) error {
+func (c *KeycloakAdminClient) DeleteRegistrarRealmClient(ctx context.Context, realm string) error {
+	return c.deleteRealmClient(ctx, realm, RegistrarClientID)
+}
+
+func (c *KeycloakAdminClient) deleteRealmClient(ctx context.Context, realm, clientID string) error {
 	token, err := c.adminToken(ctx)
 	if err != nil {
 		return err
 	}
-	client, err := c.findClient(ctx, token, realm, DirectorClientID)
+	client, err := c.findClient(ctx, token, realm, clientID)
 	if err != nil || client == nil {
 		return err
 	}

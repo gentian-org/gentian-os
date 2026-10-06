@@ -309,8 +309,8 @@ create_crossplane_secrets() {
             --arg c "$(_derive postgres keycloak_extensions_user)" \
             --arg h "$(_derive postgres openfga_user)" \
             --arg p "$(_derive postgres portal_shell_user)" \
-            --arg d "$(_derive postgres director_user)" \
-            '{postgres_password:$a,keycloak_user_password:$b,keycloak_extensions_user_password:$c,openfga_user_password:$h,portal_shell_user_password:$p,director_user_password:$d}')" \
+            --arg d "$(_derive postgres registrar_user)" \
+            '{postgres_password:$a,keycloak_user_password:$b,keycloak_extensions_user_password:$c,openfga_user_password:$h,portal_shell_user_password:$p,registrar_user_password:$d}')" \
         "gentian-os/kernel/database/postgresql"
 
     # ── database/mariadb ──────────────────────────────────────────────────────

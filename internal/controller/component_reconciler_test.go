@@ -97,6 +97,38 @@ func TestPlatformValuesLandWhereTheProfileSays(t *testing.T) {
 	}
 }
 
+// A console that manages people asks where the registrar is. It is told the
+// Service the chart creates in the control namespace, on the port the chart
+// gives it, and asking is what opens its egress there -- the registrar alone
+// is enough, a component need not also name the director.
+func TestAProfileThatNamesTheRegistrarIsToldWhereItIsAndMayReachIt(t *testing.T) {
+	t.Setenv("GENTIAN_NS_CONTROL", "kernel-control")
+	r := &ComponentReconciler{KernelDomain: "k.example", KernelRealm: "kernel", Cluster: "c1"}
+	profile := &gentianov1alpha1.ComponentProfile{}
+	profile.Spec.Package.ValueMapping = &gentianov1alpha1.ValueMapping{
+		Platform: &gentianov1alpha1.PlatformValueMapping{RegistrarURLKey: "registrar.url"},
+	}
+	tenant := platformTenantFixture()
+	v := r.platformValues(profile, tenant, r.zoneOf(tenant))
+	got := v["registrar"].(map[string]interface{})["url"]
+	if got != "http://gentian-os-registrar.kernel-control.svc.cluster.local:9445" {
+		t.Fatalf("registrar.url = %v", got)
+	}
+	if _, present := v["director"]; present {
+		t.Fatal("the director's address was set without being asked for")
+	}
+	egress := r.componentEgressNamespaces(profile, tenant)
+	if len(egress) != 1 || egress[0] != "kernel-control" {
+		t.Fatalf("egress namespaces = %v, want the control namespace", egress)
+	}
+
+	r.RegistrarURL = "http://elsewhere:1"
+	v = r.platformValues(profile, tenant, r.zoneOf(tenant))
+	if got := v["registrar"].(map[string]interface{})["url"]; got != "http://elsewhere:1" {
+		t.Fatalf("an override was not used: %v", got)
+	}
+}
+
 // The database Secret's name lands as a string where the profile asks for the
 // name, and as a structured reference where it asks for a host. A chart that
 // consumes the Secret with envFrom needs the first; handing it the second

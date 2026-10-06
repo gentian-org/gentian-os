@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -30,25 +31,25 @@ import (
 // People screen would go to 503 for as long as the outage lasted. A complete
 // pass replaces, so a realm that IS gone stops being reachable.
 
-func TestDirectorRealmSecretReplacesOnACompletePass(t *testing.T) {
+func TestRegistrarRealmSecretReplacesOnACompletePass(t *testing.T) {
 	t.Parallel()
 	existing := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      controller.DirectorRealmSecretName,
-			Namespace: controller.DirectorRealmSecretNamespaceForTest(),
+			Name:      controller.RegistrarRealmSecretName,
+			Namespace: controller.RegistrarRealmSecretNamespaceForTest(),
 		},
 		Data: map[string][]byte{"kernel": []byte("old"), "retired": []byte("gone")},
 	}
 	c := fake.NewClientBuilder().WithScheme(controller.SchemeForTest(t)).WithObjects(existing).Build()
 
-	err := controller.WriteDirectorRealmSecretForTest(context.Background(), c,
+	err := controller.WriteRegistrarRealmSecretForTest(context.Background(), c,
 		map[string][]byte{"kernel": []byte("new"), "demo": []byte("d")}, true)
 	if err != nil {
 		t.Fatal(err)
 	}
 	got := &corev1.Secret{}
 	if err := c.Get(context.Background(), types.NamespacedName{
-		Name: controller.DirectorRealmSecretName, Namespace: controller.DirectorRealmSecretNamespaceForTest()}, got); err != nil {
+		Name: controller.RegistrarRealmSecretName, Namespace: controller.RegistrarRealmSecretNamespaceForTest()}, got); err != nil {
 		t.Fatal(err)
 	}
 	if string(got.Data["kernel"]) != "new" || string(got.Data["demo"]) != "d" {
@@ -59,26 +60,26 @@ func TestDirectorRealmSecretReplacesOnACompletePass(t *testing.T) {
 	}
 }
 
-func TestDirectorRealmSecretMergesOnAPartialPass(t *testing.T) {
+func TestRegistrarRealmSecretMergesOnAPartialPass(t *testing.T) {
 	t.Parallel()
 	existing := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      controller.DirectorRealmSecretName,
-			Namespace: controller.DirectorRealmSecretNamespaceForTest(),
+			Name:      controller.RegistrarRealmSecretName,
+			Namespace: controller.RegistrarRealmSecretNamespaceForTest(),
 		},
 		Data: map[string][]byte{"kernel": []byte("k"), "demo": []byte("d")},
 	}
 	c := fake.NewClientBuilder().WithScheme(controller.SchemeForTest(t)).WithObjects(existing).Build()
 
 	// demo could not be reached this pass; kernel was.
-	err := controller.WriteDirectorRealmSecretForTest(context.Background(), c,
+	err := controller.WriteRegistrarRealmSecretForTest(context.Background(), c,
 		map[string][]byte{"kernel": []byte("k2")}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	got := &corev1.Secret{}
 	if err := c.Get(context.Background(), types.NamespacedName{
-		Name: controller.DirectorRealmSecretName, Namespace: controller.DirectorRealmSecretNamespaceForTest()}, got); err != nil {
+		Name: controller.RegistrarRealmSecretName, Namespace: controller.RegistrarRealmSecretNamespaceForTest()}, got); err != nil {
 		t.Fatal(err)
 	}
 	if string(got.Data["kernel"]) != "k2" {
@@ -89,17 +90,17 @@ func TestDirectorRealmSecretMergesOnAPartialPass(t *testing.T) {
 	}
 }
 
-func TestDirectorRealmSecretIsCreatedWhenAbsent(t *testing.T) {
+func TestRegistrarRealmSecretIsCreatedWhenAbsent(t *testing.T) {
 	t.Parallel()
 	c := fake.NewClientBuilder().WithScheme(controller.SchemeForTest(t)).Build()
 
-	if err := controller.WriteDirectorRealmSecretForTest(context.Background(), c,
+	if err := controller.WriteRegistrarRealmSecretForTest(context.Background(), c,
 		map[string][]byte{"kernel": []byte("k")}, true); err != nil {
 		t.Fatal(err)
 	}
 	got := &corev1.Secret{}
 	if err := c.Get(context.Background(), types.NamespacedName{
-		Name: controller.DirectorRealmSecretName, Namespace: controller.DirectorRealmSecretNamespaceForTest()}, got); err != nil {
+		Name: controller.RegistrarRealmSecretName, Namespace: controller.RegistrarRealmSecretNamespaceForTest()}, got); err != nil {
 		t.Fatalf("the Secret was not created: %v", err)
 	}
 	if string(got.Data["kernel"]) != "k" {
@@ -114,28 +115,58 @@ func TestAnUnchangedPassDoesNotWrite(t *testing.T) {
 	t.Parallel()
 	existing := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      controller.DirectorRealmSecretName,
-			Namespace: controller.DirectorRealmSecretNamespaceForTest(),
+			Name:      controller.RegistrarRealmSecretName,
+			Namespace: controller.RegistrarRealmSecretNamespaceForTest(),
 		},
 		Data: map[string][]byte{"kernel": []byte("k")},
 	}
 	c := fake.NewClientBuilder().WithScheme(controller.SchemeForTest(t)).WithObjects(existing).Build()
 	before := &corev1.Secret{}
 	if err := c.Get(context.Background(), types.NamespacedName{
-		Name: controller.DirectorRealmSecretName, Namespace: controller.DirectorRealmSecretNamespaceForTest()}, before); err != nil {
+		Name: controller.RegistrarRealmSecretName, Namespace: controller.RegistrarRealmSecretNamespaceForTest()}, before); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := controller.WriteDirectorRealmSecretForTest(context.Background(), c,
+	if err := controller.WriteRegistrarRealmSecretForTest(context.Background(), c,
 		map[string][]byte{"kernel": []byte("k")}, true); err != nil {
 		t.Fatal(err)
 	}
 	after := &corev1.Secret{}
 	if err := c.Get(context.Background(), types.NamespacedName{
-		Name: controller.DirectorRealmSecretName, Namespace: controller.DirectorRealmSecretNamespaceForTest()}, after); err != nil {
+		Name: controller.RegistrarRealmSecretName, Namespace: controller.RegistrarRealmSecretNamespaceForTest()}, after); err != nil {
 		t.Fatal(err)
 	}
 	if before.ResourceVersion != after.ResourceVersion {
 		t.Errorf("an unchanged pass wrote: %s → %s", before.ResourceVersion, after.ResourceVersion)
+	}
+}
+
+// The Secret the director mounted is removed, the registrar's is left alone,
+// and a cluster that never had the old one is not an error.
+func TestTheDirectorsFormerSecretIsRetired(t *testing.T) {
+	t.Parallel()
+	ns := controller.RegistrarRealmSecretNamespaceForTest()
+	old := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "gentian-director-realms", Namespace: ns},
+		Data:       map[string][]byte{"kernel": []byte("former")},
+	}
+	current := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: controller.RegistrarRealmSecretName, Namespace: ns},
+		Data:       map[string][]byte{"kernel": []byte("k")},
+	}
+	c := fake.NewClientBuilder().WithScheme(controller.SchemeForTest(t)).WithObjects(old, current).Build()
+
+	for pass := 1; pass <= 2; pass++ {
+		if err := controller.RetireDirectorRealmSecretForTest(context.Background(), c); err != nil {
+			t.Fatalf("pass %d: %v", pass, err)
+		}
+	}
+	err := c.Get(context.Background(), types.NamespacedName{Name: old.Name, Namespace: ns}, &corev1.Secret{})
+	if !apierrors.IsNotFound(err) {
+		t.Fatalf("the director's former Secret is still there: %v", err)
+	}
+	if err := c.Get(context.Background(), types.NamespacedName{
+		Name: controller.RegistrarRealmSecretName, Namespace: ns}, &corev1.Secret{}); err != nil {
+		t.Fatalf("the registrar's Secret was removed: %v", err)
 	}
 }

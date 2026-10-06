@@ -8,20 +8,20 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 SPDX-License-Identifier: MPL-2.0
 */
 
-// Package identity is how the director speaks for Keycloak.
+// Package identity is how the registrar speaks for Keycloak.
 //
 // Keycloak holds WHO, the way git holds HOW and OpenFGA holds WHAT somebody
-// may do, and a director write into any of the three is admissible on the
-// same three conditions: it is authenticated, it is evaluated, and it is
-// recorded. People cannot be derived from the state of a cluster and cannot
-// go into git, so managing them is the director's to do as an action rather
-// than as a commit.
+// may do, and a write into any of the three is admissible on the same three
+// conditions: it is authenticated, it is evaluated, and it is recorded.
+// People cannot be derived from the state of a cluster and cannot go into
+// git, so managing them is an action rather than a commit, and it is the
+// registrar's: the one process that holds a Keycloak credential for it.
 //
-// Two rules hold this package together, and both are about what it must NOT
+// Three rules hold this package together, and all are about what it must NOT
 // let happen.
 //
-// The credential is the director's; the authority is always the caller's.
-// Nothing here checks anything: every call arrives having already been
+// The credential is the registrar's; the authority is always the caller's.
+// Nothing here decides who may ask: every call arrives having already been
 // authorised against OpenFGA with the caller's own token, and this package's
 // job is to make it impossible for that check to have been made about the
 // wrong realm. So no method takes a realm from a request. A realm arrives
@@ -36,8 +36,12 @@ SPDX-License-Identifier: MPL-2.0
 // which is the "one realm-admin for every realm" the plan rejected for the
 // right reason -- a single missing check would then be a cross-tenant breach.
 // A credential that exists per realm makes that structural instead of
-// policed: to touch another tenant's realm the director would have to be
+// policed: to touch another tenant's realm the registrar would have to be
 // handed a credential it was never given.
+//
+// Who administers the platform is not the registrar's to change. Every write
+// leaves through one function, and that function refuses the ones that would
+// touch the platform administrators' group or a person in it: see guard.go.
 package identity
 
 import (
@@ -55,7 +59,7 @@ import (
 	"time"
 )
 
-// ErrNoCredential means this director holds nothing for that realm. It is not
+// ErrNoCredential means this registrar holds nothing for that realm. It is not
 // a failure of the caller's authority -- they may well hold the relation --
 // but of this deployment's provisioning, and the two read differently to
 // whoever has to fix it.
@@ -69,7 +73,7 @@ var ErrNotFound = errors.New("not found in the realm")
 // or the username is already taken.
 var ErrConflict = errors.New("already exists in the realm")
 
-// Realm is a realm this director has been given a credential for.
+// Realm is a realm this registrar has been given a credential for.
 //
 // Unexported field and no literal: the only way to obtain one is through a
 // Client, which refuses a realm it holds nothing for. A handler therefore
@@ -108,7 +112,7 @@ type Credential struct {
 // realm other than r.
 type CredentialSource interface {
 	For(realm string) (Credential, bool)
-	// Realms lists what this director can speak for, for a readiness check
+	// Realms lists what this registrar can speak for, for a readiness check
 	// that can say "this cluster has no credential for tenant X" before
 	// somebody discovers it in a 503.
 	Realms() []string
@@ -137,16 +141,21 @@ type Config struct {
 	// BaseURL is Keycloak's root, without /admin or /realms.
 	BaseURL string
 	Source  CredentialSource
-	Logger  *slog.Logger
+	// Administrators names the group whose members administer the platform.
+	// Required: every write is checked against it (guard.go), and a client
+	// that did not know the name could only let everything through.
+	Administrators AdminGroup
+	Logger         *slog.Logger
 	// HTTPClient is optional; the default has a timeout because an admin
 	// call on a request path must not outlive the request.
 	HTTPClient *http.Client
 }
 
-// Client is the director's Keycloak administrative client.
+// Client is the registrar's Keycloak administrative client.
 type Client struct {
 	base   string
 	source CredentialSource
+	admins AdminGroup
 	http   *http.Client
 	log    *slog.Logger
 
@@ -159,7 +168,7 @@ type cachedToken struct {
 	expires time.Time
 }
 
-// New builds a Client. A director with no credentials at all is not an error
+// New builds a Client. A registrar with no credentials at all is not an error
 // here: the cluster may have no realm it administers yet, and the routes that
 // need one refuse individually with ErrNoCredential rather than the whole
 // service refusing to start.
@@ -170,6 +179,10 @@ func New(cfg Config) (*Client, error) {
 	}
 	if _, err := url.Parse(base); err != nil {
 		return nil, fmt.Errorf("identity: BaseURL: %w", err)
+	}
+	if cfg.Administrators == nil {
+		return nil, errors.New("identity: Administrators is required: " +
+			"without the platform administrators' group no write can be judged")
 	}
 	if cfg.Source == nil {
 		cfg.Source = StaticSource{}
@@ -182,11 +195,12 @@ func New(cfg Config) (*Client, error) {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Client{base: base, source: cfg.Source, http: hc, log: log, tokens: map[string]cachedToken{}}, nil
+	return &Client{base: base, source: cfg.Source, admins: cfg.Administrators, http: hc, log: log,
+		tokens: map[string]cachedToken{}}, nil
 }
 
-// Realm returns the realm token for a realm this director holds a credential
-// for. Every operation starts here, which is what makes "the director cannot
+// Realm returns the realm token for a realm this registrar holds a credential
+// for. Every operation starts here, which is what makes "the registrar cannot
 // reach a realm it was not given" a property of the type rather than of every
 // handler remembering to check.
 func (c *Client) Realm(name string) (Realm, error) {
@@ -199,7 +213,7 @@ func (c *Client) Realm(name string) (Realm, error) {
 	return Realm{name: name}, nil
 }
 
-// Realms is what this director can speak for.
+// Realms is what this registrar can speak for.
 func (c *Client) Realms() []string { return c.source.Realms() }
 
 // token returns a service-account access token for one realm, minting a new
@@ -283,6 +297,13 @@ func (c *Client) do(ctx context.Context, r Realm, method, path string, query url
 // outside the admin API (the activation link). label is what errors name.
 func (c *Client) doAt(ctx context.Context, r Realm, method, rel, label string, query url.Values, body any) (*http.Response, error) {
 	path := label
+	// The one place a write leaves from, and so the one place the rule about
+	// the platform's administrators is applied. See guard.go.
+	if method != http.MethodGet {
+		if err := c.guard(ctx, r, method, rel, body); err != nil {
+			return nil, err
+		}
+	}
 	tok, err := c.token(ctx, r)
 	if err != nil {
 		return nil, err
@@ -314,11 +335,11 @@ func (c *Client) doAt(ctx context.Context, r Realm, method, rel, label string, q
 	// changed and with retention, and that is the better record of the change
 	// because it is written whether the change came through here or through
 	// Keycloak's own console. What it cannot see is WHO was allowed to ask:
-	// authDetails names this director's service account and nothing else.
+	// authDetails names this registrar's service account and nothing else.
 	//
 	// So the request id travels with the call. The platform's event listener
 	// runs inside this request's transaction and reads it back off the
-	// headers, which joins Keycloak's record of the change to the director's
+	// headers, which joins Keycloak's record of the change to the registrar's
 	// record of the authority without either one storing the other's half.
 	if id := RequestIDFrom(ctx); id != "" {
 		req.Header.Set(RequestIDHeader, id)
@@ -377,22 +398,22 @@ func statusError(status int, method, path string, body []byte) error {
 	return fmt.Errorf("keycloak %s %s: HTTP %d: %s", method, path, status, detail)
 }
 
-// ClientID is the client the director authenticates as, in every realm it
+// ClientID is the client the registrar authenticates as, in every realm it
 // speaks for. One name everywhere, so an operator reading a realm can tell
 // what it is at a glance and an audit can find it without a convention to
 // remember.
 //
 // Canonical here and referenced by the operator that provisions it: the two
-// must agree or the operator writes a credential under a name the director
+// must agree or the operator writes a credential under a name the registrar
 // never asks for, which reads as "this tenant has no identity".
-const ClientID = "gentian-director-admin"
+const ClientID = "gentian-registrar-admin"
 
 // RequestIDHeader is how the caller's request id reaches Keycloak's admin
 // event, and through it the authority record. Named here rather than in the
 // caller because the listener that reads it back has to agree on the spelling.
 const RequestIDHeader = "X-Gentian-Request-Id"
 
-// requestIDKey is the context key the director puts the request id under.
+// requestIDKey is the context key the registrar puts the request id under.
 type requestIDKey struct{}
 
 // WithRequestID carries a request id into the admin calls made under ctx.

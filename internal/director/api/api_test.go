@@ -11,7 +11,6 @@ SPDX-License-Identifier: MPL-2.0
 package api_test
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -20,7 +19,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -504,15 +502,9 @@ func (failing) Check(context.Context, string, string, string, string) (bool, err
 
 // ---- decisions ------------------------------------------------------------
 
-type table map[string]bool
-
-func (tb table) Check(_ context.Context, _, user, relation, object string) (bool, error) {
-	return tb[user+" "+relation+" "+object], nil
-}
-
 // facts is what model v1 answers for the fixture, for the questions these
 // tests ask. The OpenFGA run is what shows the table is not wishful.
-var facts = table{
+var facts = dt.Table{
 	"user:tom can_install_app tenant:demo":       true,
 	"user:tom can_view tenant:demo":              true,
 	"user:mia can_view tenant:demo":              true,
@@ -555,86 +547,7 @@ var facts = table{
 // configured, and otherwise the table.
 func checker(t *testing.T) authz.Checker {
 	t.Helper()
-	base := os.Getenv("DIRECTOR_TEST_OPENFGA_URL")
-	if base == "" {
-		return facts
-	}
-	storeID, modelID := loadOpenFGA(t, base)
-	c, err := authz.NewOpenFGA(authz.Options{
-		BaseURL: base, StoreID: storeID, ModelID: modelID,
-		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return c
-}
-
-// loadOpenFGA creates a store holding model v1 and the shared fixture.
-func loadOpenFGA(t *testing.T, base string) (storeID, modelID string) {
-	t.Helper()
-	post := func(path string, body any, out any) {
-		t.Helper()
-		b, _ := json.Marshal(body)
-		resp, err := http.Post(base+path, "application/json", bytes.NewReader(b))
-		if err != nil {
-			t.Fatalf("openfga %s: %v", path, err)
-		}
-		defer func() { _ = resp.Body.Close() }()
-		raw, _ := io.ReadAll(resp.Body)
-		if resp.StatusCode/100 != 2 {
-			t.Fatalf("openfga %s: %d %s", path, resp.StatusCode, raw)
-		}
-		if out != nil {
-			_ = json.Unmarshal(raw, out)
-		}
-	}
-	var store struct {
-		ID string `json:"id"`
-	}
-	// OpenFGA caps a store name at 64 characters, and this repository's test
-	// names run longer than that. Keeping the tail keeps the part that
-	// distinguishes one test from another.
-	name := t.Name()
-	if len(name) > 64 {
-		name = name[len(name)-64:]
-	}
-	post("/stores", map[string]string{"name": name}, &store)
-
-	raw, err := os.ReadFile("../../../authz/model/v1/model.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var model map[string]any
-	if err := json.Unmarshal(raw, &model); err != nil {
-		t.Fatal(err)
-	}
-	var written struct {
-		ID string `json:"authorization_model_id"`
-	}
-	post("/stores/"+store.ID+"/authorization-models", model, &written)
-
-	raw, err = os.ReadFile("../../../authz/model/v1/tests.fga.yaml")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var fixture struct {
-		Tuples []map[string]any `json:"tuples"`
-	}
-	if err := yaml.Unmarshal(raw, &fixture); err != nil {
-		t.Fatal(err)
-	}
-	tuples := fixture.Tuples
-	// The fixture's cluster is cluster:main; this director serves dt.Cluster.
-	// Bind the same platform groups to it so cluster verbs can be checked.
-	for _, role := range [][2]string{{"admin", "admin"}, {"auditor", "auditor"}, {"service-admin", "service_admin"}, {"security", "security_officer"}} {
-		tuples = append(tuples, map[string]any{"user": "group:gentian/platform/" + role[0] + "#member", "relation": role[1], "object": "cluster:" + dt.Cluster})
-	}
-	post("/stores/"+store.ID+"/write", map[string]any{
-		"authorization_model_id": written.ID,
-		"writes":                 map[string]any{"tuple_keys": tuples},
-	}, nil)
-	return store.ID, written.ID
+	return dt.Checker(t, facts)
 }
 
 // The desktop renders from what the director says the caller holds, and

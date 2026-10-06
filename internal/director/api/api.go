@@ -38,9 +38,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/director/authz"
 	"github.com/gentian-org/gentian-os/internal/director/catalogue"
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
-	"github.com/gentian-org/gentian-os/internal/director/identity"
 	"github.com/gentian-org/gentian-os/internal/director/lifecycle"
-	"github.com/gentian-org/gentian-os/internal/director/record"
 )
 
 // Authenticator establishes the caller's identity from a request.
@@ -64,12 +62,9 @@ type Repository interface {
 	DeclareTenant(ctx context.Context, name string, spec *gentianov1alpha1.TenantSpec, origin string, meta gitops.Meta) (gitops.Result, error)
 	PendingPurges(ctx context.Context) ([]string, error)
 	Tenants(ctx context.Context) ([]string, error)
-	TenantRealm(ctx context.Context, tenant string) (string, error)
-	TenantLoginDomain(ctx context.Context, tenant string) (string, error)
 	SetTenantDomain(ctx context.Context, tenant, domain string, meta gitops.Meta) (gitops.Result, error)
 	ClusterBranding(ctx context.Context) (*gentianov1alpha1.BrandingSpec, bool, error)
 	SetClusterBranding(ctx context.Context, spec gentianov1alpha1.BrandingSpec, meta gitops.Meta) (gitops.Result, error)
-	TenantAdminRequiresMFA(ctx context.Context, tenant string) (bool, error)
 	SetResourcePlan(ctx context.Context, tenant string, plan gitops.Plan, meta gitops.Meta) (gitops.Result, error)
 	SetTenantBackupPolicy(ctx context.Context, tenant string, policy gitops.BackupPolicy, meta gitops.Meta) (gitops.Result, error)
 	ClearTenantBackupPolicy(ctx context.Context, tenant string, meta gitops.Meta) (gitops.Result, error)
@@ -119,11 +114,6 @@ type Config struct {
 	// screen that should have worked.
 	Viewer authz.Viewer
 	Repo   Repository
-	// Record is the durable record of who was allowed to ask for a change to
-	// a person (S7A.17). Optional: a cluster whose director database has not
-	// been provisioned keeps the log line and nothing else, which is a worse
-	// record rather than a broken director.
-	Record *record.Store
 	// Catalogue materialises a profile when a tenant installs it (AD-3). Nil
 	// on a cluster whose profiles are still synced wholesale, which is what a
 	// deployment naming no catalogue source is saying.
@@ -145,52 +135,6 @@ type Config struct {
 	// with no operator to ask has nothing to relay and nothing to validate a
 	// plan against.
 	Lifecycle Lifecycle
-	// Identity is how this director speaks for Keycloak (S7A.17). Nil leaves
-	// the people, group and realm-settings routes unregistered, which a
-	// console shows as those screens not being here -- rather than as a
-	// screen that should have worked answering 502.
-	//
-	// It holds one credential per realm and can name no other, so what it can
-	// reach is decided by what the operator handed it rather than by what a
-	// handler remembered to check.
-	Identity Identity
-	// InviteClientID overrides the client an invitation link names. Empty
-	// derives it from the realm, which is right on every cluster but one --
-	// see inviteClientID. InviteRedirectURI is where the link lands, and is
-	// empty until the zone client accepts somewhere worth landing.
-	InviteClientID    string
-	InviteRedirectURI string
-	// DesktopAPI is where a tenant's desktop API answers, with %s for the
-	// tenant: the settings templates live there, and the director relays the
-	// caller's own token to them. Empty means templates are not offered.
-	DesktopAPI string
-}
-
-// Identity is the part of the Keycloak client this API uses. An interface so
-// the routes can be tested without a realm, and so nothing here can reach a
-// method that was not meant to be reachable from a request.
-type Identity interface {
-	Realm(name string) (identity.Realm, error)
-	People(ctx context.Context, r identity.Realm, search string, limit int) ([]identity.Person, error)
-	Person(ctx context.Context, r identity.Realm, id string) (identity.Person, error)
-	Groups(ctx context.Context, r identity.Realm) ([]identity.Group, error)
-	Invite(ctx context.Context, r identity.Realm, inv identity.Invitation) (identity.Person, error)
-	SetMembership(ctx context.Context, r identity.Realm, userID, groupPath string, member bool) error
-	PasswordPolicy(ctx context.Context, r identity.Realm) (string, error)
-	SetPasswordPolicy(ctx context.Context, r identity.Realm, policy string) error
-	ZoneLanding(ctx context.Context, r identity.Realm, clientID string) string
-	SendPasswordReset(ctx context.Context, r identity.Realm, userID, clientID, redirectURI string) error
-	UpdatePerson(ctx context.Context, r identity.Realm, id string, u identity.PersonUpdate) (identity.Person, error)
-	RemovePerson(ctx context.Context, r identity.Realm, id string) error
-	RequireTOTP(ctx context.Context, r identity.Realm, id string, mail bool, clientID, redirectURI string) error
-	RemoveTOTP(ctx context.Context, r identity.Realm, id string) error
-	CreateGroup(ctx context.Context, r identity.Realm, path string) (identity.Group, error)
-	DeleteGroup(ctx context.Context, r identity.Realm, path string) error
-	RenameGroup(ctx context.Context, r identity.Realm, path, newPath string) (identity.Group, error)
-	FindUser(ctx context.Context, r identity.Realm, username string) (identity.Person, error)
-	ActivateAccount(ctx context.Context, r identity.Realm, id, email string, requireMFA bool, clientID, redirectURI string) (identity.Activation, error)
-	GroupMembers(ctx context.Context, r identity.Realm, path string) ([]identity.Person, error)
-	UserCount(ctx context.Context, r identity.Realm) (int, error)
 }
 
 // Server is the director's API.
@@ -636,50 +580,10 @@ func (s *Server) routes() {
 		s.action("POST /v1/tenants/{t}/actions/delete-backup", "can_administer", tenantObject, s.deleteBackup)
 	}
 
-	// People, groups and the realm's settings (S7A.17).
-	//
-	// Registered only when this director holds a Keycloak credential. A
-	// console then shows the screens as absent rather than as broken, which
-	// is the difference between "this cluster has not provisioned it" and
-	// "this is failing".
-	//
-	// Every write is an ACTION and none is a PUT. A commit says what should
-	// be true from now on and is reviewable in git for ever; inviting
-	// somebody happens once, and people do not belong in an append-only
-	// history. can_manage_users throughout, except the password policy, which
-	// is a statement about the tenant rather than about a person and sits
-	// with can_set_policy.
-	if s.cfg.Identity != nil {
-		s.guarded("GET /v1/tenants/{t}/people", "can_manage_users", tenantObject, s.listPeople)
-		s.guarded("GET /v1/tenants/{t}/people/{id}", "can_manage_users", tenantObject, s.getPerson)
-		s.guarded("GET /v1/tenants/{t}/groups", "can_manage_users", tenantObject, s.listGroups)
-		s.guarded("GET /v1/tenants/{t}/identity", "can_manage_users", tenantObject, s.tenantIdentitySettings)
-
-		s.action("POST /v1/tenants/{t}/actions/invite-person", "can_manage_users", tenantObject, s.invitePerson)
-		s.action("POST /v1/tenants/{t}/actions/set-membership", "can_manage_users", tenantObject, s.setMembership)
-		s.action("POST /v1/tenants/{t}/actions/send-password-reset", "can_manage_users", tenantObject, s.sendPasswordReset)
-		s.action("POST /v1/tenants/{t}/actions/set-password-policy", "can_set_policy", tenantObject, s.setPasswordPolicy)
-
-		// Editing somebody, and the groups they are put in. can_manage_users
-		// throughout, like the invitation they extend.
-		s.guarded("GET /v1/tenants/{t}/group-members", "can_manage_users", tenantObject, s.listGroupMembers)
-		s.guarded("GET /v1/tenants/{t}/templates", "can_manage_users", tenantObject, s.listTemplates)
-		s.action("POST /v1/tenants/{t}/actions/update-person", "can_manage_users", tenantObject, s.updatePerson)
-		s.action("POST /v1/tenants/{t}/actions/remove-person", "can_manage_users", tenantObject, s.removePerson)
-		s.action("POST /v1/tenants/{t}/actions/require-totp", "can_manage_users", tenantObject, s.requireTOTP)
-		s.action("POST /v1/tenants/{t}/actions/remove-totp", "can_manage_users", tenantObject, s.removeTOTP)
-		s.action("POST /v1/tenants/{t}/actions/create-group", "can_manage_users", tenantObject, s.createGroup)
-		s.action("POST /v1/tenants/{t}/actions/delete-group", "can_manage_users", tenantObject, s.deleteGroup)
-		s.action("POST /v1/tenants/{t}/actions/rename-group", "can_manage_users", tenantObject, s.renameGroup)
-
-		// Handing a tenant's administrator account to its holder: whoever may
-		// bring tenants on (can_configure on the cluster) issues the link.
-		s.action("POST /v1/clusters/{c}/tenants/{t}/actions/activate-admin", "can_configure", s.clusterObject, s.activateAdmin)
-
-		// How many people hold an account on this cluster. A count and no
-		// names, so it is can_audit like every other read of the cluster.
-		s.guarded("GET /v1/clusters/{c}/people/count", "can_audit", s.clusterObject, s.clusterUserCount)
-	}
+	// No people, groups or realm settings here. They are the registrar's
+	// (internal/registrar), which holds the Keycloak credential they need;
+	// this process holds none, so there is nothing here that could serve
+	// them.
 }
 
 // clusterRelations are the cluster verbs a console asks about the caller: the

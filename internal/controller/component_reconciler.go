@@ -59,6 +59,9 @@ type ComponentReconciler struct {
 	// CustodianURL overrides where a component is told the credential
 	// manager is. Empty derives it from the layout.
 	CustodianURL string
+	// RegistrarURL overrides where a component is told the registrar is.
+	// Empty derives it from the layout.
+	RegistrarURL string
 	// Seeder holds the credentials of the databases this reconciler makes
 	// for tenant components. Nil leaves those requirements waiting.
 	Seeder *secrets.Seeder
@@ -931,6 +934,20 @@ func (r *ComponentReconciler) custodianURL() string {
 	}
 	return fmt.Sprintf("http://gentian-os-custodian.%s.svc.cluster.local:%d",
 		layout.Namespace(layout.Control), custodianPort)
+}
+
+// registrarPort is charts/gentian-os/values.yaml's registrar.port, named
+// for the reason custodianPort is.
+const registrarPort = 9445
+
+// registrarURL is where a component relays the managing of people. In the
+// control namespace beside the director and the custodian.
+func (r *ComponentReconciler) registrarURL() string {
+	if r.RegistrarURL != "" {
+		return r.RegistrarURL
+	}
+	return fmt.Sprintf("http://gentian-os-registrar.%s.svc.cluster.local:%d",
+		layout.Namespace(layout.Control), registrarPort)
 }
 
 func mergeValues(dst, src map[string]interface{}) {

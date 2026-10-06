@@ -7,6 +7,10 @@
   nothing. Every request it serves is authorised against OpenFGA with the
   caller's own Keycloak token.
 
+  It holds no Keycloak credential. People, groups and the realm's settings are
+  the registrar's (registrar.yaml), which holds the per-realm credential they
+  need; nothing of it is mounted or named here.
+
   The one thing it needs from the cluster, the tile catalogue the operator
   projects, is mounted rather than fetched: handing it the file keeps the
   division intact, where reading one ConfigMap through the API would mean
@@ -221,19 +225,6 @@ spec:
               value: {{ printf "https://id.%s/auth" .Values.kernelDomain | quote }}
             - name: DIRECTOR_JWKS_BASE_URL
               value: {{ .Values.director.jwksBaseURL | default (printf "http://gentian-idp-keycloak-keycloakx-http.%s.svc.cluster.local:8080/auth" (.Values.layout.authentication | default .Values.servicesNamespace)) | quote }}
-            # Where the director calls Keycloak's admin API for People and the
-            # realm settings: in-cluster, like the keys. Unset it defaulted to
-            # the public issuer, and the public host refuses /auth/admin by
-            # design (sp-kernel-id-admin redirects it to a sign-in), so every
-            # call came back as an HTML page and People answered 502.
-            # Each tenant's desktop API, where the settings templates an
-            # invitation may apply live. %s is the tenant; the desktop is the
-            # component named "desktop" in the tenant's namespace. The director
-            # relays the caller's own token, so the desktop still decides.
-            - name: DIRECTOR_DESKTOP_API_URL
-              value: {{ .Values.director.desktopAPI | default "http://desktop-gentian-portal-api.tenant-%s.svc.cluster.local:8000/api/v1" | quote }}
-            - name: DIRECTOR_IDENTITY_BASE_URL
-              value: {{ .Values.director.jwksBaseURL | default (printf "http://gentian-idp-keycloak-keycloakx-http.%s.svc.cluster.local:8080/auth" (.Values.layout.authentication | default .Values.servicesNamespace)) | quote }}
             - name: DIRECTOR_AUDIENCE
               value: {{ .Values.director.audience | quote }}
             - name: OPENFGA_API_URL
@@ -268,45 +259,6 @@ spec:
             {{- end }}
             - name: DIRECTOR_APP_LIFECYCLE_URL
               value: {{ .Values.director.appLifecycleURL | default (printf "http://%s-lifecycle.%s.svc.cluster.local:%v" (include "gentian-os.fullname" .) .Release.Namespace .Values.appLifecycle.port) | quote }}
-            {{- /* Where the director reads its Keycloak credentials.
-
-                 One file per realm, written by the operator's Keycloak
-                 platform reconciler: it holds the admin credential and the
-                 director does not, so the credentials are handed over rather
-                 than fetched -- the same division as the tile catalogue.
-
-                 A realm the director holds no file for is a realm it cannot
-                 name, let alone reach. That is the confinement: a missed
-                 authorization check cannot cross into another tenant's realm
-                 because there is no credential for it to cross with. */}}
-            - name: DIRECTOR_REALM_CREDENTIALS_PATH
-              value: /etc/gentian/realms
-            {{- /* The durable record of WHO WAS ALLOWED to ask for a change
-                 to a person (S7A.17).
-
-                 A database and not a commit, and this is the one place the
-                 platform chooses that deliberately: git's append-only history
-                 is what makes it right for configuration and wrong for a
-                 record about people. This one has a retention horizon.
-
-                 Optional. A cluster whose director database has not been
-                 provisioned starts anyway and keeps only the log line, because
-                 taking the console down over an audit trail is the worse
-                 failure. The director warns at start which it is. */}}
-            {{- with .Values.director.recordDatabase }}
-            {{- if .secretName }}
-            - name: DIRECTOR_DATABASE_URL
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .secretName | quote }}
-                  key: {{ .secretKey | default "uri" | quote }}
-                  optional: true
-            {{- end }}
-            {{- with .retention }}
-            - name: DIRECTOR_RECORD_RETENTION
-              value: {{ . | quote }}
-            {{- end }}
-            {{- end }}
             {{- if .Values.director.signingKeySecret }}
             # AD-2: what the director writes is signed, and Argo CD syncs the
             # deployments repository only for commits carrying a key the
@@ -392,9 +344,6 @@ spec:
             - name: tmp
               mountPath: /tmp
               readOnly: true
-            - name: realm-credentials
-              mountPath: /etc/gentian/realms
-              readOnly: true
             {{- if .Values.director.signingKeySecret }}
             - name: signing-key
               mountPath: /etc/gentian/signing
@@ -410,14 +359,6 @@ spec:
           emptyDir: {}
         - name: tmp
           emptyDir: {}
-        # Optional, and re-read rather than read once: the operator writes a
-        # realm's key when the realm appears, which for every tenant is after
-        # this pod started. A director that read the directory at boot would
-        # never speak for a tenant created since.
-        - name: realm-credentials
-          secret:
-            secretName: gentian-director-realms
-            optional: true
         {{- if .Values.director.signingKeySecret }}
         # Optional for the same reason as the git credential: B-10 writes the
         # key to the vault and External Secrets projects it, which may happen

@@ -8,16 +8,16 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 SPDX-License-Identifier: MPL-2.0
 */
 
-// Package record is the director's durable record of WHO WAS ALLOWED to ask
+// Package record is the registrar's durable record of WHO WAS ALLOWED to ask
 // for a change to a person (S7A.17).
 //
 // Two halves, joined by a request id.
 //
 // WHAT CHANGED is Keycloak's own admin event, and Keycloak is the better
 // witness for it: the event is written whether the change came through the
-// director or through Keycloak's own console.
+// registrar or through Keycloak's own console.
 //
-// WHO WAS ALLOWED TO ASK is this. Keycloak sees only the director's service
+// WHO WAS ALLOWED TO ASK is this. Keycloak sees only the registrar's service
 // account, so it cannot say which person asked or what permitted the call.
 // That is the caller, the relation and the object the check was made against,
 // and the request id both halves carry.
@@ -41,7 +41,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// Action is one identity change, as the director saw it.
+// Action is one identity change, as the registrar saw it.
 type Action struct {
 	// RequestID joins this to Keycloak's admin event for the same change.
 	RequestID string

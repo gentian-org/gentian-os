@@ -44,6 +44,9 @@ type fakeKeycloak struct {
 	mints map[string]int
 	// creds per user id, for the two-factor reads.
 	creds map[string][]map[string]string
+	// memberOf is the group paths one user id holds. A user it does not name
+	// holds every group of the realm, which is what the older tests assume.
+	memberOf map[string][]string
 }
 
 type recorded struct {
@@ -159,7 +162,31 @@ func (f *fakeKeycloak) serve(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodGet && strings.HasSuffix(path, "/members") && strings.HasPrefix(path, "/groups/"):
 		_ = json.NewEncoder(w).Encode(users)
 	case r.Method == http.MethodGet && strings.HasSuffix(path, "/groups") && strings.HasPrefix(path, "/users/"):
+		id := strings.TrimSuffix(strings.TrimPrefix(path, "/users/"), "/groups")
+		f.mu.Lock()
+		held, named := f.memberOf[id]
+		f.mu.Unlock()
+		if named {
+			out := []groupRep{}
+			for _, g := range groups {
+				for _, p := range held {
+					if g.Path == p {
+						out = append(out, g)
+					}
+				}
+			}
+			_ = json.NewEncoder(w).Encode(out)
+			return
+		}
 		_ = json.NewEncoder(w).Encode(groups)
+	case r.Method == http.MethodGet && strings.HasPrefix(path, "/groups/"):
+		for _, g := range groups {
+			if path == "/groups/"+g.ID {
+				_ = json.NewEncoder(w).Encode(g)
+				return
+			}
+		}
+		w.WriteHeader(http.StatusNotFound)
 	case r.Method == http.MethodGet && strings.HasPrefix(path, "/users/"):
 		for _, u := range users {
 			if strings.HasSuffix(path, "/"+u.ID) {
@@ -191,9 +218,15 @@ func (f *fakeKeycloak) recorded() []recorded {
 	return append([]recorded(nil), f.calls...)
 }
 
+// platformAdmins is the group these tests protect, and adminGroup names it
+// the way the registrar's reading of the Cluster claim does.
+const platformAdmins = "gentian:platform:admin"
+
+func adminGroup(context.Context) ([]string, error) { return []string{platformAdmins}, nil }
+
 func clientFor(t *testing.T, srv *httptest.Server, src CredentialSource) *Client {
 	t.Helper()
-	c, err := New(Config{BaseURL: srv.URL, Source: src})
+	c, err := New(Config{BaseURL: srv.URL, Source: src, Administrators: adminGroup})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -205,7 +238,7 @@ func TestARealmWithNoCredentialCannotBeNamed(t *testing.T) {
 	c := clientFor(t, srv, StaticSource{"demo": {Realm: "demo", ClientID: "d", ClientSecret: "s"}})
 
 	if _, err := c.Realm("other"); !errors.Is(err, ErrNoCredential) {
-		t.Fatalf("realm the director holds nothing for: got %v, want ErrNoCredential", err)
+		t.Fatalf("realm the registrar holds nothing for: got %v, want ErrNoCredential", err)
 	}
 	if _, err := c.Realm("demo"); err != nil {
 		t.Fatalf("realm it does hold: %v", err)
@@ -218,8 +251,8 @@ func TestARealmWithNoCredentialCannotBeNamed(t *testing.T) {
 func TestEveryCallIsScopedToItsOwnRealm(t *testing.T) {
 	f, srv := newFake(t)
 	c := clientFor(t, srv, StaticSource{
-		"demo":  {Realm: "demo", ClientID: "director-demo", ClientSecret: "s1"},
-		"other": {Realm: "other", ClientID: "director-other", ClientSecret: "s2"},
+		"demo":  {Realm: "demo", ClientID: "registrar-demo", ClientSecret: "s1"},
+		"other": {Realm: "other", ClientID: "registrar-other", ClientSecret: "s2"},
 	})
 	demo, err := c.Realm("demo")
 	if err != nil {
@@ -239,10 +272,10 @@ func TestEveryCallIsScopedToItsOwnRealm(t *testing.T) {
 	if len(calls) != 2 {
 		t.Fatalf("calls: %d, want 2", len(calls))
 	}
-	if !strings.Contains(calls[0].path, "/admin/realms/demo/") || calls[0].token != "token-for-demo-director-demo" {
+	if !strings.Contains(calls[0].path, "/admin/realms/demo/") || calls[0].token != "token-for-demo-registrar-demo" {
 		t.Errorf("demo call went to %q with %q", calls[0].path, calls[0].token)
 	}
-	if !strings.Contains(calls[1].path, "/admin/realms/other/") || calls[1].token != "token-for-other-director-other" {
+	if !strings.Contains(calls[1].path, "/admin/realms/other/") || calls[1].token != "token-for-other-registrar-other" {
 		t.Errorf("other call went to %q with %q", calls[1].path, calls[1].token)
 	}
 }
@@ -482,7 +515,7 @@ func TestAnIdWithAPathSeparatorIsRefused(t *testing.T) {
 }
 
 // The request id has to reach Keycloak, because it is the only thing that
-// joins Keycloak's record of WHAT changed to the director's record of WHO was
+// joins Keycloak's record of WHAT changed to the registrar's record of WHO was
 // allowed to ask. Keycloak's own event names this service account and nobody
 // else.
 func TestTheRequestIdTravelsWithEveryAdminCall(t *testing.T) {

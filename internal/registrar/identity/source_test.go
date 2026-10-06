@@ -23,7 +23,7 @@ func TestDirectorySourceReadsOneCredentialPerRealm(t *testing.T) {
 	write(t, dir, "demo", "secret-demo\n")
 	write(t, dir, "kernel", "secret-kernel")
 
-	s := NewDirectorySource(dir, "gentian-director-admin")
+	s := NewDirectorySource(dir, "gentian-registrar-admin")
 	got := s.Realms()
 	sort.Strings(got)
 	if len(got) != 2 || got[0] != "demo" || got[1] != "kernel" {
@@ -34,7 +34,7 @@ func TestDirectorySourceReadsOneCredentialPerRealm(t *testing.T) {
 		t.Fatal("no credential for demo")
 	}
 	// The trailing newline a file may carry is not part of the secret.
-	if c.ClientSecret != "secret-demo" || c.ClientID != "gentian-director-admin" || c.TokenRealm != "demo" {
+	if c.ClientSecret != "secret-demo" || c.ClientID != "gentian-registrar-admin" || c.TokenRealm != "demo" {
 		t.Fatalf("credential = %+v", c)
 	}
 	if _, ok := s.For("other"); ok {
@@ -42,14 +42,14 @@ func TestDirectorySourceReadsOneCredentialPerRealm(t *testing.T) {
 	}
 }
 
-// The reason this re-reads at all: a tenant's realm appears after the director
+// The reason this re-reads at all: a tenant's realm appears after the registrar
 // started, and a source read once at boot would never speak for it.
 func TestDirectorySourcePicksUpARealmAddedLater(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	write(t, dir, "kernel", "secret-kernel")
 
-	s := NewDirectorySource(dir, "gentian-director-admin")
+	s := NewDirectorySource(dir, "gentian-registrar-admin")
 	s.ttl = 0 // every call re-reads, which is what a real TTL expiry does
 	if _, ok := s.For("demo"); ok {
 		t.Fatal("demo should not exist yet")
@@ -67,7 +67,7 @@ func TestDirectorySourceForgetsARealmThatWasRemoved(t *testing.T) {
 	dir := t.TempDir()
 	write(t, dir, "demo", "secret-demo")
 
-	s := NewDirectorySource(dir, "gentian-director-admin")
+	s := NewDirectorySource(dir, "gentian-registrar-admin")
 	s.ttl = 0
 	if _, ok := s.For("demo"); !ok {
 		t.Fatal("demo should resolve")
@@ -91,7 +91,7 @@ func TestDirectorySourceIgnoresTheProjectionsOwnEntries(t *testing.T) {
 	}
 	write(t, dir, "..data", "not a realm")
 
-	s := NewDirectorySource(dir, "gentian-director-admin")
+	s := NewDirectorySource(dir, "gentian-registrar-admin")
 	got := s.Realms()
 	if len(got) != 1 || got[0] != "demo" {
 		t.Fatalf("realms = %v, want just demo", got)
@@ -100,7 +100,7 @@ func TestDirectorySourceIgnoresTheProjectionsOwnEntries(t *testing.T) {
 
 func TestDirectorySourceWithNoDirectoryIsEmptyRatherThanAnError(t *testing.T) {
 	t.Parallel()
-	s := NewDirectorySource(filepath.Join(t.TempDir(), "never-written"), "gentian-director-admin")
+	s := NewDirectorySource(filepath.Join(t.TempDir(), "never-written"), "gentian-registrar-admin")
 	if got := s.Realms(); len(got) != 0 {
 		t.Fatalf("realms = %v", got)
 	}
@@ -116,7 +116,7 @@ func TestDirectorySourceSkipsAnEmptyFile(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	write(t, dir, "demo", "   \n")
-	s := NewDirectorySource(dir, "gentian-director-admin")
+	s := NewDirectorySource(dir, "gentian-registrar-admin")
 	if _, ok := s.For("demo"); ok {
 		t.Fatal("an empty secret must not resolve")
 	}

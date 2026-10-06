@@ -81,16 +81,22 @@ func (r *TenantReconciler) EnsureMailForTest(ctx context.Context, tenant *gentia
 	return err
 }
 
-// WriteDirectorRealmSecretForTest exposes the hand-over write. Its merge rule
+// WriteRegistrarRealmSecretForTest exposes the hand-over write. Its merge rule
 // decides whether a realm that could not be reached on one pass keeps a
 // working credential, and getting that wrong takes a screen down for as long
 // as the outage lasts.
-func WriteDirectorRealmSecretForTest(ctx context.Context, c client.Client, data map[string][]byte, complete bool) error {
-	return writeDirectorRealmSecret(ctx, c, data, complete)
+func WriteRegistrarRealmSecretForTest(ctx context.Context, c client.Client, data map[string][]byte, complete bool) error {
+	return writeRegistrarRealmSecret(ctx, c, data, complete)
+}
+
+// RetireDirectorRealmSecretForTest exposes the removal of the Secret the
+// director used to mount.
+func RetireDirectorRealmSecretForTest(ctx context.Context, c client.Client) error {
+	return retireDirectorRealmSecret(ctx, c)
 }
 
 // ServicesNamespaceForTest is where the hand-over Secret lands.
 func ServicesNamespaceForTest() string { return servicesNamespace }
 
-// DirectorRealmSecretNamespaceForTest is where the director's realm credentials are written.
-func DirectorRealmSecretNamespaceForTest() string { return directorRealmSecretNamespace() }
+// RegistrarRealmSecretNamespaceForTest is where the registrar's realm credentials are written.
+func RegistrarRealmSecretNamespaceForTest() string { return registrarRealmSecretNamespace() }
