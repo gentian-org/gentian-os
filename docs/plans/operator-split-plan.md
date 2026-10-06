@@ -253,8 +253,7 @@ PUT    /v1/tenants/{t}/apps/{p}/config          per-install overrides
 PUT    /v1/tenants/{t}/resources
 PUT    /v1/tenants/{t}/policies/{kind}/{name}   backup, grants, export schedules (§2.2)
 PUT    /v1/tenants/{t}/integrations/{contract}  AppGrant: integration consent; `can_grant`
-POST   /v1/tenants/{t}/users | /groups          identity writes; `can_manage_users`
-PUT    /v1/tenants/{t}/users/{u} | DELETE       (§4 open: whether identity deserves its own PEP)
+(people, groups and the realm's settings are not here: they are the registrar's, §3.10)
 PUT    /v1/tenants/{t}/exposure/{inst}/{name}   enable a perimeter surface; `can_expose`
 DELETE /v1/tenants/{t}/exposure/{inst}/{name}   disable it; `can_expose`
 PUT    /v1/tenants/{t}/privileges/{inst}/{name} grant a tenant-scope privilege; `can_approve_privilege`
@@ -453,14 +452,18 @@ the third is new, and is what the director's read routes become.
 | **Bouncer** | Asks, for every request on the authenticated Gateway, whether this session may enter this host, and refuses when the answer is not yes. | `kernel-edge` | nothing; reads the route table and asks OpenFGA | `edge-authz`, "the shim" |
 | **Usher** | Tells a signed-in person what is here and what they may open. | `kernel-edge` | nothing; reads the operator's projections and asks OpenFGA | the director's `tiles`, `me` and status reads |
 | **Custodian** | Takes a credential from the person entitled to set it and puts it in the vault, without anyone being able to take one back out. | `kernel-control`, a Deployment and ServiceAccount of its own | an identity at the vault that can write a credential and cannot read one | `credential manager`, a part of the operator's process |
+| **Registrar** | Keeps the list of people: invites them, puts them in groups, removes them — and cannot touch who administers the platform. | `kernel-control`, a Deployment and ServiceAccount of its own | a Keycloak client credential for each realm, handed over by the operator; the login of its own database | the director's people, group and realm-settings routes, and the Keycloak credential the director held for them |
 
 The names are a cast on purpose: the concierge points you to the right
 door, the bouncer checks you at it, the usher shows you round inside, the
-custodian keeps the keys, and the director decides what the house runs. Only
-the last two change anything, and they change different things: the director
-changes what git declares, the custodian what the vault holds. A secret is
-the one thing that must never be a commit, which is why it has a keeper of
-its own.
+custodian keeps the keys, the registrar keeps the list of who belongs to the
+house, and the director decides what the house runs. Only the last three
+change anything, and they change different things: the director changes what
+git declares, the custodian what the vault holds, the registrar who is in a
+realm and in which groups. A secret must never be a commit and people do not
+belong in an append-only history, which is why each has a keeper of its own.
+One standing credential per process is the rule the cast follows; the table
+at the end of this section says where it holds and where it does not.
 
 **What each must not do** — the contract, stated as the failure it rules out.
 
@@ -490,8 +493,32 @@ its own.
   never shown a caller's token and is not asked who they are: an earlier
   shape exchanged that token at the vault and took the vault's verdict, which
   made a group written into a token a second source of rights.
-- *The director does not answer for the cluster.* It keeps the reads of
-  declared state, for the people who may change it.
+- *The registrar does not decide who may ask, and does not change who
+  administers the platform.* It is the director's pattern with Keycloak where
+  the director has git: it verifies the caller's token, asks the store the
+  relation the route names -- `can_manage_users` on the tenant for people
+  and groups, `can_set_policy` for the realm's password policy,
+  `can_configure` on the cluster for handing a tenant's administrator account
+  to its holder, `can_audit` on the cluster for the count of accounts -- and
+  then acts under its own client in that tenant's realm. Whose act it was is
+  recorded in a database of its own, and the request id goes with the call
+  so that Keycloak's admin event can be joined to it. It holds one credential
+  per realm and can name no realm it was not handed one for. One thing it
+  refuses whoever asks and whatever the store answers: a change to the group
+  the Cluster claim names as the platform's administrators
+  (`spec.platformRoles.admin`) -- adding to it, removing from it, renaming,
+  deleting or re-creating it -- and any change to a person who is in it,
+  because changing an administrator's address and mailing a password link
+  replaces them as surely as editing the group does. That includes the
+  activation link for the cluster administrator's own account, which comes
+  from the install host (`./install.sh --activate-admin`). The rule is applied
+  at the one place every write leaves for Keycloak
+  (`internal/registrar/identity/guard.go`), not route by route. It holds no
+  git credential and no vault role, and in the cluster it may read the
+  tenants and the Cluster claim and nothing else.
+- *The director does not answer for the cluster, and not for people.* It
+  keeps the reads of declared state, for the people who may change it. It
+  holds no Keycloak credential and serves no route about a person.
 
 **Why the usher is not part of the bouncer.** Both are read-only and ask the
 same store, and they share their code: one image, the same verifier, the same
@@ -553,6 +580,17 @@ not mistaken for the controls.
    bounds that is that the role cannot read or delete, so the worst a
    compromised custodian does is overwrite credentials, which is loud; and
    that it is a process of its own, so nothing else runs under its identity.
+9. *The registrar's rule about administrators is the registrar's code.* Its
+   Keycloak client holds `manage-users` in the kernel realm, and Keycloak
+   would add anybody to the administrators' group for it. The rule stops
+   every caller the store allows, and a fault in a route; it does not stop
+   whoever takes over the process. It also covers one group: the one behind
+   the cluster's `admin` role. The groups behind the other platform roles
+   (`securityOfficer`, `auditor`, `serviceAdmin`, `sharedAppsAdmin`,
+   `breakGlass`) are managed like any other group of the kernel realm, by
+   whoever holds `can_manage_users` on the platform tenant. Keycloak's
+   fine-grained admin permissions could deny the client the group itself;
+   that is not built.
 
 **What moves, and in what order.**
 
@@ -563,7 +601,42 @@ not mistaken for the controls.
 | Usher, the rest | `me` (the relations a person holds on a tenant and on the cluster), then status reads. Each leaves the director when its last caller has moved. The director's `GET /v1/clusters/{c}/tiles` — reachable only with a cluster relation, which is why a tenant's own people saw an empty desktop — goes with the first. |
 | Launch rights ✅ | Tiles of installed catalogue apps need `can_launch` on `app:<t>/<p>`. The operator's projection writes `app#tenant` and `app#entitled` from `Tenant.spec.apps`, by the rule the portal applied: an app's own group entitles it, and a base with activated addons is entitled by the addons' groups. Every entry of `spec.apps`, and every addon activated inside one, is a `Component` the tenant reconciler creates and removes; the Component writes the App claim the app Composition answers, routes the app's exposures behind the zone's session, and asks `can_use` on the app at them. |
 | Concierge to the DMZ ✅ | A component of the platform tenant with one perimeter surface, `authMode: none`, published from `tenant-platform-dmz` with an owner and a review date. The brand files it serves today move with the branding work, not with this. |
+| Registrar ✅ | The director's people, group and realm-settings routes → `registrar` (package, executable, Deployment and ServiceAccount, Service, values `registrar.*`, the profile key `registrarUrlKey`). Paths, methods, bodies and the relation each route asks are unchanged; a caller changes the address. The per-realm Keycloak client is a new one, `gentian-registrar-admin`, with the roles the director's had and no more, handed over in the Secret `gentian-registrar-realms`; the operator removes the director's client from each realm and the Secret it was handed over in. The record of who was allowed to ask moved with the routes, to a database and a login of the registrar's own. A tenant's realm and login domain are read from the Tenant objects, where the director read them from git. The director holds no Keycloak credential, mounts none and answers 404 on every one of these paths. |
 | Custodian ✅ | `credential manager` → `custodian` (package, executable, Deployment and ServiceAccount, Service, values, environment, the profile key `custodianUrlKey`, the consoles that call it). It left the operator's process for one of its own. It verifies the caller's token, asks the store `can_read_credential` or `can_write_credential` on the cluster or the tenant, and writes as itself with a vault role that cannot read a value. The exchange of a caller's token at the vault is gone, and with it what existed only for it: the vault's JWT role for cluster administrators, the per-tenant auth mounts and their group-bound roles, the director's audience on the vault's roles, and the `groups` scope on the zone clients. |
+
+**Who enforces what, and what a compromise of each costs.** Read from the
+code and the chart as they are, not from the names. "Enforces" is where a
+request is refused; a process that only filters what it shows enforces
+nothing.
+
+| Process | Standing credentials | What it decides or enforces | What somebody who takes it over can do | What bounds that |
+| --- | --- | --- | --- | --- |
+| **Director** | The deployments repository's push credential; the key its commits are signed with; the token of the operator's command door, which is a shared string (§3.11); the OpenFGA key. No Kubernetes token is mounted, and it holds no Keycloak credential and no vault role. | Every change to declared state and every command of §3.11: it verifies the caller's token and asks the store the route's relation before it commits or relays. | Push a signed commit of anything, in anybody's name: tenants, apps, policies, and the Cluster claim -- which names the group that administers the platform and the catalogue sources software comes from. Issue every command of §3.11 for any tenant, naming anybody as the actor. Write the store directly (see below). | Nothing prevents it. Every commit stays in git, signed by its key, where it can be seen and reverted. It cannot read a secret from the vault or the cluster and cannot reach a realm. |
+| **Operator** | A ServiceAccount whose ClusterRole reads and writes Secrets in every namespace, among much else; Keycloak's administrator credential; a vault role that reads and writes the whole platform path, the master password included; the OpenFGA key; the command door's token. The chart also mounts the deployments repository's credential into it -- the same one the director pushes with -- though not the signing key. | It writes the store: the cluster's roles from the claim, the tenants, the apps, and membership from Keycloak's signed statements. It admits or refuses a Tenant at admission. At the command door it checks the director's token and nothing about the person. | Everything in the cluster. Every Secret is readable to it, so the director's signing key and the registrar's realm credentials are too; with those and the repository credential it can also do what they can. | Nothing inside the cluster. It is the trusted base. What protects it is that no person's request reaches it except through the command door, Keycloak's signed statements and the admission webhook. |
+| **Custodian** | A vault role bound to its ServiceAccount that can create and update a value under the platform path and read and write its metadata, and cannot read a value or delete one; the OpenFGA key. In the cluster: read the credential catalogue, the tenants and the Cluster claim; create, change and delete `Repository` objects; update `ExternalSecret` objects; create and update ConfigMaps in its own namespace; read the vault's CA certificate. | Who may see that a credential is required and who may set one: `can_read_credential` and `can_write_credential`, on the cluster or on a tenant. | Overwrite any credential the platform stores, without being able to read one. Change where the cluster or a tenant installs software from, by changing a `Repository`. Write the store directly. | It cannot read or delete a secret, so what it does is loud: things stop working. No git, no Keycloak. |
+| **Registrar** | One Keycloak client secret per realm (`gentian-registrar-admin`: `view-users`, `query-users`, `query-groups`, `manage-users`, `manage-realm`); the login of its own database; the OpenFGA key. In the cluster: read the tenants and the Cluster claim. | Who may manage a tenant's people (`can_manage_users`), set a realm's password policy (`can_set_policy`), hand over a tenant's administrator account (`can_configure` on the cluster) and count accounts (`can_audit`). That a tenant's request reaches that tenant's realm only. That nobody changes the platform administrators' group or a person in it. | In every realm, the kernel realm included, whatever those roles allow: create, disable or delete any account, set any password, remove any second factor, change any group membership. That includes the platform administrators' group: the rule that forbids it is the registrar's code, which a takeover replaces, and Keycloak carries the change out for this client. So it can make an administrator of the platform. It can also change the realm settings `manage-realm` covers, rewrite its own record of who asked, and write the store directly. | No git, no vault, no write in the cluster. A client per realm and none in `master`; no `manage-clients`, no `manage-identity-providers`, no `impersonation`. Keycloak writes an admin event for each change under the client's service account, and a change with no partner in the registrar's record is what an audit looks for. |
+| **Usher** | The OpenFGA key. No Kubernetes token; the table of tiles is a mounted file. | Nothing. It filters what it lists by the store's answers. | Show or hide tiles, read from the store who holds what, and write the store directly. | A tile is not access: the bouncer decides each request. It holds nothing else. |
+| **Bouncer** | The OpenFGA key. No Kubernetes token; the route table is a mounted file. | Every request on a route of the authenticated Gateway that attaches it: it verifies the session's token and asks the store the question the table names for that host. | Admit any signed-in person to any host behind it, or refuse everybody. It is shown the token of every session that passes, and that token is the one the director, the registrar and the custodian accept -- so for a token's lifetime it can ask them for anything that person may ask. It can also write the store directly. | It holds no credential of its own beyond the key, and a token it sees is good only until it expires -- five minutes, by item 4 above. |
+| **Concierge** | None. | Nothing. It redirects a browser to a console of this cluster. | Serve what it likes on the cluster's bare domain, a false sign-in page included, and alter the brand files other pages load from it. | It holds no credential and no session passes through it. |
+
+Three things in that table are weaker than the cast suggests, and they are
+the same for every row.
+
+- *One key opens the store for everybody.* OpenFGA is configured with a
+  single preshared key, and the director, the operator, the custodian, the
+  registrar, the usher and the bouncer all present it. Only the operator is
+  meant to write; nothing but the code of the other five keeps them from it.
+  A write to the store can grant any relation, the cluster's `admin`
+  included. Per-process identities at the store, with the right to write
+  given to one, would make "reads the store" a property of the credential.
+- *One audience serves every door.* The zone's token is minted for
+  `gentian-director`, and the director, the custodian, the registrar, the
+  usher and the bouncer all accept that audience. A token relayed to one of
+  them is therefore valid at the others for as long as it lives. Anything
+  that sees a person's token -- the bouncer, a console's backend -- can use
+  it at all of them.
+- *The director's word is taken at the command door.* The operator checks a
+  shared string and believes the name the director passes with it (§3.11).
 
 ### 3.11 The operator's command door
 

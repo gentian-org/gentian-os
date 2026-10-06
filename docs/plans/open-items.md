@@ -92,7 +92,7 @@ and the union's exactly-one rule cannot, so it survives as the annotation
 | ✅ | One layout. The v4 step set, kernel trees, `spec.layout`, the `InfraData` kind and `--layout` are gone, and the 50 library functions the v4 steps were the only caller of went with them. `make lint` now runs `lint-unreachable`, so a definition nothing reaches fails the build — the other half of `lint-resolvable` |
 | ✅ | `GETTING-STARTED.md` names the claim set that exists, and says plainly that a leftover `claims/infra-data.yaml` must be deleted — the `InfraData` kind itself is gone, so nothing composes those engines twice |
 | ☐ | S7A.4 — no write has ever succeeded against this cluster |
-| ✅ | S7A.17's durable record: the director's own database on `kernel-postgres` holds who was allowed to ask for each identity change, with a retention horizon it enforces. Optional — a cluster without it starts and warns |
+| ✅ | S7A.17's durable record: the registrar's own database on `kernel-postgres` holds who was allowed to ask for each identity change, with a retention horizon it enforces. Optional — a cluster without it starts and warns |
 | ☐ | S7A.17's other half: the event listener recording Keycloak **admin** events, carrying the request id so the two records join. It projects group membership today and drops the rest |
 | ☐ | S7A.7 and S7A.11 — built, never exercised in a browser |
 | ✅ | S8 — purge and reinstall, which is what makes M1 reached rather than demonstrated (2026-10-03, beefy1) |

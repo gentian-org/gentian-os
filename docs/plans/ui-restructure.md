@@ -123,13 +123,13 @@ token to the custodian rather than holding an OpenBao token
   plans, backup settings and export/restore requests. Every read is a
   director read with the user's token, filtered by the caller's relations.
   The console's `rbac.yaml` has zero rules.
-- **User and group administration** goes through the director too. The
-  director is the platform's configuration API; identity writes are
-  configuration, performed against Keycloak with a scoped service identity
-  the director holds, after an FGA check on the human (`can_manage_users`
-  on `tenant`). The console never sees a Keycloak admin credential. Whether
-  identity writes deserve their own named PEP rather than the director is
-  open (§4); either way the answer is not "the UI".
+- **User and group administration** goes through the registrar
+  ([operator-split-plan.md](operator-split-plan.md) §3.10). Identity writes
+  are performed against Keycloak with a per-realm service identity the
+  registrar holds, after an FGA check on the human (`can_manage_users` on
+  `tenant`). The console never sees a Keycloak admin credential, and neither
+  does the director: identity writes have their own enforcement point, so
+  that the process that pushes to git cannot also write a realm.
 - **The privilege queue.** An install whose profile asks for a privilege
   nobody has granted waits rather than failing, so the console shows it:
   pending requests with what is asked, the profile's stated reason, and who

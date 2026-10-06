@@ -81,7 +81,7 @@ steps yet; `work-packages.md` is where their content lives until they are.
 | S7A.14 | A release reaches a cluster by an immutable name | ✅ |
 | S7A.15 | A zone's hosts follow the components, not a list | ◐ two of five; three are kernel tier |
 | S7A.16 | The app-lifecycle API authenticates nobody | ✅ a shared token |
-| S7A.17 | The director speaks for Keycloak | ◐ credential, routes and screens built; the record's second half is left |
+| S7A.17 | The director speaks for Keycloak | ◐ credential, routes and screens built, and since moved to the registrar; the record's second half is left |
 
 ### What is left, in the order to do it
 
@@ -910,6 +910,13 @@ prerequisite here, not a separate piece of work; it is in
 
 ### S7A.17 ◐ The director speaks for Keycloak
 
+**Moved since.** The routes, the per-realm credential and the record this
+section describes are the registrar's now
+([operator-split-plan.md](operator-split-plan.md) §3.10): a process of its
+own, so that the director holds the git credential and nothing that writes a
+realm. The reasoning below stands as it was written; read "the registrar"
+where it says the director holds, serves or records any of it.
+
 **The same rule as S7A.2, one source of truth along.** Keycloak holds *who*,
 OpenFGA holds *what they may do*, git holds *how the cluster is configured*,
 and a director write into any of the three is admissible when it is
@@ -1127,7 +1134,7 @@ that are not say so.
 | M2.5 | The realm can send mail | operator copies `keycloak-smtp-credentials` into the tenant realm | needs the `smtp-relay` credential supplied |
 | M2.6 | The zone answers: client, session, Gateway listener, hosts, DNS | `keycloak-edge-zone-client` + the operator's `zoneSecurityPolicySpec` + `zone_hosts_projection.go` | **the second zone has never been stood up** |
 | M2.7 | The tenant's desktop is installed and opens | desktop ComponentProfile, `component_desktop.go` | unblocked; never exercised |
-| M2.8 | The director holds a Keycloak credential for the new realm | `KeycloakPlatformReconciler.ensureDirectorRealmCredentials` | **new, never run** |
+| M2.8 | The registrar holds a Keycloak credential for the new realm | `KeycloakPlatformReconciler.ensureRegistrarRealmCredentials` | **new, never run** |
 | M2.9 | A tenant administrator can sign in and see the tenant | the whole of the above | — |
 | M2.10 | The tenant has a backup policy | `SetTenantBackupPolicy`, backup schedules | exercised on v4 only |
 
@@ -1175,14 +1182,14 @@ invitation actually arriving and working.
 
 | | what has to be true | where it lives | state |
 |---|---|---|---|
-| M3.1 | The administrator can reach the People screen | console `IdentitySection`, director `GET /v1/tenants/{t}/people` | built, needs a browser |
-| M3.2 | The invitation is created and the link sent | director `POST /actions/invite-person` | built, never sent a real mail |
+| M3.1 | The administrator can reach the People screen | console `IdentitySection`, registrar `GET /v1/tenants/{t}/people` | built, needs a browser |
+| M3.2 | The invitation is created and the link sent | registrar `POST /actions/invite-person` | built, never sent a real mail |
 | M3.3 | The mail leaves the cluster and arrives | realm `smtpServer` → the relay | **the first real test of mail** |
-| M3.4 | The link is accepted by Keycloak | the action token names the zone client | built: the zone client lists each host's root and the director reads `rootUrl` back — **never exercised with a real mail** |
+| M3.4 | The link is accepted by Keycloak | the action token names the zone client | built: the zone client lists each host's root and the registrar reads `rootUrl` back — **never exercised with a real mail** |
 | M3.5 | The person sets a password and signs in | Keycloak required actions + the zone session | — |
 | M3.6 | They land in that tenant and no other | zone cookie scoped per host (S7A.7) | built, needs a browser |
 | M3.7 | Their groups reach the authorization graph | the event listener → the operator's projector | built, exercised on v4 |
-| M3.8 | The change is recorded with who was allowed to ask | Keycloak admin event + the director's request id | the director's half is durable; **the listener's request-id read-back is left** |
+| M3.8 | The change is recorded with who was allowed to ask | Keycloak admin event + the registrar's request id | the registrar's half is durable; **the listener's request-id read-back is left** |
 
 **M3.4, decided.** An action-token link may carry a `redirect_uri`, and
 Keycloak refuses one that is not on the client's valid redirect URIs. The zone
@@ -1202,7 +1209,7 @@ open redirect at all, so the loosening this paragraph was written to flag
 never happened.
 
 `crossplane/compositions/tenant-default.yaml` carries the reasoning.
-`internal/director/identity/people.go` reads the client's `rootUrl` back
+`internal/registrar/identity/people.go` reads the client's `rootUrl` back
 rather than deriving the host a second time, and sends no redirect when the
 client states none — which is what a realm composed before this change looks
 like.
@@ -1213,7 +1220,7 @@ Keycloak's own console — so the "what changed" half needs nothing built. The
 director sets `X-Gentian-Request-Id` on every admin call so the two halves can
 be joined.
 
-The director's half is now durable: `internal/director/record` keeps the
+The registrar's half is now durable: `internal/registrar/record` keeps the
 caller, the relation and the object in the director's own database on
 `kernel-postgres`, with a retention horizon it enforces, and it is what
 roadmap §1.12 will also use for refusals — which by definition reach Keycloak

@@ -12,7 +12,7 @@ their own license; what that license asks of whoever installs them is stated
 with the add-ons, not here, and no install is gated on it by the cluster.
 
 What the OS contributes to any license stated in users is a fact, not a gate:
-the director answers how many people hold an account on the cluster, per
+the registrar answers how many people hold an account on the cluster, per
 realm (`GET /v1/clusters/{c}/people/count`, `can_audit`). A platform
 administrator can read it today; a console telling them that the number has
 crossed what an installed add-on's license allows is not wired yet.

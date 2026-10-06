@@ -571,20 +571,26 @@ single-use, expiring link that sets one (and enrols a second factor, unless
 switched off) — the same way every member is invited. The installer and the
 director never know it, so there is nothing to print, derive or recover.
 
-Lost access, an expired link, or a link nobody received:
+Lost access, an expired link, or a link nobody received, for a tenant's
+administrator:
 
 ```bash
-kubectl gentian tenants activate-admin platform     # the cluster administrator
 kubectl gentian tenants activate-admin acme         # a tenant administrator
 ```
 
 or **Tenants → Activate administrator** in the console. Each call issues a new
-link; earlier ones still expire on their own. If no administrator can sign in
-at all, the CLI cannot either. Then, from the install host:
+link; earlier ones still expire on their own.
+
+The cluster administrator's own account is not handed over that way. The CLI
+and the console ask the registrar, and the registrar changes nothing about a
+member of the platform administrators' group, whoever asks: it answers 403.
+That account's link comes from the install host:
 
 ```bash
 ./install.sh --activate-admin    # a new link for admin@<kernel-domain>, from the installer's own credential
 ```
+
+which is also the way back in when no administrator can sign in at all.
 
 ### A commit to the deployments repository is not synced
 

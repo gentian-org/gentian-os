@@ -15,8 +15,10 @@ The Gentian CLI is a kubectl plugin (`kubectl-gentian`), installed with
 `make install-plugin` into `~/.local/bin`, with a shorthand symlink `gtnctl`.
 It is a client of the director, like the admin console: sign in once with
 `kubectl gentian login` (a code confirmed in the browser), and every command
-asks the director as you, which checks, commits and records it. It reaches the
-director of the current kubectl context, so it needs no configuration.
+asks the director as you, which checks, commits and records it. The one
+command about a person, `tenants activate-admin`, asks the registrar, which
+checks the same way and acts at Keycloak. It reaches the director and the
+registrar of the current kubectl context, so it needs no configuration.
 
 ```bash
 gtnctl tenants list    # same as kubectl gentian tenants list
@@ -257,9 +259,13 @@ A new link, for a lost password or a link that expired:
 
 ```bash
 kubectl gentian tenants activate-admin <tenant> [--recovery-email <address>]
-kubectl gentian tenants activate-admin platform      # the cluster administrator
-./install.sh --activate-admin                        # break glass: nobody can sign in
+./install.sh --activate-admin                        # the cluster administrator
 ```
+
+The first asks the registrar, which changes nothing about a member of the
+platform administrators' group and answers 403 for the cluster administrator's
+account. That account's link comes from the install host, with the installer's
+own credential — which is also the way in when nobody can sign in.
 
 Keycloak master-realm admin (Suze stack):
 
