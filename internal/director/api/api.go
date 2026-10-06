@@ -48,7 +48,7 @@ type Authenticator interface {
 
 // Repository is the git backend.
 type Repository interface {
-	Install(ctx context.Context, tenant, profile, digest string, meta gitops.Meta) (gitops.Result, error)
+	InstallFrom(ctx context.Context, tenant, profile, digest, catalogue string, meta gitops.Meta) (gitops.Result, error)
 	Uninstall(ctx context.Context, tenant, profile string, meta gitops.Meta) (gitops.Result, error)
 	SetAddons(ctx context.Context, tenant, profile string, addons []string, meta gitops.Meta) (gitops.Result, error)
 	Apps(ctx context.Context, tenant string) ([]gitops.App, error)
@@ -719,16 +719,24 @@ func (s *Server) install(w http.ResponseWriter, r *http.Request, c call) {
 	// does not have is a tenant whose app never appears, with the composition
 	// failing on a ComponentProfile that is not there. Fetching first means an
 	// install either has everything it needs or changed nothing.
+	//
+	// The catalogue is recorded with the install only here, where the bundle
+	// was fetched from that catalogue's source and hashed to the digest. A
+	// coordinate the caller merely states is not written down as a fact.
+	catalogueName := ""
 	if s.cfg.Catalogue != nil && body.Coordinate != "" {
-		if res, ok := s.materialise(w, r, c, body); !ok {
+		res, from, ok := s.materialise(w, r, c, body)
+		if !ok {
 			return
-		} else if res.Changed {
+		}
+		catalogueName = from
+		if res.Changed {
 			s.cfg.Log.InfoContext(ctx, "materialised a catalogue entry",
 				"request_id", reqID(ctx), "coordinate", body.Coordinate, "commit", res.Commit)
 		}
 	}
 
-	res, err := s.cfg.Repo.Install(ctx, tenant, profile, body.Digest, c.meta)
+	res, err := s.cfg.Repo.InstallFrom(ctx, tenant, profile, body.Digest, catalogueName, c.meta)
 	s.written(w, r, res, err)
 }
 
@@ -739,27 +747,31 @@ func (s *Server) install(w http.ResponseWriter, r *http.Request, c call) {
 // not trusted: if they do not hash to that digest the install is refused and
 // nothing is written. The request says WHAT, the source says the bytes, and
 // only agreement produces an install.
+//
+// It also answers the catalogue the bundle was fetched from, which is empty
+// when nothing was fetched: that is the one case in which the install may
+// record where its build came from.
 func (s *Server) materialise(
 	w http.ResponseWriter, r *http.Request, c call, body installRequest,
-) (gitops.Result, bool) {
+) (gitops.Result, string, bool) {
 	ctx := r.Context()
 	cat, name, _ := strings.Cut(body.Coordinate, "/")
 	if !s.cfg.Catalogue.Known(cat) {
 		// A catalogue this cluster has no source for. Not an error: a cluster
 		// may name a source for one catalogue and sync another wholesale, and
 		// the install proceeds against whatever is already there.
-		return gitops.Result{}, true
+		return gitops.Result{}, "", true
 	}
 	if name != r.PathValue("p") {
 		// The bundle fetched is the coordinate's and the entry written is the
 		// path's. Two names would commit one profile and install another.
 		s.fail(w, r, http.StatusBadRequest, "the coordinate names a different app than the one being installed")
-		return gitops.Result{}, false
+		return gitops.Result{}, "", false
 	}
 	if body.Digest == "" {
 		s.fail(w, r, http.StatusBadRequest,
 			"installing from a catalogue source needs the entry's digest: sha256:<hex>")
-		return gitops.Result{}, false
+		return gitops.Result{}, "", false
 	}
 	profile, err := s.cfg.Catalogue.Fetch(ctx, body.Coordinate, body.Digest)
 	switch {
@@ -771,20 +783,20 @@ func (s *Server) materialise(
 			"request_id", reqID(ctx), "coordinate", body.Coordinate)
 		s.fail(w, r, http.StatusBadGateway,
 			"the catalogue source served a bundle that is not this entry; nothing was installed")
-		return gitops.Result{}, false
+		return gitops.Result{}, "", false
 	case errors.Is(err, catalogue.ErrNotFound):
 		s.fail(w, r, http.StatusNotFound, "the catalogue source does not serve this entry")
-		return gitops.Result{}, false
+		return gitops.Result{}, "", false
 	case err != nil:
 		s.fail(w, r, http.StatusBadGateway, "the catalogue entry could not be read: "+err.Error())
-		return gitops.Result{}, false
+		return gitops.Result{}, "", false
 	}
 	res, err := s.cfg.Repo.MaterialiseProfile(ctx, profile.Name, profile.Digest, profile.Body, c.meta)
 	if err != nil {
 		s.repoError(w, r, err)
-		return gitops.Result{}, false
+		return gitops.Result{}, "", false
 	}
-	return res, true
+	return res, cat, true
 }
 
 func (s *Server) uninstall(w http.ResponseWriter, r *http.Request, c call) {

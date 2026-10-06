@@ -100,6 +100,11 @@ func TestInstallingMaterialisesTheProfile(t *testing.T) {
 	if !strings.Contains(tenant, "  - profile: element\n    digest: "+sha(elementProfile)+"\n") {
 		t.Fatalf("the install does not record its digest:\n%s", tenant)
 	}
+	// And it says which catalogue the build was fetched from, which with the
+	// name is the coordinate.
+	if !strings.Contains(tenant, "    catalogue: main\n") {
+		t.Fatalf("the install does not record its catalogue:\n%s", tenant)
+	}
 }
 
 // The property the design rests on: the source is not trusted. A source
@@ -160,6 +165,11 @@ func TestAnUnknownCatalogueInstallsAsBefore(t *testing.T) {
 	log := dt.Git(t, "", "--git-dir", h.remote, "log", "--format=%s", "-5", "main")
 	if strings.Contains(log, "materialise") {
 		t.Fatalf("it materialised from a source it does not have:\n%s", log)
+	}
+	// And a catalogue the caller only named is not written down as where the
+	// app came from.
+	if tenant := dt.RemoteFile(t, h.remote, dt.TenantPath("demo")); strings.Contains(tenant, "catalogue:") {
+		t.Fatalf("a catalogue nothing was fetched from was recorded:\n%s", tenant)
 	}
 }
 

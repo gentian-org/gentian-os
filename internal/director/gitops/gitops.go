@@ -395,7 +395,14 @@ func (g *GitOps) applyTo(ctx context.Context, tenant, sibling, message string, m
 var digestPattern = regexp.MustCompile(`^sha256:[a-f0-9]{64}$`)
 
 // Install adds profile to the tenant's manifest, pinned to digest when one is
-// given.
+// given. It is InstallFrom with no catalogue to record.
+func (g *GitOps) Install(ctx context.Context, tenant, profile, digest string, meta Meta) (Result, error) {
+	return g.InstallFrom(ctx, tenant, profile, digest, "", meta)
+}
+
+// InstallFrom adds profile to the tenant's manifest, pinned to digest when one
+// is given, and records the catalogue the build was fetched from when the
+// caller vouches for one.
 //
 // The digest is the build the install was asked for, and it is recorded as a
 // field of the entry rather than in the profile's name: the name is what the
@@ -403,14 +410,25 @@ var digestPattern = regexp.MustCompile(`^sha256:[a-f0-9]{64}$`)
 // its group, its object in the authorization store, its route -- is spelled
 // from the name.
 //
+// The catalogue is the first half of the coordinate the build was fetched
+// under, and with the name it is the coordinate. It is recorded only beside a
+// digest, and only by a caller that fetched the bundle from that catalogue's
+// source and saw it hash to the digest: the entry then says where the pinned
+// build came from, which nothing else in the cluster does.
+//
 // Installing an app that is already there at another digest moves the pin and
-// reports "updated"; with no digest, or the same one, nothing changes.
-func (g *GitOps) Install(ctx context.Context, tenant, profile, digest string, meta Meta) (Result, error) {
+// reports "updated"; with no digest, or the same one from the same catalogue,
+// nothing changes. A pin moved with no catalogue named loses the one it had,
+// because that one described the build it no longer points at.
+func (g *GitOps) InstallFrom(ctx context.Context, tenant, profile, digest, catalogue string, meta Meta) (Result, error) {
 	if !ValidName(profile) {
 		return Result{}, fmt.Errorf("%w: profile %q", ErrInvalidName, profile)
 	}
 	if digest != "" && !digestPattern.MatchString(digest) {
 		return Result{}, fmt.Errorf("%w: digest %q", ErrInvalidName, digest)
+	}
+	if catalogue != "" && (digest == "" || !ValidName(catalogue)) {
+		return Result{}, fmt.Errorf("%w: catalogue %q", ErrInvalidName, catalogue)
 	}
 	msg := fmt.Sprintf("feat(%s): install %s (via %s)", tenant, profile, meta.actor())
 	if digest != "" {
@@ -418,9 +436,8 @@ func (g *GitOps) Install(ctx context.Context, tenant, profile, digest string, me
 	}
 	return g.apply(ctx, tenant, msg, meta, func(text string) (string, string, bool, error) {
 		lines := strings.Split(text, "\n")
-		start, end, keyIndent, installed := appEntryExtent(lines, profile)
-		if !installed {
-			out, ok := insertAppProfile(text, profile, digest)
+		if _, _, _, installed := appEntryExtent(lines, profile); !installed {
+			out, ok := insertAppProfile(text, profile, digest, catalogue)
 			if !ok {
 				return "", "", false, errors.New("failed to update apps list")
 			}
@@ -429,20 +446,55 @@ func (g *GitOps) Install(ctx context.Context, tenant, profile, digest string, me
 		if digest == "" {
 			return text, "already_installed", false, nil
 		}
-		pin := strings.Repeat(" ", keyIndent) + "digest: " + digest
-		for i := start + 1; i < end; i++ {
-			if indentOf(lines[i]) != keyIndent || !strings.HasPrefix(strings.TrimSpace(lines[i]), "digest:") {
-				continue
-			}
-			if lines[i] == pin {
-				return text, "already_installed", false, nil
-			}
-			lines[i] = pin
-			return strings.Join(lines, "\n"), "updated", true, nil
+		pinned, moved := setAppEntryKey(lines, profile, "digest", digest, "")
+		if catalogue != "" || moved {
+			var recorded bool
+			pinned, recorded = setAppEntryKey(pinned, profile, "catalogue", catalogue, "digest")
+			moved = moved || recorded
 		}
-		out := append(append(append([]string{}, lines[:start+1]...), pin), lines[start+1:]...)
-		return strings.Join(out, "\n"), "updated", true, nil
+		if !moved {
+			return text, "already_installed", false, nil
+		}
+		return strings.Join(pinned, "\n"), "updated", true, nil
 	})
+}
+
+// setAppEntryKey makes one scalar key of an app's entry equal to value, and
+// reports whether that changed anything. An empty value removes the key. A
+// key the entry does not have yet is written under the key named after, or
+// directly under the entry's name when after is empty or absent.
+func setAppEntryKey(lines []string, profile, key, value, after string) ([]string, bool) {
+	start, end, keyIndent, ok := appEntryExtent(lines, profile)
+	if !ok {
+		return lines, false
+	}
+	has := func(i int, k string) bool {
+		return indentOf(lines[i]) == keyIndent && strings.HasPrefix(strings.TrimSpace(lines[i]), k+":")
+	}
+	want := strings.Repeat(" ", keyIndent) + key + ": " + value
+	at := start
+	for i := start + 1; i < end; i++ {
+		if after != "" && has(i, after) {
+			at = i
+		}
+		if !has(i, key) {
+			continue
+		}
+		switch {
+		case value == "":
+			return append(append([]string{}, lines[:i]...), lines[i+1:]...), true
+		case lines[i] == want:
+			return lines, false
+		}
+		out := append([]string{}, lines...)
+		out[i] = want
+		return out, true
+	}
+	if value == "" {
+		return lines, false
+	}
+	out := append(append(append([]string{}, lines[:at+1]...), want), lines[at+1:]...)
+	return out, true
 }
 
 // Uninstall removes profile from the tenant's manifest.
@@ -467,10 +519,13 @@ func (g *GitOps) Uninstall(ctx context.Context, tenant, profile string, meta Met
 // it, as a new tenant's manifest has it.
 var emptyAppsList = regexp.MustCompile(`^  apps:\s*\[\s*\]\s*$`)
 
-func insertAppProfile(text, profile, digest string) (string, bool) {
+func insertAppProfile(text, profile, digest, catalogue string) (string, bool) {
 	entry := []string{"  - profile: " + profile}
 	if digest != "" {
 		entry = append(entry, "    digest: "+digest)
+	}
+	if catalogue != "" {
+		entry = append(entry, "    catalogue: "+catalogue)
 	}
 	lines := strings.Split(text, "\n")
 	for i, line := range lines {

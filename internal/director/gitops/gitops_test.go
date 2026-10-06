@@ -209,3 +209,56 @@ func TestAppsReadsWhatGitSays(t *testing.T) {
 		t.Fatalf("apps = %+v", apps)
 	}
 }
+
+// An install that fetched its build from a catalogue's source says so on the
+// entry, beside the digest: the two together are the coordinate and the build,
+// and nothing else in the cluster keeps the first half.
+func TestAnInstallFromACatalogueRecordsWhichOne(t *testing.T) {
+	remote := dt.Remote(t, "demo")
+	g := gitops.NewGitOps(dt.Clone(t, remote), remote, dt.Cluster, director)
+	ctx := context.Background()
+	first := "sha256:" + strings.Repeat("ab", 32)
+	next := "sha256:" + strings.Repeat("cd", 32)
+
+	if _, err := g.InstallFrom(ctx, "demo", "element", first, "main", meta("u-ada")); err != nil {
+		t.Fatal(err)
+	}
+	entry := "  - profile: element\n    digest: " + first + "\n    catalogue: main\n"
+	if got := dt.RemoteFile(t, remote, dt.TenantPath("demo")); !strings.Contains(got, entry) {
+		t.Fatalf("the entry does not name its catalogue:\n%s", got)
+	}
+
+	// The same build from the same catalogue is not a change.
+	res, err := g.InstallFrom(ctx, "demo", "element", first, "main", meta("u-ada"))
+	if err != nil || res.Changed {
+		t.Fatalf("a repeated install changed something: %+v %v", res, err)
+	}
+
+	// A pin moved with no catalogue vouched for loses the one it had: that
+	// one described the build the entry no longer points at.
+	if _, err := g.InstallFrom(ctx, "demo", "element", next, "", meta("u-ada")); err != nil {
+		t.Fatal(err)
+	}
+	got := dt.RemoteFile(t, remote, dt.TenantPath("demo"))
+	if !strings.Contains(got, "    digest: "+next+"\n") || strings.Contains(got, "catalogue:") {
+		t.Fatalf("the moved pin kept a catalogue nobody vouched for:\n%s", got)
+	}
+
+	// And one recorded later, for an entry that had a digest and no
+	// catalogue, is written without disturbing the pin.
+	if _, err := g.InstallFrom(ctx, "demo", "element", next, "main", meta("u-ada")); err != nil {
+		t.Fatal(err)
+	}
+	entry = "  - profile: element\n    digest: " + next + "\n    catalogue: main\n"
+	if got := dt.RemoteFile(t, remote, dt.TenantPath("demo")); !strings.Contains(got, entry) {
+		t.Fatalf("the catalogue was not recorded beside the pin:\n%s", got)
+	}
+
+	// A catalogue is a fact about a pinned build, so it is refused without
+	// one, and refused when it is not a name.
+	for _, bad := range [][2]string{{"", "main"}, {first, "Not A Name"}} {
+		if _, err := g.InstallFrom(ctx, "demo", "jitsi", bad[0], bad[1], meta("u")); !errors.Is(err, gitops.ErrInvalidName) {
+			t.Fatalf("digest %q catalogue %q: err = %v", bad[0], bad[1], err)
+		}
+	}
+}

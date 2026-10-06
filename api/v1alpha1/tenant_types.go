@@ -404,6 +404,15 @@ type TenantApp struct {
 	// +kubebuilder:validation:Pattern=`^sha256:[a-f0-9]{64}$`
 	Digest string `json:"digest,omitempty"`
 
+	// Catalogue is the catalogue the pinned build was fetched from: the first
+	// half of its coordinate, <catalogue>/<profile>. It is written with the
+	// digest by an install that fetched the bundle from that catalogue's
+	// source, and is absent on every other entry.
+	// +optional
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`
+	// +kubebuilder:validation:MaxLength=63
+	Catalogue string `json:"catalogue,omitempty"`
+
 	// Config provides per-tenant overrides for this app installation.
 	// Values here are merged over the AppProfile's extraValues.
 	// +optional

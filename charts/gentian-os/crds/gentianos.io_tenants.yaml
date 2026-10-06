@@ -103,6 +103,15 @@ spec:
                         type: string
                       type: array
                       x-kubernetes-list-type: set
+                    catalogue:
+                      description: |-
+                        Catalogue is the catalogue the pinned build was fetched from: the first
+                        half of its coordinate, <catalogue>/<profile>. It is written with the
+                        digest by an install that fetched the bundle from that catalogue's
+                        source, and is absent on every other entry.
+                      maxLength: 63
+                      pattern: ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$
+                      type: string
                     config:
                       description: |-
                         Config provides per-tenant overrides for this app installation.
