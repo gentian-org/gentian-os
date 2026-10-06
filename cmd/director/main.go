@@ -182,14 +182,16 @@ func run(log *slog.Logger) error {
 	// cluster routes by being handed it rather than by being trusted to go and
 	// look. A cluster whose operator has not projected yet has no file here,
 	// and the endpoint answers an empty list.
-	// The operator's app-lifecycle API is the one thing in the cluster this
-	// process asks a question of, and it only ever asks: a tenant's enforced
-	// ceiling, what is under it, which plans it may move to. Choosing a plan
-	// is then a commit here, like every other change. Without the URL the
-	// resources routes do not exist, which a console shows as exactly that.
+	// The operator's listener is the one thing in the cluster this process
+	// talks to: it issues the commands of the command door there, and asks
+	// what a commit or a command depends on -- which plans a tenant may move
+	// to, whether a restore finished. Choosing a plan is then a commit here,
+	// like every other change. A person's reads of live state do not pass
+	// through this process; they are the usher's. Without the URL the routes
+	// that need the operator do not exist.
 	var lc api.Lifecycle
 	if u := os.Getenv("DIRECTOR_APP_LIFECYCLE_URL"); u == "" {
-		log.Warn("no app-lifecycle URL: a tenant's resources cannot be read or its plan chosen here", "setting", "DIRECTOR_APP_LIFECYCLE_URL")
+		log.Warn("no app-lifecycle URL: no plan can be chosen and no command issued from here", "setting", "DIRECTOR_APP_LIFECYCLE_URL")
 	} else {
 		// The operator's API refuses a request that presents no token, so a
 		// director started without one reaches nothing. Saying so here is

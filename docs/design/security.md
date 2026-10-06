@@ -96,8 +96,8 @@ changes only when the code does.
 | Control | Status | Where |
 | --- | --- | --- |
 | Keycloak per-tenant realms, kernel realm, OIDC for portal and apps | Implemented | Suze composition, `identity_reconciler.go` |
-| Keycloak group → OpenFGA tuple sync | Implemented as a poll; **the poll is retired by AD-12** | `authz_bridge_reconciler.go` polls on a timer with an admin credential. Membership stays stored as `group#member` tuples, but as a projection the director writes from Keycloak's event-listener feed, reconciled by a read-only client (R7) |
-| `AppGrant` → tuples | Implemented | `app_grant_reconciler.go`; grants are structure and stay stored, but AD-12 makes the director the store's only writer |
+| Keycloak group → OpenFGA tuple sync | Implemented as a poll; **the poll is retired by AD-12** | `authz_bridge_reconciler.go` polls on a timer with an admin credential. Membership stays stored as `group#member` tuples, as a projection the **operator** writes from Keycloak's signed event-listener statements (`membership_listener.go`). The director was to be that writer and is not: it writes nothing to the store |
+| `AppGrant` → tuples | Implemented | `app_grant_reconciler.go`; grants are structure and stay stored. AD-12 would have made the director the store's only writer; as built the operator writes the store and the director only asks it |
 | Any PEP calling OpenFGA `Check` | **Target** | console client exists, no caller; no gateway ext-auth |
 | Tenant namespace + NetworkPolicy default-deny egress | Implemented | `internal/kernel/netpolicy/` — tenant namespaces only |
 | NetworkPolicy in kernel, system and shared namespaces | **Target** | every builder is tenant-scoped; the only policies in the tree are two vendored Bitnami templates (gap G28) |
@@ -122,7 +122,8 @@ changes only when the code does.
 |---|---|---|
 | **Keycloak** | Authentication authority + token issuer (*who you are*). **Per-tenant realms** (not Organizations-as-isolation); kernel realm brokers login; service accounts for agents; RFC 8693 Token Exchange; SAML/OIDC brokering. See [iam.md](iam.md), [admin-console.md](admin-console.md). | Apache 2.0 |
 | **OpenFGA** | ReBAC authorization PDP (*what you may do*). Relationship tuples for humans/agents/apps/assets; Conditions + contextual tuples for ABAC; the derived-ceiling schema. | Apache 2.0 |
-| **Director** | The store's only writer (AD-2, AD-12). Membership arrives on Keycloak's event-listener feed and is written as `group#member` tuples, a projection reconciled toward Keycloak by a read-only client and never edited in place; structure — role-to-group assignments, installs, grants — is written from the CRs in the same operation as the commit it reflects. Keycloak decides no permission; OpenFGA changes no identity. | **Target** (the director does not exist yet) |
+| **Director** | Turns an authorised request into a signed commit to the deployments repository. It asks OpenFGA before each one and writes nothing there. Keycloak decides no permission; OpenFGA changes no identity. | Implemented (`cmd/director`) |
+| **Operator, as the store's writer** | The authorization store is written by the operator and by nothing else on purpose: role-to-group assignments from the Cluster claim, tenants and apps from what Argo CD applied, grants from the CRs, and membership as `group#member` tuples from Keycloak's signed event-listener statements -- a projection, never edited in place. The design named the director for this (AD-2, AD-12); the code does not, so that the process holding the push credential holds no reason to write a relation. What enforces "on purpose" is weak: OpenFGA has one preshared key, every process that asks the store presents it, and it can write. | Implemented (`authz_projection_reconciler.go`, `membership_listener.go`, `app_grant_reconciler.go`); per-process store credentials are **Target** |
 | **Provisioning bridge** | What does this today: reconciles `IntegrationBinding` credentials and `AppGrant` into the graph, and polls Keycloak on a timer with an admin credential for group membership. The poll is **retired by AD-12** in favour of the event feed; the credential is why. | **Partial**, and superseded |
 | **MAC backbone** | K8s namespaces per tenant, NetworkPolicy default-deny egress in those namespaces, Kyverno pod-security admission (implemented); the same default-deny in the platform tiers, service mesh + SPIFFE/SPIRE (target). | Apache 2.0 / OSS |
 | **PEP** | Named enforcement points — Envoy Gateway ext-auth, the director, the custodian, the MCP gateway — calling OpenFGA `Check`, ideally over the OpenID **AuthZEN** Authorization API so PDPs stay swappable. Target: no PEP calls `Check` today (§3.0). | OSS |
@@ -148,7 +149,7 @@ flowchart TD
         Keycloak["KEYCLOAK (IdP / AuthN)<br>realms/orgs, clients, service accounts"]
     end
     
-    Director["DIRECTOR (the store's only writer)<br>membership projection from Keycloak events<br>+ structure: installs, grants<br>+ Integration Binding + ITAM conn."]
+    Director["OPERATOR (writes the store; the director only asks it)<br>membership projection from Keycloak events<br>+ structure: installs, grants<br>+ Integration Binding + ITAM conn."]
     
     AgentsWorkloads["Agents / Workloads"]
     Apps["Apps / API Gateway<br>(Kong/Envoy/app) ◄── PEP"]
@@ -168,14 +169,14 @@ flowchart TD
     
     AgentsWorkloads -->|"acts via OBO token (≤ user)"| Apps
     
-    Shell -->|"installs, grants<br>(every write goes through the director)"| Director
+    Shell -->|"installs, grants<br>(commits by the director,<br>applied by Argo CD)"| Director
     Director -->|"writes every tuple"| OpenFGA
     Apps -->|"AuthZEN Check<br>+ contextual tuples: task TTL, acting_for,<br>device posture — never memberships"| OpenFGA
     
     ITAM -.->|"device/asset + contract-consumer edges"| OpenFGA
 ```
 
-**Decision flow (target):** (1) principal authenticates to Keycloak → OIDC token (agents via client-credentials or Token Exchange carrying `act`). (2) Keycloak's event listener pushes membership changes to the director, which writes them as `group#member` tuples — a projection it reconciles toward Keycloak with a read-only client, never edits in place (AD-12); the director writes structure (installs, grants) from the CRs in the same operation as the commit; `IntegrationBinding` reconciles cross-app credentials. (3) PEP receives request + token, calls OpenFGA `Check` (over AuthZEN), passing runtime facts — a task's TTL, `acting_for`, device posture — as contextual tuples. Memberships are already in the graph and no group travels in a token for a platform decision. (4) OpenFGA traverses the graph (principal → group/org → resource/device, plus task-scoped delegation with TTL Conditions, plus derived-ceiling) → allow/deny. (5) Independently, the MAC backbone enforces tenant isolation and egress *regardless* of the authZ result. (6) Sensitive ops use consistent reads; the Watch API streams tuple changes to an audit log. Today steps (1) and (5) run; (2) runs only in its superseded form — the polling bridge with an admin credential, not the event feed, and no director; (3), (4) and (6) are target.
+**Decision flow (target):** (1) principal authenticates to Keycloak → OIDC token (agents via client-credentials or Token Exchange carrying `act`). (2) Keycloak's event listener pushes signed membership changes to the operator, which writes them as `group#member` tuples — a projection, never edited in place; the operator also writes structure (roles, tenants, installs, grants) from the objects Argo CD applied from the director's commits, so a relation follows a commit only once it has been applied; `IntegrationBinding` reconciles cross-app credentials. (3) PEP receives request + token, calls OpenFGA `Check` (over AuthZEN), passing runtime facts — a task's TTL, `acting_for`, device posture — as contextual tuples. Memberships are already in the graph and no group travels in a token for a platform decision. (4) OpenFGA traverses the graph (principal → group/org → resource/device, plus task-scoped delegation with TTL Conditions, plus derived-ceiling) → allow/deny. (5) Independently, the MAC backbone enforces tenant isolation and egress *regardless* of the authZ result. (6) Sensitive ops use consistent reads; the Watch API streams tuple changes to an audit log. Today steps (1) and (5) run; (2) runs only in its superseded form — the polling bridge with an admin credential, not the event feed, and no director; (3), (4) and (6) are target.
 
 ### 3.4 Application permissions — catalogue contracts and grants
 
