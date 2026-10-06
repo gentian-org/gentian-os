@@ -12,6 +12,7 @@ package lifecycle
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -19,6 +20,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // The operator answers 401 only to a token it does not accept. That is a fault
@@ -83,5 +85,35 @@ func TestTheTokenIsReadFromItsFileOnEveryRequest(t *testing.T) {
 	want := []string{"", "Bearer first", "Bearer second"}
 	if len(presented) != len(want) || presented[0] != want[0] || presented[1] != want[1] || presented[2] != want[2] {
 		t.Fatalf("presented %q, want %q", presented, want)
+	}
+}
+
+// A purge is answered when it is over, minutes after it was asked for. The
+// ordinary timeout of this client would cut it off while the operator was
+// still destroying things, so that one action is relayed under a deadline of
+// its own -- and every other request keeps the short one.
+func TestAPatientRequestOutlastsTheOrdinaryTimeout(t *testing.T) {
+	op := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		time.Sleep(150 * time.Millisecond)
+		_, _ = w.Write([]byte(`{"status":"purged"}`))
+	}))
+	defer op.Close()
+	c := New(op.URL, func() string { return "t" })
+	c.http.Timeout = 30 * time.Millisecond
+
+	if _, _, err := c.Do(context.Background(), "/v1/tenants/demo/actions/provision-app", "ada", map[string]string{}); err == nil {
+		t.Fatal("an ordinary request outlasted the ordinary timeout")
+	}
+	ctx, cancel := Patient(context.Background(), 5*time.Second)
+	defer cancel()
+	status, body, err := c.Do(ctx, "/v1/tenants/demo/actions/purge-app", "ada", map[string]string{"profile": "wiki"})
+	if err != nil || status != http.StatusOK || !strings.Contains(string(body), "purged") {
+		t.Fatalf("a patient request: %d %s %v", status, body, err)
+	}
+	// Patient is still bounded: by the deadline it was given.
+	short, cancelShort := Patient(context.Background(), 30*time.Millisecond)
+	defer cancelShort()
+	if _, _, err := c.Do(short, "/v1/tenants/demo/actions/purge-app", "ada", map[string]string{}); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v, want the deadline", err)
 	}
 }

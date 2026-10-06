@@ -357,6 +357,65 @@ func (c *KeycloakAdminClient) GroupExists(ctx context.Context, realm, groupName 
 	return id != "", err
 }
 
+// DeleteGroup removes a realm's group of this name, and with it every
+// membership in it. existed is false, with no error, when there was no such
+// group: asked twice, the second call finds nothing and says so.
+//
+// The group is looked for again afterwards, and one that is still there is an
+// error whatever the delete answered: a caller that reports the group gone
+// has to have seen it gone.
+func (c *KeycloakAdminClient) DeleteGroup(ctx context.Context, realm, groupName string) (existed bool, err error) {
+	id, err := c.findGroupID(ctx, realm, groupName)
+	if err != nil {
+		return false, err
+	}
+	if id == "" {
+		return false, nil
+	}
+	token, err := c.adminToken(ctx)
+	if err != nil {
+		return true, err
+	}
+	path := fmt.Sprintf("/admin/realms/%s/groups/%s", url.PathEscape(realm), url.PathEscape(id))
+	status, err := c.doAdmin(ctx, token, http.MethodDelete, path, nil)
+	if err != nil && status != http.StatusNotFound {
+		return true, fmt.Errorf("keycloak delete group %s: %w", groupName, err)
+	}
+	left, err := c.findGroupID(ctx, realm, groupName)
+	if err != nil {
+		return true, err
+	}
+	if left != "" {
+		return true, fmt.Errorf("keycloak still has group %s after deleting it", groupName)
+	}
+	return true, nil
+}
+
+// GroupNames lists the realm's top-level groups whose name starts with prefix.
+func (c *KeycloakAdminClient) GroupNames(ctx context.Context, realm, prefix string) ([]string, error) {
+	token, err := c.adminToken(ctx)
+	if err != nil {
+		return nil, err
+	}
+	base := fmt.Sprintf("/admin/realms/%s/groups", url.PathEscape(realm))
+	var out []string
+	for first := 0; ; first += keycloakAdminPageSize {
+		var page []keycloakGroupRecord
+		if err := c.getAdminJSON(ctx, token, paginatedAdminPath(base, first, keycloakAdminPageSize), &page); err != nil {
+			return nil, fmt.Errorf("keycloak list groups: %w", err)
+		}
+		for _, g := range page {
+			if strings.HasPrefix(g.Name, prefix) {
+				out = append(out, g.Name)
+			}
+		}
+		if len(page) < keycloakAdminPageSize {
+			break
+		}
+	}
+	return out, nil
+}
+
 func (c *KeycloakAdminClient) findGroupID(ctx context.Context, realm, groupName string) (string, error) {
 	token, err := c.adminToken(ctx)
 	if err != nil {

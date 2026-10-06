@@ -14,6 +14,8 @@ import (
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
+
+	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -80,55 +82,59 @@ func TestPodReferencesAny(t *testing.T) {
 
 // A resource Helm owns must only go with its own release. provider-helm
 // reconciles release state rather than cluster contents, so anything deleted
-// from under a live release stays deleted.
-
-func TestOwnedByOtherRelease(t *testing.T) {
+// from under a live release stays deleted. Release names are exact -- the
+// app's, its declared extensions', or a directly delivered chart's -- so a
+// claim that names a release is the app's only when the release is.
+func TestAClaimIsTheAppsOnlyWhenItsReleaseIs(t *testing.T) {
 	t.Parallel()
-	cases := []struct {
-		name    string
-		release string
-		app     string
-		want    bool
-	}{
-		{"our own release", "nextcloud-base-ce-jbwn6-release", "nextcloud-base-ce", false},
-		{"our sidecar's release", "demo-odoo-base-ce-git-modules", "odoo-base-ce", false},
-		{"a sibling profile in the same family", "nextcloud-suite-ab12-release", "nextcloud-base-ce", true},
-		{"an unrelated app", "open-webui-lm5pw-release", "odoo-base-ce", true},
-		// Not Helm-managed at all: the veto must not fire, or PVCs the operator
-		// created directly would survive every purge.
-		{"no helm annotation", "", "odoo-base-ce", false},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			ann := map[string]string{}
-			if tc.release != "" {
-				ann["meta.helm.sh/release-name"] = tc.release
-			}
-			got, other := ownedByOtherRelease(ann, tc.app)
-			if other != tc.want {
-				t.Fatalf("ownedByOtherRelease(%q, %q) = %v, want %v", tc.release, tc.app, other, tc.want)
-			}
-			if got != tc.release {
-				t.Fatalf("release name: got %q want %q", got, tc.release)
-			}
-		})
-	}
-}
-
-// The veto has to actually override the match, since the name-substring
-// fallback is what reaches a sibling app's volume in the first place.
-func TestOwnedByOtherReleaseOverridesAFuzzyNameMatch(t *testing.T) {
-	t.Parallel()
-	pvc := corev1.PersistentVolumeClaim{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:        "nextcloud-suite-data",
-			Annotations: map[string]string{"meta.helm.sh/release-name": "nextcloud-suite-ab12-release"},
+	tenant := &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "demo"}}
+	tenant.Spec.Apps = []gentianov1alpha1.TenantApp{{Profile: "nextcloud-base-ce-talk"}}
+	profile := &gentianov1alpha1.ComponentProfile{
+		ObjectMeta: metav1.ObjectMeta{Name: "nextcloud-base-ce"},
+		Spec: gentianov1alpha1.ComponentProfileSpec{
+			Package:    gentianov1alpha1.PackageSpec{Chart: &gentianov1alpha1.ChartRef{Name: "nextcloud"}},
+			Extensions: []gentianov1alpha1.AppSidecarSpec{{Name: "mcp"}, {Name: "talk"}},
 		},
 	}
-	if !pvcBelongsToApp(pvc, "nextcloud-base-ce", "nextcloud") {
-		t.Fatal("precondition: the family substring is expected to match here")
+	helm := func(name, release string) corev1.PersistentVolumeClaim {
+		return corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{
+			Name: name, Annotations: map[string]string{"meta.helm.sh/release-name": release}}}
 	}
-	if _, other := ownedByOtherRelease(pvc.Annotations, "nextcloud-base-ce"); !other {
-		t.Fatal("the sibling's volume must be vetoed despite matching")
+	statefulSet := func(name, release string) corev1.PersistentVolumeClaim {
+		return corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{
+			Name: name, Labels: map[string]string{"app.kubernetes.io/instance": release}}}
+	}
+	cases := []struct {
+		name    string
+		claim   corev1.PersistentVolumeClaim
+		profile *gentianov1alpha1.ComponentProfile
+		want    bool
+	}{
+		{"its own release", helm("nextcloud-base-ce-release-data", "nextcloud-base-ce-release"), profile, true},
+		{"its declared extension's release", helm("nextcloud-base-ce-mcp-release-cache", "nextcloud-base-ce-mcp-release"), profile, true},
+		{"its chart delivered directly", helm("tenant-demo-nextcloud-base-ce-data", "tenant-demo-nextcloud-base-ce"), profile, true},
+		{"a claim its StatefulSet made", statefulSet("data-nextcloud-base-ce-release-0", "nextcloud-base-ce-release"), profile, true},
+		// Not Helm's at all: matched by name alone, or a claim the operator
+		// made directly would survive every purge.
+		{"no release on record", pvc("nextcloud-base-ce-uploads", nil), profile, true},
+
+		// The dangerous direction.
+		{"a sibling profile sharing the chart", helm("nextcloud-suite-data", "nextcloud-suite-release"), profile, false},
+		{"an app whose name begins with this one's", helm("nextcloud-base-ce-pro-release-data", "nextcloud-base-ce-pro-release"), profile, false},
+		{"a StatefulSet claim of such an app", statefulSet("data-nextcloud-base-ce-pro-release-0", "nextcloud-base-ce-pro-release"), profile, false},
+		{"an installed app named like an extension's key", helm("nextcloud-base-ce-talk-release-data", "nextcloud-base-ce-talk-release"), profile, false},
+		{"the same app in another tenant's naming", helm("tenant-other-nextcloud-base-ce-data", "tenant-other-nextcloud-base-ce"), profile, false},
+
+		// With the profile gone the extensions are not known: a release
+		// shaped like one counts, but never an installed app's.
+		{"profile gone: shaped like an extension's", helm("nextcloud-base-ce-mcp-release-cache", "nextcloud-base-ce-mcp-release"), nil, true},
+		{"profile gone: an installed app's", helm("nextcloud-base-ce-talk-release-data", "nextcloud-base-ce-talk-release"), nil, false},
+		{"profile gone: a sibling sharing the chart", helm("nextcloud-suite-data", "nextcloud-suite-release"), nil, false},
+	}
+	for _, c := range cases {
+		own, vetoed := appVolumes([]corev1.PersistentVolumeClaim{c.claim}, tenant, "nextcloud-base-ce", c.profile)
+		if got := len(own) == 1; got != c.want {
+			t.Errorf("%s: the app's = %v, want %v (vetoed %v)", c.name, got, c.want, vetoed)
+		}
 	}
 }

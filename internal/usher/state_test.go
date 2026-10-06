@@ -78,6 +78,7 @@ func TestEachReadAsksItsRelationOnItsObject(t *testing.T) {
 		path, relation, object, asked string
 	}{
 		{"/v1/tenants/acme/apps/status", "can_view", "tenant:acme", "/v1/tenants/acme/apps/status"},
+		{"/v1/tenants/acme/apps/retained", "can_view", "tenant:acme", "/v1/tenants/acme/apps/retained"},
 		{"/v1/tenants/acme/resources", "can_view", "tenant:acme", "/v1/tenants/acme/resources"},
 		{"/v1/tenants/acme/resources/plans", "can_view", "tenant:acme", "/v1/tenants/acme/resources/plans"},
 		{"/v1/tenants/acme/resources/usage", "can_view", "tenant:acme", "/v1/tenants/acme/resources/usage"},

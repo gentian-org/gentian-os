@@ -45,6 +45,10 @@ import (
 func (s *Server) stateRoutes() {
 	// What the cluster made of what git says is installed.
 	s.guarded("GET /v1/tenants/{t}/apps/status", "can_view", tenantObject, s.relay("/apps/status"))
+	// What uninstalled apps still hold: the apps that are "retained", and
+	// which kinds of data each one has left. Uninstalling keeps an app's
+	// data, and this is the only place that says so afterwards.
+	s.guarded("GET /v1/tenants/{t}/apps/retained", "can_view", tenantObject, s.relay("/apps/retained"))
 
 	// A tenant's resources: the ceiling the cluster enforces, what is under
 	// it, the plans it may move to, and its history.

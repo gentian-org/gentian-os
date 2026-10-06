@@ -23,6 +23,20 @@ func CategoryPath(tenant, app, category string) string {
 	return fmt.Sprintf("gentian-os/tenants/%s/apps/%s/%s", tenant, app, category)
 }
 
+// AppPath is everything stored for one app of a tenant: each category the
+// kernel provisions for it and each secret generated for it is below this. An
+// extension of an app has a subtree of its own beside it, keyed
+// "{app}-{extension}". Purging an app's credentials is deleting these.
+func AppPath(tenant, app string) string {
+	return fmt.Sprintf("gentian-os/tenants/%s/apps/%s", tenant, app)
+}
+
+// AppsPath is where a tenant's per-app subtrees are: listing it names every
+// app, installed or not, that still has something stored.
+func AppsPath(tenant string) string {
+	return fmt.Sprintf("gentian-os/tenants/%s/apps", tenant)
+}
+
 // InternalPath returns the canonical KV v2 logical path for a per-app internal
 // secret (an AppProfile.spec.appSecrets entry). The value is stored with a
 // single "value" key so the ExternalSecret can read it generically.

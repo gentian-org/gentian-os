@@ -49,6 +49,34 @@ type Client struct {
 	// stream has no timeout: it carries bundle downloads, which take as long
 	// as the bundle is big and are bounded by the caller's context instead.
 	stream *http.Client
+	// patient has no timeout of its own at all, not even for the response
+	// to begin: it carries the one action whose answer is the end of minutes
+	// of work, and is bounded by the deadline Patient puts on the context.
+	patient *http.Client
+}
+
+// PurgeDeadline is how long the director waits for the operator to answer a
+// purge of an app.
+//
+// A purge is one request answered when it is over, and the operator gives
+// itself four and a half minutes for it (applifecycle's purgeBudget): it
+// drops databases, runs deletion Jobs and waits for volumes to go. The
+// ordinary thirty seconds of this client cut such a request off while the
+// operator was still destroying things, and the person was told the operator
+// had not answered. This is longer than the operator's budget, so the
+// operator always answers first -- finished, or stopped and saying where --
+// and shorter than the director's own write deadline, so the director still
+// has time to pass the answer on.
+const PurgeDeadline = 5 * time.Minute
+
+type patientKey struct{}
+
+// Patient returns a context under which Do waits up to d for its answer
+// instead of this client's ordinary timeout. For an action known to take
+// long; everything else keeps the short timeout, which is what stops a
+// relay from hanging on an operator that is not there.
+func Patient(ctx context.Context, d time.Duration) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithValue(ctx, patientKey{}, true), d)
 }
 
 // New returns a client for the operator's API at base, for the director.
@@ -87,6 +115,9 @@ func NewReader(base string, token func() string) *Client {
 		who:    "usher",
 		http:   &http.Client{Timeout: 30 * time.Second},
 		stream: &http.Client{Transport: &http.Transport{ResponseHeaderTimeout: 30 * time.Second}},
+		// A transport of its own, so that nothing set on the default one is
+		// inherited by the request that must be allowed to take minutes.
+		patient: &http.Client{Transport: &http.Transport{}},
 	}
 }
 
@@ -270,7 +301,11 @@ func (c *Client) Do(ctx context.Context, path, actor string, body any) (int, []b
 	if actor != "" {
 		req.Header.Set("X-Gentian-Actor", actor)
 	}
-	resp, err := c.http.Do(req)
+	client := c.http
+	if patient, _ := ctx.Value(patientKey{}).(bool); patient {
+		client = c.patient
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return 0, nil, fmt.Errorf("app-lifecycle API: %w", err)
 	}

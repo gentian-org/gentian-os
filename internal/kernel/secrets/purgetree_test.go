@@ -81,3 +81,27 @@ func TestDeleteTreeRefusesEmptyPath(t *testing.T) {
 		t.Fatalf("nothing should have been deleted, got %v", *deleted)
 	}
 }
+
+// Listing names what is below a path and nothing more, and a path with
+// nothing below it is an empty list, not an error.
+func TestListChildrenNamesWhatIsBelowAPath(t *testing.T) {
+	c, deleted := fakeKV(t, map[string][]string{
+		"gentian-os/tenants/demo/apps": {"nextcloud/", "nextcloud-mcp/", "wiki/"},
+	})
+	got, err := c.ListChildren(context.Background(), "/gentian-os/tenants/demo/apps/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(got, " ") != "nextcloud/ nextcloud-mcp/ wiki/" {
+		t.Fatalf("children = %v", got)
+	}
+	if got, err := c.ListChildren(context.Background(), "gentian-os/tenants/nobody/apps"); err != nil || len(got) != 0 {
+		t.Fatalf("an empty path: %v %v", got, err)
+	}
+	if _, err := c.ListChildren(context.Background(), " / "); err == nil {
+		t.Fatal("an empty path was listed: that is the whole mount")
+	}
+	if len(*deleted) != 0 {
+		t.Fatalf("listing deleted %v", *deleted)
+	}
+}

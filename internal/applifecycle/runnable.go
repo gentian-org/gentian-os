@@ -16,6 +16,7 @@ import (
 
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 
+	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"github.com/gentian-org/gentian-os/internal/layout"
 	"github.com/gentian-org/gentian-os/internal/licencereport"
 )
@@ -38,6 +39,7 @@ func NewRunnableFromEnv(mgr manager.Manager) (*Runnable, error) {
 		OperatorSA:        envOrDefault("OPERATOR_SA", "gentian-os"),
 		MetricsEnabled:    os.Getenv("METRICS_SERVER_ENABLED") == "true",
 		LicenceReport:     licencereport.SettingsFromEnv(),
+		Vault:             vaultFromEnv(),
 	})
 	if err != nil {
 		return nil, err
@@ -53,6 +55,17 @@ func NewRunnableFromEnv(mgr manager.Manager) (*Runnable, error) {
 			Auth:    NewCallerAuth(svc.clientset.AuthenticationV1().TokenReviews(), CallersFromEnv(namespace)),
 		},
 	}, nil
+}
+
+// vaultFromEnv is the vault the operator's own seeder writes to, reached the
+// same way: BAO_ADDR, and the operator's Kubernetes-auth role. Nil without an
+// address.
+func vaultFromEnv() CredentialStore {
+	addr := os.Getenv("BAO_ADDR")
+	if addr == "" {
+		return nil
+	}
+	return secrets.NewKVClient(addr, envOrDefault("BAO_ROLE", "gentian-os-operator"), "")
 }
 
 func envOrDefault(key, def string) string {

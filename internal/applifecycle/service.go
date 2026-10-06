@@ -54,6 +54,41 @@ type Service struct {
 	actualSource usage.ActualSource
 	// appLocks serializes lifecycle operations per (tenant, profile) — see lockApp.
 	appLocks sync.Map
+
+	// vault is where apps' credentials are stored. Nil when the operator was
+	// given no vault to talk to; a purge then fails at its credentials step
+	// rather than report them destroyed.
+	vault CredentialStore
+	// groups, when set, is the identity provider to use in place of the one
+	// the keycloak-admin Secret names. Tests set it.
+	groups AccessGroups
+	// exec, when set, runs a command in a pod in place of the API server's
+	// exec. Tests set it.
+	exec func(ctx context.Context, ns, pod, container string, command []string) (string, error)
+}
+
+// accessGroups is the identity provider's groups, with the administrator
+// credential the operator holds beside it.
+func (s *Service) accessGroups(ctx context.Context) (AccessGroups, error) {
+	if s.groups != nil {
+		return s.groups, nil
+	}
+	kcURL, kcUser, kcPass, err := s.loadKeycloakAdmin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("load keycloak admin credentials: %w", err)
+	}
+	return authz.NewKeycloakAdminClient(kcURL, kcUser, kcPass), nil
+}
+
+// tryLockApp is lockApp for a request that must not queue: it reports false
+// when another operation on the app is running, and the caller says so.
+func (s *Service) tryLockApp(tenant, profile string) (func(), bool) {
+	v, _ := s.appLocks.LoadOrStore(tenant+"/"+profile, &sync.Mutex{})
+	mu := v.(*sync.Mutex)
+	if !mu.TryLock() {
+		return nil, false
+	}
+	return mu.Unlock, true
 }
 
 // lockApp blocks until no other lifecycle operation is running for this app,
@@ -93,6 +128,11 @@ func NewService(c client.Client, cfg *rest.Config, opts Options) (*Service, erro
 		client:    c,
 		clientset: cs,
 		opts:      opts,
+	}
+	// Assigned only when there is one: an interface holding a nil pointer is
+	// not nil, and the purge's check for "no vault" would pass it.
+	if opts.Vault != nil {
+		svc.vault = opts.Vault
 	}
 	// Constructed rather than probed: metrics.k8s.io may be absent, and
 	// discovering that at start-up would make the operator's readiness depend

@@ -74,6 +74,17 @@ func (c *KVClient) deleteTree(ctx context.Context, path string, depth int) error
 	return c.deleteMetadata(ctx, path)
 }
 
+// ListChildren names what is directly below a KV v2 path: a secret by its
+// name, a subtree by its name with a trailing slash. Nothing there is an empty
+// list and no error. It reads names only, never a value.
+func (c *KVClient) ListChildren(ctx context.Context, logicalPath string) ([]string, error) {
+	logicalPath = strings.Trim(strings.TrimSpace(logicalPath), "/ ")
+	if logicalPath == "" {
+		return nil, fmt.Errorf("refusing to list an empty KV path")
+	}
+	return c.listChildren(ctx, logicalPath)
+}
+
 func (c *KVClient) listChildren(ctx context.Context, path string) ([]string, error) {
 	tok, err := c.authToken(ctx)
 	if err != nil {

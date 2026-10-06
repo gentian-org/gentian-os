@@ -98,6 +98,68 @@ func CNPGDatabaseCR(tenantName, app string) string {
 	return "db-" + tenantName + "-" + app
 }
 
+// DesktopStore is the name the desktop's database, role and vault record are
+// kept under for a tenant. It is shaped like an app's name and is not one: no
+// catalogue entry is called this and nothing installs or uninstalls it, so a
+// tenant always holds these stores and never "retains" them.
+const DesktopStore = "shell"
+
+// backupStore is the same for the tenant's backup bucket.
+const backupStore = "gentian-backup"
+
+// IsPlatformStore reports whether a name addresses stores the platform keeps
+// for a tenant itself rather than for an app the tenant installed. A purge of
+// an app must refuse such a name -- it would drop the desktop's database --
+// and a list of what uninstalled apps left behind must not show it.
+func IsPlatformStore(name string) bool {
+	return name == DesktopStore || name == backupStore
+}
+
+// AppRelease is the Helm release an app is installed as in its tenant's
+// namespace: one name for as long as the app is the tenant's, whichever
+// install of it this is. The app Composition sets it as the release's
+// external name. Being stable is what lets a volume claim kept by one
+// uninstall be found, and taken over, by the next install.
+func AppRelease(app string) string {
+	return app + "-release"
+}
+
+// ExtensionRelease is the Helm release of one extension (sidecar) of an app.
+func ExtensionRelease(app, extension string) string {
+	return app + "-" + extension + "-release"
+}
+
+// DirectRelease is the Helm release of a chart the component reconciler
+// delivers itself, without the app Composition. The Release object is
+// cluster-scoped and carries the namespace in its name; the Helm release
+// takes the same name.
+func DirectRelease(tenantName, app string) string {
+	return TenantNamespace(tenantName) + "-" + app
+}
+
+// IsAppRelease reports whether a Helm release in the tenant's namespace is
+// one of this app's.
+//
+// extensions are the app's declared extensions. known says whether they are:
+// when the app's profile is gone they are not, and any release shaped like an
+// extension's ("<app>-…-release") is taken to be one. Callers that destroy on
+// the strength of that wider reading must first rule out that the release is
+// another installed app's.
+func IsAppRelease(release, tenantName, app string, extensions []string, known bool) bool {
+	if release == AppRelease(app) || release == DirectRelease(tenantName, app) {
+		return true
+	}
+	if !known {
+		return strings.HasPrefix(release, app+"-") && strings.HasSuffix(release, "-release")
+	}
+	for _, ext := range extensions {
+		if release == ExtensionRelease(app, ext) {
+			return true
+		}
+	}
+	return false
+}
+
 func s3Safe(value string) string {
 	var b strings.Builder
 	for _, ch := range value {
@@ -167,8 +229,10 @@ func SidecarNames(profile *gentianov1alpha1.ComponentProfile) []string {
 // The label checks are exact; the trailing name check is a substring, which is
 // deliberately broad — charts name volumes inconsistently and some ship none of
 // the standard labels. Callers that *delete* what this matches must first ask
-// OwnedByOtherRelease, because the substring is wide enough to reach a sibling
-// app's volume when two profiles share a family.
+// whether the claim records a Helm release and, if it does, whether that
+// release is the app's (IsAppRelease): the substring is wide enough to reach a
+// sibling app's volume when two profiles share a family, or when one app's
+// name begins another's.
 func PVCBelongsToApp(pvc corev1.PersistentVolumeClaim, appName, family string) bool {
 	if pvc.Labels["gentianos.io/app"] == appName {
 		return true
@@ -182,20 +246,4 @@ func PVCBelongsToApp(pvc corev1.PersistentVolumeClaim, appName, family string) b
 		}
 	}
 	return strings.Contains(pvc.Name, appName) || (family != "" && strings.Contains(pvc.Name, family))
-}
-
-// OwnedByOtherRelease reports whether a Helm-managed object belongs to a
-// release other than this app's, returning the release name for logging.
-//
-// For purge this is a veto: deleting an object out from under a live release is
-// unrecoverable, because provider-helm reconciles release *state* and will not
-// notice the object is gone. For export it is only a hint — capturing a
-// neighbour's volume wastes space but destroys nothing — so export may choose
-// to include what purge would skip.
-func OwnedByOtherRelease(annotations map[string]string, appName string) (string, bool) {
-	release := annotations["meta.helm.sh/release-name"]
-	if release == "" || strings.Contains(release, appName) {
-		return release, false
-	}
-	return release, true
 }

@@ -159,20 +159,44 @@ func TestPVCBelongsToApp(t *testing.T) {
 	}
 }
 
-func TestOwnedByOtherRelease(t *testing.T) {
-	cases := []struct {
-		name        string
-		annotations map[string]string
-		app         string
-		wantOther   bool
-	}{
-		{"no helm annotation", nil, "nextcloud-base-ce", false},
-		{"own release", map[string]string{"meta.helm.sh/release-name": "nextcloud-base-ce-release"}, "nextcloud-base-ce", false},
-		{"sibling release", map[string]string{"meta.helm.sh/release-name": "openproject-ce-release"}, "nextcloud-base-ce", true},
+// A release is named after its app, with nothing generated in the name: that
+// is what lets a volume claim kept by an uninstall be recognised, and taken
+// over, by the next install. Which releases are an app's is exact when its
+// extensions are known, and only then.
+func TestAnAppsReleasesAreNamedAfterIt(t *testing.T) {
+	if got := AppRelease("odoo-base-ce"); got != "odoo-base-ce-release" {
+		t.Errorf("AppRelease = %q", got)
 	}
-	for _, tc := range cases {
-		if _, got := OwnedByOtherRelease(tc.annotations, tc.app); got != tc.wantOther {
-			t.Errorf("%s: OwnedByOtherRelease = %v, want %v", tc.name, got, tc.wantOther)
+	if got := ExtensionRelease("odoo-base-ce", "mcp"); got != "odoo-base-ce-mcp-release" {
+		t.Errorf("ExtensionRelease = %q", got)
+	}
+	if got := DirectRelease("demo", "desktop"); got != "tenant-demo-desktop" {
+		t.Errorf("DirectRelease = %q", got)
+	}
+	cases := []struct {
+		release    string
+		extensions []string
+		known      bool
+		want       bool
+	}{
+		{"wiki-release", nil, true, true},
+		{"tenant-demo-wiki", nil, true, true},
+		{"wiki-mcp-release", []string{"mcp"}, true, true},
+		// Another app whose name begins with this one's.
+		{"wiki-pro-release", []string{"mcp"}, true, false},
+		// With the extensions unknown the same release counts, so that an
+		// app is never taken to be gone while something that may be its
+		// own is still running.
+		{"wiki-pro-release", nil, false, true},
+		{"drive-release", nil, false, false},
+		{"tenant-other-wiki", nil, false, false},
+	}
+	for _, c := range cases {
+		if got := IsAppRelease(c.release, "demo", "wiki", c.extensions, c.known); got != c.want {
+			t.Errorf("IsAppRelease(%q, extensions %v known=%v) = %v, want %v", c.release, c.extensions, c.known, got, c.want)
 		}
+	}
+	if !IsPlatformStore(DesktopStore) || IsPlatformStore("wiki") {
+		t.Error("the desktop's store is the platform's, and an app's is not")
 	}
 }

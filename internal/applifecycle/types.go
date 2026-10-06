@@ -24,9 +24,14 @@ type Options struct {
 	// LicenceReport is whether this cluster reports what it runs, and to
 	// where: what the read of the last report answers from.
 	LicenceReport licencereport.Settings
+	// Vault is where apps' credentials are stored: what a purge deletes them
+	// from and the retained-data read lists. Nil when the operator has no
+	// vault configured; a purge then fails rather than claim the credentials
+	// destroyed.
+	Vault CredentialStore
 }
 
-// Result is returned from install/uninstall operations.
+// Result is returned from lifecycle operations.
 type Result struct {
 	Status   string   `json:"status"`
 	Tenant   string   `json:"tenant"`
@@ -35,4 +40,12 @@ type Result struct {
 	Ready    bool     `json:"ready,omitempty"`
 	Message  string   `json:"message,omitempty"`
 	Warnings []string `json:"warnings,omitempty"`
+	// What a purge did. Complete is whether every kind of data the app could
+	// hold was examined: false, with NotExamined naming the kinds, when the
+	// app's profile is no longer on the cluster and what it declared is
+	// unknown. Destroyed are the kinds that are now gone. Set on a purge's
+	// answer and on nothing else.
+	Complete    *bool    `json:"complete,omitempty"`
+	Destroyed   []string `json:"destroyed,omitempty"`
+	NotExamined []string `json:"notExamined,omitempty"`
 }
