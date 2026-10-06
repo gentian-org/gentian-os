@@ -43,6 +43,11 @@ spec:
     metadata:
       labels:
         {{- include "gentian-os.selectorLabels" . | nindent 8 }}
+        # What tells these pods from the release's other workloads in this
+        # namespace, which carry the two labels above as well. The
+        # NetworkPolicy in networkpolicy.yaml selects on it. Not part of the
+        # Deployment's selector, which is immutable.
+        app.kubernetes.io/component: operator
       {{- with .Values.podAnnotations }}
       annotations:
         {{- toYaml . | nindent 8 }}

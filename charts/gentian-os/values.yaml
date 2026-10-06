@@ -740,6 +740,16 @@ membershipListener:
     name: ""
     key: keys
 
+# A NetworkPolicy on the operator's own pods, and on nothing else. It leaves
+# the app-lifecycle port (appLifecycle.port) reachable only from the
+# director's and the usher's pods in this namespace, and lists the operator's
+# other ports -- metrics, health, the membership listener, the admission
+# webhook -- as open as they are without a policy. Needs a CNI that enforces
+# NetworkPolicy; on one that does not it has no effect. Off removes the
+# policy and leaves the callers' ServiceAccount identity as the only check.
+networkPolicy:
+  enabled: true
+
 appLifecycle:
   port: 8082
   # Who may call this API is decided by workload identity. The director and
