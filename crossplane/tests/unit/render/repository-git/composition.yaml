@@ -616,7 +616,7 @@ spec:
                           {{- if not $bearer }}
                           .git-credentials: |
                             {{- $scheme := ternary "http://" "https://" (hasPrefix "http://" $url) }}
-                            {{ $scheme }}{{ `{{ .username }}` }}:{{ `{{ .password }}` }}@{{ trimPrefix $scheme $url }}
+                            {{ printf "%s{{ .username }}:{{ .password }}@%s" $scheme (trimPrefix $scheme $url) }}
                           {{- else }}
                           {{- /* A URL has no place for a bearer token, so there
                                is no .git-credentials line to write. Whoever

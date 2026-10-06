@@ -1,0 +1,20 @@
+# A mirror of the user-interface repository that takes a token: a platform
+# repository role and the bearer mode are accepted together.
+kind: Repository
+apiVersion: gentianos.io/v1alpha1
+metadata:
+  namespace: crossplane-system
+  name: schema-valid-repository-mirror-token
+spec:
+  type: git
+  role: gentian-ui
+  branch: develop
+  endpoints:
+    inCluster: https://git.mirror.example/platform/gentian-ui
+  credential:
+    authType: bearer
+    phase: bootstrap
+    vaultPath: gentian-os/kernel/repositories/gentian-ui
+    displayName: "Gentian UI Repository Access"
+    validate:
+      type: git-https

@@ -22,7 +22,7 @@ gentian_argocd_namespace() {
     ns_kernel gitops
 }
 
-# =============================================================================
+# -----------------------------------------------------------------------------
 # argocd_bootstrap_repo_credential <requirement>
 #
 # Hands Argo CD the credential the installer collected for one repository, as
@@ -36,7 +36,7 @@ gentian_argocd_namespace() {
 #
 # Does nothing for a repository that does not authenticate, and warns without
 # failing when it does but no token was collected.
-# =============================================================================
+# -----------------------------------------------------------------------------
 argocd_bootstrap_repo_credential() {
     local req="$1" name mode repo_var user_var token_var
     name="$(_repo_credential "${req}" vault)" || {
@@ -48,38 +48,29 @@ argocd_bootstrap_repo_credential() {
     user_var="$(_repo_credential "${req}" username)"
     token_var="$(_repo_credential "${req}" token)"
 
-    if [[ "${mode}" == "none" || -z "${!repo_var:-}" ]]; then
-        return 0
-    fi
-    if [[ -z "${!token_var:-}" ]]; then
-        warn "The ${name} repository authenticates (${mode}) but no token was collected; no bootstrap repo-creds Secret for Argo CD."
-        return 0
-    fi
-
-    # The two modes differ only in the keys Argo CD reads the credential from.
-    local login
-    if [[ "${mode}" == "bearer" ]]; then
-        login="bearerToken: \"${!token_var}\""
-    else
-        login="username: \"${!user_var:-}\"
-  password: \"${!token_var}\""
-    fi
+    case "${mode}:${!repo_var:+repo}:${!token_var:+token}" in
+        none:*|*::*) return 0 ;;
+        *:repo:)
+            warn "The ${name} repository authenticates (${mode}) but no token was collected; no bootstrap repo-creds Secret for Argo CD."
+            return 0 ;;
+    esac
 
     local ns; ns="$(gentian_argocd_namespace)"
     info "Registering bootstrap ArgoCD repo-creds for ${name} (${!repo_var}) in ${ns}..."
-    kubectl apply -f - <<EOF
-apiVersion: v1
-kind: Secret
-metadata:
-  name: argocd-repo-creds-bootstrap-${name}
-  namespace: ${ns}
-  labels:
-    argocd.argoproj.io/secret-type: repo-creds
-stringData:
-  type: git
-  url: ${!repo_var}
-  ${login}
-EOF
+    # Built by jq and applied as JSON, so a token is quoted by something that
+    # knows how, whatever characters it holds. The two modes differ only in
+    # the keys Argo CD reads the login from.
+    jq -n \
+        --arg name "argocd-repo-creds-bootstrap-${name}" --arg ns "${ns}" \
+        --arg url "${!repo_var}" --arg mode "${mode}" \
+        --arg user "${!user_var:-}" --arg token "${!token_var}" '
+        { kind: "Secret", apiVersion: "v1",
+          metadata: { namespace: $ns, name: $name,
+                      labels: { "argocd.argoproj.io/secret-type": "repo-creds" } },
+          stringData: ( { url: $url, type: "git" }
+                        + if $mode == "bearer" then { bearerToken: $token }
+                          else { username: $user, password: $token } end ) }' |
+        kubectl apply -f -
 }
 
 # =============================================================================

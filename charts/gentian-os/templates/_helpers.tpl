@@ -96,24 +96,39 @@ on its own; a v5 install passes the whole map from kernel/namespaces.yaml.
 {{- end }}
 
 {{/*
-The environment that makes git send a bearer token, for a container that
-authenticates to the deployments repository with one.
+One git setting, given through the environment: git reads the numbered pairs
+GIT_CONFIG_KEY_n / GIT_CONFIG_VALUE_n as configuration, up to the number in
+GIT_CONFIG_COUNT. Takes .index, .key and .value.
+*/}}
+{{- define "gentian-os.gitConfigEnv" -}}
+- name: GIT_CONFIG_KEY_{{ .index }}
+  value: {{ .key }}
+- name: GIT_CONFIG_VALUE_{{ .index }}
+  value: {{ .value | quote }}
+{{- end }}
 
-git reads numbered GIT_CONFIG_KEY_n / GIT_CONFIG_VALUE_n pairs as configuration;
-this emits the pair at .index and the caller sets GIT_CONFIG_COUNT. The token
-is taken from the Secret into a variable of its own first, because Kubernetes
-expands $(NAME) only from variables listed earlier in the same container: the
-header is put together by the kubelet, and no shell ever handles the token.
+{{/*
+What makes git send a bearer token, for a container that authenticates to the
+deployments repository with one: the header, as the setting at .index.
+
+The token is taken from the Secret into a variable of its own first, because
+Kubernetes expands $(NAME) only from variables listed earlier in the same
+container: the header is put together by the kubelet, and no shell ever
+handles the token. With .alone set, this is the container's whole git
+environment, and HOME and the count of one are emitted too.
 */}}
 {{- define "gentian-os.gitBearerEnv" -}}
+{{- if .alone }}
+- name: HOME
+  value: /tmp
+- name: GIT_CONFIG_COUNT
+  value: "1"
+{{ end -}}
 - name: GIT_BEARER_TOKEN
   valueFrom:
     secretKeyRef:
       name: {{ .secret }}
       key: token
       optional: true
-- name: GIT_CONFIG_KEY_{{ .index }}
-  value: http.extraHeader
-- name: GIT_CONFIG_VALUE_{{ .index }}
-  value: "Authorization: Bearer $(GIT_BEARER_TOKEN)"
+{{ include "gentian-os.gitConfigEnv" (dict "index" .index "key" "http.extraHeader" "value" "Authorization: Bearer $(GIT_BEARER_TOKEN)") }}
 {{- end }}

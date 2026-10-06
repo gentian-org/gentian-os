@@ -152,15 +152,14 @@ spec:
                       type: boolean
                       default: false
                     authType:
-                      description: >
-                        How the repository authenticates. basic is a username
-                        and a password. bearer is one token: it is stored in
-                        the password field under the same vault path, no
-                        username is asked for, and the repository Secret
-                        carries it as bearerToken.
-                      type: string
-                      enum: [basic, bearer]
                       default: basic
+                      enum: [basic, bearer]
+                      type: string
+                      description: >
+                        basic is a username and a password. bearer is one
+                        token: it is stored in the password field under the
+                        same vault path, no username is asked for, and the
+                        repository Secret carries it as bearerToken.
                     validate:
                       type: object
                       properties:

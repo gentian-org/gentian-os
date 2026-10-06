@@ -5,7 +5,7 @@ entries:
       category: Database
       licenses: Apache-2.0
     apiVersion: v2
-    created: "2026-09-07T10:38:07.057881561+02:00"
+    created: "2026-10-06T08:57:51.446067995+02:00"
     dependencies:
     - name: common
       repository: https://charts.bitnami.com/bitnami
@@ -13,7 +13,7 @@ entries:
       - bitnami-common
       version: ^2.x.x
     description: A Helm chart for running MariaDB database
-    digest: 5012e98ce50938903c0c1feaf84b9f50c274eb830719c26ca591aff419f0dba7
+    digest: 8d35e0a0cee2582cc628bc5e38cea45935ad30e0034c155cbd6e04c5832390c0
     home: https://zendis.de
     keywords:
     - mariadb
@@ -132,4 +132,4 @@ entries:
     urls:
     - https://raw.githubusercontent.com/gentian-org/gentian-os/develop/charts/infra/packages/redis-18.6.1.tgz
     version: 18.6.1
-generated: "2026-09-07T10:38:07.054497527+02:00"
+generated: "2026-10-06T08:57:51.446067995+02:00"

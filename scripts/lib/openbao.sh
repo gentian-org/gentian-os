@@ -47,8 +47,13 @@ try_load_creds_from_openbao() {
         done < <(catalogue_field_keys "${_pr}" 2>/dev/null || true)
     done < <(_provider_requirement_names 2>/dev/null || true)
 
-    if [[ -n "${MASTER_PASSWORD:-}" && -n "${GENTIAN_DEPLOYMENTS_GIT_TOKEN:-}" \
-        && "${_repos_ready}" == "1" && "${_providers_ready}" == "1" ]]; then
+    # The master password and the deployments token are wanted on every
+    # cluster; the rest was worked out above.
+    local _core_ready=0
+    if [[ -n "${MASTER_PASSWORD:-}" && -n "${GENTIAN_DEPLOYMENTS_GIT_TOKEN:-}" ]]; then
+        _core_ready=1
+    fi
+    if [[ "${_core_ready}${_repos_ready}${_providers_ready}" == "111" ]]; then
         if [[ "${MAIL_SERVICE_MODE}" == "external" \
             && -n "${SMTP_RELAY_USERNAME:-}" \
             && -n "${SMTP_RELAY_PASSWORD:-}" ]]; then
