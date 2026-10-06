@@ -24,6 +24,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -33,6 +34,7 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"github.com/gentian-org/gentian-os/internal/layout"
+	"github.com/gentian-org/gentian-os/internal/profilebundle"
 	"github.com/gentian-org/gentian-os/internal/security"
 )
 
@@ -65,6 +67,9 @@ type ComponentReconciler struct {
 	// Seeder holds the credentials of the databases this reconciler makes
 	// for tenant components. Nil leaves those requirements waiting.
 	Seeder *secrets.Seeder
+	// Recorder writes the events a person should see on a Component without
+	// reading its conditions. Nil writes none.
+	Recorder record.EventRecorder
 }
 
 // The markers are a free-floating block: controller-gen ignores a block that
@@ -146,6 +151,32 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	if comp.Spec.Class != gentianov1alpha1.ComponentClassApp {
 		return r.status(ctx, comp, metav1.ConditionFalse, "ClassUnsupported",
 			fmt.Sprintf("class %q is not reconciled yet; only apps are", comp.Spec.Class), 0)
+	}
+	// An install pinned to a digest rolls out that build and no other. The
+	// director checked the bytes it fetched before it committed them; this is
+	// the check that what the cluster now holds under that name is still
+	// those bytes' profile -- which nothing between the commit and here
+	// guarantees: the file can be edited in git, the object in the cluster,
+	// and another tenant's install of the same entry at another digest
+	// replaces the one profile both of them name.
+	//
+	// Before anything else is read or written: no privilege is asked for, no
+	// network policy, release, App claim or route is rendered from a profile
+	// that is not the one installed. And nothing is taken away either. What
+	// an earlier pass rolled out from the right profile stays as it is, held
+	// at that state, until the profile is the pinned build again or the pin
+	// is moved.
+	if digest := comp.Spec.ProfileRef.Digest; digest != "" {
+		if refusal := profilebundle.Verify(profile, digest); refusal != nil {
+			message := refusal.Message + "; nothing is rolled out from it, and what is running is left as it is"
+			if r.Recorder != nil && !componentReports(comp, refusal.Reason, message) {
+				r.Recorder.Event(comp, corev1.EventTypeWarning, refusal.Reason, message)
+			}
+			logger.Info("component held: its profile is not the build the install is pinned to",
+				"component", comp.Name, "namespace", comp.Namespace, "reason", refusal.Reason, "detail", refusal.Message)
+			// No requeue: a change to the profile or to the pin re-runs this.
+			return r.status(ctx, comp, metav1.ConditionFalse, refusal.Reason, message, 0)
+		}
 	}
 	tenant, err := r.tenantOf(ctx, comp.Namespace)
 	if err != nil {
@@ -384,6 +415,19 @@ func (r *ComponentReconciler) addonBaseReady(
 		}
 	}
 	return false, fmt.Sprintf("%s is installed but not ready yet", base), nil
+}
+
+// componentReports says whether the component's Ready condition already
+// carries this reason and message, so that what is said once as an event is
+// not said again on every pass.
+func componentReports(comp *gentianov1alpha1.Component, reason, message string) bool {
+	for i := range comp.Status.Conditions {
+		c := &comp.Status.Conditions[i]
+		if c.Type == conditionComponentReady {
+			return c.Reason == reason && c.Message == message
+		}
+	}
+	return false
 }
 
 func (r *ComponentReconciler) status(ctx context.Context, comp *gentianov1alpha1.Component, st metav1.ConditionStatus, reason, message string, requeue time.Duration) (ctrl.Result, error) {

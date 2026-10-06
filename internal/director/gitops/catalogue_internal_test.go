@@ -27,3 +27,28 @@ func TestTheFirstEntryFillsAnEmptyResourceList(t *testing.T) {
 		t.Fatalf("kustomization:\n%s", out)
 	}
 }
+
+// The bundle is a kustomize patch, and kustomize finds a patch's target by
+// everything the patch states about it. A profile that states a namespace --
+// the kind has none, and a document may still say one -- is only found by a
+// patch that states the same; otherwise the whole catalogue directory stops
+// building, for every entry in it.
+func TestTheBundleNamesItsProfileAsTheProfileNamesItself(t *testing.T) {
+	plain, err := renderBundle("element", []byte("apiVersion: gentianos.io/v1alpha1\nkind: ComponentProfile\nmetadata:\n  name: element\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(plain), "apiVersion: gentianos.io/v1alpha1\nkind: ComponentProfile\nmetadata:\n  name: element\n  annotations:\n") {
+		t.Fatalf("bundle:\n%s", plain)
+	}
+	odd, err := renderBundle("element", []byte("apiVersion: gentianos.io/v1beta7\nkind: ComponentProfile\nmetadata:\n  name: element\n  namespace: odd\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(odd), "apiVersion: gentianos.io/v1beta7\n") || !strings.Contains(string(odd), "  name: element\n  namespace: odd\n") {
+		t.Fatalf("bundle:\n%s", odd)
+	}
+	if _, err := renderBundle("element", []byte("kind: ComponentProfile\n")); err == nil {
+		t.Fatal("a bundle was rendered for a document that states no apiVersion")
+	}
+}

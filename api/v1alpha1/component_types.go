@@ -119,7 +119,10 @@ type ProfileRef struct {
 	// +kubebuilder:validation:MaxLength=63
 	Name string `json:"name"`
 
-	// Digest pins the profile bundle this instance was installed from.
+	// Digest pins the profile bundle this instance was installed from. When
+	// set, nothing is rolled out from a profile that is not shown to be that
+	// build: the bundle the profile carries must hash to it, and the profile
+	// must be what the bundle says.
 	// +optional
 	// +kubebuilder:validation:Pattern=`^sha256:[a-f0-9]{64}$`
 	Digest string `json:"digest,omitempty"`

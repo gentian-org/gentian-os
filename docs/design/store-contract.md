@@ -93,6 +93,7 @@ confirmation is the store's own affair and is not shown to the cluster.
 | `400` | the digest is not a sha256 digest, a source install carries none, or the coordinate names another app |
 | `403` | the caller may not install in this tenant, or asked to install for everyone and may not grant in it |
 | `404` | the source does not serve this entry |
+| `422` | the entry is larger than the bundle the cluster carries beside a profile (180 KiB), so its digest could not be checked at rollout. Nothing was installed |
 | `502` | the source could not be read, or served bytes that do not hash to the digest. Nothing was installed |
 
 ## 4. The digest
@@ -122,6 +123,42 @@ It is not signed and it is not a permission. What it does:
   digest says which build. The operator carries it onto the app's Component
   (`spec.profileRef.digest`). The commit that materialised the bundle names
   the digest as well.
+* **It is checked again at rollout.** The director's check is on the bytes it
+  fetched, before the commit. What reaches the cluster is not those bytes:
+  Argo CD applies the document and the API server prunes and defaults it, so
+  the digest cannot be recomputed from the profile the cluster holds. The
+  director therefore commits the verified bytes a second time, beside the
+  profile, as a kustomize patch (`catalogue/<name>.bundle.yaml`) that puts
+  them on the profile in the annotation `gentianos.io/profile-bundle`,
+  base64-encoded. The profile file itself stays byte for byte what the source
+  served.
+
+  Before it renders anything for a Component whose `profileRef` carries a
+  digest, the operator hashes the annotation's bytes itself and compares the
+  result with that digest; then it reads those bytes as a profile -- the way
+  kustomize reads the file, with the schema's defaults applied -- and
+  compares the result with the profile in the cluster: the whole `spec`, and
+  every label and annotation in the `gentianos.io/` namespace. Both have to
+  hold. It takes nobody's word for the annotation: bytes that are another
+  build do not hash to the pin, and bytes that are the pinned build beside a
+  profile that says something else do not compare.
+
+  If either fails, the Component reports `Ready=False` with the reason
+  `DigestMismatch` (naming the pinned digest and the one found, or the part
+  of `spec` that differs) or `DigestUnverifiable` (the profile carries no
+  bundle, or one that cannot be read), and an event says the same. Nothing is
+  rendered from that profile, and nothing already rolled out is removed: the
+  component is held as it runs until the profile is the pinned build again or
+  the pin is moved. An install with no digest is not checked.
+
+  What this does not cover. Only the component reconciler is held; the other
+  readers of a profile -- the tile, the app's groups, the authorization
+  projection -- read it by name as before. One name is one profile for the
+  whole cluster, so a tenant that installs an entry at a newer digest replaces
+  the profile under every other tenant pinned to the older one, and those are
+  then held with `DigestMismatch` until they move their pin. And the check is
+  on the profile, not on what the profile points at: a chart or image it
+  names by tag is whatever that tag is when it is pulled.
 
 Who states the digest is whoever may install: a person with `can_install_app`
 can name any build of any entry a source serves. That is the same authority

@@ -818,6 +818,14 @@ func (s *Server) materialise(
 		return gitops.Result{}, "", false
 	}
 	res, err := s.cfg.Repo.MaterialiseProfile(ctx, profile.Name, profile.Digest, profile.Body, c.meta)
+	if errors.Is(err, gitops.ErrBundleTooLarge) {
+		// Refused rather than installed unverifiable: the operator checks a
+		// pinned install against the bundle, and one it cannot be given
+		// would be held at rollout for good.
+		s.fail(w, r, http.StatusUnprocessableEntity,
+			"the catalogue entry is too large to be installed at a digest; nothing was installed")
+		return gitops.Result{}, "", false
+	}
 	if err != nil {
 		s.repoError(w, r, err)
 		return gitops.Result{}, "", false

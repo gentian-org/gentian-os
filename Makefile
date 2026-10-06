@@ -78,6 +78,10 @@ manifests:
 		case "$$f" in *_apps.yaml|*_xtenants.yaml) continue ;; esac; \
 		cp "$$f" charts/gentian-os/crds/; \
 	done
+	@# The operator applies the ComponentProfile schema's defaults to a profile
+	@# bundle before it compares it with the profile in the cluster, so it
+	@# carries the schema it was built with (internal/profilebundle).
+	cp config/crd/gentianos.io_componentprofiles.yaml internal/profilebundle/componentprofiles.crd.yaml
 	@# RBAC is generated from the +kubebuilder:rbac markers, which live in
 	@# ./internal/... — NOT ./api/..., where the CRD run above looks. Scanning
 	@# only ./api/... is what let the chart's hand-written ClusterRole drift from
@@ -113,7 +117,7 @@ gen-all: generate manifests gen-theme gen-credentials gen-provider-rbac gen-clus
 ## Verify generated files are up to date (CI check)
 verify-gen: gen-all
 	python3 scripts/gen/gen-credential-requirements.py --check
-	git diff --exit-code api/ internal/director/authz/model.json internal/director/gitops/settings_defaults.go config/crd/ charts/gentian-os/crds/ charts/gentian-os/templates/clusterrole.yaml kernel/services/keycloak-idp/manifests/ kernel/credentials/ crossplane/providers/provider-rbac.yaml || (echo "Generated files are out of date. Run 'make gen-all'." && exit 1)
+	git diff --exit-code api/ internal/director/authz/model.json internal/director/gitops/settings_defaults.go config/crd/ charts/gentian-os/crds/ internal/profilebundle/componentprofiles.crd.yaml charts/gentian-os/templates/clusterrole.yaml kernel/services/keycloak-idp/manifests/ kernel/credentials/ crossplane/providers/provider-rbac.yaml || (echo "Generated files are out of date. Run 'make gen-all'." && exit 1)
 
 ## Tidy module dependencies
 tidy:

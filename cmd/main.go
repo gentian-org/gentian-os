@@ -314,6 +314,7 @@ func main() {
 		DirectorURL:    os.Getenv("DIRECTOR_URL"),
 		UsherURL:       os.Getenv("USHER_URL"),
 		Seeder:         buildSeeder(),
+		Recorder:       mgr.GetEventRecorderFor("component"), //nolint:staticcheck
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Component")
 		os.Exit(1)

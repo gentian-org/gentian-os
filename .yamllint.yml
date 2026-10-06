@@ -10,6 +10,9 @@ ignore: |
   .claude/
   config/crd/
   charts/gentian-os/crds/
+  # The operator's embedded copy of one of those CRDs, written by
+  # `make manifests` and compared byte for byte with them.
+  internal/profilebundle/componentprofiles.crd.yaml
   charts/gentian-os/templates/
   kernel/services/llm/chart/templates/
   # Every chart under kernel/manifests/, by pattern rather than by name, for the

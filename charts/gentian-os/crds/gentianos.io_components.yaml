@@ -282,8 +282,11 @@ spec:
                   of.
                 properties:
                   digest:
-                    description: Digest pins the profile bundle this instance was
-                      installed from.
+                    description: |-
+                      Digest pins the profile bundle this instance was installed from. When
+                      set, nothing is rolled out from a profile that is not shown to be that
+                      build: the bundle the profile carries must hash to it, and the profile
+                      must be what the bundle says.
                     pattern: ^sha256:[a-f0-9]{64}$
                     type: string
                   name:
