@@ -1657,16 +1657,15 @@ _claim_catalogue_section() {
     printf '  # This is not a licence: whether an app arrives is decided by whether\n'
     printf '  # the tenant holds a credential for the repository it is pulled from.\n'
     printf '  catalogue:\n'
-    printf '    # Where people are sent for everything the cluster does not list\n'
-    printf '    # itself: the maintained (me) and licensed (ee) editions. A cluster\n'
-    printf '    # lists only ce and pe from its own sources.\n'
+    printf '    # The base address of the App Store API: where the App Store app on\n'
+    printf '    # this cluster reads what is on offer and what a tenant has acquired.\n'
     if [[ "$(gentian_licence_report_enabled)" == "true" ]]; then
-        printf '    storeUrl: %s\n' "${GENTIAN_STORE_URL:-https://gentian.org/apps}"
+        printf '    storeUrl: %s\n' "${GENTIAN_STORE_URL:-https://store.sovrence.com}"
     else
         printf '    #\n'
         printf '    # Not named here: the App Store needs licence reporting, which is\n'
         printf '    # turned off on this cluster (--no-licence-report).\n'
-        printf '    # storeUrl: %s\n' "${GENTIAN_STORE_URL:-https://gentian.org/apps}"
+        printf '    # storeUrl: %s\n' "${GENTIAN_STORE_URL:-https://store.sovrence.com}"
     fi
     printf '    sources:\n'
     printf '      - name: gentian\n'

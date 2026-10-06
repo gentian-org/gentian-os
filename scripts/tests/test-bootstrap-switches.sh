@@ -68,7 +68,7 @@ check "D-03 (all \"true\"): Headlamp reads headlamp-oidc"     "$(has "${on}" 'he
 # switch, and must reach the operator's chart as a boolean false.
 report_on="$(render true true true)"
 check "licence report: on by default, at the default address" \
-    "$(grep -A2 '^        licenceReport:$' <<<"${report_on}" | grep -q '^          enabled: true$' && has "${report_on}" 'url: "https://corp\.gentian-os\.org/api/v1/licence-reports"$' && echo 1 || echo 0)"
+    "$(grep -A2 '^        licenceReport:$' <<<"${report_on}" | grep -q '^          enabled: true$' && has "${report_on}" 'url: "https://licence\.sovrence\.com/api/v1/licence-reports"$' && echo 1 || echo 0)"
 report_off="$(render true true true --set-string licenceReport.enabled=false)"
 check "licence report: --no-licence-report renders enabled: false" \
     "$(grep -A2 '^        licenceReport:$' <<<"${report_off}" | grep -q '^          enabled: false$' && echo 1 || echo 0)"
@@ -77,7 +77,7 @@ check "licence report: another address replaces the default" \
     "$(has "${report_else}" 'url: "https://reports\.example/r"$' && ! has "${report_else}" 'corp\.gentian-os\.org' && echo 1 || echo 0)"
 report_unset="$(render true true true --set-string licenceReport.url=)"
 check "licence report: an empty address from the installer is the default" \
-    "$(has "${report_unset}" 'url: "https://corp\.gentian-os\.org/api/v1/licence-reports"$' && echo 1 || echo 0)"
+    "$(has "${report_unset}" 'url: "https://licence\.sovrence\.com/api/v1/licence-reports"$' && echo 1 || echo 0)"
 
 echo ""
 if (( fail > 0 )); then
