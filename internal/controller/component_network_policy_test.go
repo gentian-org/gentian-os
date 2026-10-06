@@ -101,3 +101,25 @@ func TestATenantDesktopReachesTheSystemPostgres(t *testing.T) {
 		t.Fatalf("egress namespaces = %v", got)
 	}
 }
+
+// The usher runs in the control namespace. A component that asks where it is
+// is let through to that namespace, as one that asks for the director is, and
+// is not let through to the edge on that account.
+func TestAskingForTheUsherOpensTheControlNamespace(t *testing.T) {
+	t.Setenv("GENTIAN_NS_EDGE", "kernel-edge")
+	t.Setenv("GENTIAN_NS_CONTROL", "kernel-control")
+	r := &ComponentReconciler{KernelRealm: "kernel"}
+	tenant := &gentianov1alpha1.Tenant{}
+	tenant.Name = "demo"
+	profile := &gentianov1alpha1.ComponentProfile{}
+	profile.Spec.Package.ValueMapping = &gentianov1alpha1.ValueMapping{
+		Platform: &gentianov1alpha1.PlatformValueMapping{UsherURLKey: "usher.url"},
+	}
+	got := r.componentEgressNamespaces(profile, tenant)
+	if len(got) != 1 || got[0] != "kernel-control" {
+		t.Fatalf("egress namespaces = %v, want only the control namespace", got)
+	}
+	if want := "http://gentian-os-usher.kernel-control.svc.cluster.local:8080"; r.usherURL() != want {
+		t.Fatalf("the usher's address is %s, want %s", r.usherURL(), want)
+	}
+}

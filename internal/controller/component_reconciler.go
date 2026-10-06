@@ -911,12 +911,13 @@ func (r *ComponentReconciler) directorURL() string {
 }
 
 // usherURL is where the usher answers inside the cluster: the Service the
-// operator's chart puts in the edge namespace (templates/usher.yaml).
+// operator's chart puts in the control namespace (templates/usher.yaml),
+// beside the director's.
 func (r *ComponentReconciler) usherURL() string {
 	if r.UsherURL != "" {
 		return r.UsherURL
 	}
-	return fmt.Sprintf("http://gentian-os-usher.%s.svc.cluster.local:8080", layout.Namespace(layout.Edge))
+	return fmt.Sprintf("http://gentian-os-usher.%s.svc.cluster.local:8080", layout.Namespace(layout.Control))
 }
 
 // custodianPort is charts/gentian-os/values.yaml's

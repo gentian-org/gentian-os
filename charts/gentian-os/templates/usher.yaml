@@ -2,13 +2,15 @@
   The usher: what a signed-in person's desktop asks to learn what is here and
   what that person may open (operator-split-plan.md §3.10).
 
-  It runs in the edge namespace beside the bouncer, from the operator's image
-  with its own command. It holds what the bouncer holds -- the identity
-  provider's public keys and the authorization store's credential -- and one
-  thing more: a token for the operator's listener that admits reads of live
-  state and nothing else. No ServiceAccount token, no RBAC, no route on a
-  Gateway -- a console's backend reaches it in-cluster with the person's own
-  token. What it lists is the operator's tile catalogue, mounted as a file.
+  It runs in the control namespace beside the director, from the operator's
+  image with its own command: the edge namespace holds what a Gateway must
+  reach, and no Gateway reaches this. It holds what the bouncer holds -- the
+  identity provider's public keys and the authorization store's credential --
+  and one thing more: a token for the operator's listener that admits reads
+  of live state and nothing else. A ServiceAccount of its own with no RBAC
+  and no token for the API server mounted, no route on a Gateway -- a
+  console's backend reaches it in-cluster with the person's own token. What
+  it lists is the operator's tile catalogue, mounted as a file.
 
   The reader's token is not rendered here. The operator mints it and writes
   the Secret this pod mounts (appLifecycle.readTokenSecretName), so there is
@@ -17,7 +19,7 @@
   it and follows it afterwards.
 */ -}}
 {{- if .Values.usher.enabled }}
-{{- $ns := .Values.layout.edge | default .Values.servicesNamespace }}
+{{- $ns := .Release.Namespace }}
 {{- $name := printf "%s-usher" (include "gentian-os.fullname" .) }}
 {{- $deployments := .Values.appLifecycle.deployments | default dict }}
 {{- $readToken := (.Values.appLifecycle).readTokenSecretName | default "" }}
@@ -46,6 +48,16 @@ spec:
         property: {{ .Values.director.openfgaTokenSecretRef.property }}
 ---
 {{- end }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "gentian-os.usherServiceAccountName" . }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "gentian-os.labels" . | nindent 4 }}
+    app.kubernetes.io/component: usher
+automountServiceAccountToken: false
+---
 apiVersion: v1
 kind: Service
 metadata:
@@ -83,6 +95,7 @@ spec:
         {{- include "gentian-os.labels" . | nindent 8 }}
         app.kubernetes.io/component: usher
     spec:
+      serviceAccountName: {{ include "gentian-os.usherServiceAccountName" . }}
       automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true

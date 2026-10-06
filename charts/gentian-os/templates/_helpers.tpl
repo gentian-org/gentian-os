@@ -60,6 +60,19 @@ Create the name of the service account to use.
 {{- end }}
 {{- end }}
 
+{{/*
+The ServiceAccounts of the director and of the usher. Named once here because
+each name is used three times: by the ServiceAccount, by the Deployment that
+runs under it, and by the operator, which admits a caller of its listener by
+exactly this identity.
+*/}}
+{{- define "gentian-os.directorServiceAccountName" -}}
+{{- printf "%s-director" (include "gentian-os.fullname" .) -}}
+{{- end }}
+{{- define "gentian-os.usherServiceAccountName" -}}
+{{- printf "%s-usher" (include "gentian-os.fullname" .) -}}
+{{- end }}
+
 {{- /*
 The ClusterIssuer per-tenant wildcards are issued by.
 

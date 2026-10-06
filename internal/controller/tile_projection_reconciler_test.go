@@ -60,7 +60,7 @@ func project(t *testing.T, objs ...client.Object) []tilecatalogue.Tile {
 		t.Fatal(err)
 	}
 	cm := &corev1.ConfigMap{}
-	key := types.NamespacedName{Name: tilecatalogue.ConfigMapName, Namespace: layout.Namespace(layout.Edge)}
+	key := types.NamespacedName{Name: tilecatalogue.ConfigMapName, Namespace: layout.Namespace(layout.Control)}
 	if err := c.Get(context.Background(), key, cm); err != nil {
 		t.Fatal(err)
 	}
@@ -256,7 +256,7 @@ func TestAnUnchangedCatalogueIsNotRewritten(t *testing.T) {
 	r := &TileProjectionReconciler{Client: c, Cluster: "demo-cluster", KernelRealm: "kernel",
 		KernelDomain: "k.example", TenancyMode: "multi"}
 	ctx := context.Background()
-	key := types.NamespacedName{Name: tilecatalogue.ConfigMapName, Namespace: layout.Namespace(layout.Edge)}
+	key := types.NamespacedName{Name: tilecatalogue.ConfigMapName, Namespace: layout.Namespace(layout.Control)}
 	versions := make([]string, 0, 2)
 	for i := 0; i < 2; i++ {
 		if _, err := r.Reconcile(ctx, ctrl.Request{}); err != nil {

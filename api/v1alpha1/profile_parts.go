@@ -602,7 +602,7 @@ type PlatformValueMapping struct {
 
 	// UsherURLKey receives the usher's in-cluster URL: where a desktop asks,
 	// with the person's own token, what that person may open. Naming it also
-	// opens the component's egress to the edge namespace, where the usher
+	// opens the component's egress to the control namespace, where the usher
 	// runs.
 	// +optional
 	UsherURLKey string `json:"usherUrlKey,omitempty"`

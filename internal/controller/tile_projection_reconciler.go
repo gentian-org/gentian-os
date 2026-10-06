@@ -52,7 +52,7 @@ import (
 // which means a console the cluster does not serve yet cannot be advertised as
 // a broken link.
 //
-// The projection is one ConfigMap in the edge namespace, beside the
+// The projection is one ConfigMap in the control namespace, beside the
 // usher, and it is declarative like the rest: an app uninstalled loses its
 // tile because the projection is rebuilt, not because anything remembers to
 // delete it.
@@ -405,15 +405,16 @@ func tileObject(tile *gentianov1alpha1.ExposureTile, tenant, profile string) str
 	return "app:" + tenant + "/" + profile
 }
 
-// write puts the catalogue in the edge namespace, beside the usher that
-// reads it, creating the ConfigMap the first time and patching it only when
-// the content differs.
+// write puts the catalogue in the control namespace, beside the usher that
+// mounts it and is its only reader, creating the ConfigMap the first time and
+// patching it only when the content differs. The bouncer's route table is a
+// different object and stays in the edge namespace, where the bouncer is.
 func (r *TileProjectionReconciler) write(ctx context.Context, catalogue tilecatalogue.Catalogue) error {
 	rendered, err := tilecatalogue.Marshal(catalogue)
 	if err != nil {
 		return err
 	}
-	return r.writeTo(ctx, layout.Namespace(layout.Edge), rendered)
+	return r.writeTo(ctx, layout.Namespace(layout.Control), rendered)
 }
 
 func (r *TileProjectionReconciler) writeTo(ctx context.Context, namespace, rendered string) error {

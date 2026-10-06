@@ -307,9 +307,9 @@ bouncer:
       memory: 128Mi
 
 # The usher: the reads a signed-in person's desktop asks for -- what is here
-# and what they may open -- run in the edge namespace from this image. It
-# holds no git credential and no Kubernetes access. Off by default; the v5
-# bootstrap turns it on beside the bouncer.
+# and what they may open -- run in the control namespace from this image,
+# beside the director. It holds no git credential and no Kubernetes access.
+# Off by default; the v5 bootstrap turns it on.
 usher:
   enabled: false
   replicas: 2
@@ -752,7 +752,7 @@ appLifecycle:
   # A second, separate token for the same API, the usher's. It admits the
   # reads of live state the usher answers people with and nothing else: no
   # command, no bundle download. The operator mints it and writes this Secret
-  # in the edge namespace, where the usher mounts it; nothing renders its
+  # in the control namespace, where the usher mounts it; nothing renders its
   # value. Empty leaves the API with no reader, and the usher without its
   # reads of live state.
   readTokenSecretName: gentian-os-lifecycle-read-token

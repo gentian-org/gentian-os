@@ -37,7 +37,7 @@ type Runnable struct {
 	// runnable owns: the Secret the usher's token is handed over in.
 	reader client.Reader
 	writer client.Client
-	// readTokenSecret names that Secret, in the edge namespace. Empty on a
+	// readTokenSecret names that Secret, in the control namespace. Empty on a
 	// cluster with no usher: the listener then has no reader at all.
 	readTokenSecret string
 }
@@ -107,7 +107,7 @@ func (r *Runnable) handOverReadToken(ctx context.Context) {
 	log := ctrllog.FromContext(ctx).WithName("app-lifecycle")
 	for {
 		wait := 5 * time.Minute
-		token, err := ensureReadToken(ctx, r.reader, r.writer, layout.Namespace(layout.Edge), r.readTokenSecret)
+		token, err := ensureReadToken(ctx, r.reader, r.writer, layout.Namespace(layout.Control), r.readTokenSecret)
 		if err != nil {
 			log.Error(err, "the usher's token could not be handed over; its reads of live state are refused until it is")
 			wait = 15 * time.Second

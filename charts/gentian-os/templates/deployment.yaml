@@ -305,9 +305,9 @@ spec:
             - name: BOUNCER_SERVICE
               value: {{ printf "%s-bouncer" (include "gentian-os.fullname" .) | quote }}
             # Where a desktop asks what a person may open: the usher's Service,
-            # beside the bouncer's.
+            # in this namespace, beside the director's.
             - name: USHER_URL
-              value: {{ printf "http://%s-usher.%s.svc.cluster.local:8080" (include "gentian-os.fullname" .) (.Values.layout.edge | default .Values.servicesNamespace) | quote }}
+              value: {{ printf "http://%s-usher.%s.svc.cluster.local:8080" (include "gentian-os.fullname" .) .Release.Namespace | quote }}
             - name: GENTIAN_STAGE
               value: {{ .Values.stage | default "dev" | quote }}
             - name: LLM_SUPPORT
@@ -381,7 +381,7 @@ spec:
                   optional: true
             {{- end }}
             {{- if and .Values.usher.enabled (.Values.appLifecycle).readTokenSecretName }}
-            # The Secret, in the edge namespace, the operator hands the
+            # The Secret, in this namespace, the operator hands the
             # usher's token over in: a second token for this API that admits
             # reads and nothing else. Named only where there is an usher to
             # read it; without the name the API has no reader at all.

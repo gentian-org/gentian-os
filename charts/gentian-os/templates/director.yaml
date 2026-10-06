@@ -36,7 +36,7 @@
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: {{ include "gentian-os.fullname" . }}-director
+  name: {{ include "gentian-os.directorServiceAccountName" . }}
   labels:
     {{- include "gentian-os.labels" . | nindent 4 }}
     app.kubernetes.io/component: director
@@ -127,7 +127,7 @@ spec:
         {{- include "gentian-os.labels" . | nindent 8 }}
         app.kubernetes.io/component: director
     spec:
-      serviceAccountName: {{ include "gentian-os.fullname" . }}-director
+      serviceAccountName: {{ include "gentian-os.directorServiceAccountName" . }}
       automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true

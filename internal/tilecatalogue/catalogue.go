@@ -39,7 +39,7 @@ import (
 
 const (
 	// ConfigMapName is the one ConfigMap the catalogue is projected into. It
-	// lives in the edge namespace, beside the usher that reads it.
+	// lives in the control namespace, beside the usher that reads it.
 	ConfigMapName = "gentian-tiles"
 
 	// Key is the entry within it. The content is YAML rather than one key per
