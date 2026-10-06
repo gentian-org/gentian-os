@@ -454,10 +454,7 @@ spec:
                  even to read, and that file would be a read-only mount. */}}
             - name: GIT_CONFIG_COUNT
               value: {{ ternary "2" "1" $gitBearer | quote }}
-            - name: GIT_CONFIG_KEY_0
-              value: safe.directory
-            - name: GIT_CONFIG_VALUE_0
-              value: {{ $lifecycleDeployments.path | default "/data/gentian-deployments" | quote }}
+            {{- include "gentian-os.gitConfigEnv" (dict "index" 0 "key" "safe.directory" "value" ($lifecycleDeployments.path | default "/data/gentian-deployments")) | nindent 12 }}
             {{- if $gitBearer }}
             {{- include "gentian-os.gitBearerEnv" (dict "secret" $lifecycleGitCredsSecret "index" 1) | nindent 12 }}
             {{- end }}
@@ -621,11 +618,7 @@ spec:
             - name: GENTIAN_DEPLOYMENTS_REPO
               value: {{ $lifecycleDeployments.repo | default "https://git.example.domain/gentian-deployments" | quote }}
             {{- if $gitBearer }}
-            - name: HOME
-              value: /tmp
-            - name: GIT_CONFIG_COUNT
-              value: "1"
-            {{- include "gentian-os.gitBearerEnv" (dict "secret" $lifecycleGitCredsSecret "index" 0) | nindent 12 }}
+            {{- include "gentian-os.gitBearerEnv" (dict "secret" $lifecycleGitCredsSecret "index" 0 "alone" true) | nindent 12 }}
             {{- end }}
           securityContext:
             runAsUser: 65532
@@ -638,10 +631,10 @@ spec:
             - name: deployments-checkout
               mountPath: {{ $lifecycleDeployments.path | default "/data/gentian-deployments" }}
             {{- if $gitLoginFile }}
-            - name: git-credentials
-              mountPath: /etc/git/credentials
-              subPath: .git-credentials
+            - mountPath: /etc/git/credentials
+              name: git-credentials
               readOnly: true
+              subPath: .git-credentials
             {{- end }}
       {{- end }}
       terminationGracePeriodSeconds: 10

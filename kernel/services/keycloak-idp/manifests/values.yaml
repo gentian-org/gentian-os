@@ -11,9 +11,9 @@ storageClass: ""
 mailServiceMode: external
 relayHost: ""
 relayPort: "587"
-# STARTTLS on, implicit TLS off: a relay on port 587.
-relayStarttls: "true"
+# A relay on port 587: implicit TLS off, STARTTLS on.
 relaySsl: "false"
+relayStarttls: "true"
 kernelDomain: ""
 # The realm the cluster's own users live in. Tenants have their own realms and
 # are configured by the operator, not from here.

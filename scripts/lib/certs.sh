@@ -219,9 +219,9 @@ apply_gentian_cluster_issuers() {
 
     # helm renders one template per --show-only, and there may be two.
     local only=() template
-    while IFS= read -r template; do
+    for template in $(gentian_cluster_issuers_manifest); do
         only+=(--show-only "templates/${template}")
-    done < <(gentian_cluster_issuers_manifest)
+    done
 
     helm template gentian-cert-manager "${SCRIPT_DIR}/kernel/manifests/cert-manager/chart" \
         -f "$(gentian_platforms_values)" \

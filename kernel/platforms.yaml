@@ -39,9 +39,7 @@ platforms:
   # address is claimed by MetalLB rather than allocated.
   self-hosted:
     displayName: Self-hosted (MetalLB)
-    # MetalLB takes the address from the annotation, not from the Service's
-    # own loadBalancerIP field.
-    supportsLoadBalancerIP: false
+    supportsLoadBalancerIP: false  # MetalLB reads the annotation below, not the Service's own field
     lbAnnotations:
       # The edge and the mail service both keep the client's address
       # (externalTrafficPolicy: Local), and MetalLB lets two Services share
