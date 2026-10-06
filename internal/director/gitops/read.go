@@ -28,8 +28,11 @@ import (
 
 // App is one entry of a tenant's apps list as git records it.
 type App struct {
-	Profile string   `json:"profile"`
-	Addons  []string `json:"addons,omitempty"`
+	Profile string `json:"profile"`
+	// Digest is the build the install is pinned to, when it was installed
+	// at one.
+	Digest string   `json:"digest,omitempty"`
+	Addons []string `json:"addons,omitempty"`
 }
 
 // Apps returns what git says a tenant has installed. Git is the desired state;

@@ -35,27 +35,21 @@ import (
 // profile in the operator's own repository, which nobody sells and nobody
 // else lists.
 //
-// So it lists coordinates, versions and editions, and nothing that would
-// pretend to be a shop. Two consequences follow, and both are deliberate:
+// So it lists coordinates, versions, editions and digests, and nothing that
+// would pretend to be a shop. Only ce and pe are listed: me and ee exist
+// because somebody maintains or licenses them, and an entry whose whole value
+// is a relationship with a supplier is not something a cluster can describe
+// usefully, so it is counted and named to the store instead.
 //
-//   - Only ce and pe are listed. me and ee exist because somebody maintains
-//     or licenses them; an entry whose whole value is a relationship with a
-//     supplier is not something a cluster can describe usefully, so it is
-//     counted and named to the store instead.
-//   - An ENTITLED source's entries carry no digest here. The digest that
-//     governs an install from such a source is the one the store stated over
-//     its own TLS; a source's own number, checked against the same source's
-//     own bytes, is not a check (AD-3). An open source's digest is served,
-//     because there the trust is the Cluster claim naming the source and
-//     there is no store in the picture to say otherwise.
+// None of this is a licence check. A source being open to a tenant says the
+// cluster offers that source's entries to it here; it does not decide whether
+// an install is allowed, which is the person's can_install_app and nothing
+// else.
 
 type catalogueOut struct {
-	Name   string `json:"name"`
-	Access string `json:"access"`
-	// Open says this source is open to THIS tenant -- it may install from it
-	// with no statement from the store. Straight from the claim, not from a
-	// graph check: the claim is what decides it, and an entry's tuple is only
-	// written when somebody first installs it.
+	Name string `json:"name"`
+	// Open says the Cluster claim opens this source to THIS tenant. Straight
+	// from the claim, which is what decides it.
 	Open bool `json:"open"`
 }
 
@@ -65,10 +59,12 @@ type entryOut struct {
 	Version    string `json:"version,omitempty"`
 	Edition    string `json:"edition"`
 	TrustTier  string `json:"trustTier,omitempty"`
-	Digest     string `json:"digest,omitempty"`
-	// Installable says the tenant may install this entry from here, now,
-	// without going anywhere. False does not mean refused -- it means the
-	// store decides, and the store is where to go.
+	// Digest is the build the source lists: what an install of this entry
+	// from here sends back.
+	Digest string `json:"digest,omitempty"`
+	// Installable says the cluster offers this entry to the tenant from this
+	// list: the source is open to it and the entry states its digest. False
+	// sends the person to the store.
 	Installable bool `json:"installable"`
 }
 
@@ -87,11 +83,7 @@ func (s *Server) listCatalogues(w http.ResponseWriter, r *http.Request, _ call) 
 	tenant := r.PathValue("t")
 	out := make([]catalogueOut, 0, len(s.cfg.CatalogueSources))
 	for _, src := range s.cfg.CatalogueSources {
-		access := src.Access
-		if access == "" {
-			access = "entitled"
-		}
-		out = append(out, catalogueOut{Name: src.Name, Access: access, Open: src.Open(tenant)})
+		out = append(out, catalogueOut{Name: src.Name, Open: src.Open(tenant)})
 	}
 	s.json(w, http.StatusOK, map[string]any{
 		"tenant": tenant, "storeUrl": s.cfg.StoreURL, "catalogues": out,
@@ -107,7 +99,7 @@ func (s *Server) listCatalogueEntries(w http.ResponseWriter, r *http.Request, _ 
 		return
 	}
 	open := src.Open(tenant)
-	listing, err := s.cfg.Catalogue.Index(r.Context(), name, !open)
+	listing, err := s.cfg.Catalogue.Index(r.Context(), name)
 	switch {
 	case errors.Is(err, catalogue.ErrNotFound):
 		s.fail(w, r, http.StatusNotFound, "this cluster has no catalogue by that name")
@@ -131,10 +123,8 @@ func (s *Server) listCatalogueEntries(w http.ResponseWriter, r *http.Request, _ 
 			Edition:    string(e.Edition),
 			TrustTier:  e.TrustTier,
 			Digest:     e.Digest,
-			// Installable from here exactly when the claim opened this source
-			// to this tenant. Otherwise the store decides, and an entry it
-			// has already granted is installed from the store's own screen
-			// with the store's own digest -- not from this list.
+			// Offered from here exactly when the claim opened this source to
+			// this tenant; otherwise the store is the route.
 			Installable: open && e.Digest != "",
 		})
 	}

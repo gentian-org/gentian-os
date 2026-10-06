@@ -77,7 +77,7 @@ func (l *liveTenants) Do(context.Context, string, string, any) (int, []byte, err
 func TestAPurgeWaitsForTheClusterBeforeRemovingTheTenant(t *testing.T) {
 	defer api.SetPurgePoll(20 * time.Millisecond)()
 	live := &liveTenants{policy: map[string]string{"demo": "Retain"}}
-	h := startWith(t, false, live)
+	h := startWith(t, live)
 	alice := h.token(t, "gentian", "alice")
 	manifest := "clusters/" + dt.Cluster + "/tenants/demo/tenant.yaml"
 
@@ -109,7 +109,7 @@ func TestAPurgeWaitsForTheClusterBeforeRemovingTheTenant(t *testing.T) {
 }
 
 func TestThePlatformTenantIsNotPurged(t *testing.T) {
-	h := startWith(t, false, &liveTenants{policy: map[string]string{}})
+	h := startWith(t, &liveTenants{policy: map[string]string{}})
 	code, _ := h.do(t, "POST", "/v1/clusters/"+dt.Cluster+"/tenants/platform/actions/purge", h.token(t, "gentian", "alice"), "")
 	if code != http.StatusForbidden && code != http.StatusNotFound {
 		t.Fatalf("purge platform = %d, want a refusal", code)

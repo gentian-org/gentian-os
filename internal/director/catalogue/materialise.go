@@ -20,14 +20,17 @@ limitations under the License.
 // waiting for somebody to want one; a profile arrives when a tenant installs
 // it, at a content digest, and it arrives through the director.
 //
-// Which makes the digest the whole of the security. The STORE says a tenant
-// may install an entry and which digest that entry is, over TLS and with a
-// signature the director already checks. The SOURCE serves the bytes, and it
-// is not trusted: it is a web server somewhere, possibly a customer's own. If
-// what it returns does not hash to the digest the store named, it is refused
-// and nothing is written. So a compromised source can fail an install and
-// cannot change what gets installed — which is the property AD-3 wants when
-// it says the store "never supplies the artefact".
+// Which makes the digest what pins an install. The REQUEST names an entry and
+// the digest of the build it means: the App Store's confirmation carries it,
+// and so does the cluster's own listing of a source. The SOURCE serves the
+// bytes, and it is not trusted: it is a web server somewhere, possibly a
+// customer's own. If what it returns does not hash to the digest requested,
+// it is refused and nothing is written. So a compromised source can fail an
+// install and cannot change what gets installed.
+//
+// The digest is not a licence and is not signed. Whether a tenant may have an
+// app is not decided here at all: it is decided where the app's artefacts are
+// pulled, by the credential the tenant holds for their repository.
 package catalogue
 
 import (
@@ -45,10 +48,10 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
-// ErrDigestMismatch is what a source serving something other than what the
-// store named looks like. It is not a retryable error and it is not a
+// ErrDigestMismatch is what a source serving something other than the build
+// requested looks like. It is not a retryable error and it is not a
 // formatting complaint: it means the two disagree about what this entry IS.
-var ErrDigestMismatch = errors.New("catalogue: the bundle does not match the digest the store named")
+var ErrDigestMismatch = errors.New("catalogue: the bundle does not match the digest requested")
 
 // ErrNotFound is a source that does not have the entry.
 var ErrNotFound = errors.New("catalogue: the source does not serve this entry")
@@ -109,15 +112,14 @@ type Profile struct {
 	// unformatted. What is committed is what was hashed: re-serialising it
 	// would produce bytes nobody verified.
 	Body []byte
-	// Digest is what it hashed to, in the store's spelling.
+	// Digest is what it hashed to: "sha256:<hex>".
 	Digest string
 }
 
 // Fetch reads one entry from its source and refuses anything that is not
 // byte-for-byte what the digest names.
 //
-// coordinate is "<catalogue>/<name>"; digest is "sha256:<hex>" as the store's
-// index gives it.
+// coordinate is "<catalogue>/<name>"; digest is "sha256:<hex>".
 func (f *Fetcher) Fetch(ctx context.Context, coordinate, digest string) (*Profile, error) {
 	catalogue, name, ok := strings.Cut(coordinate, "/")
 	if !ok || catalogue == "" || name == "" {
@@ -170,10 +172,10 @@ func (f *Fetcher) Fetch(ctx context.Context, coordinate, digest string) (*Profil
 		return nil, fmt.Errorf("%w: %s", ErrDigestMismatch, coordinate)
 	}
 
-	// It hashes correctly, so it is what the store meant. It still has to BE
-	// a ComponentProfile of the right name — a source could serve a correct
-	// digest for a document that installs something else entirely, if the
-	// store's own ingest were ever confused about which file it hashed.
+	// It hashes correctly, so it is the build that was asked for. It still
+	// has to BE a ComponentProfile of the right name — a digest can be that
+	// of a document that installs something else entirely, if whoever stated
+	// it was ever confused about which file they hashed.
 	var head struct {
 		APIVersion string `json:"apiVersion"`
 		Kind       string `json:"kind"`
@@ -193,7 +195,18 @@ func (f *Fetcher) Fetch(ctx context.Context, coordinate, digest string) (*Profil
 	return &Profile{Name: head.Metadata.Name, Body: body, Digest: "sha256:" + got}, nil
 }
 
-// normaliseDigest accepts the store's spelling and returns the bare hex.
+// CanonicalDigest returns a digest in the one spelling that is recorded,
+// "sha256:<lowercase hex>", or an error if it is not a sha256 digest.
+func CanonicalDigest(digest string) (string, error) {
+	d, err := normaliseDigest(digest)
+	if err != nil {
+		return "", err
+	}
+	return "sha256:" + d, nil
+}
+
+// normaliseDigest accepts a digest with or without its prefix and returns the
+// bare hex.
 func normaliseDigest(digest string) (string, error) {
 	d := strings.TrimSpace(strings.ToLower(digest))
 	d = strings.TrimPrefix(d, "sha256:")
@@ -218,9 +231,9 @@ func ParseSources(configured string) map[string]string {
 		if !ok || slug == "" || base == "" {
 			continue
 		}
-		// http:// is refused: the digest makes the bytes safe but the INDEX
-		// that named the digest travelled separately, and a cluster fetching
-		// its catalogue in clear is one whose traffic says what it runs.
+		// http:// is refused: the digest makes the bytes safe, but a cluster
+		// fetching its catalogue in clear is one whose traffic says what it
+		// runs.
 		if !strings.HasPrefix(base, "https://") {
 			continue
 		}

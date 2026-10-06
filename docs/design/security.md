@@ -122,7 +122,7 @@ changes only when the code does.
 |---|---|---|
 | **Keycloak** | Authentication authority + token issuer (*who you are*). **Per-tenant realms** (not Organizations-as-isolation); kernel realm brokers login; service accounts for agents; RFC 8693 Token Exchange; SAML/OIDC brokering. See [iam.md](iam.md), [admin-console.md](admin-console.md). | Apache 2.0 |
 | **OpenFGA** | ReBAC authorization PDP (*what you may do*). Relationship tuples for humans/agents/apps/assets; Conditions + contextual tuples for ABAC; the derived-ceiling schema. | Apache 2.0 |
-| **Director** | The store's only writer (AD-2, AD-12). Membership arrives on Keycloak's event-listener feed and is written as `group#member` tuples, a projection reconciled toward Keycloak by a read-only client and never edited in place; structure — role-to-group assignments, installs, grants, entitlements — is written from the CRs in the same operation as the commit it reflects. Keycloak decides no permission; OpenFGA changes no identity. | **Target** (the director does not exist yet) |
+| **Director** | The store's only writer (AD-2, AD-12). Membership arrives on Keycloak's event-listener feed and is written as `group#member` tuples, a projection reconciled toward Keycloak by a read-only client and never edited in place; structure — role-to-group assignments, installs, grants — is written from the CRs in the same operation as the commit it reflects. Keycloak decides no permission; OpenFGA changes no identity. | **Target** (the director does not exist yet) |
 | **Provisioning bridge** | What does this today: reconciles `IntegrationBinding` credentials and `AppGrant` into the graph, and polls Keycloak on a timer with an admin credential for group membership. The poll is **retired by AD-12** in favour of the event feed; the credential is why. | **Partial**, and superseded |
 | **MAC backbone** | K8s namespaces per tenant, NetworkPolicy default-deny egress in those namespaces, Kyverno pod-security admission (implemented); the same default-deny in the platform tiers, service mesh + SPIFFE/SPIRE (target). | Apache 2.0 / OSS |
 | **PEP** | Named enforcement points — Envoy Gateway ext-auth, the director, the custodian, the MCP gateway — calling OpenFGA `Check`, ideally over the OpenID **AuthZEN** Authorization API so PDPs stay swappable. Target: no PEP calls `Check` today (§3.0). | OSS |
@@ -148,7 +148,7 @@ flowchart TD
         Keycloak["KEYCLOAK (IdP / AuthN)<br>realms/orgs, clients, service accounts"]
     end
     
-    Director["DIRECTOR (the store's only writer)<br>membership projection from Keycloak events<br>+ structure: installs, grants, entitlements<br>+ Integration Binding + ITAM conn."]
+    Director["DIRECTOR (the store's only writer)<br>membership projection from Keycloak events<br>+ structure: installs, grants<br>+ Integration Binding + ITAM conn."]
     
     AgentsWorkloads["Agents / Workloads"]
     Apps["Apps / API Gateway<br>(Kong/Envoy/app) ◄── PEP"]
@@ -168,14 +168,14 @@ flowchart TD
     
     AgentsWorkloads -->|"acts via OBO token (≤ user)"| Apps
     
-    Shell -->|"installs, grants, entitlements<br>(every write goes through the director)"| Director
+    Shell -->|"installs, grants<br>(every write goes through the director)"| Director
     Director -->|"writes every tuple"| OpenFGA
     Apps -->|"AuthZEN Check<br>+ contextual tuples: task TTL, acting_for,<br>device posture — never memberships"| OpenFGA
     
     ITAM -.->|"device/asset + contract-consumer edges"| OpenFGA
 ```
 
-**Decision flow (target):** (1) principal authenticates to Keycloak → OIDC token (agents via client-credentials or Token Exchange carrying `act`). (2) Keycloak's event listener pushes membership changes to the director, which writes them as `group#member` tuples — a projection it reconciles toward Keycloak with a read-only client, never edits in place (AD-12); the director writes structure (installs, grants, entitlements) from the CRs in the same operation as the commit; `IntegrationBinding` reconciles cross-app credentials. (3) PEP receives request + token, calls OpenFGA `Check` (over AuthZEN), passing runtime facts — a task's TTL, `acting_for`, device posture — as contextual tuples. Memberships are already in the graph and no group travels in a token for a platform decision. (4) OpenFGA traverses the graph (principal → group/org → resource/device, plus task-scoped delegation with TTL Conditions, plus derived-ceiling) → allow/deny. (5) Independently, the MAC backbone enforces tenant isolation and egress *regardless* of the authZ result. (6) Sensitive ops use consistent reads; the Watch API streams tuple changes to an audit log. Today steps (1) and (5) run; (2) runs only in its superseded form — the polling bridge with an admin credential, not the event feed, and no director; (3), (4) and (6) are target.
+**Decision flow (target):** (1) principal authenticates to Keycloak → OIDC token (agents via client-credentials or Token Exchange carrying `act`). (2) Keycloak's event listener pushes membership changes to the director, which writes them as `group#member` tuples — a projection it reconciles toward Keycloak with a read-only client, never edits in place (AD-12); the director writes structure (installs, grants) from the CRs in the same operation as the commit; `IntegrationBinding` reconciles cross-app credentials. (3) PEP receives request + token, calls OpenFGA `Check` (over AuthZEN), passing runtime facts — a task's TTL, `acting_for`, device posture — as contextual tuples. Memberships are already in the graph and no group travels in a token for a platform decision. (4) OpenFGA traverses the graph (principal → group/org → resource/device, plus task-scoped delegation with TTL Conditions, plus derived-ceiling) → allow/deny. (5) Independently, the MAC backbone enforces tenant isolation and egress *regardless* of the authZ result. (6) Sensitive ops use consistent reads; the Watch API streams tuple changes to an audit log. Today steps (1) and (5) run; (2) runs only in its superseded form — the polling bridge with an admin credential, not the event feed, and no director; (3), (4) and (6) are target.
 
 ### 3.4 Application permissions — catalogue contracts and grants
 

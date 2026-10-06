@@ -155,7 +155,6 @@ spec:
             key: keys
         director:
           enabled: true
-          entitlements: "off"
         # The waiver allowlist is the director's to write, into the claims,
         # where the console's changes to it are commits. The chart would
         # otherwise create a second copy of the same object from its own

@@ -35,12 +35,10 @@ import (
 	"github.com/gentian-org/gentian-os/internal/director/authn"
 	"github.com/gentian-org/gentian-os/internal/director/authz"
 	"github.com/gentian-org/gentian-os/internal/director/catalogue"
-	"github.com/gentian-org/gentian-os/internal/director/entitlement"
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
 	"github.com/gentian-org/gentian-os/internal/director/identity"
 	"github.com/gentian-org/gentian-os/internal/director/lifecycle"
 	"github.com/gentian-org/gentian-os/internal/director/record"
-	"github.com/gentian-org/gentian-os/internal/membership"
 )
 
 func main() {
@@ -86,19 +84,6 @@ func run(log *slog.Logger) error {
 	cluster := req.env("GENTIAN_DEPLOYMENTS_CLUSTER_ID")
 	if len(req.missing) > 0 {
 		return fmt.Errorf("missing configuration: %v", req.missing)
-	}
-
-	// Entitlements are enforced unless a deployment says otherwise, in so many
-	// words. A cluster with no store has nothing that could grant one, and
-	// turns this off as a visible setting.
-	enforce := true
-	switch v := envOr("DIRECTOR_ENTITLEMENTS", "enforce"); v {
-	case "enforce":
-	case "off":
-		enforce = false
-		log.Warn("entitlements are not enforced: any catalogue entry may be installed by whoever may install", "setting", "DIRECTOR_ENTITLEMENTS=off")
-	default:
-		return fmt.Errorf("DIRECTOR_ENTITLEMENTS must be enforce or off, not %q", v)
 	}
 
 	verifier, err := authn.NewVerifier(authn.Config{
@@ -186,23 +171,6 @@ func run(log *slog.Logger) error {
 	// the director's token had to be able to write -- so the rule that the
 	// director reads the graph and writes git was enforced by care rather
 	// than by the credential. Now it is enforced by the credential.
-	// The store is believed only through keys pinned here, from the Cluster
-	// claim. No key, no store: statements are refused because the endpoint does
-	// not exist, not because a lookup failed.
-	var store *api.StoreConfig
-	if raw := os.Getenv("DIRECTOR_STORE_KEYS"); raw == "" {
-		log.Warn("no store signing key pinned: entitlement statements are not accepted", "setting", "DIRECTOR_STORE_KEYS")
-	} else {
-		keys, err := membership.ParseKeys(raw)
-		if err != nil {
-			return fmt.Errorf("DIRECTOR_STORE_KEYS: %w", err)
-		}
-		sv, err := entitlement.NewVerifier(keys, cluster)
-		if err != nil {
-			return err
-		}
-		store = &api.StoreConfig{Verifier: sv, Applier: &entitlement.Applier{Repo: repo, Store: checker}}
-	}
 	// No back-channel logout endpoint, and nothing to sweep.
 	//
 	// Ending a session at Keycloak is what ends it. The edge holds a
@@ -339,8 +307,7 @@ func run(log *slog.Logger) error {
 		sources := make(map[string]string, len(declared))
 		for _, src := range declared {
 			sources[src.Name] = src.URL
-			log.Info("catalogue source", "catalogue", src.Name, "url", src.URL,
-				"access", src.Access, "openTo", len(src.Tenants))
+			log.Info("catalogue source", "catalogue", src.Name, "url", src.URL, "openTo", len(src.Tenants))
 		}
 		entries = catalogue.NewFetcher(sources)
 	}
@@ -353,13 +320,12 @@ func run(log *slog.Logger) error {
 	}
 
 	handler, err := api.New(api.Config{Authn: verifier, Authz: checker, Viewer: checker, Repo: repo, Log: log,
-		Record:              authorityRecord,
-		Catalogue:           entries,
-		CatalogueSources:    declared,
-		StoreURL:            storeURL,
-		Binder:              checker,
-		EnforceEntitlements: enforce, Store: store, Cluster: cluster,
-		Lifecycle: lc, Identity: ident,
+		Record:           authorityRecord,
+		Catalogue:        entries,
+		CatalogueSources: declared,
+		StoreURL:         storeURL,
+		Cluster:          cluster,
+		Lifecycle:        lc, Identity: ident,
 		InviteClientID:    os.Getenv("DIRECTOR_INVITE_CLIENT_ID"),
 		InviteRedirectURI: os.Getenv("DIRECTOR_INVITE_REDIRECT_URI"),
 		// Where a tenant's desktop API answers, %s for the tenant: the

@@ -395,6 +395,13 @@ type TenantApp struct {
 	// +optional
 	ProfileRef *ProfileReference `json:"profileRef,omitempty"`
 
+	// Digest pins the profile bundle this app was installed from: the build
+	// the install asked for. It is a field of the install and not part of the
+	// profile's name, so the same app keeps one name across builds.
+	// +optional
+	// +kubebuilder:validation:Pattern=`^sha256:[a-f0-9]{64}$`
+	Digest string `json:"digest,omitempty"`
+
 	// Config provides per-tenant overrides for this app installation.
 	// Values here are merged over the AppProfile's extraValues.
 	// +optional

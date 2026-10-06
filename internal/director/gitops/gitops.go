@@ -397,22 +397,57 @@ func (g *GitOps) applyTo(ctx context.Context, tenant, sibling, message string, m
 	return Result{}, ErrPushContended
 }
 
-// Install adds profile to the tenant's manifest.
-func (g *GitOps) Install(ctx context.Context, tenant, profile string, meta Meta) (Result, error) {
+// digestPattern is the one spelling of a content digest a manifest carries.
+var digestPattern = regexp.MustCompile(`^sha256:[a-f0-9]{64}$`)
+
+// Install adds profile to the tenant's manifest, pinned to digest when one is
+// given.
+//
+// The digest is the build the install was asked for, and it is recorded as a
+// field of the entry rather than in the profile's name: the name is what the
+// app is, across every build of it, and everything that addresses the app --
+// its group, its object in the authorization store, its route -- is spelled
+// from the name.
+//
+// Installing an app that is already there at another digest moves the pin and
+// reports "updated"; with no digest, or the same one, nothing changes.
+func (g *GitOps) Install(ctx context.Context, tenant, profile, digest string, meta Meta) (Result, error) {
 	if !ValidName(profile) {
 		return Result{}, fmt.Errorf("%w: profile %q", ErrInvalidName, profile)
 	}
-	profileLine := regexp.MustCompile(`(?m)^\s*-\s*profile:\s*` + regexp.QuoteMeta(profile) + `\s*$`)
+	if digest != "" && !digestPattern.MatchString(digest) {
+		return Result{}, fmt.Errorf("%w: digest %q", ErrInvalidName, digest)
+	}
 	msg := fmt.Sprintf("feat(%s): install %s (via %s)", tenant, profile, meta.actor())
+	if digest != "" {
+		msg = fmt.Sprintf("feat(%s): install %s at %s (via %s)", tenant, profile, shortDigest(digest), meta.actor())
+	}
 	return g.apply(ctx, tenant, msg, meta, func(text string) (string, string, bool, error) {
-		if profileLine.MatchString(text) {
+		lines := strings.Split(text, "\n")
+		start, end, keyIndent, installed := appEntryExtent(lines, profile)
+		if !installed {
+			out, ok := insertAppProfile(text, profile, digest)
+			if !ok {
+				return "", "", false, errors.New("failed to update apps list")
+			}
+			return out, "installed", true, nil
+		}
+		if digest == "" {
 			return text, "already_installed", false, nil
 		}
-		out, ok := insertAppProfile(text, profile)
-		if !ok {
-			return "", "", false, errors.New("failed to update apps list")
+		pin := strings.Repeat(" ", keyIndent) + "digest: " + digest
+		for i := start + 1; i < end; i++ {
+			if indentOf(lines[i]) != keyIndent || !strings.HasPrefix(strings.TrimSpace(lines[i]), "digest:") {
+				continue
+			}
+			if lines[i] == pin {
+				return text, "already_installed", false, nil
+			}
+			lines[i] = pin
+			return strings.Join(lines, "\n"), "updated", true, nil
 		}
-		return out, "installed", true, nil
+		out := append(append(append([]string{}, lines[:start+1]...), pin), lines[start+1:]...)
+		return strings.Join(out, "\n"), "updated", true, nil
 	})
 }
 
@@ -434,17 +469,21 @@ func (g *GitOps) Uninstall(ctx context.Context, tenant, profile string, meta Met
 	})
 }
 
-func insertAppProfile(text, profile string) (string, bool) {
+func insertAppProfile(text, profile, digest string) (string, bool) {
+	entry := []string{"  - profile: " + profile}
+	if digest != "" {
+		entry = append(entry, "    digest: "+digest)
+	}
 	lines := strings.Split(text, "\n")
 	for i, line := range lines {
 		if line == "  apps:" {
 			out := append([]string{}, lines[:i+1]...)
-			out = append(out, "  - profile: "+profile)
+			out = append(out, entry...)
 			out = append(out, lines[i+1:]...)
 			return strings.Join(out, "\n"), true
 		}
 	}
-	return strings.TrimRight(text, "\n") + "\n  apps:\n  - profile: " + profile + "\n", true
+	return strings.TrimRight(text, "\n") + "\n  apps:\n" + strings.Join(entry, "\n") + "\n", true
 }
 
 func (g *GitOps) commit(ctx context.Context, file, message string, meta Meta) error {

@@ -44,10 +44,8 @@ func CatalogueSource(name string) (string, error) {
 // environment variable changes when a Deployment rolls and leaves no record
 // of who decided it.
 //
-// An open source is the one path by which software installs into a tenant
-// without a signed statement from the store, so it is worth being plain about
-// what it is: the platform administrator saying "this repository is mine and
-// this tenant may install from it". Nothing is open by default.
+// What the tuple says is that the platform administrator offers this
+// repository's entries to this tenant. Nothing is open by default.
 //
 // What is stored is read per tenant rather than per source, which is what
 // makes a source DELETED from the claim lose its tuples as well -- reading
@@ -113,40 +111,5 @@ func (c *OpenFGA) ReconcileCatalogueSources(ctx context.Context, tenants []strin
 	}
 	c.log.InfoContext(ctx, "catalogue sources reconciled",
 		"sources", len(sources), "opened", len(writes), "closed", len(deletes))
-	return nil
-}
-
-// BindEntryToSource records which catalogue serves an entry, which is what
-// makes catalogue_entry#can_install's "open from source" leg reachable.
-//
-// It is a fact about the coordinate's own spelling -- "in-house/timesheets"
-// is served by "in-house" and by nothing else -- so it decides nothing by
-// itself: the tuple grants an install only where the source is also open to
-// that tenant, and an open source is written from the Cluster claim.
-//
-// Written when an entry is first installed rather than for the whole
-// catalogue up front, because a cluster holds no catalogue to enumerate
-// (AD-3): an entry exists here from the moment somebody asks for it.
-func (c *OpenFGA) BindEntryToSource(ctx context.Context, coordinate string) error {
-	entry, err := CatalogueEntry(coordinate)
-	if err != nil {
-		return err
-	}
-	cat, _, _ := strings.Cut(coordinate, "/")
-	source, err := CatalogueSource(cat)
-	if err != nil {
-		return err
-	}
-	t := Tuple{User: source, Relation: "source", Object: entry}
-	have, err := c.Read(ctx, t)
-	if err != nil {
-		return fmt.Errorf("read source of %s: %w", entry, err)
-	}
-	if len(have) > 0 {
-		return nil
-	}
-	if err := c.Write(ctx, []Tuple{t}, nil); err != nil {
-		return fmt.Errorf("bind %s to %s: %w", entry, source, err)
-	}
 	return nil
 }

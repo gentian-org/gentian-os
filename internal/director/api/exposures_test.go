@@ -36,7 +36,7 @@ func publishBody(expires time.Time) string {
 // Publishing is its own decision, asked as its own relation, and recorded as
 // its own commit.
 func TestAPerimeterApproverPublishesASurface(t *testing.T) {
-	h := start(t, false)
+	h := start(t)
 	tom := h.token(t, "tenant-demo", "tom")
 
 	code, body := h.do(t, "PUT", sharesPath, tom, publishBody(time.Now().Add(30*24*time.Hour)))
@@ -73,7 +73,7 @@ func TestAPerimeterApproverPublishesASurface(t *testing.T) {
 // website is not taken down the day nobody renewed it -- but nobody may put
 // the review off past a year, and an overdue review is reported, not acted on.
 func TestAPublishedSurfaceIsAlwaysReviewedAndEndsOnlyIfAsked(t *testing.T) {
-	h := start(t, false)
+	h := start(t)
 	tom := h.token(t, "tenant-demo", "tom")
 
 	// Saying nothing: a review date, and no expiry.
@@ -118,7 +118,7 @@ func TestAPublishedSurfaceIsAlwaysReviewedAndEndsOnlyIfAsked(t *testing.T) {
 // Withdrawing takes it down, and the URL stops answering once the operator
 // has seen the commit.
 func TestWithdrawingRemovesItFromTheRegistry(t *testing.T) {
-	h := start(t, false)
+	h := start(t)
 	tom := h.token(t, "tenant-demo", "tom")
 
 	if code, _ := h.do(t, "PUT", sharesPath, tom, publishBody(time.Now().Add(24*time.Hour))); code != http.StatusAccepted {
@@ -140,7 +140,7 @@ func TestWithdrawingRemovesItFromTheRegistry(t *testing.T) {
 // Administering a tenant is not publishing from it. alice runs the cluster
 // and mia is a member; neither holds can_expose.
 func TestPublishingNeedsTheExposeRelation(t *testing.T) {
-	h := start(t, false)
+	h := start(t)
 	before := h.tip(t)
 
 	for name, tok := range map[string]string{
@@ -161,7 +161,7 @@ func TestPublishingNeedsTheExposeRelation(t *testing.T) {
 // can_expose and nothing else, which is the model's own fixture for the role
 // existing separately from running the tenant.
 func TestAnApproverNeedNotBeAnAdministrator(t *testing.T) {
-	h := start(t, false)
+	h := start(t)
 	pat := h.token(t, "tenant-demo", "pat")
 
 	if code, body := h.do(t, "PUT", sharesPath, pat, publishBody(time.Now().Add(24*time.Hour))); code != http.StatusAccepted {

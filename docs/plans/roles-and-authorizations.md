@@ -23,7 +23,7 @@ manager (3, 9); authority is derived downward, never granted sideways (5).
 | kernel | **Auditor** | `gentian:platform:auditor` | reading the issuer, decision and change logs across all tenants, and the cluster-wide exposure view — every public endpoint, its owner, expiry, and the condensed proxy log; nothing else | read-only routes on the director; OpenFGA read; git read |
 | system | **Service admin** | `gentian:platform:service-admin` | running the system services: capacity, backups and restores, upgrades and engine versions of `system-postgresql`, `system-mariadb`, `system-cache`, `system-s3`, `system-mail`, `system-llm`; the default fulfiller per contract | director (Cluster claim `system` section), custodian for service admin credentials |
 | shared | **Shared-apps admin** | `gentian:platform:shared-apps-admin` | installing, upgrading and removing `tenancy: shared` instances; granting and revoking tenants' access to each | director (`/v1/clusters/{c}/shared-apps/…`) |
-| tenant | **Tenant administrator** | `gentian:tenant:<t>:admins` | one tenant: installing apps within entitlements, addons, resource plan within the ceiling, backup policies and export schedules, integration grants (`AppGrant`), approving **tenant-scope** privilege requests — egress beyond the baseline, which leaves the tenant's own namespace (target-component-structure.md §4.3) — users and groups in the tenant realm. A dedicated account: holds no `members` or `app:*` group, launches no app | director (`/v1/tenants/{t}/…`), the tenant desktop showing admin tiles only |
+| tenant | **Tenant administrator** | `gentian:tenant:<t>:admins` | one tenant: installing apps, addons, resource plan within the ceiling, backup policies and export schedules, integration grants (`AppGrant`), approving **tenant-scope** privilege requests — egress beyond the baseline, which leaves the tenant's own namespace (target-component-structure.md §4.3) — users and groups in the tenant realm. A dedicated account: holds no `members` or `app:*` group, launches no app | director (`/v1/tenants/{t}/…`), the tenant desktop showing admin tiles only |
 | tenant-dmz | **Perimeter approver** | `gentian:tenant:<t>:perimeter` | enabling and disabling a public surface for the tenant, within cluster policy; setting its host, owner and expiry; renewing or revoking at review; the credentials the DMZ proxies hold; reading the tenant's exposure view — surfaces, condensed proxy log, public objects — and revoking an object through the `exposure-policy` contract | director (`/v1/tenants/{t}/exposure/…`) |
 | tenant, one app | **App administrator** | `gentian:tenant:<t>:app:<p>:admins` — per app, and only for a profile that declares a `privilegedRole` | administration *inside* one installed app — the app's own admin role, reconciled from `privilegedRole`; no platform rights | the app |
 | tenant | **Member** | `gentian:tenant:<t>:members`, `gentian:tenant:<t>:app:<profile>` | using the apps they are entitled to | tenant desktop, the apps |
@@ -104,7 +104,7 @@ Keycloak's event listener pushes membership changes to the director, which
 writes them as `group#member` tuples; a reconcile with a **read-only**
 Keycloak client corrects the projection toward Keycloak — never the other
 way. Everything else in the store is structure, and **only the director
-writes any of it** — installs, grants, entitlements and the role-to-group
+writes any of it** — installs, grants and the role-to-group
 assignments from the Cluster claim, each tuple written in the same
 operation as the commit it reflects. The store is a projection of Keycloak
 and git: the director creates it and the model on first start and rebuilds
@@ -152,7 +152,7 @@ Three invariants, one per class, each a scripted test:
 | Question | Answered by | Fed by |
 | --- | --- | --- |
 | Who is this? | Keycloak — realm `kernel` for platform roles, realm `<t>` for tenant roles | groups in the token |
-| May they configure this? | OpenFGA, asked by the **director** | the membership projection fed by Keycloak's events; structure (installs, grants, entitlements, role assignments) written by the director |
+| May they configure this? | OpenFGA, asked by the **director** | the membership projection fed by Keycloak's events; structure (installs, grants, role assignments) written by the director |
 | May they write this secret? | OpenFGA, asked by the **custodian** — `can_write_credential` on `app:<t>/<p>`, `can_configure` on `cluster:<c>` for kernel and system secrets. OpenBao's policy then bounds the *path* the request may touch; it does not make the decision (principle 2). Deciding in OpenBao policy from token groups put secret-write authority outside `ListUsers` and left it un-revoked by a tuple delete | the membership projection |
 | May they reach this app? | OpenFGA, asked by the **gateway ext-auth bouncer** — `can_use`, which is the app's own entitlement group, not tenant membership | the token; a decision cached per session and route |
 | Is this anonymous request valid? | the **publishing proxy** in the DMZ — the entry's `authMode`, and a source restriction where one is declared. It strips every inbound identity header and sets only its own | the credential presented, or none |

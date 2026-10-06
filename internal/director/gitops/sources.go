@@ -42,26 +42,19 @@ type CatalogueSource struct {
 	Name string `json:"name"`
 	// URL is where bundles are fetched from.
 	URL string `json:"url"`
-	// Access is "entitled" or "open".
+	// Tenants are the tenants this source is open to: the cluster lists the
+	// source's entries to them as installable from here. Empty means none --
+	// a source is open to somebody, never to all, and nothing is open by
+	// default.
 	//
-	// entitled: the store's own catalogue. An entry needs a signed grant
-	// before a tenant may install it.
-	//
-	// open: a platform administrator's own repository. Entries install
-	// without a statement from the store — but only for the tenants named
-	// below, and nothing is open by default.
-	Access string `json:"access,omitempty"`
-	// Tenants may install from an open source. Empty means none, which is
-	// what makes "open" mean "open to somebody" rather than "open to all".
+	// It is what the cluster offers, not a licence. An install is asked of
+	// the person (can_install_app), and whether the app then arrives is
+	// decided where its artefacts are pulled.
 	Tenants []string `json:"tenants,omitempty"`
 }
 
-// Open reports whether this source admits a tenant without a statement from
-// the store.
+// Open reports whether the Cluster claim opens this source to a tenant.
 func (s CatalogueSource) Open(tenant string) bool {
-	if !strings.EqualFold(strings.TrimSpace(s.Access), "open") {
-		return false
-	}
 	for _, t := range s.Tenants {
 		if t == tenant {
 			return true
@@ -73,7 +66,7 @@ func (s CatalogueSource) Open(tenant string) bool {
 // CatalogueSettings is the claim's whole spec.catalogue.
 type CatalogueSettings struct {
 	// StoreURL is where people are sent to get the entries this cluster
-	// cannot serve itself -- everything maintained or licensed by somebody.
+	// does not list itself -- everything maintained or licensed by somebody.
 	//
 	// Here rather than compiled in, because which store a cluster belongs to
 	// is a fact about that cluster, and because a cluster with no store at

@@ -18,8 +18,6 @@ package api_test
 
 import (
 	"context"
-	"crypto/ed25519"
-	"crypto/rand"
 	"io"
 	"log/slog"
 	"net/http"
@@ -31,7 +29,6 @@ import (
 	"github.com/gentian-org/gentian-os/internal/director/api"
 	"github.com/gentian-org/gentian-os/internal/director/authn"
 	dt "github.com/gentian-org/gentian-os/internal/director/directortest"
-	"github.com/gentian-org/gentian-os/internal/director/entitlement"
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
 	"github.com/gentian-org/gentian-os/internal/director/identity"
 )
@@ -177,22 +174,16 @@ func startWithIdentity(t *testing.T, ident api.Identity) *harness {
 	}
 	remote := dt.Remote(t, "demo", "solo", "other")
 	repo := gitops.NewGitOps(dt.Clone(t, remote), remote, dt.Cluster, gitops.Person{})
-	decisions, tuples := checker(t)
-	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
-	verifier, err := entitlement.NewVerifier(map[string]ed25519.PublicKey{"store-1": pub}, dt.Cluster)
-	if err != nil {
-		t.Fatal(err)
-	}
+	decisions := &asked{Checker: checker(t)}
 	srv, err := api.New(api.Config{
 		Authn: v, Authz: decisions, Viewer: fixedViewer{}, Repo: repo, Cluster: dt.Cluster,
-		Store:    &api.StoreConfig{Verifier: verifier, Applier: &entitlement.Applier{Repo: repo, Store: tuples}},
 		Log:      slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Identity: ident,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := &harness{Server: httptest.NewServer(srv), issuer: is, remote: remote, storeKey: priv}
+	h := &harness{Server: httptest.NewServer(srv), issuer: is, remote: remote, asked: decisions}
 	t.Cleanup(h.Close)
 	return h
 }
@@ -354,7 +345,7 @@ func TestTheRequestIdReachesTheRealm(t *testing.T) {
 // A director with no Keycloak credential at all serves none of these routes.
 // A console then shows the screens as absent rather than as failing.
 func TestWithoutIdentityTheScreensDoNotExist(t *testing.T) {
-	h := start(t, false)
+	h := start(t)
 	for _, path := range []string{
 		"/v1/tenants/demo/people",
 		"/v1/tenants/demo/groups",

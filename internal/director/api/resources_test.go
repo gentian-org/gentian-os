@@ -206,14 +206,14 @@ const operatorToken = "operator-token-for-the-director"
 func startWithOperator(t *testing.T) (*harness, *operator) {
 	t.Helper()
 	op := startOperator(t)
-	return startWith(t, false, lifecycle.New(op.URL, operatorToken)), op
+	return startWith(t, lifecycle.New(op.URL, operatorToken)), op
 }
 
 // A director with no token reaches nothing, which is what a misconfigured
 // deployment must look like rather than an open API.
 func TestTheOperatorsAPIRefusesADirectorWithNoToken(t *testing.T) {
 	op := startOperator(t)
-	h := startWith(t, false, lifecycle.New(op.URL, ""))
+	h := startWith(t, lifecycle.New(op.URL, ""))
 	tom := h.token(t, "tenant-demo", "tom")
 	code, _ := h.do(t, http.MethodGet, "/v1/tenants/demo/resources", tom, "")
 	if code == http.StatusOK {
@@ -400,7 +400,7 @@ func TestTheClustersViewNamesEveryTenant(t *testing.T) {
 }
 
 func TestWithoutAnOperatorThereAreNoResourcesRoutes(t *testing.T) {
-	h := start(t, false)
+	h := start(t)
 	tom := h.token(t, "tenant-demo", "tom")
 	if code, _ := h.do(t, "GET", "/v1/tenants/demo/resources", tom, ""); code != http.StatusNotFound {
 		t.Fatalf("resources without an operator: %d", code)

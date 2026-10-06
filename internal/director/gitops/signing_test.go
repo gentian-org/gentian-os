@@ -77,7 +77,7 @@ func TestWhatTheDirectorCommitsIsSigned(t *testing.T) {
 		t.Fatalf("signing key = %q, want %q", g.SigningKey(), fpr)
 	}
 
-	if _, err := g.Install(context.Background(), "demo", "element", meta("u-ada")); err != nil {
+	if _, err := g.Install(context.Background(), "demo", "element", "", meta("u-ada")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -109,7 +109,7 @@ func TestWithoutAKeyTheDirectorStillWrites(t *testing.T) {
 	if g.SigningKey() != "" {
 		t.Fatalf("signing key = %q with no key given", g.SigningKey())
 	}
-	if _, err := g.Install(context.Background(), "demo", "element", meta("u-ada")); err != nil {
+	if _, err := g.Install(context.Background(), "demo", "element", "", meta("u-ada")); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -168,7 +168,7 @@ func TestAMissingKeyRefusesTheCommitWhereSigningIsRequired(t *testing.T) {
 		t.Fatal("SignFrom with no key file reported no error")
 	}
 	before := dt.Git(t, "", "--git-dir", remote, "rev-parse", "main")
-	_, err := g.Install(context.Background(), "demo", "element", meta("u-ada"))
+	_, err := g.Install(context.Background(), "demo", "element", "", meta("u-ada"))
 	if !errors.Is(err, gitops.ErrNoSigningKey) {
 		t.Fatalf("Install = %v, want ErrNoSigningKey", err)
 	}
@@ -183,7 +183,7 @@ func TestAMissingKeyDoesNotStopARepositoryWithoutSigning(t *testing.T) {
 	remote := dt.Remote(t, "demo")
 	g := gitops.NewGitOps(dt.Clone(t, remote), remote, dt.Cluster, director)
 	_ = g.SignFrom(context.Background(), filepath.Join(t.TempDir(), "private.asc"), t.TempDir())
-	if _, err := g.Install(context.Background(), "demo", "element", meta("u-ada")); err != nil {
+	if _, err := g.Install(context.Background(), "demo", "element", "", meta("u-ada")); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -200,7 +200,7 @@ func TestAKeyThatArrivesLaterSignsTheNextCommit(t *testing.T) {
 	if err := os.WriteFile(keyFile, []byte(key), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := g.Install(context.Background(), "demo", "element", meta("u-ada")); err != nil {
+	if _, err := g.Install(context.Background(), "demo", "element", "", meta("u-ada")); err != nil {
 		t.Fatal(err)
 	}
 	if g.SigningKey() != fpr {

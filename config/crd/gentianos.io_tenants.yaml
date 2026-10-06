@@ -161,6 +161,13 @@ spec:
                           type: integer
                       type: object
                       x-kubernetes-preserve-unknown-fields: true
+                    digest:
+                      description: |-
+                        Digest pins the profile bundle this app was installed from: the build
+                        the install asked for. It is a field of the install and not part of the
+                        profile's name, so the same app keeps one name across builds.
+                      pattern: ^sha256:[a-f0-9]{64}$
+                      type: string
                     profile:
                       description: |-
                         Profile is the name of the AppProfile CR to install.

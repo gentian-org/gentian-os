@@ -131,9 +131,10 @@ collaboration stays federation or public links (networking.md §5).
   passdb, the edge client) rather than assume them unchanged. Test: export
   on cluster A, restore on B, first login succeeds with the old password
   and the old second factor.
-- `[ ]` Entitlements move with the tenant: a signed grant names
-  `(tenant, app)` for one cluster; the migration procedure asks the store
-  to re-issue for the new one.
+- `[ ]` Pull credentials move with the tenant: the credential a tenant
+  holds for a licensed app's source repository is what lets the app arrive
+  (AD-3), so the migration procedure carries it, or has it re-issued for
+  the new cluster.
 - `[ ]` Offer Organizations within a tenant realm as a tenant-level
   setting, with the tenant admin as organization admin.
 - `[ ]` State portability as a product property where the isolation model
@@ -177,9 +178,10 @@ them.
 
 ## New — Rollback protection on profile digests
 
-The App Store names the digest the director materialises. A compromised store
-can name an older digest of a legitimate, reviewed profile: valid entitlement
-signature, valid digest, downgrade to a known-vulnerable version through
+The install request names the digest the director materialises, and the App
+Store's confirmation is where it usually comes from. A compromised store, or
+anyone who may install, can name an older digest of a legitimate, reviewed
+profile: valid digest, downgrade to a known-vulnerable version through
 entirely correct machinery. Nothing refuses it.
 
 - `[ ]` Refuse a digest older than the one installed unless a human confirms

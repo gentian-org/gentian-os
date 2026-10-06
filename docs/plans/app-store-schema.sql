@@ -313,41 +313,26 @@ create index on subscription (tenant_id, starts_at desc);
 create index on subscription (plan_id);
 
 -- -----------------------------------------------------------------------------
--- Entitlement: the store's record of a commercial fact, signed
+-- Entitlement: the store's OWN record of a commercial fact
 --
--- The cluster does NOT cache this and check it at install time. Per security
--- principle 9 the in-cluster representation is data in git plus an OpenFGA
--- tuple, written by the director:
+-- None of this reaches a cluster. The cluster does no licence gating (AD-3):
+-- it holds no key of the store's, verifies no statement, and has no relation
+-- for a tenant's right to an app. An install is asked of the person
+-- (tenant#can_install_app) and of nothing else, and whether a licensed app
+-- arrives is decided where its chart and images are pulled, by the credential
+-- the tenant holds for their repository.
 --
---     type catalogue_entry
---         define entitled: [tenant]
---         define can_install: entitled
+-- So these tables are the store's books and nothing more: what it sold, to
+-- whom, until when. What the store hands to a cluster when it confirms an app
+-- is the entry's coordinate and the content digest of its profile bundle
+-- (store-contract.md §3) -- an identification of the build, not a permission.
 --
--- Flow: the store issues the grant below; the director verifies the signature,
--- commits the record, and writes the tuple. expires_at becomes a TTL condition
--- on that tuple (principle 5), not an offline signature check at install time.
--- The signature exists so the director can trust the store, not so a cluster
--- can decide without one.
---
--- The signature covers the FACT only — (tenant, app, version, digest,
--- issued_at, expires_at). A private catalogue's fetch token and the pull
--- credential for chart and images travel in the same request to the director
--- but are never part of the signed record: the record lands in git, which may
--- be public, and the credentials land in OpenBao through the credential
--- manager, written as the tenant admin (ui-restructure.md §3). This table
--- therefore stores no credential either; it records that one was issued.
---
--- Revocation travels the same path as the grant and overrides it: the store
--- POSTs a signed record with granted = false, the director commits it and
--- deletes the tuple in the same operation, and because git is what the
--- authorization store is rebuilt from, a later commit beats an earlier
--- expires_at (operator-split-plan.md §3.8). revoked_at below is therefore a
--- record of something DELIVERED, never something the cluster polls for.
---
--- Provisional, pending this flow: cluster.public_key and entitlement_check
--- describe a cluster-asks-store protocol that the flow above makes
--- unnecessary. They stay only if a cluster ever has to CALL the store — seat
--- or usage reporting — which entitlement does not need.
+-- signing_key, and key_id and signature below, are from the first version of
+-- the contract, in which the store signed each grant and the director
+-- verified it against keys pinned on the Cluster claim. No cluster reads them
+-- any more. entitlement_check and cluster.public_key describe a
+-- cluster-asks-store protocol that was never built and is not needed. All of
+-- them are the store's to drop.
 -- -----------------------------------------------------------------------------
 
 create table signing_key (

@@ -173,9 +173,6 @@ director:
   # resources from and validates a plan choice against. Empty derives it from
   # this release's own lifecycle Service.
   appLifecycleURL: ""
-  # enforce | off. A cluster with no App Store has nothing that could grant an
-  # entitlement, and says so here rather than by an absence.
-  entitlements: "off"
   # The Secret holding this director's OpenPGP private key, projected from
   # the vault by External Secrets (AD-2). Empty mounts nothing and the
   # director commits unsigned -- which is a cluster whose AppProject carries
@@ -207,20 +204,6 @@ director:
     key: token
     openbaoPath: "gentian-os/kernel/authz/openfga"
     property: preshared_key
-  # The App Store's signing keys, pinned: id=base64,… A statement that an app
-  # may be installed is believed only when one of these signed it; with none
-  # the entitlement endpoint does not exist.
-  #
-  # The default is the public key of the Gentian App Store, which is the store
-  # an installation loads unless its claim says otherwise. Public keys are not
-  # secret, so they are a value. To trust another store, replace it; to trust
-  # none, set it empty.
-  storeKeys: "store-1=an5JmtPC5NyHEuQXBmieeZT21R/V9IxYVZuJfLtSGaE="
-  # The same keys read from a Secret instead, which wins when named.
-  storeKeysSecretRef:
-    name: ""
-    key: keys
-  # The Keycloak event listener's public keys, in the same form.
   resources:
     requests:
       cpu: 50m

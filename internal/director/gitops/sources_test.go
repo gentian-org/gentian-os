@@ -53,7 +53,6 @@ func TestCatalogueSourcesComeFromTheClusterClaim(t *testing.T) {
         url: https://store.example.com/catalogue
       - name: in-house
         url: https://git.example.com/profiles
-        access: open
         tenants: [demo]
 `)
 	got, err := g.CatalogueSources(context.Background())

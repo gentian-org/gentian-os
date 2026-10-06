@@ -138,38 +138,13 @@ tests:
       - {user: user:audrey, object: app:demo/nextcloud, assertions: {can_read_credential: true, can_write_credential: false}}
       - {user: user:mia,    object: app:demo/nextcloud, assertions: {can_read_credential: false}}
 
-  - name: an entry of a source the platform administrator opened to a tenant needs no grant
+  - name: a catalogue source is open to the tenants named on it and to no other
     tuples:
-      - {user: catalogue_source:store,   relation: source, object: catalogue_entry:store/odoo}
-      - {user: catalogue_source:in-house, relation: source, object: catalogue_entry:in-house/timesheets}
       - {user: tenant:demo, relation: open, object: catalogue_source:in-house}
     check:
-      - {user: tenant:demo, object: catalogue_entry:in-house/timesheets, assertions: {can_install: true}}
-      - {user: tenant:solo, object: catalogue_entry:in-house/timesheets, assertions: {can_install: false}}
-      - {user: tenant:demo, object: catalogue_entry:store/odoo,          assertions: {can_install: false}}
-
-  - name: an entitlement is valid until it expires
-    tuples:
-      - user: tenant:demo
-        relation: entitled
-        object: catalogue_entry:main/nextcloud
-        condition:
-          name: grant_valid
-          context:
-            expires_at: "2030-01-01T00:00:00Z"
-    check:
-      - user: tenant:demo
-        object: catalogue_entry:main/nextcloud
-        context: {current_time: "2029-12-31T00:00:00Z"}
-        assertions: {can_install: true}
-      - user: tenant:demo
-        object: catalogue_entry:main/nextcloud
-        context: {current_time: "2030-01-02T00:00:00Z"}
-        assertions: {can_install: false}
-      - user: tenant:solo
-        object: catalogue_entry:main/nextcloud
-        context: {current_time: "2029-12-31T00:00:00Z"}
-        assertions: {can_install: false}
+      - {user: tenant:demo, object: catalogue_source:in-house, assertions: {open: true}}
+      - {user: tenant:solo, object: catalogue_source:in-house, assertions: {open: false}}
+      - {user: tenant:demo, object: catalogue_source:gentian,  assertions: {open: false}}
 
   - name: a contract is consumed only by the apps the tenant allowed
     check:

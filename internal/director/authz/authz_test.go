@@ -38,8 +38,8 @@ func TestIdentifiersCrossIntoOpenFGAThroughOneMapping(t *testing.T) {
 	if got, _ := User("f:ldap-1:jdoe"); got != "user:f/ldap-1/jdoe" {
 		t.Errorf("User = %q", got)
 	}
-	if got, _ := CatalogueEntry("main/nextcloud"); got != "catalogue_entry:main/nextcloud" {
-		t.Errorf("CatalogueEntry = %q", got)
+	if got, _ := CatalogueSource("in-house"); got != "catalogue_source:in-house" {
+		t.Errorf("CatalogueSource = %q", got)
 	}
 }
 
@@ -54,9 +54,9 @@ func TestWhatCannotBeRepresentedIsRefused(t *testing.T) {
 			t.Errorf("User(%q): %v", bad, err)
 		}
 	}
-	for _, bad := range []string{"", "nextcloud", "main/", "/x", "main:nextcloud", "a/b/c", "main/x#can_install"} {
-		if _, err := CatalogueEntry(bad); !errors.Is(err, ErrInvalidID) {
-			t.Errorf("CatalogueEntry(%q): %v", bad, err)
+	for _, bad := range []string{"", "main/nextcloud", "main:nextcloud", "main#open", "in house"} {
+		if _, err := CatalogueSource(bad); !errors.Is(err, ErrInvalidID) {
+			t.Errorf("CatalogueSource(%q): %v", bad, err)
 		}
 	}
 }

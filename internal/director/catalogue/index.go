@@ -67,12 +67,9 @@ type IndexEntry struct {
 	// TrustTier is the profile's own trustTier, repeated here so the index
 	// answers without a fetch.
 	TrustTier string `json:"trustTier,omitempty"`
-	// Digest is the sha256 of the profile bundle, as the SOURCE states it.
-	//
-	// Which is why it is dropped for an entitled source before anything sees
-	// it (see Index): there the digest that governs is the one the store
-	// stated over its own TLS, and a source's own number checked against the
-	// same source's own bytes is not a check at all (AD-3).
+	// Digest is the sha256 of the profile bundle, as the SOURCE states it:
+	// the build an install from this listing asks for. The trust in it is
+	// the Cluster claim naming the source.
 	Digest string `json:"digest,omitempty"`
 }
 
@@ -101,10 +98,7 @@ type Listing struct {
 
 // Index fetches and caches one source's index, keeping only the editions a
 // cluster lists for itself.
-//
-// entitled says whether the source's entries need a grant from the store. It
-// decides one thing here: whether the digest survives into what is served.
-func (f *Fetcher) Index(ctx context.Context, catalogue string, entitled bool) (Listing, error) {
+func (f *Fetcher) Index(ctx context.Context, catalogue string) (Listing, error) {
 	if f == nil {
 		return Listing{}, fmt.Errorf("%w: this cluster has no catalogue sources", ErrNotFound)
 	}
@@ -113,27 +107,21 @@ func (f *Fetcher) Index(ctx context.Context, catalogue string, entitled bool) (L
 		return Listing{}, fmt.Errorf("%w: no source for catalogue %q", ErrNotFound, catalogue)
 	}
 	if cached, ok := f.cached(catalogue); ok {
-		return f.serve(cached, entitled), nil
+		return serve(cached), nil
 	}
 	fresh, err := f.fetchIndex(ctx, catalogue, base)
 	if err != nil {
 		return Listing{}, err
 	}
 	f.store(catalogue, fresh)
-	return f.serve(fresh, entitled), nil
+	return serve(fresh), nil
 }
 
-// serve copies out what a caller may see. The cache holds the source's own
-// words; this is where the cluster's rules are applied, so a second caller
-// with different rules gets its own answer rather than the first one's.
-func (f *Fetcher) serve(c cachedIndex, entitled bool) Listing {
+// serve copies the cached index out, so a caller cannot change what the next
+// one is given.
+func serve(c cachedIndex) Listing {
 	out := Listing{Entries: make([]IndexEntry, len(c.entries)), StoreOnly: c.dropped}
 	copy(out.Entries, c.entries)
-	if entitled {
-		for i := range out.Entries {
-			out.Entries[i].Digest = ""
-		}
-	}
 	return out
 }
 

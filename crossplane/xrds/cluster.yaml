@@ -159,32 +159,25 @@ spec:
                             type: string
                             description: >
                               Base https URL the bundle is fetched from. The
-                              bytes are untrusted -- the digest the store
-                              stated over its own TLS connection is what
-                              admits them -- so this may be any host.
-                          access:
-                            type: string
-                            enum: [entitled, open]
-                            default: entitled
-                            description: >
-                              entitled: an entry needs a signed grant from the
-                              store before a tenant may install it. This is
-                              the default, and the right one for the vendor
-                              catalogue.
-
-                              open: entries install without a statement from
-                              the store -- but only for the tenants named
-                              below. This is for a platform administrator's
-                              own repository.
+                              bytes are untrusted -- the digest an install
+                              asks for is what admits them -- so this may be
+                              any host.
                           tenants:
                             type: array
                             items:
                               type: string
                             description: >
-                              Tenants that may install from an open source.
-                              Empty means none: nothing is open by default,
-                              and adding a tenant here is the act being made
-                              reviewable.
+                              Tenants this source is open to: the cluster
+                              lists its entries to them as installable from
+                              here. Empty means none: nothing is open by
+                              default, and adding a tenant here is the act
+                              being made reviewable.
+
+                              This is what the cluster offers, not a licence.
+                              Whether an installed app arrives is decided
+                              where its artefacts are pulled, by the
+                              credential the tenant holds for their
+                              repository.
                 kernelDomain:
                   type: string
                   description: >

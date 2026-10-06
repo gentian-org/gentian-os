@@ -170,14 +170,12 @@ func (r *AuthzProjectionReconciler) platformRoles(ctx context.Context) (map[stri
 }
 
 // openCatalogueSources is spec.catalogue.sources from the Cluster claim,
-// reduced to what each OPEN source is open to (AD-14).
+// reduced to the tenants each source is open to (AD-14).
 //
-// An entitled source -- the store's -- contributes nothing here: its entries
-// are admitted by a signed statement, which is a different relation written
-// by a different path. Only a source a platform administrator declares open,
-// to named tenants, produces a tuple, and it is that declaration being a
-// commit on the claim rather than an environment variable that makes opening
-// a catalogue something one can review after the fact.
+// A source produces a tuple for each tenant the platform administrator names
+// on it, and for nobody else. It is that naming being a commit on the claim
+// rather than an environment variable that makes opening a catalogue
+// something one can review after the fact.
 func (r *AuthzProjectionReconciler) openCatalogueSources(ctx context.Context) (map[string][]string, error) {
 	list := &unstructured.UnstructuredList{}
 	list.SetGroupVersionKind(schema.GroupVersionKind{
@@ -198,8 +196,7 @@ func (r *AuthzProjectionReconciler) openCatalogueSources(ctx context.Context) (m
 				continue
 			}
 			name, _ := entry["name"].(string)
-			access, _ := entry["access"].(string)
-			if name == "" || access != "open" {
+			if name == "" {
 				continue
 			}
 			tenants, _, err := unstructured.NestedStringSlice(entry, "tenants")

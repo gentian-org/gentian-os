@@ -26,7 +26,7 @@ Public vs premium is implied by **source repo** and **license**:
 
 `spec.chart.version` is the **Helm chart pin** — distinct from `catalogueVersion`.
 
-Commerce (price, customer, invoice) is not the cluster's: it lives with whoever runs the App Store, and reaches the cluster only as the signed statements of [store-contract.md](store-contract.md).
+Commerce (price, customer, invoice) is not the cluster's: it lives with whoever runs the App Store and does not reach the cluster at all: the cluster does no licence gating, and what a store hands it is the coordinate and digest of a build ([store-contract.md](store-contract.md)).
 
 ---
 
@@ -70,7 +70,7 @@ Used by `Tenant.spec.apps[].profileRef` for dimensional installs.
 | Repo | Profiles |
 |---|---|
 | **`gentian-apps/profiles/`** | OSS catalogue |
-| Additional catalogue repositories | Supplied per deployment; a profile that sets `license: proprietary` requires an entitlement to install |
+| Additional catalogue repositories | Supplied per deployment; nothing in the cluster gates the install of a proprietary profile — its chart and images arrive only where the tenant holds a credential for their repository |
 
 Recommended CR name for new revisions:
 

@@ -89,17 +89,17 @@ func (r *ComponentReconciler) platformValues(profile *gentianov1alpha1.Component
 		zoneKind = "kernel"
 	}
 	for key, value := range map[string]string{
-		m.IssuerKey:               fmt.Sprintf("https://id.%s/auth/realms/%s", r.KernelDomain, zone.realm),
-		m.ZoneClientIDKey:         zone.clientID,
-		m.AudienceKey:             directorAudience,
-		m.DirectorURLKey:          r.directorURL(),
-		m.UsherURLKey:             r.usherURL(),
+		m.IssuerKey:       fmt.Sprintf("https://id.%s/auth/realms/%s", r.KernelDomain, zone.realm),
+		m.ZoneClientIDKey: zone.clientID,
+		m.AudienceKey:     directorAudience,
+		m.DirectorURLKey:  r.directorURL(),
+		m.UsherURLKey:     r.usherURL(),
 		m.CustodianURLKey: r.custodianURL(),
-		m.ClusterKey:              r.Cluster,
-		m.TenantKey:               tenant.Name,
-		m.KernelDomainKey:         r.KernelDomain,
-		m.RealmKey:                zone.realm,
-		m.ZoneKindKey:             zoneKind,
+		m.ClusterKey:      r.Cluster,
+		m.TenantKey:       tenant.Name,
+		m.KernelDomainKey: r.KernelDomain,
+		m.RealmKey:        zone.realm,
+		m.ZoneKindKey:     zoneKind,
 		// The tenant's own language, for a desktop deciding what to render
 		// before this person has chosen one and before a settings template
 		// has chosen for them (AD-15). Normalise never returns an empty
@@ -511,7 +511,7 @@ func (r *TenantReconciler) ensureDefaultComponents(ctx context.Context, tenant *
 		if !wanted || !classIncludes(profile, gentianov1alpha1.ComponentClassApp) {
 			continue
 		}
-		if err := r.ensureComponent(ctx, tenant, profile.Name, componentOriginDefault, nil, nil); err != nil {
+		if err := r.ensureComponent(ctx, tenant, profile.Name, componentOriginDefault, "", nil, nil); err != nil {
 			return err
 		}
 	}
@@ -543,7 +543,7 @@ func (r *TenantReconciler) ensureAppComponents(ctx context.Context, tenant *gent
 			return err
 		}
 		wanted[profileName] = struct{}{}
-		if err := r.ensureComponent(ctx, tenant, profileName, componentOriginInstall, app.Addons, app.Config); err != nil {
+		if err := r.ensureComponent(ctx, tenant, profileName, componentOriginInstall, app.Digest, app.Addons, app.Config); err != nil {
 			return err
 		}
 		for _, addon := range app.Addons {
@@ -551,7 +551,7 @@ func (r *TenantReconciler) ensureAppComponents(ctx context.Context, tenant *gent
 				continue
 			}
 			wanted[addon] = struct{}{}
-			if err := r.ensureComponent(ctx, tenant, addon, componentOriginInstall, nil, nil); err != nil {
+			if err := r.ensureComponent(ctx, tenant, addon, componentOriginInstall, "", nil, nil); err != nil {
 				return err
 			}
 		}
@@ -577,7 +577,7 @@ func (r *TenantReconciler) ensureAppComponents(ctx context.Context, tenant *gent
 // ensureComponent keeps one Component of the tenant: named after its profile,
 // of class app, carrying what the Tenant says about that install.
 func (r *TenantReconciler) ensureComponent(
-	ctx context.Context, tenant *gentianov1alpha1.Tenant, profileName, origin string,
+	ctx context.Context, tenant *gentianov1alpha1.Tenant, profileName, origin, digest string,
 	addons []string, config *gentianov1alpha1.TenantAppConfig,
 ) error {
 	desired := &gentianov1alpha1.Component{
@@ -591,7 +591,7 @@ func (r *TenantReconciler) ensureComponent(
 			},
 		},
 		Spec: gentianov1alpha1.ComponentSpec{
-			ProfileRef: gentianov1alpha1.ProfileRef{Name: profileName},
+			ProfileRef: gentianov1alpha1.ProfileRef{Name: profileName, Digest: digest},
 			Class:      gentianov1alpha1.ComponentClassApp,
 			Addons:     addons,
 			Config:     config,
@@ -631,6 +631,11 @@ func (r *TenantReconciler) ensureComponent(
 	// the Tenant, Argo applies it, and the Component is reconciled again with
 	// the grant, the published surface, the addon list or the configuration
 	// in hand. Nobody touches the Component, which keeps git the only writer.
+	if existing.Spec.ProfileRef.Digest != digest {
+		// The build the install is pinned to, as the Tenant records it.
+		existing.Spec.ProfileRef.Digest = digest
+		changed = true
+	}
 	if !equality.Semantic.DeepEqual(existing.Spec.Privileges, desired.Spec.Privileges) {
 		existing.Spec.Privileges = desired.Spec.Privileges
 		changed = true

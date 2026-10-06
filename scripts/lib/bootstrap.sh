@@ -1587,13 +1587,14 @@ _claim_catalogue_section() {
     printf '\n'
     printf '  # Catalogues this cluster may fetch profiles from. A tenant installing\n'
     printf '  # "gentian/nextcloud-base-ce" gets the bundle from the source named\n'
-    printf '  # gentian, at the digest the App Store stated -- the source itself is\n'
+    printf '  # gentian, at the digest the install asks for -- the source itself is\n'
     printf '  # not trusted.\n'
     printf '  #\n'
-    printf '  #   access: entitled   the store decides, per tenant, with a signed grant\n'
-    printf '  #   access: open       your own repository; the tenants listed here may\n'
-    printf '  #                      install from it with no grant. Nothing is open by\n'
-    printf '  #                      default, and removing a tenant closes it again.\n'
+    printf '  # A source is open to the tenants listed on it: the cluster then lists\n'
+    printf '  # its entries to them as installable from here, without the App Store.\n'
+    printf '  # Nothing is open by default, and removing a tenant closes it again.\n'
+    printf '  # This is not a licence: whether an app arrives is decided by whether\n'
+    printf '  # the tenant holds a credential for the repository it is pulled from.\n'
     printf '  catalogue:\n'
     printf '    # Where people are sent for everything the cluster does not list\n'
     printf '    # itself: the maintained (me) and licensed (ee) editions. A cluster\n'
@@ -1602,10 +1603,9 @@ _claim_catalogue_section() {
     printf '    sources:\n'
     printf '      - name: gentian\n'
     printf '        url: %s\n' "${GENTIAN_STORE_CATALOGUE_URL:-https://store.gentian.org/catalogue}"
-    printf '        access: entitled\n'
+    printf '        # tenants: [demo]\n'
     printf '      # - name: in-house\n'
     printf '      #   url: https://git.example.com/profiles\n'
-    printf '      #   access: open\n'
     printf '      #   tenants: [demo]\n'
 }
 
@@ -1619,11 +1619,14 @@ _claim_catalogue_section() {
 # So a claim with no spec.catalogue is given the default one. A claim that
 # says anything at all there is left alone, and that is how a cluster goes
 # without a store: `catalogue: {}` is a decision somebody wrote down, where an
-# absent key is only a key nobody wrote.
+# absent key is only a key nobody wrote. The one edit made to an existing
+# section is removing a field the schema no longer has
+# (_claim_drop_catalogue_access).
 ensure_claim_catalogue_section() {
     local claim="$1"
     [[ -f "${claim}" ]] || return 0
     if yq_get '.spec.catalogue' "${claim}" >/dev/null 2>&1; then
+        _claim_drop_catalogue_access "${claim}"
         return 0
     fi
     # Appended to the file, which is only inside spec while spec is the last
@@ -1642,6 +1645,28 @@ ensure_claim_catalogue_section() {
     _claim_catalogue_section >> "${claim}"
     info "claims/cluster.yaml named no catalogue: the App Store default was added."
     info "  To run without a store, set 'catalogue: {}' under spec."
+}
+
+# _claim_drop_catalogue_access <claim file>
+#
+# A catalogue source used to say `access: entitled` or `access: open`. The
+# schema no longer has the field -- a source is open to the tenants it lists
+# and that is all -- and a claim still carrying it is refused when it is
+# applied, because an unknown field is an error rather than something ignored.
+# So the lines are removed from a claim written before, and only there: under
+# spec.catalogue, at a source's own indent.
+_claim_drop_catalogue_access() {
+    local claim="$1" tmp
+    grep -qE '^      +access: *(entitled|open) *$' "${claim}" || return 0
+    tmp="$(mktemp)"
+    awk '
+        /^  catalogue:/              { inside = 1; print; next }
+        inside && /^  [A-Za-z]/      { inside = 0 }
+        inside && /^      +access: *(entitled|open) *$/ { next }
+        { print }
+    ' "${claim}" > "${tmp}" && cat "${tmp}" > "${claim}"
+    rm -f "${tmp}"
+    info "claims/cluster.yaml: removed 'access' from its catalogue sources; a source is open to the tenants it lists."
 }
 
 # _claim_default_line <field> <value> <default> <explanation>

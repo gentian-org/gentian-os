@@ -72,8 +72,8 @@ func sampleIndex(digest string) string {
 // and the cluster only says how many there are (AD-14).
 func TestTheClusterListsOnlyItsOwnEditionsAndCountsTheRest(t *testing.T) {
 	src := indexedSource(t, sampleIndex(sha(elementProfile)))
-	h := startWithEntitledCatalogue(t, true, src, map[string]string{"in-house": src.URL},
-		gitops.CatalogueSource{Name: "in-house", URL: src.URL, Access: "open", Tenants: []string{"demo"}})
+	h := startWithCatalogue(t, src, map[string]string{"in-house": src.URL},
+		gitops.CatalogueSource{Name: "in-house", URL: src.URL, Tenants: []string{"demo"}})
 	tom := h.token(t, "tenant-demo", "tom")
 
 	code, out := h.do(t, "GET", "/v1/tenants/demo/catalogues/in-house/entries", tom, "")
@@ -97,7 +97,7 @@ func TestTheClusterListsOnlyItsOwnEditionsAndCountsTheRest(t *testing.T) {
 	}
 
 	// An open source's entries are installable from here, digest and all:
-	// the claim named the source, so there is no store in the picture.
+	// the claim named the source and opened it to this tenant.
 	first := entries[0].(map[string]any)
 	if first["installable"] != true || first["digest"] != sha(elementProfile) {
 		t.Fatalf("an open source's entry is not installable: %v", first)
@@ -113,13 +113,13 @@ func TestTheClusterListsOnlyItsOwnEditionsAndCountsTheRest(t *testing.T) {
 	}
 }
 
-// An entitled source's digest is the STORE's to state, over the store's own
-// TLS. The source's own number, checked against the same source's own bytes,
-// is not a check -- so it never leaves the director (AD-3).
-func TestAnEntitledSourceServesNoDigestAndNoInstallButton(t *testing.T) {
+// A source the claim did not open to this tenant is still listed -- with its
+// digests, which are no secret -- and offers no install from here: the store
+// is the route.
+func TestASourceNotOpenToTheTenantOffersNoInstallFromHere(t *testing.T) {
 	src := indexedSource(t, sampleIndex(sha(elementProfile)))
-	h := startWithEntitledCatalogue(t, true, src, map[string]string{"main": src.URL},
-		gitops.CatalogueSource{Name: "main", URL: src.URL, Access: "entitled"})
+	h := startWithCatalogue(t, src, map[string]string{"main": src.URL},
+		gitops.CatalogueSource{Name: "main", URL: src.URL})
 	tom := h.token(t, "tenant-demo", "tom")
 
 	code, out := h.do(t, "GET", "/v1/tenants/demo/catalogues/main/entries", tom, "")
@@ -127,27 +127,27 @@ func TestAnEntitledSourceServesNoDigestAndNoInstallButton(t *testing.T) {
 		t.Fatalf("entries = %d %v", code, out)
 	}
 	if out["open"] != false {
-		t.Fatalf("an entitled source reads as open: %v", out["open"])
+		t.Fatalf("a source opened to nobody reads as open: %v", out["open"])
 	}
 	for _, raw := range out["entries"].([]any) {
 		e := raw.(map[string]any)
-		if _, ok := e["digest"]; ok {
-			t.Fatalf("an entitled source's digest reached a caller: %v", e)
+		if e["digest"] != sha(elementProfile) {
+			t.Fatalf("the entry does not state its build: %v", e)
 		}
 		if e["installable"] != false {
-			t.Fatalf("an entitled entry offers a local install: %v", e)
+			t.Fatalf("an entry of a source not open to the tenant offers a local install: %v", e)
 		}
 	}
 }
 
 // The list of catalogues is the other half: which they are, and which of them
-// this tenant may install from without asking anybody.
+// the Cluster claim opened to this tenant.
 func TestListingCataloguesSaysWhichAreOpenToThisTenant(t *testing.T) {
 	src := indexedSource(t, sampleIndex(sha(elementProfile)))
-	h := startWithEntitledCatalogue(t, true, src,
+	h := startWithCatalogue(t, src,
 		map[string]string{"main": src.URL, "in-house": src.URL},
-		gitops.CatalogueSource{Name: "main", URL: src.URL, Access: "entitled"},
-		gitops.CatalogueSource{Name: "in-house", URL: src.URL, Access: "open", Tenants: []string{"demo"}})
+		gitops.CatalogueSource{Name: "main", URL: src.URL},
+		gitops.CatalogueSource{Name: "in-house", URL: src.URL, Tenants: []string{"demo"}})
 
 	code, out := h.do(t, "GET", "/v1/tenants/demo/catalogues", h.token(t, "tenant-demo", "tom"), "")
 	if code != http.StatusOK {
@@ -178,7 +178,7 @@ func TestListingCataloguesSaysWhichAreOpenToThisTenant(t *testing.T) {
 // That is an empty list, not a broken screen.
 func TestASourceWithNoIndexListsNothing(t *testing.T) {
 	src := catalogueSource(t, elementProfile) // serves profiles, no index.yaml
-	h := startWithEntitledCatalogue(t, true, src, map[string]string{"main": src.URL})
+	h := startWithCatalogue(t, src, map[string]string{"main": src.URL})
 	code, out := h.do(t, "GET", "/v1/tenants/demo/catalogues/main/entries",
 		h.token(t, "tenant-demo", "tom"), "")
 	if code != http.StatusOK {
@@ -193,7 +193,7 @@ func TestASourceWithNoIndexListsNothing(t *testing.T) {
 // caller asks for.
 func TestAnUndeclaredCatalogueIsNotFound(t *testing.T) {
 	src := indexedSource(t, sampleIndex(sha(elementProfile)))
-	h := startWithEntitledCatalogue(t, true, src, map[string]string{"main": src.URL})
+	h := startWithCatalogue(t, src, map[string]string{"main": src.URL})
 	code, _ := h.do(t, "GET", "/v1/tenants/demo/catalogues/elsewhere/entries",
 		h.token(t, "tenant-demo", "tom"), "")
 	if code != http.StatusNotFound {

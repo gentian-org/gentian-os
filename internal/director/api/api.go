@@ -43,7 +43,6 @@ import (
 	"github.com/gentian-org/gentian-os/internal/director/authn"
 	"github.com/gentian-org/gentian-os/internal/director/authz"
 	"github.com/gentian-org/gentian-os/internal/director/catalogue"
-	"github.com/gentian-org/gentian-os/internal/director/entitlement"
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
 	"github.com/gentian-org/gentian-os/internal/director/identity"
 	"github.com/gentian-org/gentian-os/internal/director/lifecycle"
@@ -57,11 +56,10 @@ type Authenticator interface {
 
 // Repository is the git backend.
 type Repository interface {
-	Install(ctx context.Context, tenant, profile string, meta gitops.Meta) (gitops.Result, error)
+	Install(ctx context.Context, tenant, profile, digest string, meta gitops.Meta) (gitops.Result, error)
 	Uninstall(ctx context.Context, tenant, profile string, meta gitops.Meta) (gitops.Result, error)
 	SetAddons(ctx context.Context, tenant, profile string, addons []string, meta gitops.Meta) (gitops.Result, error)
 	Apps(ctx context.Context, tenant string) ([]gitops.App, error)
-	Entitlements(ctx context.Context, tenant string) ([]gitops.Entitlement, error)
 	KernelDomain(ctx context.Context) (string, error)
 	ClusterSettingValues(ctx context.Context) (map[string]string, error)
 	SetClusterSettings(ctx context.Context, values map[string]string, meta gitops.Meta) (gitops.Result, error)
@@ -117,12 +115,6 @@ type Lifecycle interface {
 	Do(ctx context.Context, path, actor string, body any) (int, []byte, error)
 }
 
-// EntryBinder records the edge from a catalogue entry to the catalogue that
-// serves it. See authz.OpenFGA.BindEntryToSource.
-type EntryBinder interface {
-	BindEntryToSource(ctx context.Context, coordinate string) error
-}
-
 // Config assembles a Server.
 type Config struct {
 	Authn Authenticator
@@ -142,32 +134,18 @@ type Config struct {
 	// on a cluster whose profiles are still synced wholesale, which is what a
 	// deployment naming no catalogue source is saying.
 	Catalogue *catalogue.Fetcher
-	// Binder records which source serves a coordinate, so that a source the
-	// Cluster claim opened to this tenant admits its entries (AD-14). Nil
-	// leaves that leg unreachable, which means entitlement by signed
-	// statement and nothing else -- the right behaviour for a cluster that
-	// declares no source of its own.
-	Binder EntryBinder
 	// CatalogueSources is spec.catalogue.sources from the Cluster claim: the
 	// same list the Fetcher was built from, kept whole because the index
-	// routes need each source's access mode and the tenants it is open to.
+	// routes need the tenants each source is open to.
 	CatalogueSources []gitops.CatalogueSource
 	// StoreURL is spec.catalogue.storeUrl: where a person is sent for
 	// everything this cluster does not list for itself. Empty is a cluster
 	// that belongs to no store.
 	StoreURL string
 	Log      *slog.Logger
-	// EnforceEntitlements makes an install require
-	// catalogue_entry:<coordinate>#can_install for the tenant. It is on unless
-	// a deployment turns it off explicitly, which a cluster without a store
-	// has to do — and which is then visible as a setting, not as an absence.
-	EnforceEntitlements bool
 	// Cluster is the id of the one cluster this director serves: the object
 	// cluster verbs are checked against, and the only {c} the routes accept.
 	Cluster string
-	// Store verifies and applies what the App Store signed. Nil leaves the
-	// write unregistered: a cluster with no pinned store key believes no store.
-	Store *StoreConfig
 	// Lifecycle answers what only the cluster knows about a tenant's
 	// resources. Nil leaves the resources routes unregistered: a director
 	// with no operator to ask has nothing to relay and nothing to validate a
@@ -219,12 +197,6 @@ type Identity interface {
 	ActivateAccount(ctx context.Context, r identity.Realm, id, email string, requireMFA bool, clientID, redirectURI string) (identity.Activation, error)
 	GroupMembers(ctx context.Context, r identity.Realm, path string) ([]identity.Person, error)
 	UserCount(ctx context.Context, r identity.Realm) (int, error)
-}
-
-// StoreConfig is what the entitlement write needs.
-type StoreConfig struct {
-	Verifier *entitlement.Verifier
-	Applier  *entitlement.Applier
 }
 
 // Server is the director's API.
@@ -429,8 +401,6 @@ func (s *Server) routes() {
 	s.guarded("GET /v1/tenants/{t}/apps", "can_view", tenantObject, s.listApps)
 	s.guarded("GET /v1/tenants/{t}/apps/{p}/addons", "can_view", tenantObject, s.getAddons)
 
-	s.guarded("GET /v1/tenants/{t}/entitlements", "can_view", tenantObject, s.listEntitlements)
-
 	// The cluster's own catalogues (AD-14). can_view, like every other read
 	// of a tenant: whoever may see a tenant may see what it could install.
 	// Registered only where there are sources to list, so a cluster that
@@ -501,10 +471,6 @@ func (s *Server) routes() {
 		}
 		s.guarded("GET /v1/tenants/{t}/authorization", "can_view", tenantObject, s.tenantAuthorization)
 	}
-	if s.cfg.Store != nil {
-		s.mux.HandleFunc("POST /v1/tenants/{t}/entitlements", s.entitle)
-	}
-
 	s.guarded("POST /v1/tenants/{t}/apps/{p}", "can_install_app", tenantObject, s.install)
 	s.guarded("DELETE /v1/tenants/{t}/apps/{p}", "can_install_app", tenantObject, s.uninstall)
 	s.guarded("PUT /v1/tenants/{t}/apps/{p}/addons", "can_install_app", tenantObject, s.setAddons)
@@ -809,92 +775,33 @@ func (s *Server) getAddons(w http.ResponseWriter, r *http.Request, _ call) {
 	s.fail(w, r, http.StatusNotFound, "app not installed")
 }
 
-func (s *Server) listEntitlements(w http.ResponseWriter, r *http.Request, _ call) {
-	facts, err := s.cfg.Repo.Entitlements(r.Context(), r.PathValue("t"))
-	if err != nil {
-		s.repoError(w, r, err)
-		return
-	}
-	s.json(w, http.StatusOK, map[string]any{"tenant": r.PathValue("t"), "entitlements": facts})
-}
-
-type entitleRequest struct {
-	// Grant is the store's statement, a compact JWS.
-	Grant string `json:"grant"`
-}
-
-// entitle takes a statement the store signed. The signature is what is
-// believed, so it is checked first, before anything is asked of the caller.
-//
-// A grant adds access, so it also needs a person who may install in this
-// tenant to be the one delivering it: the store may trigger, it may not decide
-// for the tenant. A revocation only removes access and the store's signature is
-// all the authority it needs — requiring the tenant's own administrator to
-// deliver it would let them decline to.
-func (s *Server) entitle(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	tenant := r.PathValue("t")
-	if !gitops.ValidName(tenant) {
-		s.fail(w, r, http.StatusBadRequest, "invalid name")
-		return
-	}
-	var body entitleRequest
-	if err := decode(r, &body); err != nil || body.Grant == "" {
-		s.fail(w, r, http.StatusBadRequest, `body must be {"grant": "<compact JWS>"}`)
-		return
-	}
-	claims, kid, err := s.cfg.Store.Verifier.Verify(body.Grant, tenant)
-	switch {
-	case errors.Is(err, entitlement.ErrNotBelieved):
-		s.cfg.Log.WarnContext(ctx, "entitlement statement refused", "request_id", reqID(ctx), "tenant", tenant, "reason", err.Error())
-		s.fail(w, r, http.StatusUnauthorized, "statement is not verifiably the store's")
-		return
-	case errors.Is(err, entitlement.ErrNotForHere):
-		s.fail(w, r, http.StatusForbidden, "statement is not for this cluster and tenant")
-		return
-	case err != nil:
-		s.fail(w, r, http.StatusBadRequest, "statement is incomplete")
-		return
-	}
-
-	meta := gitops.Meta{RequestID: reqID(ctx), Principal: "store:" + kid, Decision: "signed " + claims.ID}
-	if claims.Granted {
-		c, ok := s.authorize(w, r, "POST /v1/tenants/{t}/entitlements", "can_install_app", tenantObject)
-		if !ok {
-			return
-		}
-		// The person delivered it; the store decided it. Both are recorded.
-		meta = c.meta
-		meta.Decision += "; store:" + kid + " signed " + claims.ID
-	}
-	res, err := s.cfg.Store.Applier.Apply(ctx, tenant, claims, kid, meta)
-	if errors.Is(err, gitops.ErrStaleFact) {
-		s.fail(w, r, http.StatusConflict, "a newer statement about this entry is already recorded")
-		return
-	}
-	s.written(w, r, res, err)
-}
-
 type installRequest struct {
-	// Coordinate is the store coordinate <catalogue>/<app> the profile was
-	// offered under; the entitlement is recorded against it.
-	Coordinate string `json:"coordinate"`
-	// Digest is the content digest of the profile bundle, as the store's
-	// index gives it: "sha256:<hex>".
+	// Coordinate is <catalogue>/<app>: which catalogue the profile comes
+	// from. It is what materialising fetches; without it the install is of a
+	// profile the cluster already has.
+	Coordinate string `json:"coordinate,omitempty"`
+	// Digest is the content digest of the profile bundle, "sha256:<hex>":
+	// the exact build being installed.
 	//
-	// From the store, over TLS, and not from the source that serves the
-	// bytes. That separation is the point: the source could be a customer's
-	// own web server, and what protects the install is that only one set of
-	// bytes hashes to what the store named (AD-3).
+	// It is the caller's to state -- the App Store's confirmation carries it,
+	// and the cluster's own listing of a source gives it -- and it is not
+	// signed. What it does is pin: only one set of bytes hashes to it, so the
+	// source that serves the bundle can fail an install and cannot change
+	// what is installed (AD-3). It is recorded with the install in git.
 	Digest string `json:"digest,omitempty"`
 }
 
+// install commits an app to a tenant's manifest.
+//
+// The one question asked is the route's own: may this person install apps in
+// this tenant (can_install_app). Nothing here decides whether the tenant is
+// licensed for the app. That is not the platform's to gate: whether the app
+// arrives is decided where its artefacts are pulled, by whether the tenant
+// holds a credential for the repository they come from.
 func (s *Server) install(w http.ResponseWriter, r *http.Request, c call) {
 	ctx := r.Context()
 	tenant, profile := r.PathValue("t"), r.PathValue("p")
-	// Read once. The coordinate is what the entitlement check asks about and
-	// what materialising fetches, and decoding twice would read an empty body
-	// the second time.
+	// Read once: decoding twice would read an empty body the second time.
 	var body installRequest
 	if r.ContentLength != 0 {
 		if err := decode(r, &body); err != nil {
@@ -902,36 +809,13 @@ func (s *Server) install(w http.ResponseWriter, r *http.Request, c call) {
 			return
 		}
 	}
-	if s.cfg.EnforceEntitlements {
-		entry, err := authz.CatalogueEntry(body.Coordinate)
+	if body.Digest != "" {
+		digest, err := catalogue.CanonicalDigest(body.Digest)
 		if err != nil {
-			s.fail(w, r, http.StatusBadRequest, "coordinate is required: <catalogue>/<app>")
+			s.fail(w, r, http.StatusBadRequest, "digest must be sha256:<64 hex characters>")
 			return
 		}
-		// An entry's source is part of the question: a catalogue the Cluster
-		// claim opened to this tenant admits its entries without a statement
-		// from the store, and the graph reaches that through the entry's
-		// source tuple. Recording it is a fact about the coordinate, not a
-		// decision -- the decision is the claim's, and it is checked below.
-		if cat, _, _ := strings.Cut(body.Coordinate, "/"); s.cfg.Binder != nil && s.cfg.Catalogue.Known(cat) {
-			if err := s.cfg.Binder.BindEntryToSource(ctx, body.Coordinate); err != nil {
-				s.cfg.Log.ErrorContext(ctx, "could not record which catalogue serves an entry",
-					"request_id", reqID(ctx), "coordinate", body.Coordinate, "error", err)
-				s.fail(w, r, http.StatusServiceUnavailable, "authorization unavailable")
-				return
-			}
-		}
-		// The second question is about the tenant, not the person: is this
-		// tenant entitled to this entry, now.
-		ok, err := s.cfg.Authz.Check(ctx, reqID(ctx), authz.Tenant(tenant), "can_install", entry)
-		if err != nil {
-			s.fail(w, r, http.StatusServiceUnavailable, "authorization unavailable")
-			return
-		}
-		if !ok {
-			s.fail(w, r, http.StatusForbidden, "tenant is not entitled to this catalogue entry")
-			return
-		}
+		body.Digest = digest
 	}
 	// The profile itself, if this cluster materialises on reference (AD-3).
 	//
@@ -948,41 +832,46 @@ func (s *Server) install(w http.ResponseWriter, r *http.Request, c call) {
 		}
 	}
 
-	res, err := s.cfg.Repo.Install(ctx, tenant, profile, c.meta)
+	res, err := s.cfg.Repo.Install(ctx, tenant, profile, body.Digest, c.meta)
 	s.written(w, r, res, err)
 }
 
 // materialise fetches the entry being installed and commits it, so the
 // cluster has the profile the tenant's manifest is about to name.
 //
-// The digest comes from the STORE's index, over TLS. The bytes come from the
-// SOURCE, which is not trusted: if they do not hash to that digest the install
-// is refused and nothing is written. That is the whole of AD-3's "the store
-// never supplies the artefact" — the store says WHAT, the source says the
-// bytes, and only agreement produces an install.
+// The digest comes with the REQUEST. The bytes come from the SOURCE, which is
+// not trusted: if they do not hash to that digest the install is refused and
+// nothing is written. The request says WHAT, the source says the bytes, and
+// only agreement produces an install.
 func (s *Server) materialise(
 	w http.ResponseWriter, r *http.Request, c call, body installRequest,
 ) (gitops.Result, bool) {
 	ctx := r.Context()
-	cat, _, _ := strings.Cut(body.Coordinate, "/")
+	cat, name, _ := strings.Cut(body.Coordinate, "/")
 	if !s.cfg.Catalogue.Known(cat) {
 		// A catalogue this cluster has no source for. Not an error: a cluster
 		// may name a source for one catalogue and sync another wholesale, and
 		// the install proceeds against whatever is already there.
 		return gitops.Result{}, true
 	}
+	if name != r.PathValue("p") {
+		// The bundle fetched is the coordinate's and the entry written is the
+		// path's. Two names would commit one profile and install another.
+		s.fail(w, r, http.StatusBadRequest, "the coordinate names a different app than the one being installed")
+		return gitops.Result{}, false
+	}
 	if body.Digest == "" {
 		s.fail(w, r, http.StatusBadRequest,
-			"installing from a catalogue source needs the entry's digest, which the store's index gives")
+			"installing from a catalogue source needs the entry's digest: sha256:<hex>")
 		return gitops.Result{}, false
 	}
 	profile, err := s.cfg.Catalogue.Fetch(ctx, body.Coordinate, body.Digest)
 	switch {
 	case errors.Is(err, catalogue.ErrDigestMismatch):
 		// Said plainly and logged, because this is the one failure here that
-		// is not a mistake: the source served something other than the entry
-		// the store named.
-		s.cfg.Log.ErrorContext(ctx, "a catalogue source served a bundle that is not the entry the store named",
+		// is not a mistake: the source served something other than the build
+		// that was asked for.
+		s.cfg.Log.ErrorContext(ctx, "a catalogue source served a bundle that is not the build requested",
 			"request_id", reqID(ctx), "coordinate", body.Coordinate)
 		s.fail(w, r, http.StatusBadGateway,
 			"the catalogue source served a bundle that is not this entry; nothing was installed")

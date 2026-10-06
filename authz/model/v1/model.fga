@@ -116,19 +116,17 @@ type tenant
     define can_read_credential: can_write_credential or can_audit from cluster
 
 # A catalogue source is a repository of profile bundles named on the Cluster
-# claim: the store's, or one a platform administrator added. Opening a source
-# to a tenant is that administrator's act (can_configure), recorded as a tuple;
-# an entry of an open source installs without any statement from the store.
-# Nothing is open by default.
+# claim. Opening a source to a tenant is the platform administrator's act
+# (can_configure), recorded as a tuple: the cluster offers that source's
+# entries to that tenant. Nothing is open by default.
+#
+# There is no relation for a tenant's right to an app. Installing is asked of
+# the person (tenant#can_install_app); whether the app then arrives is decided
+# where its artefacts are pulled, by the credential the tenant holds for their
+# repository. The platform does no licence gating.
 type catalogue_source
   relations
-    define open: [tenant]                         # written by the director from the Cluster claim
-
-type catalogue_entry
-  relations
-    define source: [catalogue_source]
-    define entitled: [tenant with grant_valid]   # written by the director from a signed grant
-    define can_install: entitled or open from source   # checked with user = tenant:<t>
+    define open: [tenant]                         # written by the operator from the Cluster claim
 
 type app
   relations
@@ -204,10 +202,6 @@ type session
     # tuple, every bouncer replica sees it on the ReadChanges poll it already
     # runs, and nothing is lost when a replica restarts (AD-13).
     define revoked: [user]
-
-condition grant_valid(current_time: timestamp, expires_at: timestamp) {
-  current_time < expires_at
-}
 
 # Wave 2 (security-gap-closing G9) adds, without changing anything above:
 #

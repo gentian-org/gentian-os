@@ -17,7 +17,6 @@ limitations under the License.
 package api_test
 
 import (
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -27,6 +26,7 @@ import (
 	"testing"
 
 	dt "github.com/gentian-org/gentian-os/internal/director/directortest"
+	"github.com/gentian-org/gentian-os/internal/director/gitops"
 )
 
 const elementProfile = `apiVersion: gentianos.io/v1alpha1
@@ -66,7 +66,7 @@ func catalogueSource(t *testing.T, body string) *httptest.Server {
 }
 
 // A profile arrives when a tenant installs it, and is committed at the digest
-// the store named (AD-3).
+// the install asked for (AD-3).
 func TestInstallingMaterialisesTheProfile(t *testing.T) {
 	src := catalogueSource(t, elementProfile)
 	h := startWithCatalogue(t, src, map[string]string{"main": src.URL})
@@ -83,7 +83,7 @@ func TestInstallingMaterialisesTheProfile(t *testing.T) {
 	// Compared by DIGEST rather than by string, and trimmed, because the
 	// helper reads through `git show`, which does not promise the trailing
 	// byte back. The digest is the thing that has to hold anyway: what was
-	// committed must be what the store named, and a test that compared some
+	// committed must be what was asked for, and a test that compared some
 	// other way would be checking something weaker than the code does.
 	path := "clusters/" + dt.Cluster + "/catalogue/element.yaml"
 	got := dt.RemoteFile(t, h.remote, path)
@@ -96,10 +96,15 @@ func TestInstallingMaterialisesTheProfile(t *testing.T) {
 		t.Fatalf("kustomization:\n%s", k)
 	}
 	// The commit says which digest was checked, so a reviewer need not hash
-	// the file to know whether it is the entry the store meant.
+	// the file to know whether it is the build that was asked for.
 	log := dt.Git(t, "", "--git-dir", h.remote, "log", "--format=%s", "-3", "main")
 	if !strings.Contains(log, "materialise element at sha256:") {
 		t.Fatalf("no materialise commit:\n%s", log)
+	}
+	// And the tenant's entry is pinned to the same build, as a field.
+	tenant := dt.RemoteFile(t, h.remote, dt.TenantPath("demo"))
+	if !strings.Contains(tenant, "  - profile: element\n    digest: "+sha(elementProfile)+"\n") {
+		t.Fatalf("the install does not record its digest:\n%s", tenant)
 	}
 }
 
@@ -114,7 +119,7 @@ func TestATamperedBundleInstallsNothing(t *testing.T) {
 	tom := h.token(t, "tenant-demo", "tom")
 	before := h.tip(t)
 
-	// The digest the STORE named, against bytes the SOURCE changed.
+	// The digest the REQUEST named, against bytes the SOURCE changed.
 	body := fmt.Sprintf(`{"coordinate":"main/element","digest":%q}`, sha(elementProfile))
 	code, out := h.do(t, "POST", "/v1/tenants/demo/apps/element", tom, body)
 	if code != http.StatusBadGateway {
@@ -164,57 +169,39 @@ func TestAnUnknownCatalogueInstallsAsBefore(t *testing.T) {
 	}
 }
 
-// AD-14: a catalogue the Cluster claim opened to a tenant installs without a
-// statement from the store, and only for the tenants the claim names.
-//
-// Needs the model to decide, because what is being tested IS the model: the
-// entry's source is open to this tenant, therefore the entry is installable.
-// A table would only restate the answer.
-func TestATenantInstallsFromACatalogueTheClaimOpenedToIt(t *testing.T) {
+// A coordinate that names another app than the one being installed is refused:
+// it would commit one profile and install another.
+func TestTheCoordinateMustNameTheAppBeingInstalled(t *testing.T) {
 	src := catalogueSource(t, elementProfile)
-	h := startWithEntitledCatalogue(t, true, src, map[string]string{"in-house": src.URL})
-	if h.graph == nil {
-		t.Skip("needs OpenFGA deciding: make test-director-contract")
-	}
-	ctx := context.Background()
-	if err := h.graph.ReconcileCatalogueSources(ctx, []string{"demo", "solo"},
-		map[string][]string{"in-house": {"demo"}}); err != nil {
-		t.Fatal(err)
-	}
-
-	body := fmt.Sprintf(`{"coordinate":"in-house/element","digest":%q}`, sha(elementProfile))
+	h := startWithCatalogue(t, src, map[string]string{"main": src.URL})
 	tom := h.token(t, "tenant-demo", "tom")
-	if code, out := h.do(t, "POST", "/v1/tenants/demo/apps/element", tom, body); code != http.StatusAccepted {
-		t.Fatalf("install from an open catalogue = %d %v", code, out)
-	}
-
-	// And a tenant the claim did not name gets nothing, from the same source.
-	tina := h.token(t, "tenant-solo", "tina")
 	before := h.tip(t)
-	if code, _ := h.do(t, "POST", "/v1/tenants/solo/apps/element", tina, body); code != http.StatusForbidden {
-		t.Fatalf("a tenant the claim did not name installed anyway: %d", code)
+
+	body := fmt.Sprintf(`{"coordinate":"main/element","digest":%q}`, sha(elementProfile))
+	if code, out := h.do(t, "POST", "/v1/tenants/demo/apps/wiki", tom, body); code != http.StatusBadRequest {
+		t.Fatalf("install = %d %v, want 400", code, out)
 	}
 	if h.tip(t) != before {
-		t.Fatal("a refused install committed something")
+		t.Fatal("it committed anyway")
 	}
 }
 
-// The other half: an entry of an ENTITLED source still needs the store to
-// have said so, and recording which catalogue serves it grants nothing.
-func TestBindingAnEntryToItsSourceGrantsNothingByItself(t *testing.T) {
+// Whether a source is open to a tenant decides what the cluster lists for it,
+// not whether an install is allowed: a tenant the Cluster claim opened the
+// source to nobody for still installs from it, on can_install_app alone.
+func TestInstallingFromASourceDoesNotDependOnItBeingOpen(t *testing.T) {
 	src := catalogueSource(t, elementProfile)
-	h := startWithEntitledCatalogue(t, true, src, map[string]string{"in-house": src.URL})
-	if h.graph == nil {
-		t.Skip("needs OpenFGA deciding: make test-director-contract")
-	}
-	if err := h.graph.ReconcileCatalogueSources(context.Background(),
-		[]string{"demo", "solo"}, nil); err != nil {
-		t.Fatal(err)
-	}
+	h := startWithCatalogue(t, src, map[string]string{"main": src.URL},
+		gitops.CatalogueSource{Name: "main", URL: src.URL, Tenants: []string{"demo"}})
+	body := fmt.Sprintf(`{"coordinate":"main/element","digest":%q}`, sha(elementProfile))
 
-	body := fmt.Sprintf(`{"coordinate":"in-house/element","digest":%q}`, sha(elementProfile))
-	tom := h.token(t, "tenant-demo", "tom")
-	if code, _ := h.do(t, "POST", "/v1/tenants/demo/apps/element", tom, body); code != http.StatusForbidden {
-		t.Fatalf("an entry of a source nothing opened installed: %d", code)
+	// solo is not named on the source.
+	tina := h.token(t, "tenant-solo", "tina")
+	h.asked.reset()
+	if code, out := h.do(t, "POST", "/v1/tenants/solo/apps/element", tina, body); code != http.StatusAccepted {
+		t.Fatalf("install = %d %v", code, out)
+	}
+	if got := h.asked.questions(); len(got) != 1 || got[0] != "user:tina can_install_app tenant:solo" {
+		t.Fatalf("the install asked %q", got)
 	}
 }

@@ -55,8 +55,9 @@ func TestEveryInstalledAppIsAComponent(t *testing.T) {
 	_ = gentianov1alpha1.AddToScheme(scheme)
 	tenant := acmeTenantFixture()
 	replicas := int32(2)
+	pinned := "sha256:" + strings.Repeat("ab", 32)
 	tenant.Spec.Apps = []gentianov1alpha1.TenantApp{
-		{Profile: "xwiki-ce", Config: &gentianov1alpha1.TenantAppConfig{Replicas: &replicas}},
+		{Profile: "xwiki-ce", Digest: pinned, Config: &gentianov1alpha1.TenantAppConfig{Replicas: &replicas}},
 		{Profile: "odoo-base-ce", Addons: []string{"crm-ce", "sales-ce"}},
 	}
 	ns := tenantNamespaceName(tenant)
@@ -91,6 +92,26 @@ func TestEveryInstalledAppIsAComponent(t *testing.T) {
 	}
 	if wiki.Spec.Config == nil || wiki.Spec.Config.Replicas == nil || *wiki.Spec.Config.Replicas != 2 {
 		t.Fatalf("the install's configuration did not reach its component: %+v", wiki.Spec.Config)
+	}
+	// The build the install is pinned to is the Component's, under the same
+	// name: the digest is a field, and an app installed at no digest has none.
+	if wiki.Spec.ProfileRef.Name != "xwiki-ce" || wiki.Spec.ProfileRef.Digest != pinned {
+		t.Fatalf("the install's digest did not reach its component: %+v", wiki.Spec.ProfileRef)
+	}
+	if base.Spec.ProfileRef.Digest != "" {
+		t.Fatalf("an install with no digest is pinned to %q", base.Spec.ProfileRef.Digest)
+	}
+	// The pin moves when the Tenant's does.
+	moved := "sha256:" + strings.Repeat("cd", 32)
+	tenant.Spec.Apps[0].Digest = moved
+	if err := r.ensureAppComponents(ctx, tenant); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Get(ctx, types.NamespacedName{Name: "xwiki-ce", Namespace: ns}, wiki); err != nil {
+		t.Fatal(err)
+	}
+	if wiki.Spec.ProfileRef.Digest != moved {
+		t.Fatalf("the component is still pinned to %q", wiki.Spec.ProfileRef.Digest)
 	}
 
 	// An addon is deactivated and an app uninstalled: both go, the base

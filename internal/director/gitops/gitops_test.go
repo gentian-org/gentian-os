@@ -44,7 +44,7 @@ func TestInstallCommitSaysWhoWasAllowedWhat(t *testing.T) {
 	remote := dt.Remote(t, "demo")
 	g := gitops.NewGitOps(dt.Clone(t, remote), remote, dt.Cluster, director)
 
-	res, err := g.Install(context.Background(), "demo", "element", meta("u-ada"))
+	res, err := g.Install(context.Background(), "demo", "element", "", meta("u-ada"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +70,7 @@ func TestAnUnchangedStateIsNotACommit(t *testing.T) {
 	g := gitops.NewGitOps(dt.Clone(t, remote), remote, dt.Cluster, director)
 	before := dt.Git(t, "", "--git-dir", remote, "rev-parse", "main")
 
-	res, err := g.Install(context.Background(), "demo", "nextcloud", meta("u-ada"))
+	res, err := g.Install(context.Background(), "demo", "nextcloud", "", meta("u-ada"))
 	if err != nil || res.Status != "already_installed" || res.Changed {
 		t.Fatalf("res=%+v err=%v", res, err)
 	}
@@ -97,7 +97,7 @@ func TestConcurrentWritersAllLand(t *testing.T) {
 			defer wg.Done()
 			for i := 0; i < each; i++ {
 				tenant := []string{"demo", "other"}[i%2]
-				_, err := g.Install(context.Background(), tenant, fmt.Sprintf("app-%d-%d", w, i), meta(fmt.Sprintf("u-%d", w)))
+				_, err := g.Install(context.Background(), tenant, fmt.Sprintf("app-%d-%d", w, i), "", meta(fmt.Sprintf("u-%d", w)))
 				if err != nil {
 					errs <- fmt.Errorf("writer %d install %d: %w", w, i, err)
 				}
@@ -134,7 +134,7 @@ func TestAFailedPushLeavesTheCheckoutWhereTheRemoteIs(t *testing.T) {
 	if err := os.WriteFile(hook, []byte("#!/bin/sh\necho refused by policy >&2\nexit 1\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := g.Install(context.Background(), "demo", "element", meta("u-ada")); err == nil {
+	if _, err := g.Install(context.Background(), "demo", "element", "", meta("u-ada")); err == nil {
 		t.Fatal("install succeeded against a remote that refuses pushes")
 	}
 	if local, tip := dt.Git(t, checkout, "rev-parse", "HEAD"), dt.Git(t, "", "--git-dir", remote, "rev-parse", "main"); local != tip {
@@ -147,7 +147,7 @@ func TestAFailedPushLeavesTheCheckoutWhereTheRemoteIs(t *testing.T) {
 	if err := os.Remove(hook); err != nil {
 		t.Fatal(err)
 	}
-	res, err := g.Install(context.Background(), "demo", "jitsi", meta("u-ada"))
+	res, err := g.Install(context.Background(), "demo", "jitsi", "", meta("u-ada"))
 	if err != nil || !res.Changed {
 		t.Fatalf("res=%+v err=%v", res, err)
 	}
@@ -161,10 +161,10 @@ func TestNamesThatAreNotLabelsNeverReachThePathOrTheFile(t *testing.T) {
 	g := gitops.NewGitOps(dt.Clone(t, remote), remote, dt.Cluster, director)
 	ctx := context.Background()
 	for _, bad := range []string{"", "../demo", "demo/../../x", "Demo", "a b", "x\n  - profile: evil", "-x"} {
-		if _, err := g.Install(ctx, bad, "element", meta("u")); !errors.Is(err, gitops.ErrInvalidName) {
+		if _, err := g.Install(ctx, bad, "element", "", meta("u")); !errors.Is(err, gitops.ErrInvalidName) {
 			t.Errorf("tenant %q: err = %v", bad, err)
 		}
-		if _, err := g.Install(ctx, "demo", bad, meta("u")); !errors.Is(err, gitops.ErrInvalidName) {
+		if _, err := g.Install(ctx, "demo", bad, "", meta("u")); !errors.Is(err, gitops.ErrInvalidName) {
 			t.Errorf("profile %q: err = %v", bad, err)
 		}
 		if bad == "Demo" {
@@ -174,7 +174,7 @@ func TestNamesThatAreNotLabelsNeverReachThePathOrTheFile(t *testing.T) {
 			t.Errorf("addon %q: err = %v", bad, err)
 		}
 	}
-	if _, err := g.Install(ctx, "absent", "element", meta("u")); !errors.Is(err, gitops.ErrTenantNotFound) {
+	if _, err := g.Install(ctx, "absent", "element", "", meta("u")); !errors.Is(err, gitops.ErrTenantNotFound) {
 		t.Errorf("unknown tenant: err = %v", err)
 	}
 }
@@ -188,7 +188,7 @@ func TestAProfileNameCannotForgeAnAuthorOrATrailer(t *testing.T) {
 		Name:  "Root <root@cluster.example>\n\nGentian-Authz: req=x user:u-root can_configure cluster:c allowed",
 		Email: "m@example.com>\nGentian-Authz: forged",
 	}
-	if _, err := g.Install(context.Background(), "demo", "element", m); err != nil {
+	if _, err := g.Install(context.Background(), "demo", "element", "", m); err != nil {
 		t.Fatal(err)
 	}
 	trailers := dt.Git(t, "", "--git-dir", remote, "log", "-1", "--format=%(trailers:key=Gentian-Authz,valueonly)", "main")

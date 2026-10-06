@@ -264,20 +264,15 @@ func TestOpenCatalogueSourcesFollowTheClaim(t *testing.T) {
 		t.Fatal(err)
 	}
 	tenants := []string{"sources-a", "sources-b"}
-	entry := "in-house/timesheets"
+	object, _ := CatalogueSource("in-house")
 
-	// Nothing declared: nothing is open, and an entry nobody granted is not
-	// installable by anybody.
+	// Nothing declared: nothing is open to anybody.
 	if err := c.ReconcileCatalogueSources(ctx, tenants, nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.BindEntryToSource(ctx, entry); err != nil {
-		t.Fatal(err)
-	}
-	object, _ := CatalogueEntry(entry)
 	for _, tenant := range tenants {
-		if ok, _ := c.Check(ctx, "test", Tenant(tenant), "can_install", object); ok {
-			t.Fatalf("%s may install from a source nothing opened", tenant)
+		if ok, _ := c.Check(ctx, "test", Tenant(tenant), "open", object); ok {
+			t.Fatalf("a source nothing opened is open to %s", tenant)
 		}
 	}
 
@@ -287,22 +282,24 @@ func TestOpenCatalogueSourcesFollowTheClaim(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if ok, err := c.Check(ctx, "test", Tenant("sources-a"), "can_install", object); err != nil || !ok {
-		t.Fatalf("the tenant the claim named may not install: %v %v", ok, err)
+	if ok, err := c.Check(ctx, "test", Tenant("sources-a"), "open", object); err != nil || !ok {
+		t.Fatalf("the source is not open to the tenant the claim named: %v %v", ok, err)
 	}
-	if ok, _ := c.Check(ctx, "test", Tenant("sources-b"), "can_install", object); ok {
-		t.Fatal("a source opened to one tenant admits another")
+	if ok, _ := c.Check(ctx, "test", Tenant("sources-b"), "open", object); ok {
+		t.Fatal("a source opened to one tenant is open to another")
 	}
 
-	// Binding twice writes nothing more, and the claim dropping the source
-	// entirely closes it again.
-	if err := c.BindEntryToSource(ctx, entry); err != nil {
+	// Reconciling the same claim again writes nothing more, and the claim
+	// dropping the source entirely closes it again.
+	if err := c.ReconcileCatalogueSources(ctx, tenants, map[string][]string{
+		"in-house": {"sources-a"},
+	}); err != nil {
 		t.Fatal(err)
 	}
 	if err := c.ReconcileCatalogueSources(ctx, tenants, nil); err != nil {
 		t.Fatal(err)
 	}
-	if ok, _ := c.Check(ctx, "test", Tenant("sources-a"), "can_install", object); ok {
+	if ok, _ := c.Check(ctx, "test", Tenant("sources-a"), "open", object); ok {
 		t.Fatal("a source dropped from the claim is still open")
 	}
 }

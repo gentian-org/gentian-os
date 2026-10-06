@@ -226,7 +226,7 @@ call, and to write git. As built it also wrote OpenFGA in six places.
 | tenants, `operated_by`, tenant roles | operator |
 | membership from Keycloak events | operator (`MembershipListener`) |
 | session revocation | **deleted** |
-| entitlement tuples | still the director's, gated on `DIRECTOR_STORE_KEYS` |
+| entitlement tuples | **deleted** with entitlements themselves (AD-3) |
 
 Session revocation existed to make a logout immediate while the realm's access
 token lived twelve hours. The realm now issues five-minute tokens against a
@@ -244,51 +244,31 @@ authorizing proxy in front of OpenFGA, or OpenFGA's OIDC auth mode with
 something that maps a subject to permitted operations. Neither is small.
 Worth a decision rather than a silent assumption.
 
-**Decided, 2026-09-25: the entitlement tuples stay the director's.** The step
-was named "the director stops writing authorization state", and the premise
-under it was wrong. What matters is not *which* source of truth the director
-writes, it is *how*.
+**The entitlement tuples are gone, and with them the director's last write to
+OpenFGA.** They were kept at first, on the argument that what a tenant is
+entitled to install is a fact from outside the cluster and so had to be an
+action of the director's: a statement the App Store signed, verified against
+pinned keys, committed, and mirrored as a conditional tuple. That argument
+held for as long as the platform gated installs on a licence. It no longer
+does (AD-3): installing is asked of the person (`can_install_app`) and of
+nothing else, and whether a licensed app arrives is decided where its
+artefacts are pulled, by the credential the tenant holds for their
+repository. There is no statement to verify, no store key to pin and no tuple
+to write, so the director reads the graph to decide and writes git, and that
+is all it does to either.
 
-There are three sources of truth and the rule is the same for each:
+The rule the earlier decision stated is unchanged and still governs what the
+director writes to Keycloak and to git: a write is admissible when it is
+**authenticated, evaluated and recorded**; anything that can be derived from
+the cluster, the tenant, its users or its apps belongs in git and is the
+operator's to satisfy.
 
-| | what it holds | who writes it |
-|---|---|---|
-| Keycloak | **who** | the director, on the caller's behalf (S7A.17) |
-| OpenFGA | **what** they may do | the director, for what cannot be derived |
-| git | **how** the cluster is configured | the director, as commits |
-
-A director write into any of the three is admissible when it is
-**authenticated, evaluated and recorded**. The operator's job is the other
-half: turning declared state into what runs. So anything that *can* be derived
-from the cluster, the tenant, its users or its apps belongs in git and is the
-operator's to satisfy; anything that cannot is the director's to do as an
-**action**, and an action is legitimate because of those three properties
-rather than because it went through a file.
-
-The entitlement path already meets all three, which is why this closes rather
-than needing work:
-
-- **Authenticated** twice over. The statement is a compact JWS the director
-  verifies against keys pinned in the cluster's own configuration, never
-  against a key it could fetch; and the caller presents their own token.
-- **Evaluated.** A grant checks `can_install_app` on the tenant before it is
-  applied. A revocation deliberately does not: it is the App Store's decision
-  and its signature is the authority, and asking a tenant administrator to
-  authorise their own revocation would be the wrong question.
-- **Recorded.** The fact is committed to git before the tuple is written, with
-  the person, the signing key that decided it and the request id that joins
-  them. The tuple mirrors a commit; it is not the only trace.
-
-An entitlement is exactly the case the rule is for: what a tenant is entitled
-to install is a fact from outside the cluster and cannot be derived from
-anything inside it.
-
-**What remains open is not this.** The director's OpenFGA credential still
+**What remains open is the credential.** The director's OpenFGA key still
 cannot be made read-only, because OpenFGA authenticates with a preshared key
-and a key carries no scope. Under the rule above that is a smaller problem than
-it looked — the director is *meant* to write here — but it still means nothing
-stops a bug writing a tuple no action asked for. An authorizing proxy or
-OpenFGA's OIDC auth mode would; neither is small, and neither is in M1.
+and a key carries no scope. The director now has no code that writes, which
+is the weaker form of the guarantee: nothing stops a bug writing a tuple. An
+authorizing proxy or OpenFGA's OIDC auth mode would; neither is small, and
+neither is in M1.
 
 ### S7A.3 ✅ The platform administrator is an address
 
@@ -1255,7 +1235,7 @@ and does the thing the app is for.
 
 | | what has to be true | where it lives | state |
 |---|---|---|---|
-| M4.1 | The catalogue offers the entry and the tenant may install it | `catalogue_source`, entitlements | exercised on v4 |
+| M4.1 | The catalogue offers the entry and the tenant's administrator may install it | `catalogue_source`, `can_install_app` | exercised on v4 |
 | M4.2 | Installing is a commit and the App composes | director `POST /v1/tenants/{t}/apps/{p}`, `app-default` | exercised on v4 |
 | M4.3 | Its database and storage are fulfilled | the app composition's claims | exercised on v4 |
 | M4.4 | Its OIDC client exists and the zone session reaches it | `app-default` keycloak client, the edge | exercised on v4 |
@@ -1482,7 +1462,7 @@ changes only when the model version does, and the **relation structure** —
 that a cluster has tenants, that a tenant has admins, members and a perimeter
 group, which relation each role implies — is the model, not data. What is
 genuinely per-cluster is small: which groups exist, who is in them, which
-tenants this cluster has, and which entitlements are current. So the graph
+tenants this cluster has, and which catalogue sources are open to them. So the graph
 should arrive mostly built, with only names, memberships and facts written at
 runtime. That is less code and a smaller blast radius: a bug in a projector
 can then add or remove a membership, but it cannot invent a relation that was

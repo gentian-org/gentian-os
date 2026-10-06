@@ -27,8 +27,8 @@ import (
 // A profile in the cluster, because a tenant asked for it (AD-3).
 //
 // The cluster holds no catalogue. A ComponentProfile is written here when a
-// tenant installs the entry it describes, at the digest the store named, and
-// it stays because the tenant still has it installed.
+// tenant installs the entry it describes, at the digest the install asked
+// for, and it stays because the tenant still has it installed.
 //
 // Committed rather than applied. The director writes git and the operator
 // reads the cluster, and a profile that arrived any other way would be the one
@@ -95,8 +95,8 @@ func (g *GitOps) MaterialiseProfile(ctx context.Context, name, digest string, bo
 		rels = append(rels, rel)
 	}
 	// The digest is in the message because it is the thing that was checked,
-	// and a reviewer asking "is this the entry the store meant" should not
-	// have to hash the file to find out.
+	// and a reviewer asking "is this the build that was asked for" should
+	// not have to hash the file to find out.
 	msg := fmt.Sprintf("feat(catalogue): materialise %s at %s", name, shortDigest(digest))
 	if err := g.commitPaths(ctx, rels, msg, meta); err != nil {
 		return Result{}, err

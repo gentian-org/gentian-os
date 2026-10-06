@@ -76,7 +76,7 @@ that only covers one of two escape hatches is not one.
 never reaching the pod; a route with `authMode: none` appears in `kubectl
 gentian audit routes`; removing a user from a group revokes their Keycloak
 sessions and the next request re-authenticates without the role
-(networking.md §4); deleting a stored tuple (a grant, an entitlement)
+(networking.md §4); deleting a stored tuple (a grant)
 changes the next `Check`; the console's ServiceAccount is bound to no Role
 or ClusterRole (roles-and-authorizations.md §2, invariant 1); a profile
 declaring egress the cluster policy does not allow is refused, exactly as an

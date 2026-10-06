@@ -43,7 +43,8 @@ Specified in [operator-split-plan.md](operator-split-plan.md) §3, §5, §6.
       authorization state: it creates the OpenFGA store and model at start,
       projects cluster roles from the claim and tenant structure from the
       tenant manifests, applies Keycloak membership events, records session
-      revocations and writes entitlement tuples. None of that was asked for;
+      revocations and wrote entitlement tuples (removed with entitlements,
+      AD-3). None of that was asked for;
       it was written into these plans and into the code in the same pass.
       Inventory in `tmp/director-today.md`, outside the repository. The director's
       job is to read OpenFGA to decide whether a caller may make a call, and
@@ -98,7 +99,7 @@ Specified in [operator-split-plan.md](operator-split-plan.md) §3, §5, §6.
 - [ ] Read API — **one read per write, no exceptions** (operator-split-plan
       §3.5). Tenants, installed apps with version, digest, config and addons,
       integrations in force, users and groups, policies, exposure surfaces and
-      their enablements, entitlements, plans and usage, cluster security and
+      their enablements, plans and usage, cluster security and
       exposure ceilings, operations, tiles filtered by `can_launch`, and audit
       views joining issuer log, decision log and git by request id. Reads are
       authorised by `can_view`/`can_audit`, never by the write relation. Both
@@ -113,9 +114,13 @@ Specified in [operator-split-plan.md](operator-split-plan.md) §3, §5, §6.
       service identity after `can_manage_users`; on any membership change,
       revoke the user's sessions (networking §4); refuse admin+member on one
       account (roles §1).
-- [ ] Entitlements: verify the store's signed grant, commit the fact, write
-      `catalogue_entry#entitled` with `expires_at`; pull credentials go to
-      OpenBao through the custodian, never git (ui-restructure §3).
+- [x] **No entitlements** (AD-3). An install is checked against
+      `can_install_app` on the tenant and nothing else; the digest in the
+      request pins the build and is recorded in the tenant's manifest as a
+      field of the install. The signed-grant verifier, `entitlements.yaml`,
+      `catalogue_entry#entitled` and the store keys are removed. Pull
+      credentials are the tenant's, in OpenBao through the custodian, never
+      git (ui-restructure §3).
 - [ ] OpenFGA projection: receive Keycloak membership events (WP-3), write
       `group#member` tuples, run the reconcile with a `view-users` client;
       create the store and model on first start; rebuild tuples from Keycloak
@@ -181,7 +186,7 @@ Specified in [authorization-model.md](authorization-model.md) and
 - [ ] **Decide who projects into OpenFGA**, once the director stops (WP-1).
       Three things need a writer: the store and model at first start,
       structure projected from git (cluster roles, tenants, tenant roles,
-      entitlement facts), and membership projected from Keycloak's events.
+      open catalogue sources), and membership projected from Keycloak's events.
       All three are "turn a declared state into cluster state", which is what
       the operator does. The fourth, session revocation on back-channel
       logout, is a runtime signal rather than a projection and could belong to
@@ -421,26 +426,25 @@ Specified in [ui-restructure.md](ui-restructure.md) §3 and
 
 - [ ] The store service outside the cluster over the schema: listings in
       every locale, editions, plans, subscriptions, catalogue access per
-      cluster, cluster registration with a public key.
+      cluster.
 - [ ] Ingest from the catalogue repository; reject entries not deployable
       as `tenant`.
 - [x] **The contract and the cluster's half of it**
-      ([store-contract.md](../design/store-contract.md)): statements are
-      compact JWS, EdDSA, bound to cluster and tenant, ordered by `iat`, keys
-      pinned; `POST`/`GET /v1/tenants/{t}/entitlements` in the director; the
-      fact committed to `entitlements.yaml`, the conditional tuple written or
-      removed in the order that fails towards less access. Contract-tested
-      with OpenFGA evaluating `grant_valid`.
-- [ ] Store side: signing (`entitlement_grant`, `signing_key`); single-use
-      fetch token; pull credential handed to the custodian as the
-      tenant admin.
-- [x] **Revocation on the same path** (cluster side; the pull credential's
-      removal waits for the custodian): a signed record with `granted: false`
-      to `POST /v1/tenants/{t}/entitlements`. The director verifies, commits
-      the fact and deletes the tuple in one operation, so a later commit
-      overrides an earlier `expires_at` (operator-split-plan §3.8). The pull
-      credential and its `ExternalSecret` go with it; running pods are
-      untouched and the next pod start cannot pull.
+      ([store-contract.md](../design/store-contract.md)): the store states
+      which build — coordinate and content digest — and decides nothing. The
+      director installs on `can_install_app` alone, refuses bytes that do not
+      hash to the digest requested, and records the digest in git with the
+      install. Contract-tested against OpenFGA holding model v1.
+- [x] **No statements, no keys.** The first version of this contract had the
+      store sign grants and revocations (compact JWS, EdDSA, keys pinned on
+      the cluster), delivered to `POST /v1/tenants/{t}/entitlements`,
+      committed to `entitlements.yaml` and mirrored as a conditional tuple.
+      It is removed from the cluster, because licence gating is not the
+      platform's job (AD-3): what decides whether a licensed app arrives is
+      the credential the tenant holds for its source repository.
+- [ ] Store side: the confirmation an install is asked with (coordinate and
+      digest); how a tenant is issued the pull credential for a private
+      source, set through the custodian as the tenant admin.
 - [ ] Store reads cluster state through the director's read API with the
       signed-in admin's token, to render installed apps, enabled addons and
       published surfaces (AD-3: it may trigger and read, never supply).
@@ -635,8 +639,8 @@ From [security-gap-closing.md](security-gap-closing.md).
       keeps the credential for materialisation only.
 - [ ] Cluster claim fields: `exposure` policy, `network.egressAllow`,
       default fulfiller per contract, identity/secrets/database provider
-      selectors for the modular kernel, `catalogue.sources[]` (AD-14),
-      `store.signingKeys`, and the `compliance` block of WP-13.
+      selectors for the modular kernel, `catalogue.sources[]` (AD-14), and
+      the `compliance` block of WP-13.
 - [x] **Phase 1 skeleton, `install.sh --layout v5`** (`scripts/steps-v5/`,
       `kernel/bootstrap/chart`, `kernel/data/kernel-postgres`): one namespace
       list, `kernel/namespaces.yaml`, read by the installer
@@ -765,7 +769,7 @@ Specified by [store-contract.md](../design/store-contract.md) (the interface),
 [ui-restructure.md](ui-restructure.md) §3 and
 [app-store-schema.sql](app-store-schema.sql). WP-6 is the cluster's half of
 the contract and is done; this is the other half, built so the whole flow —
-listing, entitlement, install, read-back, revocation — can be run and tested
+listing, confirmation, install, read-back — can be run and tested
 before any of it touches a cluster. It is a reference implementation: the
 smallest service that honours the contract, in the shape a product store
 would take, and the one the contract tests run against. Billing, plans and
@@ -773,13 +777,12 @@ subscriptions stay out until the flow is proven.
 
 The store holds no cluster credential and no identity toward the cluster
 (AD-3). Everything it does at the director it does with the signed-in
-person's token, or with a statement it signed.
+person's token. It signs nothing the cluster reads.
 
 - [x] **Repository and service.** In the store's own repository, one service
       per trust boundary over a shared account library; the store is FastAPI
       over SQLAlchemy (Postgres; SQLite in tests), runnable beside
-      `director-dev` from that repository's dev compose. Its signing key is
-      one setting with no fallback; without it every entitlement route is 503.
+      `director-dev` from that repository's dev compose.
 - [x] **Ingest.** `convert-appprofiles.sh` already produces
       `listings/<name>.yaml` per profile; the store ingests a directory of
       them plus the catalogue index (coordinate → profile name, bundle
@@ -789,56 +792,52 @@ person's token, or with a statement it signed.
       the director's materialise-on-reference (WP-5) reads the same index.
 - [x] **Listings API.** Locale fallback as the schema describes; per cluster,
       which catalogues it may see. Public: this is the shop window.
-- [x] **Cluster registration.** A cluster registers with an id and the store
-      publishes its signing keys for the platform administrator to pin on the
-      Cluster claim (`store.signingKeys`); rotation is a new key published
-      before it signs, the old one retired after.
-- [x] **Entitlement statements.** Sign grants and revocations exactly as
-      store-contract.md §2 states (compact JWS, EdDSA, `aud`/`sub`/`jti`/`iat`,
-      `exp` on grants, `reason` on revocations); record each in
-      `entitlement_grant`; deliver a grant through the signed-in tenant
-      administrator's browser (`POST /v1/tenants/{t}/entitlements` with their
-      token) and a revocation directly, with no token. Retry until the
-      director answers `recorded` or `unchanged`; `409` is the store's own
-      older statement and is final.
-- [x] **OSS and paid, as one mechanism.** An OSS listing is granted on
-      request with a far expiry; a paid one on a recorded purchase, and
-      revoked on refund. No second code path: the difference is who may
-      trigger the grant and when it ends.
+- [x] **Cluster registration.** A cluster registers with an id. The signing
+      keys the store published for pinning are read by no cluster any more:
+      the cluster verifies nothing the store says.
+- [ ] **Confirmation, not entitlement.** The store's answer to "this tenant
+      wants this app" is the entry's coordinate and content digest, handed to
+      the desktop, which asks the director to install with them. The store
+      keeps its own record of what it sold; the cluster keeps none of it.
+      The signed statements this item first built (grants, revocations,
+      delivery to `POST /v1/tenants/{t}/entitlements`) have no receiver: the
+      cluster's half is removed (WP-6), and the store's is to follow.
+- [ ] **OSS and paid, as one mechanism.** The install is the same request
+      either way. The difference is outside the cluster: a paid entry's
+      source repository needs a credential the tenant is issued on purchase,
+      and an OSS entry's needs none.
 - [~] **Install and read-back.** The website's checkout page and account page
       call the store from the browser with the person's GTC token; the
       install trigger and read-back live in the tenant desktop's store screen
-      (WP-7), which delivers the grant it is handed. The store triggers
-      `POST /v1/tenants/{t}/apps/{p}` with the person's token and the
-      coordinate, and renders "installed / addons enabled / entitled until"
-      from the director's reads — never from its own tables.
-- [ ] **Private catalogue sources** (paid apps): a single-use fetch token
-      issued with the grant, for the director to fetch the bundle at the
-      digest; the pull credential handed to the custodian as the
-      tenant administrator. Lands with WP-5's materialise-on-reference, not
-      before.
-- [x] **Flow test**, runnable without a cluster — `tests/test_flow.py` in the
-      store, against `director-dev -entitlements -store-keys …`; also run in
-      that repository's CI with `director-dev` built from this branch. Passes:: store + `director-dev` (with
-      `-entitlements`) — ingest two listings, register the dev cluster, pin
-      the key, grant one entry to tenant demo, install it as tom (202),
-      install the other (403), revoke, install again (403), replay the old
-      grant (409), read the tenant's apps and entitlements as mia (200). The
-      same test later runs against a real director in phase 2.
-- [ ] **The store is optional (AD-14).** In `os`: `catalogue.sources[]` on
-      the Cluster claim with `access: entitled|open` and `tenants`; the
-      director reads each source's index, writes `catalogue_entry#source`
-      and `catalogue_source#open` tuples from the claim, and serves
-      `GET /v1/catalogues[/{source}/entries]` filtered by `can_install` for
-      the tenant. `[x]` model v1: `catalogue_source#open`,
-      `can_install: entitled or open from source`, tested. In `ui`: the
-      store screen renders the director's index — name, version, install —
-      when the store is unreachable or not configured, and the store's
-      listings on top of it when it is.
+      (WP-7), which asks for the install with the confirmation it is handed:
+      `POST /v1/tenants/{t}/apps/{p}` with the person's token, the coordinate
+      and the digest. The store renders "installed / addons enabled" from
+      the director's reads — never from its own tables.
+- [ ] **Private catalogue sources** (paid apps): the pull credential for the
+      source repository, issued to the tenant and set through the custodian
+      as the tenant administrator. It is the one thing that decides whether
+      a paid app arrives.
+- [ ] **Flow test**, runnable without a cluster — `tests/test_flow.py` in the
+      store, against `director-dev`; also run in that repository's CI with
+      `director-dev` built from this branch. It has to be rewritten to the
+      contract as it now stands: ingest two listings, register the dev
+      cluster, install an entry as tom with its coordinate and digest (202),
+      install as mia (403), read the tenant's apps as mia (200) and find the
+      digest recorded. The same test later runs against a real director in
+      phase 2.
+- [x] **The store is optional (AD-14).** In `os`: `catalogue.sources[]` on
+      the Cluster claim with `tenants`; the director reads each source's
+      index and serves `GET /v1/tenants/{t}/catalogues[/{source}/entries]`
+      under `can_view`, marking an entry installable for the tenants the
+      source is open to; the operator projects `catalogue_source#open` from
+      the claim. Model v1: `catalogue_source#open`, tested. `[ ]` In `ui`:
+      the store screen renders the director's index — name, version,
+      install — when the store is unreachable or not configured, and the
+      store's listings on top of it when it is.
 - [ ] **The license, per entry.** A listing carries the license it is
       distributed under and the desktop shows it per entry. What a store
-      asks of an account before it signs a grant is the store's own business
-      and is tracked with the store.
+      asks of an account before it confirms an app is the store's own
+      business and is tracked with the store.
 - [ ] **Not in the cluster, ever.** The `app-store-me` profile and its dead
       install paths are retired with WP-5; the cluster keeps the director's
       endpoint and, per tenant, only the installed profiles.
