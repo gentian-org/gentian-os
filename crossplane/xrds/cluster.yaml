@@ -383,6 +383,10 @@ spec:
                     kernel/platforms.yaml under requiredParams, and a missing
                     one refuses to render rather than emitting a Service that
                     stays Pending with no event explaining why.
+
+                    One key is read on every platform: metallb. MetalLB's
+                    namespace is exempt from the baseline policies wherever it
+                    exists, unless this is "false".
                 addressRef:
                   type: string
                   description: >

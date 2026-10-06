@@ -24,7 +24,7 @@ spec:
     jsonPointers:
     - /metadata/finalizers
   source:
-    repoURL: {{ .Values.osRepo | default "https://github.com/gentian-org/gentian-os" }}
+    repoURL: {{ default "https://github.com/gentian-org/gentian-os" .Values.osRepo }}
     targetRevision: {{ .Values.gentianOsBranch }}
     path: kernel/appsets
     helm:

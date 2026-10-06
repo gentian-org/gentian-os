@@ -39,16 +39,19 @@ platforms:
   # address is claimed by MetalLB rather than allocated.
   self-hosted:
     displayName: Self-hosted (MetalLB)
-    # false: the address is requested via annotation below, not spec.loadBalancerIP.
+    # MetalLB takes the address from the annotation, not from the Service's
+    # own loadBalancerIP field.
     supportsLoadBalancerIP: false
     lbAnnotations:
-      # MetalLB won't share one IP between this and Postfix's SMTP Service (both
-      # need externalTrafficPolicy: Local for real client IPs, and MetalLB requires
-      # Cluster policy — or identical pod selectors — for two Services to share an
-      # address). So each gets its own: Postfix keeps NODE_IP, and this takes
-      # addressRef as a second, distinct LAN address when the claim sets one,
-      # falling back to NODE_IP for a single-address setup with no split needed.
-      metallb.io/loadBalancerIPs: '{{ .Values.addressRef | default .Values.nodeIp }}'
+      # The edge and the mail service both keep the client's address
+      # (externalTrafficPolicy: Local), and MetalLB lets two Services share
+      # one address only under the Cluster policy or with identical selectors.
+      # They therefore cannot share: mail keeps the node's address, and the
+      # edge takes the claim's addressRef as a second address on the same
+      # network. Where the claim names none, the edge falls back to the
+      # node's address, which is right for a cluster with one address and no
+      # mail listener beside it.
+      metallb.io/loadBalancerIPs: '{{ default .Values.nodeIp .Values.addressRef }}'
 
   # A cluster with no load balancer implementation at all: k3s ServiceLB, a
   # single node behind a tunnel, or an edge fronted by something outside the

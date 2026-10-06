@@ -236,7 +236,7 @@ spec:
         # It matters because without that CRD the crd source logs a watch error
         # rather than failing, so records with no HTTP object behind them — MX,
         # SPF, DKIM, DMARC — silently never appear.
-  - repoURL: {{ .Values.osRepo | default "https://github.com/gentian-org/gentian-os" }}
+  - repoURL: {{ default "https://github.com/gentian-org/gentian-os" .Values.osRepo }}
     targetRevision: {{ .Values.gentianOsBranch }}
     ref: values
   destination:

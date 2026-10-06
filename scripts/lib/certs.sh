@@ -163,14 +163,16 @@ gentian_set_args_from_pairs() {
 }
 
 gentian_cluster_issuers_manifest() {
-    case "${ACME_ENV:-production}" in
-        staging) echo "cluster-issuers-staging.yaml" ;;
-        # Both issuers in one apply — kernel services can stay on production
-        # while a dev-stage tenant profile points elsewhere (tenantDNS01ClusterIssuer)
-        # at the staging one, without a second install.sh run.
-        both)    printf '%s\n' "cluster-issuers.yaml" "cluster-issuers-staging.yaml" ;;
-        *)       echo "cluster-issuers.yaml" ;;
-    esac
+    # One template per line. ACME_ENV=both installs the staging issuer beside
+    # the production one, so a tenant can be pointed at staging while the
+    # kernel keeps certificates browsers trust.
+    local acme="${ACME_ENV:-production}"
+    if [[ "${acme}" != "staging" ]]; then
+        echo "cluster-issuers.yaml"
+    fi
+    if [[ "${acme}" == "staging" || "${acme}" == "both" ]]; then
+        echo "cluster-issuers-staging.yaml"
+    fi
 }
 
 # Apply (or refresh) kernel ClusterIssuers. Safe to re-run
@@ -215,16 +217,15 @@ apply_gentian_cluster_issuers() {
     while IFS= read -r arg; do dns_args+=("${arg}"); done \
         < <(gentian_set_args_from_pairs dnsParams "${DNS_PARAMS:-}")
 
-    # -s may be repeated: ACME_ENV=both selects both issuer templates, rendered
-    # (and applied) together in this one invocation.
-    local show_args=()
-    while IFS= read -r manifest; do
-        show_args+=(-s "templates/${manifest}")
+    # helm renders one template per --show-only, and there may be two.
+    local only=() template
+    while IFS= read -r template; do
+        only+=(--show-only "templates/${template}")
     done < <(gentian_cluster_issuers_manifest)
 
     helm template gentian-cert-manager "${SCRIPT_DIR}/kernel/manifests/cert-manager/chart" \
         -f "$(gentian_platforms_values)" \
-        "${show_args[@]}" \
+        "${only[@]}" \
         --set-string letsencryptEmail="${LETSENCRYPT_EMAIL}" \
         --set-string kernelDomain="${KERNEL_DOMAIN}" \
         --set-string gatewayNamespace="${KERNEL_PUBLIC_GATEWAY_NAMESPACE}" \

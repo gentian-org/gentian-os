@@ -63,7 +63,7 @@ spec:
     jsonPointers:
     - /data
   sources:
-  - repoURL: {{ .Values.osRepo | default "https://github.com/gentian-org/gentian-os" }}
+  - repoURL: {{ default "https://github.com/gentian-org/gentian-os" .Values.osRepo }}
     targetRevision: {{ .Values.gentianOsBranch }}
     path: charts/gentian-os
     helm:

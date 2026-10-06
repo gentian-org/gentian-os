@@ -17,14 +17,21 @@ try_load_creds_from_openbao() {
     # not have it, so a fast path that ignores it skips the lookup that would
     # have prevented the prompt.
     MAIL_SERVICE_MODE="$(gentian_mail_service_mode)"
-    # A role whose AUTH is "none" needs nothing here — the fast path must not
-    # wait on a token that will never exist. _repo_auth_for is the same gate
-    # _requirement_applies() uses, so this agrees with what
-    # collect_bootstrap_credentials would actually prompt for.
-    local _os_ready=1 _apps_ready=1 _ui_ready=1
-    [[ "$(_repo_auth_for gentian-os-repository)" != "none" && -z "${GENTIAN_OS_GIT_TOKEN:-}" ]] && _os_ready=0
-    [[ "$(_repo_auth_for gentian-apps-repository)" != "none" && -z "${GENTIAN_APPS_GIT_TOKEN:-}" ]] && _apps_ready=0
-    [[ "$(_repo_auth_for gentian-ui-repository)" != "none" && -z "${GENTIAN_UI_GIT_TOKEN:-}" ]] && _ui_ready=0
+    # A repository that authenticates is ready once its token is here. One
+    # that does not is ready as it stands: waiting for a token nobody will
+    # ever supply would keep the fast path from being taken at all. The mode
+    # is the same one the prompt loop asks, so the two cannot disagree.
+    local _repos_ready=1 _row _req _what _var _vault
+    for _row in "${GENTIAN_REPO_CREDENTIALS[@]}"; do
+        _req="${_row%%|*}"
+        if [[ "$(_repo_credential_mode "${_req}")" == "none" ]]; then
+            continue
+        fi
+        _var="$(_repo_credential "${_req}" token)"
+        if [[ -z "${!_var:-}" ]]; then
+            _repos_ready=0
+        fi
+    done
     # The provider credentials count too. Without them the fast path returns
     # with the zone and ingress tokens still unset, and the prompt loop asks
     # for what OpenBao is holding -- the same defect the recovery below fixes,
@@ -41,8 +48,7 @@ try_load_creds_from_openbao() {
     done < <(_provider_requirement_names 2>/dev/null || true)
 
     if [[ -n "${MASTER_PASSWORD:-}" && -n "${GENTIAN_DEPLOYMENTS_GIT_TOKEN:-}" \
-        && "${_os_ready}" == "1" && "${_apps_ready}" == "1" && "${_ui_ready}" == "1" \
-        && "${_providers_ready}" == "1" ]]; then
+        && "${_repos_ready}" == "1" && "${_providers_ready}" == "1" ]]; then
         if [[ "${MAIL_SERVICE_MODE}" == "external" \
             && -n "${SMTP_RELAY_USERNAME:-}" \
             && -n "${SMTP_RELAY_PASSWORD:-}" ]]; then
@@ -121,39 +127,27 @@ try_load_creds_from_openbao() {
         v=$(_bao_get "repositories/deployments" '.data.data.password')
         [[ -n "$v" ]] && { export GENTIAN_DEPLOYMENTS_GIT_TOKEN="$v"; loaded=1; }
     fi
-    # os/apps/ui mirror the deployments pair above, but only when their AUTH
-    # gates them in — reading a path nothing ever wrote is a guaranteed 404,
-    # every run, for the common unmirrored install.
-    if [[ "$(_repo_auth_for gentian-os-repository)" != "none" ]]; then
-        if [[ -z "${GENTIAN_OS_GIT_USERNAME:-}" ]]; then
-            v=$(_bao_get "repositories/gentian-os" '.data.data.username')
-            [[ -n "$v" ]] && { export GENTIAN_OS_GIT_USERNAME="$v"; loaded=1; }
+    # The platform's own repositories are read back the same way, but only
+    # those that authenticate: the path of one that does not was never
+    # written, and asking for it is a 404 on every run of a plain install.
+    for _row in "${GENTIAN_REPO_CREDENTIALS[@]}"; do
+        _req="${_row%%|*}"
+        if [[ "${_req}" == "deployments-repository" || "$(_repo_credential_mode "${_req}")" == "none" ]]; then
+            continue
         fi
-        if [[ -z "${GENTIAN_OS_GIT_TOKEN:-}" ]]; then
-            v=$(_bao_get "repositories/gentian-os" '.data.data.password')
-            [[ -n "$v" ]] && { export GENTIAN_OS_GIT_TOKEN="$v"; loaded=1; }
-        fi
-    fi
-    if [[ "$(_repo_auth_for gentian-apps-repository)" != "none" ]]; then
-        if [[ -z "${GENTIAN_APPS_GIT_USERNAME:-}" ]]; then
-            v=$(_bao_get "repositories/gentian-apps" '.data.data.username')
-            [[ -n "$v" ]] && { export GENTIAN_APPS_GIT_USERNAME="$v"; loaded=1; }
-        fi
-        if [[ -z "${GENTIAN_APPS_GIT_TOKEN:-}" ]]; then
-            v=$(_bao_get "repositories/gentian-apps" '.data.data.password')
-            [[ -n "$v" ]] && { export GENTIAN_APPS_GIT_TOKEN="$v"; loaded=1; }
-        fi
-    fi
-    if [[ "$(_repo_auth_for gentian-ui-repository)" != "none" ]]; then
-        if [[ -z "${GENTIAN_UI_GIT_USERNAME:-}" ]]; then
-            v=$(_bao_get "repositories/gentian-ui" '.data.data.username')
-            [[ -n "$v" ]] && { export GENTIAN_UI_GIT_USERNAME="$v"; loaded=1; }
-        fi
-        if [[ -z "${GENTIAN_UI_GIT_TOKEN:-}" ]]; then
-            v=$(_bao_get "repositories/gentian-ui" '.data.data.password')
-            [[ -n "$v" ]] && { export GENTIAN_UI_GIT_TOKEN="$v"; loaded=1; }
-        fi
-    fi
+        _vault="$(_repo_credential "${_req}" vault)"
+        for _what in username token; do
+            _var="$(_repo_credential "${_req}" "${_what}")"
+            if [[ -n "${!_var:-}" ]]; then
+                continue
+            fi
+            v=$(_bao_get "repositories/${_vault}" ".data.data.${_what/token/password}")
+            if [[ -n "$v" ]]; then
+                export "${_var}=${v}"
+                loaded=1
+            fi
+        done
+    done
     if [[ -z "${REGISTRY_USER:-}" ]]; then
         v=$(_bao_get "storage/registry" '.data.data.username')
         [[ -n "$v" ]] && { export REGISTRY_USER="$v"; loaded=1; }

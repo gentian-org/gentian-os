@@ -492,14 +492,10 @@ INPUT_HIERARCHY_VARS=(
     ROUTING_MODE
     GENTIAN_APPS_REPO
     GENTIAN_APPS_BRANCH
-    GENTIAN_APPS_AUTH
-    GENTIAN_UI_REPO
-    GENTIAN_UI_BRANCH
-    GENTIAN_UI_AUTH
-    GENTIAN_OS_AUTH
     GENTIAN_DEPLOYMENTS_REPO
     GENTIAN_DEPLOYMENTS_BRANCH
-    GENTIAN_DEPLOYMENTS_AUTH
+    GENTIAN_UI_REPO GENTIAN_UI_BRANCH
+    GENTIAN_OS_AUTH GENTIAN_APPS_AUTH GENTIAN_UI_AUTH GENTIAN_DEPLOYMENTS_AUTH
     EDGE_INGRESS
     GENTIAN_DEPLOYMENTS_PATH
     GENTIAN_DEPLOYMENTS_CLUSTER_ID
@@ -932,14 +928,12 @@ EOF
     chmod 0600 "$cfg_file"
     success "App repo configuration saved to ${cfg_file}"
 
-    # No default+export for GENTIAN_DEPLOYMENTS_GIT_USERNAME here — this runs
-    # before collect_bootstrap_credentials, so defaulting it this early wins
-    # the "already set" race against the 0600 cache and OpenBao recovery
-    # (_load_credential_cache / try_load_creds_from_openbao both skip a var
-    # that's already non-empty). A cluster whose username genuinely is
-    # x-access-token still gets it — _validate_requirement's own
-    # "${!user_var:-x-access-token}" fallback applies it at the point of use,
-    # after recovery has had its chance.
+    # GENTIAN_DEPLOYMENTS_GIT_USERNAME is deliberately given no default here.
+    # This runs before the credentials are collected, and both the local cache
+    # and the recovery from OpenBao leave alone any variable that already has
+    # a value: a default set this early would be kept in place of the username
+    # the cluster really uses. Where the username is used, x-access-token is
+    # the fallback, and by then recovery has had its turn.
 }
 
 
@@ -1162,12 +1156,11 @@ load_deployments_cluster_settings() {
         # requirement.
         claim_setting     PLATFORM        platform        "${claim_file}"
         claim_map_setting PLATFORM_PARAMS platformParams  "${claim_file}"
-        # One specific platformParams key, read directly rather than parsed out
-        # of PLATFORM_PARAMS' comma-joined string — gates whether the Kyverno
-        # host-namespace exception MetalLB's speaker needs gets deployed at all
-        # (kernel/appsets/raw/05b-metallb-exception.yaml).
-        claim_setting     METALLB_EXCEPTION platformParams.metallb "${claim_file}"
         claim_setting     EDGE_ADDRESS_REF addressRef     "${claim_file}"
+        # platformParams.metallb on its own, because it is a switch and not a
+        # value to pass on: "false" keeps MetalLB's namespace under the
+        # baseline policies. See ns_ensure_kernel.
+        claim_setting     METALLB_ALLOWED platformParams.metallb "${claim_file}"
         claim_setting     DNS_PROVIDER    certificates.dnsProvider "${claim_file}"
         claim_map_setting DNS_PARAMS      certificates.dnsParams   "${claim_file}"
         claim_setting     EXTERNAL_DNS_ENABLED certificates.externalDns "${claim_file}"

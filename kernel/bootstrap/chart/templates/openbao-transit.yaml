@@ -21,7 +21,7 @@ spec:
       parameters:
       - name: server.dataStorage.storageClass
         value: {{ .Values.storageClass | quote }}
-  - repoURL: {{ .Values.osRepo | default "https://github.com/gentian-org/gentian-os" }}
+  - repoURL: {{ default "https://github.com/gentian-org/gentian-os" .Values.osRepo }}
     targetRevision: {{ .Values.gentianOsBranch }}
     ref: values
   destination:

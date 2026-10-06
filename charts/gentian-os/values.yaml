@@ -760,12 +760,13 @@ appLifecycle:
     repo: https://git.example.domain/gentian-deployments
     cluster: default-cluster
     stage: dev
-    # basic: Secret with key .git-credentials (https://user:token@host) for git
-    # push. bearer: Secret with key "token" instead, injected as an
-    # Authorization: Bearer header — see repository-default.yaml's $isBearer
-    # branch, which decides which shape gitCredentialsSecret is written in.
+    # The Secret the operator authenticates to the repository with, and what
+    # it holds. Under basic it has one key, .git-credentials: the repository's
+    # URL with the login in it. Under bearer it has one key, token, which git
+    # sends as an Authorization header. The Repository claim writes the Secret
+    # in whichever form its own authType names, so the two must agree.
     gitCredentialsSecret: ""
-    authType: basic
+    authType: basic  # basic | bearer
 
 # Admission webhook for Tenant create/update validation.
 webhook:

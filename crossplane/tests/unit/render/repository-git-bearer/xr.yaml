@@ -1,0 +1,28 @@
+# The deployments repository behind a bearer token: one secret and no username.
+#
+# This is the case that reaches every place the two modes differ. The
+# requirement asks for a single field; the Argo CD repository Secret carries
+# the token as bearerToken; and, because the operator pushes to this
+# repository, its own Secret holds the token under `token` where a basic
+# credential would have produced a .git-credentials line.
+apiVersion: gentianos.io/v1alpha1
+kind: XRepository
+metadata:
+  name: deployments-q7xw2
+  labels:
+    crossplane.io/claim-name: deployments
+    crossplane.io/claim-namespace: crossplane-system
+spec:
+  type: git
+  role: deployments
+  writable: true
+  branch: main
+  endpoints:
+    inCluster: https://git.mirror.example/platform/gentian-deployments
+  credential:
+    displayName: "Deployments Repository Access"
+    vaultPath: gentian/repositories/deployments
+    phase: bootstrap
+    authType: bearer
+    validate:
+      type: git-https
