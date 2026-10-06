@@ -742,20 +742,16 @@ membershipListener:
 
 appLifecycle:
   port: 8082
-  # The shared secret the director presents to this API, and the only thing
-  # that makes its X-Gentian-Actor header a proof rather than a claim. The
-  # chart creates the Secret with a random value on first install and keeps
-  # whatever is already there on an upgrade, so it never rotates by accident.
-  # Empty name disables the Secret; the API then has no token and refuses
-  # every request, which is the safe direction for a misconfiguration.
-  tokenSecretName: gentian-os-lifecycle-token
-  # A second, separate token for the same API, the usher's. It admits the
-  # reads of live state the usher answers people with and nothing else: no
-  # command, no bundle download. The operator mints it and writes this Secret
-  # in the control namespace, where the usher mounts it; nothing renders its
-  # value. Empty leaves the API with no reader, and the usher without its
-  # reads of live state.
-  readTokenSecretName: gentian-os-lifecycle-read-token
+  # Who may call this API is decided by workload identity. The director and
+  # the usher each mount a ServiceAccount token issued for this audience and
+  # valid ten minutes; the operator asks the API server whose it is and
+  # admits the director's ServiceAccount to every route and the usher's to
+  # reads. This is the one place the audience is named: the operator requires
+  # it and both callers' tokens are issued for it. It is not the API server's
+  # audience, so these tokens open nothing there. It must be set: a
+  # projected token with no audience named is one for the API server, so the
+  # chart refuses to render without it.
+  audience: gentian-os-operator
   # Where the cluster is declared. The director clones and pushes it; the
   # operator, the custodian and the registrar read only `cluster`, the id the
   # cluster's own relations are asked about. The operator holds no checkout

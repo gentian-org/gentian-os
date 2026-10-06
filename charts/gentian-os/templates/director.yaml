@@ -7,6 +7,11 @@
   nothing. Every request it serves is authorised against OpenFGA with the
   caller's own Keycloak token.
 
+  Its ServiceAccount is still how the operator knows it: the pod mounts a
+  token for that account issued for the operator's listener and for nothing
+  else (appLifecycle.audience). The API server does not accept that token,
+  and the account's token for the API server is not mounted.
+
   It holds no Keycloak credential. People, groups and the realm's settings are
   the registrar's (registrar.yaml), which holds the per-realm credential they
   need; nothing of it is mounted or named here.
@@ -247,16 +252,11 @@ spec:
             # cluster question the director asks. A tenant's enforced
             # ceiling and the plans it may move to come from here; the plan
             # chosen goes to git, and the operator reads it back from there.
-            {{- with (.Values.appLifecycle).tokenSecretName }}
-            # The same Secret the operator mounts: this API is the director's
-            # and nobody else's, and this is what says so.
-            - name: APP_LIFECYCLE_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: {{ . | quote }}
-                  key: token
-                  optional: true
-            {{- end }}
+            # The director is admitted there by its ServiceAccount. The token
+            # is projected below for the operator's audience and no other,
+            # and is read from this file on every request.
+            - name: DIRECTOR_LIFECYCLE_TOKEN_FILE
+              value: /var/run/secrets/gentian/operator/token
             - name: DIRECTOR_APP_LIFECYCLE_URL
               value: {{ .Values.director.appLifecycleURL | default (printf "http://%s-lifecycle.%s.svc.cluster.local:%v" (include "gentian-os.fullname" .) .Release.Namespace .Values.appLifecycle.port) | quote }}
             {{- if .Values.director.signingKeySecret }}
@@ -344,6 +344,9 @@ spec:
             - name: tmp
               mountPath: /tmp
               readOnly: true
+            - name: operator-token
+              mountPath: /var/run/secrets/gentian/operator
+              readOnly: true
             {{- if .Values.director.signingKeySecret }}
             - name: signing-key
               mountPath: /etc/gentian/signing
@@ -359,6 +362,7 @@ spec:
           emptyDir: {}
         - name: tmp
           emptyDir: {}
+        {{- include "gentian-os.operatorTokenVolume" . | nindent 8 }}
         {{- if .Values.director.signingKeySecret }}
         # Optional for the same reason as the git credential: B-10 writes the
         # key to the vault and External Secrets projects it, which may happen

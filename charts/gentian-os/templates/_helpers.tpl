@@ -73,6 +73,24 @@ exactly this identity.
 {{- printf "%s-usher" (include "gentian-os.fullname" .) -}}
 {{- end }}
 
+{{/*
+The volume a caller of the operator's listener proves its identity with: its
+own ServiceAccount token, issued for that listener's audience and for nothing
+else, valid ten minutes and replaced by the kubelet before then. One
+definition, so the director's and the usher's cannot name different
+audiences. The pod's automountServiceAccountToken stays false: this is not a
+token for the API server, which refuses one issued for another audience.
+*/}}
+{{- define "gentian-os.operatorTokenVolume" -}}
+- name: operator-token
+  projected:
+    sources:
+      - serviceAccountToken:
+          audience: {{ required "appLifecycle.audience must be set" .Values.appLifecycle.audience | quote }}
+          expirationSeconds: 600
+          path: token
+{{- end }}
+
 {{- /*
 The ClusterIssuer per-tenant wildcards are issued by.
 

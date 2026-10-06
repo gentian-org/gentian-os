@@ -494,7 +494,7 @@ func (s *Server) routes() {
 		// The bundle as one file, through the director and never a signed
 		// URL: a link that works without a session is a session nobody can
 		// revoke (sovereignty-concept.md §4.2). The one read of live state
-		// left here: the usher's token for the operator lists backups and
+		// left here: the usher's identity at the operator lists backups and
 		// does not fetch one.
 		s.guarded("GET /v1/tenants/{t}/backups/{name}/download", "can_view", tenantObject, s.tenantBundleDownload)
 

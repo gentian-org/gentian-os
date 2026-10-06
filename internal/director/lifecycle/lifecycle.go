@@ -10,8 +10,8 @@ SPDX-License-Identifier: MPL-2.0
 
 // Package lifecycle is the client for the operator's app-lifecycle API. The
 // director uses it for its commands and for the questions a commit depends
-// on; the usher uses it, with a token of its own that only reads, to answer
-// a person's reads of live state.
+// on; the usher uses it, under an identity of its own that only reads, to
+// answer a person's reads of live state.
 //
 // Only ever a question. The director holds no cluster credential, and the
 // operator's API is how it learns what only the cluster knows -- a tenant's
@@ -30,6 +30,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 )
@@ -37,8 +38,9 @@ import (
 // Client talks to one operator.
 type Client struct {
 	base string
-	// token is asked for on every request, so a token handed over in a file
-	// that appears or changes after start is followed without a restart.
+	// token is asked for on every request: it is a ServiceAccount token the
+	// kubelet projects into a file and replaces before it expires, so the
+	// one read at start would stop being valid within minutes.
 	token func() string
 	// who names the caller in the one message a person may see about the
 	// token itself.
@@ -49,19 +51,35 @@ type Client struct {
 	stream *http.Client
 }
 
-// New returns a client for the operator's API at base.
+// New returns a client for the operator's API at base, for the director.
 //
-// token is the shared secret that API requires. The operator used to require
-// nothing, which made the actor header this client sets a claim rather than a
-// proof: any pod that could reach the Service could act as anybody.
-func New(base, token string) *Client {
-	c := NewReader(base, func() string { return token })
+// token returns the caller's own ServiceAccount token, issued for the
+// operator's audience; the operator asks the API server whose it is and
+// admits the director's ServiceAccount to every route. That is what makes
+// the actor header this client sets worth recording: no other identity is
+// admitted to a route that reads it.
+func New(base string, token func() string) *Client {
+	c := NewReader(base, token)
 	c.who = "director"
 	return c
 }
 
-// NewReader returns a client that asks token for its token on every request.
-// It is the usher's: the token it presents admits reads only.
+// TokenFile returns a token source that reads path on every call. A
+// projected ServiceAccount token is rewritten in place as it nears expiry,
+// so it is read when it is needed and never remembered. A file that is
+// missing or unreadable yields no token, and the operator refuses.
+func TokenFile(path string) func() string {
+	return func() string {
+		token, err := os.ReadFile(path)
+		if err != nil {
+			return ""
+		}
+		return strings.TrimSpace(string(token))
+	}
+}
+
+// NewReader returns a client for the usher: the identity its token carries
+// is admitted to reads only.
 func NewReader(base string, token func() string) *Client {
 	return &Client{
 		base:   strings.TrimRight(base, "/"),
@@ -72,7 +90,7 @@ func NewReader(base string, token func() string) *Client {
 	}
 }
 
-// authorize presents the shared token. Called on every request, including
+// authorize presents the caller's token. Called on every request, including
 // reads: a tenant's installed apps and its usage are its own business.
 func (c *Client) authorize(req *http.Request) {
 	if token := c.token(); token != "" {
@@ -157,17 +175,18 @@ func (c *Client) Upload(ctx context.Context, path, contentType string, body io.R
 
 // refusedByOperator rewrites the operator refusing this client's own token.
 //
-// The app-lifecycle API answers 401 only to a wrong shared token: a fault
-// between two platform services. Passed through unchanged it reached the
-// browser as a 401, which every console reads as "your session expired" and
-// answers by signing in again -- so a token mismatch made the Operations
-// Console reload several times a second rather than say what was wrong. It
-// leaves here as 502 Bad Gateway, which is what it is.
+// The app-lifecycle API answers 401 only when this client's own
+// ServiceAccount token is missing or not valid for it: a fault between two
+// platform services. Passed through unchanged it reached the browser as a
+// 401, which every console reads as "your session expired" and answers by
+// signing in again -- so a refused token made the Operations Console reload
+// several times a second rather than say what was wrong. It leaves here as
+// 502 Bad Gateway, which is what it is.
 func (c *Client) refusedByOperator(status int, body []byte) (int, []byte) {
 	if status != http.StatusUnauthorized {
 		return status, body
 	}
-	detail := "the operator refused the " + c.who + "'s token for its app-lifecycle API; the two hold different tokens"
+	detail := "the operator refused the " + c.who + "'s token for its app-lifecycle API; it presented none, or one the API server does not vouch for"
 	answer, _ := json.Marshal(map[string]string{"detail": detail})
 	return http.StatusBadGateway, answer
 }

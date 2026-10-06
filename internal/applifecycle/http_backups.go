@@ -35,7 +35,7 @@ func (h *HTTPServer) registerBackupRoutes(mux router) {
 	mux.Read("GET /v1/tenants/{tenant}/backups/{name}", h.handleBackup)
 	// The bundle itself, as one file. Not JSON: a tar of the artefacts, for
 	// the person who wants their data in their hands. The director's alone:
-	// the reader's token lists backups and does not fetch one.
+	// the reader's identity lists backups and does not fetch one.
 	mux.HandleFunc("GET /v1/tenants/{tenant}/backups/{name}/download", h.handleBundleDownload)
 	mux.Read("GET /v1/tenants/{tenant}/backup-policy", h.handleTenantBackupPolicy)
 	mux.Read("GET /v1/tenants/{tenant}/backup-schedules", h.handleBackupSchedules)

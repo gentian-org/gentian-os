@@ -27,7 +27,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
@@ -101,23 +100,18 @@ func run(log *slog.Logger) error {
 		// off, and off withholds the App Store.
 		LicenceReporting: os.Getenv("USHER_LICENCE_REPORT_ENABLED") == "true",
 	}
-	// The operator's listener, for reads of live state. The token is the
-	// reader's, handed over by the operator in a mounted file and read on
-	// every request: the file appears after the operator's first start and
-	// this process must not need a restart to notice. While it is missing or
-	// empty no token is presented and the operator refuses, which a caller
-	// sees as a gateway error rather than as an empty screen.
+	// The operator's listener, for reads of live state. The token is this
+	// pod's own ServiceAccount token, projected by the kubelet for the
+	// operator's audience and replaced every few minutes, so it is read from
+	// its file on every request. The operator admits this identity to reads
+	// and to nothing else. While the file is missing or empty no token is
+	// presented and the operator refuses, which a caller sees as a gateway
+	// error rather than as an empty screen.
 	if base := os.Getenv("USHER_LIFECYCLE_URL"); base == "" {
 		log.Warn("no app-lifecycle URL: reads of live state are not served here", "setting", "USHER_LIFECYCLE_URL")
 	} else {
-		tokenFile := envOr("USHER_LIFECYCLE_TOKEN_FILE", "/etc/gentian/lifecycle/token")
-		cfg.Lifecycle = lifecycle.NewReader(base, func() string {
-			token, err := os.ReadFile(tokenFile)
-			if err != nil {
-				return ""
-			}
-			return strings.TrimSpace(string(token))
-		})
+		tokenFile := envOr("USHER_LIFECYCLE_TOKEN_FILE", "/var/run/secrets/gentian/operator/token")
+		cfg.Lifecycle = lifecycle.NewReader(base, lifecycle.TokenFile(tokenFile))
 		if cfg.Cluster == "" {
 			log.Warn("no cluster id: the cluster's own reads are not served here", "setting", "GENTIAN_DEPLOYMENTS_CLUSTER_ID")
 		}

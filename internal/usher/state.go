@@ -32,12 +32,14 @@ import (
 // operator -- a ceiling paired with consumption, a policy with inheritance
 // applied, an app's state from its pods, usage from the sampler's database,
 // notices from the desktop's -- so reading the objects behind them would
-// mean a ServiceAccount token here with read access to tenants' pods, quotas
-// and backups across the cluster, and a second copy of each computation.
-// What the usher holds instead is one token that admits these reads and
-// nothing else (internal/applifecycle/http.go).
+// mean giving this ServiceAccount read access to tenants' pods, quotas and
+// backups across the cluster, and a second copy of each computation. What
+// the usher has instead is an identity the operator's listener admits to
+// these reads and to nothing else (internal/applifecycle/auth.go): its own
+// ServiceAccount, proven by a token issued for that listener alone, which
+// the API server itself would not accept.
 //
-// That token is not narrowed by tenant: with it this process can read any
+// That identity is not narrowed by tenant: with it this process can read any
 // tenant's state. The guard is what keeps one tenant's from another, which
 // is the director's position before the move and no better.
 func (s *Server) stateRoutes() {
@@ -54,8 +56,8 @@ func (s *Server) stateRoutes() {
 	// A tenant's backups: what exists, what each run did, the policy in
 	// force once inheritance is resolved, and when the next scheduled run
 	// is. Whoever may see a tenant may see whether its data is being kept.
-	// The bundle itself is not served here: the usher's token does not fetch
-	// one.
+	// The bundle itself is not served here: the usher's identity does not
+	// fetch one.
 	s.guarded("GET /v1/tenants/{t}/backups", "can_view", tenantObject, s.relay("/backups"))
 	s.guarded("GET /v1/tenants/{t}/backups/{name}", "can_view", tenantObject, s.tenantBackup)
 	s.guarded("GET /v1/tenants/{t}/backup-policy", "can_view", tenantObject, s.relay("/backup-policy"))

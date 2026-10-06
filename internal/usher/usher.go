@@ -14,15 +14,16 @@ SPDX-License-Identifier: MPL-2.0
 // It changes nothing. Every answer is the operator's -- a projection it
 // wrote, or what it says when asked -- given to a caller the authorization
 // store allowed, asked with the caller's own identity. It holds no git
-// credential, no signing key and no Kubernetes access, which is why these
-// reads are here and not in the director: a tenant's own people need them,
-// and the process that answers them should have as little worth taking as
-// can be arranged.
+// credential, no signing key and no access to the Kubernetes API, which is
+// why these reads are here and not in the director: a tenant's own people
+// need them, and the process that answers them should have as little worth
+// taking as can be arranged.
 //
-// What it does hold, beside the store's key, is a token for the operator's
-// listener that admits reads only (state.go). With it the usher can read
-// every tenant's live state; the guard below is what stands between that and
-// a caller. It can issue no command with it.
+// What it does hold, beside the store's key, is its own ServiceAccount's
+// token for the operator's listener, which admits that identity to reads
+// only (state.go). With it the usher can read every tenant's live state; the
+// guard below is what stands between that and a caller. It can issue no
+// command with it.
 //
 // Its routes are lists, and a list is where one tenant's objects leak to
 // another. So a route is registered only through guarded, which names the

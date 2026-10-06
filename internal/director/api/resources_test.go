@@ -103,21 +103,22 @@ func startOperator(t *testing.T) *operator {
 	return op
 }
 
-// operatorToken is what both halves of the test agree on, standing in for the
-// Secret the chart mounts into each.
+// operatorToken stands in for the director's ServiceAccount token, which the
+// stand-in operator here admits by comparison rather than by asking an API
+// server.
 const operatorToken = "operator-token-for-the-director"
 
 func startWithOperator(t *testing.T) (*harness, *operator) {
 	t.Helper()
 	op := startOperator(t)
-	return startWith(t, lifecycle.New(op.URL, operatorToken)), op
+	return startWith(t, lifecycle.New(op.URL, func() string { return operatorToken })), op
 }
 
 // A director with no token reaches nothing, which is what a misconfigured
 // deployment must look like rather than an open API.
 func TestTheOperatorsAPIRefusesADirectorWithNoToken(t *testing.T) {
 	op := startOperator(t)
-	h := startWith(t, lifecycle.New(op.URL, ""))
+	h := startWith(t, lifecycle.New(op.URL, func() string { return "" }))
 	tom := h.token(t, "tenant-demo", "tom")
 	code, _ := h.do(t, http.MethodPut, "/v1/tenants/demo/resources", tom, `{"plan":"nodes-3"}`)
 	if code != http.StatusBadGateway {

@@ -193,15 +193,17 @@ func run(log *slog.Logger) error {
 	if u := os.Getenv("DIRECTOR_APP_LIFECYCLE_URL"); u == "" {
 		log.Warn("no app-lifecycle URL: no plan can be chosen and no command issued from here", "setting", "DIRECTOR_APP_LIFECYCLE_URL")
 	} else {
-		// The operator's API refuses a request that presents no token, so a
-		// director started without one reaches nothing. Saying so here is
-		// better than every resources call answering 401 with no clue why.
-		token := os.Getenv("APP_LIFECYCLE_TOKEN")
-		if token == "" {
-			log.Warn("no app-lifecycle token: the operator's API will refuse every request from here",
-				"setting", "APP_LIFECYCLE_TOKEN")
+		// The operator admits this process by its ServiceAccount: the token
+		// is one the kubelet projects for the operator's audience and
+		// replaces every few minutes, so it is read from its file on every
+		// request. A director with no such file reaches nothing, and saying
+		// so here is better than every call answering 502 with no clue why.
+		tokenFile := envOr("DIRECTOR_LIFECYCLE_TOKEN_FILE", "/var/run/secrets/gentian/operator/token")
+		if _, err := os.Stat(tokenFile); err != nil {
+			log.Warn("no ServiceAccount token for the operator's listener: it will refuse every request from here",
+				"setting", "DIRECTOR_LIFECYCLE_TOKEN_FILE", "file", tokenFile)
 		}
-		lc = lifecycle.New(u, token)
+		lc = lifecycle.New(u, lifecycle.TokenFile(tokenFile))
 	}
 	// No Keycloak credential, and no record of identity actions.
 	//

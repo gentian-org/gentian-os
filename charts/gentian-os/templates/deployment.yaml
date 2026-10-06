@@ -369,24 +369,21 @@ spec:
               value: {{ .Values.tenantProvisioning.crossplaneOnly | default false | quote }}
             - name: APP_LIFECYCLE_BIND_ADDRESS
               value: {{ printf ":%v" .Values.appLifecycle.port | quote }}
-            {{- with (.Values.appLifecycle).tokenSecretName }}
-            # The shared token this API requires. Optional on the ref so a pod
-            # still starts while the Secret is being created; the server then
-            # refuses every request rather than serving them unauthenticated.
-            - name: APP_LIFECYCLE_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: {{ . | quote }}
-                  key: token
-                  optional: true
+            # Who may call this API. A caller presents a ServiceAccount token
+            # issued for this audience; the operator asks the API server whose
+            # it is (TokenReview) and admits two identities of this namespace:
+            # the director's for every route, the usher's for reads. Each is
+            # named only where that workload is deployed; with neither, or
+            # with no audience, the API refuses every request.
+            - name: APP_LIFECYCLE_AUDIENCE
+              value: {{ .Values.appLifecycle.audience | quote }}
+            {{- if .Values.director.enabled }}
+            - name: APP_LIFECYCLE_DIRECTOR_SERVICE_ACCOUNT
+              value: {{ include "gentian-os.directorServiceAccountName" . | quote }}
             {{- end }}
-            {{- if and .Values.usher.enabled (.Values.appLifecycle).readTokenSecretName }}
-            # The Secret, in this namespace, the operator hands the
-            # usher's token over in: a second token for this API that admits
-            # reads and nothing else. Named only where there is an usher to
-            # read it; without the name the API has no reader at all.
-            - name: APP_LIFECYCLE_READ_TOKEN_SECRET
-              value: {{ .Values.appLifecycle.readTokenSecretName | quote }}
+            {{- if .Values.usher.enabled }}
+            - name: APP_LIFECYCLE_USHER_SERVICE_ACCOUNT
+              value: {{ include "gentian-os.usherServiceAccountName" . | quote }}
             {{- end }}
             - name: GENTIAN_DEPLOYMENTS_CLUSTER_ID
               value: {{ $lifecycleDeployments.cluster | default "default-cluster" | quote }}
