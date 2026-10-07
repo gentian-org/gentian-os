@@ -217,7 +217,8 @@ func TestComputeGatewayFrameAncestorsPolicy(t *testing.T) {
 	if policy.Mode != gatewayFrameAncestorsReplace {
 		t.Fatalf("mode = %q", policy.Mode)
 	}
-	if policy.Origins != "https://platform.platform.example.test https://console.demo.platform.example.test https://*.demo.platform.example.test" {
+	// The tenant's own desktop and its own domain. Not the platform's desktop.
+	if policy.Origins != "https://console.demo.platform.example.test https://*.demo.platform.example.test" {
 		t.Fatalf("origins = %q", policy.Origins)
 	}
 }
@@ -242,8 +243,9 @@ func TestIngressGatewayFrameAncestorsPolicy(t *testing.T) {
 	if !strings.Contains(policy.Origins, "https://cloud.demo.platform.example.test") {
 		t.Fatalf("origins = %q", policy.Origins)
 	}
-	if !strings.Contains(policy.Origins, "https://platform.platform.example.test") {
-		t.Fatalf("origins = %q", policy.Origins)
+	// "portal" is the tenant's desktop. It is not also the platform's.
+	if strings.Contains(policy.Origins, "https://platform.platform.example.test") {
+		t.Fatalf("the platform's desktop may frame a tenant's app: origins = %q", policy.Origins)
 	}
 	// The tenant's own console is the host a tenant user is normally signed
 	// in on. Leaving it out passes every server-side check and still blocks
@@ -270,7 +272,7 @@ func TestIngressGatewayFrameAncestorsPortalTokenMatchesRoutedPortalHosts(t *test
 	if !ok {
 		t.Fatal("expected custom policy")
 	}
-	want := strings.Join(consoleOrigins("platform.example.test", "demo.platform.example.test"), " ")
+	want := strings.Join(consoleOrigins("demo.platform.example.test"), " ")
 	if policy.Origins != want {
 		t.Fatalf("origins = %q, want %q", policy.Origins, want)
 	}
@@ -345,8 +347,9 @@ func TestAppAPIBackendRulesApplyEmbeddingFilters(t *testing.T) {
 	if modifier == nil || len(modifier.Set) != 1 {
 		t.Fatalf("modifier = %+v", modifier)
 	}
-	if !strings.Contains(modifier.Set[0].Value, "https://platform.platform.example.test") {
-		t.Fatalf("csp = %q", modifier.Set[0].Value)
+	if got := modifier.Set[0].Value; !strings.Contains(got, "https://console.demo.platform.example.test") ||
+		strings.Contains(got, "https://platform.platform.example.test") {
+		t.Fatalf("csp = %q: the tenant's own desktop and not the platform's", got)
 	}
 }
 
@@ -707,11 +710,12 @@ func TestKernelConsolesMayBeFramedByTheDesktop(t *testing.T) {
 		}
 		m := f[0].ResponseHeaderModifier
 		// X-Frame-Options cannot express an exception, so it goes; the policy
-		// that can names the kernel domain and nothing wider.
+		// that can names the platform's desktop and nothing wider -- not the
+		// kernel domain, under which a tenant's apps may be too.
 		if len(m.Remove) != 1 || m.Remove[0] != "X-Frame-Options" {
 			t.Errorf("%s: removes %v, want X-Frame-Options", name, m.Remove)
 		}
-		if len(m.Set) != 1 || m.Set[0].Value != "frame-ancestors 'self' https://*.platform.example.test" {
+		if len(m.Set) != 1 || m.Set[0].Value != "frame-ancestors 'self' https://platform.platform.example.test" {
 			t.Errorf("%s: sets %v", name, m.Set)
 		}
 	}
@@ -737,12 +741,17 @@ func TestTheKeycloakConsoleKeepsItsOwnBearer(t *testing.T) {
 		}
 		// And the two must reach their two destinations: the table line the
 		// authorization service reads, and the policy Envoy reads.
-		table, err := bouncerRouteTable([]kernelHTTPRouteSpec{s}, nil, "platform.example.test", "kernel")
+		table, err := bouncerRouteTable([]kernelHTTPRouteSpec{s}, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if !strings.Contains(table, "keepClientToken: true") || strings.Contains(table, "forwardToken") {
 			t.Fatalf("the table line the authorization service reads:\n%s", table)
+		}
+		// The session on this route is proved by its ID token, held against
+		// the kernel zone's client.
+		if !strings.Contains(table, "idTokenAudience: "+edgeKernelClientID) {
+			t.Fatalf("the route names no client to hold the session's ID token against:\n%s", table)
 		}
 		return
 	}

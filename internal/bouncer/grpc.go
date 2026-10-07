@@ -47,7 +47,7 @@ func deniedPage(brandingBase string) string {
 		`<h1>This is not available to you</h1>` +
 		`<p>Your session does not carry the access this page needs. If you have ` +
 		`just been given it, or you are signed in as someone else, sign out and ` +
-		`sign in again.</p><a href="` + SignOutPath + `">Sign out</a></main></body></html>`
+		`sign in again.</p><a href="` + LogoutPath + `">Sign out</a></main></body></html>`
 }
 
 // BrandingBase is where the cluster's brand is published, from the issuer
@@ -82,7 +82,7 @@ func (s *Server) Check(ctx context.Context, req *authv3.CheckRequest) (*authv3.C
 		Host:          headers[":authority"],
 		Path:          httpReq.GetPath(),
 		Authorization: headers["authorization"],
-		Cookies:       parseCookies(headers["cookie"]),
+		IDToken:       headers[HeaderIDToken],
 	}
 	if r.Host == "" {
 		r.Host = httpReq.GetHost()
@@ -94,18 +94,14 @@ func (s *Server) Check(ctx context.Context, req *authv3.CheckRequest) (*authv3.C
 			Body:   http.StatusText(dec.Status),
 		}
 		// A redirect is answered here and the request never reaches a
-		// backend, which is what makes sign-out possible at all: there is no
-		// service behind these hosts that could send the person to the realm
-		// with the hint, because the hint is in a cookie only the edge holds.
+		// backend: the old sign-out path, sent on to the Gateway's own.
 		if dec.Redirect != "" {
 			denied.Body = ""
 			denied.Headers = []*corev3.HeaderValueOption{{
 				Header:       &corev3.HeaderValue{Key: "location", Value: dec.Redirect},
 				AppendAction: corev3.HeaderValueOption_OVERWRITE_IF_EXISTS_OR_ADD,
 			}, {
-				// Nothing about a sign-out should be reused. A cached 302
-				// would send the next person to the realm with somebody
-				// else's expired hint.
+				// Nothing about a sign-out should be reused.
 				Header:       &corev3.HeaderValue{Key: "cache-control", Value: "no-store"},
 				AppendAction: corev3.HeaderValueOption_OVERWRITE_IF_EXISTS_OR_ADD,
 			}}
@@ -157,16 +153,4 @@ func grpcCode(status int) codes.Code {
 	default:
 		return codes.PermissionDenied
 	}
-}
-
-func parseCookies(h string) map[string]string {
-	out := map[string]string{}
-	for _, part := range strings.Split(h, ";") {
-		name, value, ok := strings.Cut(strings.TrimSpace(part), "=")
-		if !ok || name == "" {
-			continue
-		}
-		out[name] = strings.Trim(value, "\"")
-	}
-	return out
 }

@@ -118,7 +118,7 @@ func TestARouteIsOnTheListenerWhoseCertificateNamesItsHost(t *testing.T) {
 		entry.Surface, entry.AuthMode = gentianov1alpha1.SurfaceGateway, gentianov1alpha1.AuthModeOIDC
 		entry.Backend.Service, entry.Backend.Port = "svc", 8080
 		host := exposureHost(zone, comp, &entry)
-		route := buildExposureRoute(comp, component+"-web", host, zone, &entry, routeAuthz{relation: "can_enter", object: "tenant:" + tenant.Name}, kd)
+		route := buildExposureRoute(comp, component+"-web", host, zone, &entry, routeAuthz{relation: "can_enter", object: "tenant:" + tenant.Name}, kd, nil)
 		return string(route.Spec.Hostnames[0]), string(*route.Spec.ParentRefs[0].SectionName)
 	}
 	for _, c := range []struct {
@@ -361,14 +361,118 @@ func TestAKernelsHostLabelIsRefusedOnTheClustersDomain(t *testing.T) {
 	}
 }
 
-// The desktops an app may be framed by: the platform's, at platform.<kernel>,
-// and the tenant's own -- also when the tenant's domain is the cluster's.
-func TestTheDesktopsAnAppMayBeFramedBy(t *testing.T) {
-	if got := strings.Join(consoleOrigins("k.example", "acme.k.example"), " "); got != "https://platform.k.example https://console.acme.k.example" {
+// The desktop an app may be framed by is its own tenant's, and not the
+// platform's -- also when the tenant's domain is the cluster's.
+func TestTheDesktopAnAppMayBeFramedBy(t *testing.T) {
+	if got := strings.Join(consoleOrigins("acme.k.example"), " "); got != "https://console.acme.k.example" {
 		t.Errorf("a tenant: %s", got)
 	}
-	if got := strings.Join(consoleOrigins("k.example", "k.example"), " "); got != "https://platform.k.example https://console.k.example" {
+	if got := strings.Join(consoleOrigins("k.example"), " "); got != "https://console.k.example" {
 		t.Errorf("the user tenant of a single-tenancy cluster: %s", got)
+	}
+	// The wildcard over the tenant's domain is only for a domain that is the
+	// tenant's alone.
+	if got := computeGatewayFrameAncestorsPolicy("k.example", "k.example", "").Origins; got != "https://console.k.example" {
+		t.Errorf("the user tenant's default policy names more than its desktop: %s", got)
+	}
+	if got := computeGatewayFrameAncestorsPolicy("k.example", "acme.k.example", "").Origins; strings.Contains(got, "platform.") {
+		t.Errorf("a tenant's default policy names the platform: %s", got)
+	}
+}
+
+// Who may put a component's page in a frame, in every shape a zone has: the
+// desktop of the component's own tenant and the component's own other hosts.
+// Never the platform's desktop for a tenant's component, never another
+// tenant, and never a wildcard that would take either in.
+func TestAComponentIsFramedByItsOwnTenantsDesktopAndNobodyElses(t *testing.T) {
+	const kd = "k.example"
+	office := &gentianov1alpha1.ComponentProfile{}
+	office.Spec.Launch = gentianov1alpha1.ComponentLaunchTile
+	office.Spec.Expose = []gentianov1alpha1.ExposureSpec{
+		{Name: "web", Surface: gentianov1alpha1.SurfaceGateway, AuthMode: gentianov1alpha1.AuthModeOIDC, SubDomain: "cloud",
+			Backend: gentianov1alpha1.BackendRef{Service: "files", Port: 80}},
+		{Name: "editor", Surface: gentianov1alpha1.SurfaceGateway, AuthMode: gentianov1alpha1.AuthModeOIDC, SubDomain: "editor",
+			Backend: gentianov1alpha1.BackendRef{Service: "editor", Port: 9980}},
+		// Somebody else's Service: not this component's host, so not a framer.
+		{Name: "elsewhere", Surface: gentianov1alpha1.SurfaceGateway, AuthMode: gentianov1alpha1.AuthModeOIDC, SubDomain: "other",
+			Backend: gentianov1alpha1.BackendRef{Component: "another", Service: "x", Port: 80}},
+		// A perimeter surface has no session and no window on the desktop.
+		{Name: "share", Surface: gentianov1alpha1.SurfacePerimeter, SubDomain: "share",
+			Backend: gentianov1alpha1.BackendRef{Service: "files", Port: 80}},
+	}
+	admin := &gentianov1alpha1.ComponentProfile{}
+	admin.Spec.Expose = []gentianov1alpha1.ExposureSpec{
+		{Name: "web", Surface: gentianov1alpha1.SurfaceGateway, AuthMode: gentianov1alpha1.AuthModeOIDC, SubDomain: "admin",
+			Backend: gentianov1alpha1.BackendRef{Service: "admin", Port: 80}},
+	}
+	desktop := &gentianov1alpha1.ComponentProfile{}
+	desktop.Spec.Launch = gentianov1alpha1.ComponentLaunchNone
+	desktop.Spec.Expose = []gentianov1alpha1.ExposureSpec{
+		{Name: "web", Surface: gentianov1alpha1.SurfaceGateway, AuthMode: gentianov1alpha1.AuthModeOIDC, SubDomain: "console",
+			Backend: gentianov1alpha1.BackendRef{Service: "desktop", Port: 80}},
+	}
+	custom := acmeTenantFixture()
+	custom.Status.Domain = "acme.example"
+	user := &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: gentianov1alpha1.SingleUserTenantName}}
+
+	for _, c := range []struct {
+		what      string
+		mode      string
+		tenant    *gentianov1alpha1.Tenant
+		component string
+		profile   *gentianov1alpha1.ComponentProfile
+		entry     int
+		host      string
+		want      string
+	}{
+		{"a tenant's app, tenancy multi", gentianov1alpha1.TenancyModeMulti, acmeTenantFixture(), "files", office, 0,
+			"cloud.acme.k.example", "frame-ancestors 'self' https://console.acme.k.example https://editor.acme.k.example"},
+		{"the program it embeds", gentianov1alpha1.TenancyModeMulti, acmeTenantFixture(), "files", office, 1,
+			"editor.acme.k.example", "frame-ancestors 'self' https://console.acme.k.example https://cloud.acme.k.example"},
+		{"a tenant's desktop", gentianov1alpha1.TenancyModeMulti, acmeTenantFixture(), "desktop", desktop, 0,
+			"console.acme.k.example", "frame-ancestors 'self'"},
+		{"the user tenant's app, tenancy single", gentianov1alpha1.TenancyModeSingle, user, "files", office, 0,
+			"cloud.k.example", "frame-ancestors 'self' https://console.k.example https://editor.k.example"},
+		{"the user tenant's desktop", gentianov1alpha1.TenancyModeSingle, user, "desktop", desktop, 0,
+			"console.k.example", "frame-ancestors 'self'"},
+		{"an app on a tenant's own domain", gentianov1alpha1.TenancyModeMulti, custom, "files", office, 0,
+			"cloud.acme.example", "frame-ancestors 'self' https://console.acme.example https://editor.acme.example"},
+		{"the platform's admin console", gentianov1alpha1.TenancyModeMulti, platformTenantFixture(), "admin-console", admin, 0,
+			"admin.platform.k.example", "frame-ancestors 'self' https://platform.k.example"},
+		{"the platform's desktop", gentianov1alpha1.TenancyModeSingle, platformTenantFixture(), "desktop", desktop, 0,
+			"platform.k.example", "frame-ancestors 'self'"},
+	} {
+		r := &ComponentReconciler{KernelDomain: kd, KernelRealm: "kernel", TenancyMode: c.mode}
+		zone := r.zoneOf(c.tenant)
+		comp := &gentianov1alpha1.Component{}
+		comp.Name, comp.Namespace = c.component, "tenant-"+c.tenant.Name
+		e := &c.profile.Spec.Expose[c.entry]
+		host := exposureHost(zone, comp, e)
+		if host != c.host {
+			t.Errorf("%s: host %s, want %s", c.what, host, c.host)
+			continue
+		}
+		route := buildExposureRoute(comp, c.component+"-"+e.Name, host, zone, e,
+			exposureAuthz(c.tenant, comp, c.profile, false), kd, componentFramers(zone, comp, c.profile, host))
+		for _, rule := range route.Spec.Rules {
+			if len(rule.Filters) != 1 || rule.Filters[0].ResponseHeaderModifier == nil {
+				t.Fatalf("%s: rule %v carries no frame policy", c.what, rule.Matches)
+			}
+			m := rule.Filters[0].ResponseHeaderModifier
+			if len(m.Remove) != 1 || m.Remove[0] != "X-Frame-Options" || len(m.Set) != 1 || m.Set[0].Name != "Content-Security-Policy" {
+				t.Fatalf("%s: %+v", c.what, m)
+			}
+			got := m.Set[0].Value
+			if got != c.want {
+				t.Errorf("%s:\n  got  %s\n  want %s", c.what, got, c.want)
+			}
+			if strings.Contains(got, "*") {
+				t.Errorf("%s: a wildcard names hosts nobody listed: %s", c.what, got)
+			}
+			if !zone.kernel && strings.Contains(got, "https://"+platformDesktopHost(kd)) {
+				t.Errorf("%s: the platform's desktop may frame a tenant's component: %s", c.what, got)
+			}
+		}
 	}
 }
 

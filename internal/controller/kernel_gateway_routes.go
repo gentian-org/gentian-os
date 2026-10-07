@@ -531,29 +531,45 @@ func kernelBackendRulePrefixNS(serviceName, namespace string, port int32, prefix
 	return kernelBackendRuleNS(serviceName, namespace, port, pathPrefixMatch(prefix), filters...)
 }
 
-// kernelConsoleFrameFilters lets the desktop open a kernel console in a window.
+// kernelConsoleFrameFilters lets the platform's desktop open a kernel console
+// in a window, and nothing else frame one.
 //
 // Each console defends itself against being framed, which is right against a
-// stranger and wrong here: the desktop, the console and the realm are all on
-// the kernel domain, and the tile is how a platform administrator is meant to
-// reach it. Argo CD is the strict one -- x-frame-options: sameorigin, which it
-// cannot be told to drop, because an empty setting falls back to the default.
+// stranger and wrong here: the tile is how a platform administrator is meant
+// to reach it. Argo CD is the strict one -- x-frame-options: sameorigin, which
+// it cannot be told to drop, because an empty setting falls back to the
+// default.
 //
 // So the Gateway decides, for every kernel host the same way: the header that
 // cannot express an exception is removed, and the one that can names the
-// kernel domain and nothing else.
+// platform's desktop. Not the kernel domain as a whole. That named every host
+// under it, which on a cluster whose tenants are under the cluster's domain is
+// every tenant's every app, and a page of any of them could then put the
+// cluster's administration in a frame under a button of its own.
 func kernelConsoleFrameFilters(kernelDomain string) []gatewayv1.HTTPRouteFilter {
 	if kernelDomain == "" {
 		return nil
+	}
+	return frameAncestorsFilters([]string{platformDesktopHost(kernelDomain)})
+}
+
+// frameAncestorsFilters is the frame policy of a route: the page itself and
+// the named hosts may frame it, and nobody else. X-Frame-Options goes because
+// it cannot name an exception, and the backend's own Content-Security-Policy
+// is replaced because the edge, which knows where the desktop is, is the one
+// place that can say who the framer may be.
+func frameAncestorsFilters(hosts []string) []gatewayv1.HTTPRouteFilter {
+	value := "frame-ancestors 'self'"
+	for _, h := range hosts {
+		if h != "" {
+			value += " https://" + h
+		}
 	}
 	return []gatewayv1.HTTPRouteFilter{{
 		Type: gatewayv1.HTTPRouteFilterResponseHeaderModifier,
 		ResponseHeaderModifier: &gatewayv1.HTTPHeaderFilter{
 			Remove: []string{"X-Frame-Options"},
-			Set: []gatewayv1.HTTPHeader{{
-				Name:  "Content-Security-Policy",
-				Value: fmt.Sprintf("frame-ancestors 'self' https://*.%s", kernelDomain),
-			}},
+			Set:    []gatewayv1.HTTPHeader{{Name: "Content-Security-Policy", Value: value}},
 		},
 	}}
 }

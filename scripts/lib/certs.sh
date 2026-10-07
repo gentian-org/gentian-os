@@ -312,6 +312,73 @@ _detect_platform() {
 }
 
 
+# apply_envoy_gateway_crds — the pinned chart's CRDs, applied before the chart.
+#
+# Helm installs a chart's CRDs once and never again: an upgrade leaves the ones
+# in the cluster as they are. A newer Envoy Gateway then runs against the older
+# release's definitions, and the API server drops every field of a policy those
+# definitions do not know -- silently, so the policy is accepted and does
+# something else. Envoy Gateway's own upgrade procedure is the same thing:
+# definitions first, then the controller.
+#
+# Both sets come out of the one pinned chart, Envoy Gateway's own and the
+# Gateway API's, so there is no second version to keep in step. Server-side,
+# because several of them are too large for the annotation a client-side apply
+# keeps; forcing conflicts, because on an upgrade Helm is the recorded owner of
+# every field and would otherwise win.
+apply_envoy_gateway_crds() {
+    local version repo crds rc=0
+    version="$(gentian_pin envoy-gateway chart)"
+    repo="$(gentian_pin envoy-gateway repo)"
+    crds="$(mktemp)"
+    if ! _helm_retry show crds "${repo}" --version "${version}" >"${crds}"; then
+        rm -f "${crds}"
+        error "Could not read the CRDs of Envoy Gateway ${version} from ${repo}."
+        return 1
+    fi
+    if ! grep -q '^kind: CustomResourceDefinition' "${crds}"; then
+        rm -f "${crds}"
+        error "Envoy Gateway ${version} (${repo}) printed no CRDs; refusing to install the controller over whatever the cluster has."
+        return 1
+    fi
+    info "Envoy Gateway ${version}: applying its CRDs and the Gateway API's before the chart."
+    kubectl apply --server-side --force-conflicts -f "${crds}" >/dev/null || rc=$?
+    rm -f "${crds}"
+    if [[ "${rc}" != "0" ]]; then
+        error "Applying the CRDs of Envoy Gateway ${version} failed."
+        return "${rc}"
+    fi
+    kubectl wait --for=condition=Established --timeout=120s \
+        crd/securitypolicies.gateway.envoyproxy.io \
+        crd/envoyproxies.gateway.envoyproxy.io \
+        crd/gateways.gateway.networking.k8s.io \
+        crd/httproutes.gateway.networking.k8s.io >/dev/null
+}
+
+# envoy_gateway_crds_current — check() half: the cluster's SecurityPolicy
+# definition has the fields the operator writes.
+#
+# Asked of the definition and not of a version label, because this is the thing
+# that goes wrong: a stale definition accepts the operator's policies with the
+# fields it does not know removed. The two named here arrived in different
+# releases and are the newest the operator depends on.
+envoy_gateway_crds_current() {
+    kubectl get crd securitypolicies.gateway.envoyproxy.io -o json 2>/dev/null | jq -e '
+        [.spec.versions[] | select(.served)
+         | .schema.openAPIV3Schema.properties.spec.properties.oidc.properties
+         | (has("forwardIDToken") and has("cookieConfig"))] | length > 0 and all' >/dev/null 2>&1
+}
+
+# edge_filter_order_ok — check() half: the edge's EnvoyProxy runs the session
+# filter ahead of the bouncer. See the EnvoyProxy template for why the edge is
+# not installed without it.
+edge_filter_order_ok() {
+    local order
+    order="$(kubectl get envoyproxy gentian-edge -n "$(ns_kernel edge)" \
+        -o jsonpath='{range .spec.filterOrder[*]}{.name}{">"}{.before}{" "}{end}' 2>/dev/null)"
+    [[ " ${order}" == *" envoy.filters.http.oauth2>envoy.filters.http.ext_authz "* ]]
+}
+
 # apply_edge_envoyproxy — the EnvoyProxy the kernel's GatewayClass points at,
 # and the GatewayClass itself.
 #

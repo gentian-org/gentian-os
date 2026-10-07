@@ -12,9 +12,10 @@ package bouncer
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
-	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -23,9 +24,12 @@ import (
 	"github.com/gentian-org/gentian-os/internal/director/authz"
 )
 
-// Verifier checks a bearer token against the platform's issuer.
+// Verifier checks a token against the platform's issuer.
 type Verifier interface {
+	// Verify checks an access token.
 	Verify(ctx context.Context, raw string) (*authn.Identity, error)
+	// VerifyIDToken checks an ID token issued to the named client.
+	VerifyIDToken(ctx context.Context, raw, client string) (*authn.Identity, error)
 }
 
 // Store is the part of the authorization store L2 needs: a decision, and the
@@ -36,20 +40,22 @@ type Store interface {
 }
 
 // Request is what the Gateway tells the bouncer about a request.
+//
+// No cookies. The session's cookies are the OAuth2 filter's: it encrypts
+// them, and it alone decides whether they are a session. What this service
+// is given is what that filter made of them.
 type Request struct {
 	ID            string
 	Host          string
 	Path          string
 	Authorization string
-	Cookies       map[string]string
+	// IDToken is the value of HeaderIDToken.
+	IDToken string
 }
 
 // Decision is the bouncer's answer.
 type Decision struct {
 	Allow bool
-	// Identified is false when the request passed with no identity: an oidc
-	// route with no valid session, left to the OIDC filter behind the bouncer.
-	Identified bool
 	// Status is the HTTP status to answer with when not allowed.
 	Status int
 	Reason string
@@ -62,8 +68,8 @@ type Decision struct {
 	// whether the denial carries a page or the bare status.
 	Browser bool
 	// Redirect makes this decision a 302 to that location instead of a
-	// refusal with a body. Only sign-out uses it: the request is answered
-	// here and never reaches a backend, which is the point.
+	// refusal with a body. Only the old sign-out path uses it: the request is
+	// answered here and never reaches a backend.
 	Redirect string
 }
 
@@ -126,37 +132,26 @@ func (d *Decider) Table() *Table {
 // Evict forgets every cached decision: the changelog moved.
 func (d *Decider) Evict() int { return d.cache.evictAll() }
 
-// Identity headers the backend receives. The gateway strips whatever the
-// client sent under these names by overriding them, so the app may trust
-// one at all (networking.md §2, L1').
-// edgeOAuth2Prefix is where Envoy Gateway's OIDC filter answers: the
-// callback that completes a sign-in and the path that ends a session.
-const edgeOAuth2Prefix = "/oauth2/"
+// LogoutPath is where the Gateway's OAuth2 filter ends a session: it drops
+// the host's cookies and sends the browser to the realm's end-session
+// endpoint with the session's ID token as the hint, so the realm ends its
+// session too without asking, and returns to the host's front page. The
+// filter answers it itself; a request to it never arrives here.
+const LogoutPath = "/oauth2/logout"
 
-// SignOutPath is the one path this service answers itself.
+// SignOutPath is the older name for signing out, kept as a redirect.
 //
-// Signing out of the edge is not signing out. Envoy Gateway's own logout path
-// clears the zone's cookies and sends the browser to the realm, but with no
-// id_token_hint, and Keycloak will not end a session it cannot attribute
-// without asking the person to confirm. That confirmation page is the "another
-// screen" a person sees between pressing sign out and arriving back where they
-// started, and it exists for a good reason: a logout request that names no
-// session might have come from a link on somebody else's site.
-//
-// The hint is in the browser already, in the zone's own ID token cookie. So
-// this path reads it, answers a redirect that carries it, and Keycloak ends
-// the session without asking. The post-logout target is the zone's own
-// /oauth2/logout, so the last thing that happens is Envoy dropping its
-// cookies: end the realm session first, then the edge's, because the reverse
-// order throws away the hint before it has been used.
-// Under /oauth2/ because that prefix is routed on every host in a zone: the
-// Keycloak console route carries it explicitly and every component exposure
-// gets it, so a path anywhere else would be a 404 from Envoy before this
-// service ever saw it. Envoy's own OAuth2 filter claims only its callback and
-// its logout path and passes the rest through, and ext_authz runs ahead of it
-// in any case, so this one is answered here.
+// It was answered here in full while the Gateway's own logout cleared the
+// edge's cookies and nothing else: this service read the ID token from its
+// cookie and sent the browser to the realm with it. The Gateway does all of
+// that now, and the cookie is encrypted, so the path is only an alias. The
+// consoles still navigate to it, and a link that worked yesterday should not
+// be a 404 from a backend today.
 const SignOutPath = "/oauth2/sign-out"
 
+// Identity headers the backend receives. The gateway strips whatever the
+// client sent under these names by overriding them, so the app may trust
+// one at all.
 const (
 	HeaderSubject = "x-gentian-subject"
 	HeaderRealm   = "x-gentian-realm"
@@ -165,70 +160,48 @@ const (
 	HeaderName    = "x-gentian-name"
 )
 
+// HeaderIDToken is where the Gateway's OAuth2 filter puts the session's ID
+// token on a route that keeps the caller's own Authorization header.
+//
+// The filter owns the header: it removes whatever the client sent under this
+// name before it does anything else, and sets it only from a session it has
+// just validated or just refreshed. It is for this service alone and is
+// removed from every request that goes on to a backend.
+const HeaderIDToken = "x-gentian-id-token"
+
 // Decide answers whether the request may reach its route.
 //
-// Fail closed, cached allows carry (networking.md §4): a store that cannot
-// be reached leaves decisions already cached valid until they expire and
-// answers 503 to everything else. Nothing not previously allowed gets through.
+// Fail closed, cached allows carry: a store that cannot be reached leaves
+// decisions already cached valid until they expire and answers 503 to
+// everything else. Nothing not previously allowed gets through, and nothing
+// gets through without a token this service verified itself.
 func (d *Decider) Decide(ctx context.Context, req Request) Decision {
 	route := d.Table().Match(req.Host)
 	if route == nil {
 		return deny(http.StatusForbidden, "no route class for host "+req.Host)
 	}
-	// The edge's own endpoints are not the app's, and this service must not
-	// have an opinion about them. /oauth2/callback finishes a sign-in that by
-	// definition has no session yet, and /oauth2/logout ends one that may
-	// already be refused here -- which is how signing out broke: Keycloak's
-	// back-channel logout recorded the session as revoked, so the redirect
-	// back to /oauth2/logout was answered 403 by this service and the Gateway
-	// never got to drop its cookies. A revoked session must still be able to
-	// reach the path that clears it.
-	if req.Path == SignOutPath {
-		return signOut(route, req)
-	}
-	if strings.HasPrefix(req.Path, edgeOAuth2Prefix) {
-		return Decision{Allow: true, RemoveHeaders: append([]string{"authorization"}, identityHeaders...)}
+	// The old sign-out path, sent on to the Gateway's. Before anything is
+	// asked about the caller: ending your own session is not a permission,
+	// and a session that is refused everywhere must still be able to end
+	// itself. The redirect grants nothing and reaches no backend.
+	if route.AuthMode == AuthModeOIDC && pathOnly(req.Path) == SignOutPath {
+		return Decision{Status: http.StatusFound, Redirect: LogoutPath, Reason: "sign out"}
 	}
 	// Deny wins, and it wins before identity is looked at: the profile said
 	// this path is not published, so who is asking does not enter into it.
-	// Below the edge's own endpoints, because denying /oauth2/ would refuse
-	// the sign-in that the deny rule exists to sit behind.
 	if route.Denies(req.Path) {
 		return deny(http.StatusForbidden, "path is not published on "+req.Host)
 	}
-	// Where the SESSION is, which is what the route's auth mode says and
-	// nothing else.
-	//
-	// This used to read the Authorization header first and fall back to the
-	// cookie, and that is wrong on an oidc route in a way that took a long
-	// time to see. On such a route the session is the zone's cookie; a bearer
-	// in the header belongs to the BACKEND and is none of this service's
-	// business. Reading it as the session means any page that calls its own
-	// API with its own token has that token judged against the zone's
-	// audience, fails, and is treated as having no session at all -- which
-	// then strips the header, so the backend is asked to authenticate a
-	// request carrying nothing.
-	//
-	// That is exactly what broke Keycloak's administration console. The page
-	// holds a token minted for realm-management, the edge expects one minted
-	// for the director, and the console's own Admin REST call arrived at
-	// Keycloak stripped bare and was answered 401.
-	raw := ""
-	if route.AuthMode == AuthModeOIDC && route.AccessTokenCookie != "" {
-		raw = req.Cookies[route.AccessTokenCookie]
-	}
-	if raw == "" {
-		raw = bearer(req.Authorization)
-	}
-	if raw == "" {
-		return unauthenticated(route, "no token")
-	}
-	id, err := d.verify.Verify(ctx, raw)
+	id, err := d.session(ctx, route, req)
 	if err != nil {
-		return unauthenticated(route, "token refused: "+err.Error())
+		// On an oidc route this is not "no session yet". The OAuth2 filter
+		// runs first and would have sent such a request to sign in; one that
+		// arrives here without a token it set is a request the filter did
+		// not vouch for, and the only safe answer is no.
+		return browserRefusal(route, deny(http.StatusUnauthorized, err.Error()))
 	}
 	if id.SessionID == "" {
-		return unauthenticated(route, "token names no session")
+		return browserRefusal(route, deny(http.StatusUnauthorized, "token names no session"))
 	}
 	who := identity{subject: id.Subject, realm: id.Realm, session: id.SessionID, email: id.Email, name: id.Name}
 	if cached, ok := d.cache.get(id.Subject, id.SessionID, route.Host); ok {
@@ -238,15 +211,10 @@ func (d *Decider) Decide(ctx context.Context, req Request) Decision {
 	if err != nil {
 		return deny(http.StatusUnauthorized, err.Error())
 	}
-	// No revocation question.
-	//
-	// This used to ask whether the session had been recorded as revoked, a
-	// tuple the director wrote on back-channel logout. That whole path is
-	// gone. Ending the session at Keycloak is what ends it: the edge holds a
-	// short-lived access token and refreshes it, and a refresh against an
-	// ended session fails. The bound is the access token's lifetime, which
-	// the realm sets, and this costs one fewer round trip per request than
-	// asking did.
+	// No revocation question. Ending the session at the realm is what ends
+	// it: the edge holds a short-lived access token and refreshes it, and a
+	// refresh against an ended session fails. The bound is the access token's
+	// lifetime, which the realm sets.
 	ok, err := d.store.Check(ctx, req.ID, user, route.Relation, route.Object)
 	if err != nil {
 		d.log.WarnContext(ctx, "store unreachable; failing closed", "host", req.Host, "error", err.Error())
@@ -259,6 +227,44 @@ func (d *Decider) Decide(ctx context.Context, req Request) Decision {
 	return allow(route, who)
 }
 
+// session verifies the one token the route's mode says proves who is asking.
+//
+// Exactly one place per mode, and never a fallback from one to another: a
+// request that lacks the token its route calls for is refused, not searched
+// for something else that might do.
+//
+//   - bearer: the caller's Authorization header, an access token.
+//   - oidc: the Authorization header, which on these routes the OAuth2
+//     filter cleared and then set from the session it validated. A bearer the
+//     client sent never reaches this service there.
+//   - oidc with KeepClientToken: the Authorization header is the page's own
+//     and is not read. The filter hands over the session's ID token in
+//     HeaderIDToken instead, having removed any the client sent.
+func (d *Decider) session(ctx context.Context, route *Route, req Request) (*authn.Identity, error) {
+	if route.AuthMode == AuthModeOIDC && route.KeepClientToken {
+		if route.IDTokenAudience == "" {
+			return nil, errors.New("route names no client to hold its session against")
+		}
+		if req.IDToken == "" {
+			return nil, errors.New("no session token")
+		}
+		id, err := d.verify.VerifyIDToken(ctx, req.IDToken, route.IDTokenAudience)
+		if err != nil {
+			return nil, fmt.Errorf("session token refused: %w", err)
+		}
+		return id, nil
+	}
+	raw := bearer(req.Authorization)
+	if raw == "" {
+		return nil, errors.New("no token")
+	}
+	id, err := d.verify.Verify(ctx, raw)
+	if err != nil {
+		return nil, fmt.Errorf("token refused: %w", err)
+	}
+	return id, nil
+}
+
 func bearer(h string) string {
 	const prefix = "bearer "
 	if len(h) > len(prefix) && strings.EqualFold(h[:len(prefix)], prefix) {
@@ -267,43 +273,16 @@ func bearer(h string) string {
 	return ""
 }
 
-func deny(status int, reason string) Decision {
-	return Decision{Allow: false, Status: status, Reason: reason}
+// pathOnly drops the query and the fragment.
+func pathOnly(path string) string {
+	if i := strings.IndexAny(path, "?#"); i >= 0 {
+		return path[:i]
+	}
+	return path
 }
 
-// identityHeaders are what a backend may trust, so the bouncer owns them: set
-// on an identified request, stripped on every other.
-var identityHeaders = []string{HeaderSubject, HeaderRealm, HeaderSession, HeaderEmail, HeaderName}
-
-// unauthenticated answers a request that carries no valid token. On a bearer
-// route that is a refusal. On an oidc route it is not this bouncer's question:
-// Envoy Gateway runs ext_authz before its OIDC filter, so the request goes on
-// -- stripped of every identity header and of whatever bearer it carried --
-// to the OIDC filter, which sends it to sign in or completes the code flow.
-// Nothing reaches a backend on an oidc route without a session that filter
-// established, and every request that has one comes back through here.
-func unauthenticated(route *Route, reason string) Decision {
-	if route.AuthMode != AuthModeOIDC {
-		return deny(http.StatusUnauthorized, reason)
-	}
-	// Identity headers always go: a request with no session must not arrive
-	// carrying any, or a backend that trusts them trusts a forgery.
-	//
-	// The Authorization header is a different question. Normally it goes too,
-	// because a backend behind the zone has no use for the edge's token and
-	// should not be handed one. But on a route that keeps the caller's own
-	// bearer, the header is the backend's business and removing it turns a
-	// request the backend could have authenticated into one it cannot.
-	remove := append([]string(nil), identityHeaders...)
-	if !route.KeepClientToken {
-		remove = append([]string{"authorization"}, identityHeaders...)
-	}
-	return Decision{
-		Allow:         true,
-		Identified:    false,
-		Reason:        reason,
-		RemoveHeaders: remove,
-	}
+func deny(status int, reason string) Decision {
+	return Decision{Allow: false, Status: status, Reason: reason}
 }
 
 // browserRefusal marks a denial that a person will see, so it can be answered
@@ -315,10 +294,12 @@ func browserRefusal(route *Route, dec Decision) Decision {
 	return dec
 }
 
+// allow is the only way a request reaches a backend, and it is only reached
+// with a verified identity: the identity headers are set on every allowed
+// request, replacing whatever the client sent under those names.
 func allow(route *Route, who identity) Decision {
 	dec := Decision{
-		Allow:      true,
-		Identified: true,
+		Allow: true,
 		Headers: map[string]string{
 			HeaderSubject: who.subject,
 			HeaderRealm:   who.realm,
@@ -326,50 +307,17 @@ func allow(route *Route, who identity) Decision {
 			HeaderEmail:   who.email,
 			HeaderName:    who.name,
 		},
+		// The ID token header is this service's input and nobody's output.
+		// Removed on every route, so one a client sent where the gateway
+		// does not own the header goes no further either.
+		RemoveHeaders: []string{HeaderIDToken},
 	}
 	// The edge token is valid at the director and at every sibling; a
-	// backend gets it only where its exposure says forwardToken (AD-13).
-	// A route that keeps the caller's own token is not stripped either: its
-	// backend authenticates the bearer the page already holds.
+	// backend gets it only where its exposure says forwardToken. A route
+	// that keeps the caller's own token is not stripped either: its backend
+	// authenticates the bearer the page already holds.
 	if !route.ForwardToken && !route.KeepClientToken {
-		dec.RemoveHeaders = []string{"authorization"}
+		dec.RemoveHeaders = append(dec.RemoveHeaders, "authorization")
 	}
 	return dec
-}
-
-// signOut answers the sign-out path with a redirect the person never sees.
-//
-// It asks the authorization store nothing. Ending your own session is not a
-// permission: a session that is refused everywhere must still be able to end
-// itself, which is the same reason the edge's own /oauth2/ paths pass through
-// untouched. Requiring a relation here would mean the one person who most
-// needs to sign out, someone whose account was just deleted, could not.
-func signOut(route *Route, req Request) Decision {
-	// Where the browser ends up either way: Envoy's logout path, which drops
-	// the zone's cookies and returns to the portal.
-	local := "https://" + hostOnly(req.Host) + edgeOAuth2Prefix + "logout"
-	hint := ""
-	if route.IDTokenCookie != "" {
-		hint = req.Cookies[route.IDTokenCookie]
-	}
-	if route.EndSessionURL == "" || hint == "" {
-		// No hint to offer, so nothing is gained by going to the realm first.
-		// Clearing the edge's cookies still signs the person out of every
-		// kernel host; the realm session outlives it until its own idle
-		// timeout, which is the behaviour this had before.
-		return Decision{Status: http.StatusFound, Redirect: local, Reason: "sign out, edge only"}
-	}
-	target := route.EndSessionURL + "?id_token_hint=" + url.QueryEscape(hint) +
-		"&post_logout_redirect_uri=" + url.QueryEscape(local)
-	return Decision{Status: http.StatusFound, Redirect: target, Reason: "sign out"}
-}
-
-// hostOnly drops the port. A Host header carries one on a non-default port,
-// and a post_logout_redirect_uri that carries it will not match what the
-// client registered.
-func hostOnly(host string) string {
-	if i := strings.LastIndex(host, ":"); i > 0 && !strings.Contains(host[i:], "]") {
-		return host[:i]
-	}
-	return host
 }

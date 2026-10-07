@@ -9,6 +9,9 @@ ignore: |
   # made the lint fail on a directory nobody edits and nothing ships.
   .claude/
   config/crd/
+  # Envoy Gateway's own CRDs, copied from its chart for the operator's tests
+  # (scripts/gen/gen-envoy-gateway-crds.py). Upstream's text, not ours.
+  internal/controller/testdata/envoy-gateway-crds/
   charts/gentian-os/crds/
   # The operator's embedded copy of one of those CRDs, written by
   # `make manifests` and compared byte for byte with them.

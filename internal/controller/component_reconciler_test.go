@@ -185,7 +185,7 @@ func TestAComponentRouteCarriesItsQuestion(t *testing.T) {
 		SubDomain: "console", Paths: []string{"/api", "/healthz"}, ForwardToken: true,
 		Backend: gentianov1alpha1.BackendRef{Service: "desktop-gentian-portal-api", Port: 8000},
 	}
-	route := buildExposureRoute(comp, "desktop-api", "console.k.example", zone, e, exposureAuthz(platformTenantFixture(), comp, launcherProfile(), e.ForwardToken), "k.example")
+	route := buildExposureRoute(comp, "desktop-api", "console.k.example", zone, e, exposureAuthz(platformTenantFixture(), comp, launcherProfile(), e.ForwardToken), "k.example", []string{"platform.k.example"})
 	if route.Labels[bouncerRouteLabel] != "true" || route.Annotations[bouncerRelationAnnotation] != "can_enter" ||
 		route.Annotations[bouncerObjectAnnotation] != "tenant:platform" || route.Annotations[bouncerForwardAnnotation] != "true" {
 		t.Fatalf("route question = %v %v", route.Labels, route.Annotations)
@@ -203,13 +203,14 @@ func TestAComponentRouteCarriesItsQuestion(t *testing.T) {
 	web := buildExposureRoute(comp, "desktop-web", "console.k.example", zone,
 		&gentianov1alpha1.ExposureSpec{Name: "web", Surface: gentianov1alpha1.SurfaceGateway, AuthMode: gentianov1alpha1.AuthModeOIDC, SubDomain: "console",
 			Backend: gentianov1alpha1.BackendRef{Service: "desktop-gentian-portal-web", Port: 8080}},
-		exposureAuthz(platformTenantFixture(), comp, launcherProfile(), false), "k.example")
+		exposureAuthz(platformTenantFixture(), comp, launcherProfile(), false), "k.example", []string{"platform.k.example"})
 
-	// Every rule admits embedding by the kernel domain and nothing else: the
-	// desktop opens components in frames, and nobody else may.
+	// Every rule admits embedding by the framers it was given and nothing
+	// else: the zone's desktop opens components in frames, and nobody else
+	// may.
 	for _, rule := range route.Spec.Rules {
 		if len(rule.Filters) != 1 || rule.Filters[0].ResponseHeaderModifier == nil ||
-			rule.Filters[0].ResponseHeaderModifier.Set[0].Value != "frame-ancestors 'self' https://*.k.example" {
+			rule.Filters[0].ResponseHeaderModifier.Set[0].Value != "frame-ancestors 'self' https://platform.k.example" {
 			t.Fatalf("rule %v carries no frame policy", rule.Matches)
 		}
 	}
@@ -222,15 +223,13 @@ func TestAComponentRouteCarriesItsQuestion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(entries) != 1 || entries[0].Host != "console.k.example" || entries[0].Relation != "can_enter" || !entries[0].ForwardToken || entries[0].AuthMode != "oidc" || entries[0].AccessTokenCookie != edgeKernelAccessTokenCookie {
+	if len(entries) != 1 || entries[0].Host != "console.k.example" || entries[0].Relation != "can_enter" || !entries[0].ForwardToken || entries[0].AuthMode != "oidc" {
 		t.Fatalf("entries = %+v", entries)
 	}
-	// And what sign-out needs: without the id token cookie and the realm's
-	// end-session endpoint the edge only drops its own cookies, the realm's
-	// session stands, and signing out reloads the page signed in.
-	if entries[0].IDTokenCookie != edgeKernelIDTokenCookie ||
-		entries[0].EndSessionURL != "https://id.k.example/auth/realms/kernel/protocol/openid-connect/logout" {
-		t.Fatalf("sign-out is edge-only for a component: %+v", entries[0])
+	// A component's route never keeps the caller's own token, so it never
+	// needs a client to hold an ID token against.
+	if entries[0].KeepClientToken || entries[0].IDTokenAudience != "" {
+		t.Fatalf("a component's route: %+v", entries[0])
 	}
 }
 
@@ -252,7 +251,7 @@ func TestDenyPathsReachTheTableAndAreUnionedPerHost(t *testing.T) {
 			Backend: gentianov1alpha1.BackendRef{Service: "odoo", Port: 80},
 		}
 		return buildExposureRoute(comp, "odoo-"+name, sub+".k.example", zone, e,
-			exposureAuthz(platformTenantFixture(), comp, launcherProfile(), false), "k.example")
+			exposureAuthz(platformTenantFixture(), comp, launcherProfile(), false), "k.example", nil)
 	}
 	web := build("web", "shop", []string{"/web/database"})
 	api := build("api", "shop", []string{"/admin"})
@@ -293,9 +292,8 @@ func TestDenyPathsReachTheTableAndAreUnionedPerHost(t *testing.T) {
 func TestAZonePolicyOutsideTheEdgeNamesIt(t *testing.T) {
 	zone := edgeZone{zoneNames: zoneNames{domain: "platform.k.example", kernel: true}, realm: "kernel", clientID: edgeKernelClientID, secretName: edgeKernelSecretName, cookie: "c", idCookie: "i"}
 	spec := zoneSecurityPolicySpec("k.example", zone, "desktop-api", routeAuthz{forwardToken: true}, "kernel-edge", "gentian-os-bouncer")
-	// The secret is read from the policy's own namespace and no other
-	// (Envoy Gateway 1.2), so it is named without one and copied beside
-	// the policy; the bouncer is reached across namespaces under the grant.
+	// The secret is named without a namespace and copied beside the policy;
+	// the bouncer is reached across namespaces under the grant.
 	secret := spec["oidc"].(map[string]interface{})["clientSecret"].(map[string]interface{})
 	if _, has := secret["namespace"]; has || secret["name"] != edgeKernelSecretName {
 		t.Fatalf("clientSecret = %v", secret)
@@ -323,14 +321,14 @@ func TestAnExistingRouteTakesANewAnnotation(t *testing.T) {
 	_ = gatewayv1.Install(scheme)
 	existing := &gatewayv1.HTTPRoute{}
 	existing.Name, existing.Namespace = "desktop-web", "tenant-platform"
-	existing.Annotations = map[string]string{bouncerCookieAnnotation: "gentian-kernel-access", "someone/else": "kept"}
+	existing.Annotations = map[string]string{bouncerRelationAnnotation: "can_enter", "someone/else": "kept"}
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(existing).Build()
 
 	desired := existing.DeepCopy()
 	desired.ResourceVersion = ""
 	desired.Annotations = map[string]string{
-		bouncerCookieAnnotation:   "gentian-kernel-access",
-		bouncerIDCookieAnnotation: edgeKernelIDTokenCookie,
+		bouncerRelationAnnotation:  "can_enter",
+		bouncerDenyPathsAnnotation: "/admin",
 	}
 	if err := ensureHTTPRouteResource(ctx, c, desired); err != nil {
 		t.Fatal(err)
@@ -339,7 +337,7 @@ func TestAnExistingRouteTakesANewAnnotation(t *testing.T) {
 	if err := c.Get(ctx, types.NamespacedName{Name: existing.Name, Namespace: existing.Namespace}, got); err != nil {
 		t.Fatal(err)
 	}
-	if got.Annotations[bouncerIDCookieAnnotation] != edgeKernelIDTokenCookie || got.Annotations["someone/else"] != "kept" {
+	if got.Annotations[bouncerDenyPathsAnnotation] != "/admin" || got.Annotations["someone/else"] != "kept" {
 		t.Fatalf("annotations = %v", got.Annotations)
 	}
 }

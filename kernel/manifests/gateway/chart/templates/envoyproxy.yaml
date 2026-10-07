@@ -49,6 +49,24 @@ spec:
   # fleet: the cluster has one address, and two Envoy Services would
   # contend for it (networking.md §1).
   mergeGateways: true
+  # The session first, the access check after it.
+  #
+  # Envoy Gateway's own order puts ext_authz, which is the bouncer, ahead of
+  # its OAuth2 filter, which is the session. In that order the bouncer is asked
+  # about a request before anything has decided whether it has a session, and
+  # can only be shown the session's cookies -- which the OAuth2 filter
+  # encrypts. In this order the OAuth2 filter answers its own callback and
+  # logout paths, sends a request with no session to sign in, refreshes one
+  # whose token has run out, and hands the bouncer the session's current
+  # token; the bouncer verifies it and refuses a request that carries none.
+  #
+  # The operator's policies and the bouncer are both written for this order.
+  # Without it nothing is opened -- the bouncer refuses what arrives with no
+  # token -- but nobody can sign in either, which is why A-05 will not report
+  # the edge installed without it.
+  filterOrder:
+    - name: envoy.filters.http.oauth2
+      before: envoy.filters.http.ext_authz
   provider:
     type: Kubernetes
     kubernetes:

@@ -8,7 +8,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 SPDX-License-Identifier: MPL-2.0
 */
 
-// Package authz is the ext-auth bouncer: L2 of the edge (networking.md §2).
+// Package bouncer is the ext-auth bouncer: L2 of the edge.
 //
 // The Gateway has established who the caller is (L1: a session or a bearer
 // token). This answers one question per request -- may this person reach
@@ -34,43 +34,35 @@ type Route struct {
 	// Relation and Object are the store question: user:<sub> Relation Object.
 	Relation string `json:"relation"`
 	Object   string `json:"object"`
-	// AuthMode is the route's L1: "oidc", a session the Gateway's OIDC filter
-	// establishes, or "bearer", a token the caller presents. Envoy Gateway
-	// runs ext_authz before its OIDC filter, so on an oidc route a request
-	// with no valid token is not this bouncer's to refuse: it passes, carrying
-	// no identity, and the OIDC filter behind sends it to sign in. On a
-	// bearer route the same request is refused here.
+	// AuthMode is the route's L1: "oidc", a session the Gateway's OAuth2
+	// filter establishes, or "bearer", a token the caller presents.
+	//
+	// On an oidc route the OAuth2 filter runs ahead of this service. It
+	// answers its own callback and logout paths, sends a request with no
+	// session to sign in, refreshes a session whose access token has run out,
+	// and only then lets a request through -- carrying the session's current
+	// token, which it put there itself after removing whatever the client
+	// sent in that place. So every request that arrives here on such a route
+	// carries a token this service can verify, and one that does not is
+	// refused: there is no "no session yet" to be lenient about.
 	AuthMode string `json:"authMode"`
-	// AccessTokenCookie is where the zone's session keeps the access token,
-	// for routes whose token is not forwarded as a bearer.
-	AccessTokenCookie string `json:"accessTokenCookie,omitempty"`
-	// IDTokenCookie is where the zone's session keeps the ID token.
-	//
-	// Only sign-out needs it. Keycloak shows a "did you really mean it" page
-	// for any logout that arrives without an id_token_hint, because a logout
-	// it cannot attribute to a session might have been triggered by a link on
-	// somebody else's page. The hint is sitting in this cookie, so the edge
-	// can answer that question on the person's behalf and they never see the
-	// page.
-	IDTokenCookie string `json:"idTokenCookie,omitempty"`
-	// EndSessionURL is the realm's OIDC end_session_endpoint.
-	//
-	// Written by the operator, which knows the issuer and the realm, rather
-	// than discovered here: this service must not depend on reaching the
-	// identity provider to answer a request, and a sign-out that waited on
-	// discovery would fail exactly when the identity provider is the thing
-	// that is unwell. Empty means sign-out falls back to clearing the edge's
-	// own cookies and nothing else.
-	EndSessionURL string `json:"endSessionURL,omitempty"`
-	// KeepClientToken leaves the caller's own Authorization header alone
-	// without the edge putting its token there.
+	// KeepClientToken says the Authorization header on this route is the
+	// page's own and not the edge's: the gateway does not put the session's
+	// access token there and this service neither reads it nor removes it.
 	//
 	// Not the same as ForwardToken, and conflating them broke the Keycloak
 	// console: that page mints a token with its own code flow and calls the
 	// Admin REST API with it. Stripping the header is a 401; replacing it
 	// with the edge's is "Token issued for an application that is not the
 	// admin console". It needs neither -- only to be left alone.
+	//
+	// The session is then proved by its ID token, which the gateway hands
+	// over in HeaderIDToken, and IDTokenAudience says whose it must be.
 	KeepClientToken bool `json:"keepClientToken,omitempty"`
+	// IDTokenAudience is the zone's client, the one an ID token on a
+	// KeepClientToken route must have been issued to. Without it such a route
+	// has nothing to hold a token against and refuses everybody.
+	IDTokenAudience string `json:"idTokenAudience,omitempty"`
 	// ForwardToken keeps the Authorization header for the backend. Only a
 	// route whose exposure declares it -- the desktop, which relays to the
 	// director -- has it; every other backend gets identity headers instead.

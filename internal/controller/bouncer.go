@@ -48,10 +48,22 @@ const (
 	bouncerRoutesConfigMap = "bouncer-routes"
 	bouncerRoutesKey       = "routes.yaml"
 	bouncerPort            = int32(9001)
-	// edgeOAuth2Prefix is where Envoy Gateway's OIDC filter answers the code
-	// flow's callback and the logout: a route behind a session carries it,
-	// or the flow has nowhere to land.
+	// edgeOAuth2Prefix is where Envoy Gateway's OAuth2 filter answers the
+	// code flow's callback and the logout: a route behind a session carries
+	// it, or the flow has nowhere to land.
 	edgeOAuth2Prefix = "/oauth2/"
+	// edgeLogoutPath is the one path that signs a person out: the filter
+	// drops the host's cookies and sends the browser to the realm's
+	// end-session endpoint, which it reads from the issuer's discovery
+	// document, with the session's ID token as the hint and the host's front
+	// page as the way back.
+	edgeLogoutPath = "/oauth2/logout"
+	// edgeIDTokenHeader is where the filter hands the session's ID token to
+	// the bouncer on a route that keeps the caller's own Authorization
+	// header (internal/bouncer, HeaderIDToken: the two must agree). The
+	// filter removes whatever a client sent under this name before it sets
+	// its own.
+	edgeIDTokenHeader = "x-gentian-id-token"
 )
 
 // routeAuthz is what a route's exposure says must hold at L2.
@@ -64,12 +76,18 @@ type routeAuthz struct {
 	// and calls the Admin REST API with it, so stripping the header is a 401
 	// and replacing it with the edge's is "Token issued for an application
 	// that is not the admin console".
-	keepClientToken bool
-	// forwardToken makes the EDGE put its own access token on the request.
 	//
-	// Only the desktop declares it: it relays that token to the director
-	// (AD-13). Anything else wanting its header untouched wants
-	// keepClientToken instead.
+	// The bouncer still has to be shown the session, and on such a route it
+	// cannot be shown it in the Authorization header. The filter forwards
+	// the session's ID token in a header of its own instead.
+	keepClientToken bool
+	// forwardToken lets the edge's access token go on to the BACKEND.
+	//
+	// The filter puts that token on every request of an ordinary route, for
+	// the bouncer; the bouncer removes it again unless the route says this.
+	// Only the desktop declares it: it relays that token to the director.
+	// Anything else wanting its header untouched wants keepClientToken
+	// instead.
 	forwardToken bool
 }
 
@@ -107,21 +125,83 @@ func kernelSecurityPolicySpec(kernelDomain, kernelRealm, route string, authz rou
 	return zoneSecurityPolicySpec(kernelDomain, zone, route, authz, "", bouncerService)
 }
 
-// zoneSecurityPolicySpec is L1 and L2 for one route in a zone. The zone's
-// client Secret and the bouncer live in the edge namespace; a policy elsewhere
-// names that namespace and relies on the ReferenceGrant the component
-// reconciler keeps there.
-// zoneSecurityPolicySpec is the session-and-bouncer policy for one route. The
-// client secret is named without a namespace: Envoy Gateway (1.2) reads an
-// OIDC client secret only from the policy's own namespace, ReferenceGrant or
-// not, so whoever writes a policy outside the edge puts the zone's secret
-// beside it (ensureZoneSecret). The bouncer is reached across namespaces, which
-// a backendRef may do under a grant.
+// zoneSecurityPolicySpec is the session-and-bouncer policy for one route: L1,
+// the zone's session, and L2, the bouncer.
+//
+// The order the two run in is not this policy's to say. Envoy Gateway puts
+// ext_authz ahead of its OAuth2 filter unless the EnvoyProxy says otherwise,
+// and this platform's says otherwise (filterOrder in the edge EnvoyProxy):
+// the OAuth2 filter first, the bouncer after it. Everything below is written
+// for that order.
+//
+//   - The filter answers its own callback and logout paths, sends a request
+//     with no session to sign in, and refreshes a session whose access token
+//     has run out before the request goes any further. None of those reach
+//     the bouncer.
+//   - What does reach the bouncer carries the session's current token, put
+//     there by the filter: the access token in the Authorization header
+//     (forwardAccessToken), which makes the filter remove whatever the client
+//     sent in that header first; or, where the header is the page's own
+//     (keepClientToken), the ID token in a header the filter likewise clears
+//     before setting.
+//   - The bouncer verifies that token itself and refuses a request without
+//     one. There is no pass-through: passThroughAuthHeader and denyRedirect
+//     are not set, and must not be without the bouncer's table saying what
+//     such a request may reach.
+//
+// The token cookies stay encrypted, which is the filter's default. Nothing
+// but the filter reads them.
+//
+// The client secret is named without a namespace, so it is read from the
+// policy's own: whoever writes a policy outside the edge puts the zone's
+// secret beside it (ensureZoneSecret). The bouncer is reached across
+// namespaces, which a backendRef may do under a grant.
 func zoneSecurityPolicySpec(kernelDomain string, zone edgeZone, route string, authz routeAuthz, edgeNamespace, bouncerService string) map[string]interface{} {
 	clientSecret := map[string]interface{}{"name": zone.secretName}
 	backend := map[string]interface{}{"name": bouncerService, "port": int64(bouncerPort)}
 	if edgeNamespace != "" {
 		backend["namespace"] = edgeNamespace
+	}
+	oidc := map[string]interface{}{
+		"provider": map[string]interface{}{
+			"issuer": fmt.Sprintf("https://id.%s/auth/realms/%s", kernelDomain, zone.realm),
+		},
+		"clientID":     zone.clientID,
+		"clientSecret": clientSecret,
+		"logoutPath":   edgeLogoutPath,
+		// No cookieDomain, so the session cookie is scoped to the host that
+		// set it.
+		//
+		// It used to be scoped to the whole zone, .<kernel>, so one sign-in
+		// covered every host in it -- which also meant the browser sent that
+		// cookie to every application in the zone. An application that is
+		// compromised, or merely careless about what it logs, saw a
+		// credential good for every other application beside it.
+		//
+		// The cost is one silent round trip to Keycloak the first time a
+		// browser reaches each host, because the Keycloak session already
+		// exists and the redirect comes straight back. Single sign-on is
+		// preserved and so is signing out everywhere at once: the realm
+		// session ends, and no host's cookie can be refreshed against it.
+		"cookieNames": map[string]interface{}{
+			"accessToken": zone.cookie,
+			"idToken":     zone.idCookie,
+		},
+		// Lax: the cookies go with a navigation to the host and with
+		// anything the host's own pages ask for, and with nothing a page on
+		// another site makes the browser send, short of a link somebody
+		// follows. One value covers every cookie the filter sets, the ones
+		// that carry the code flow among them; those come back on a
+		// top-level redirect from the realm, which Lax allows.
+		"cookieConfig": map[string]interface{}{"sameSite": "Lax"},
+		// The bouncer's token. Not what reaches the backend: the bouncer
+		// removes the header again unless the route forwards it.
+		"forwardAccessToken": !authz.keepClientToken,
+		"scopes":             []interface{}{"openid", "profile", "email"},
+		"refreshToken":       true,
+	}
+	if authz.keepClientToken {
+		oidc["forwardIDToken"] = map[string]interface{}{"header": edgeIDTokenHeader}
 	}
 	return map[string]interface{}{
 		"targetRefs": []interface{}{
@@ -131,44 +211,7 @@ func zoneSecurityPolicySpec(kernelDomain string, zone edgeZone, route string, au
 				"name":  route,
 			},
 		},
-		"oidc": map[string]interface{}{
-			"provider": map[string]interface{}{
-				"issuer": fmt.Sprintf("https://id.%s/auth/realms/%s", kernelDomain, zone.realm),
-			},
-			"clientID":     zone.clientID,
-			"clientSecret": clientSecret,
-			"logoutPath":   "/oauth2/logout",
-			// No cookieDomain, so the session cookie is scoped to the host
-			// that set it.
-			//
-			// It used to be scoped to the whole zone, .<kernel>, so one
-			// sign-in covered every host in it -- which also meant the
-			// browser sent that cookie to every application in the zone, and
-			// nothing removed it before the request arrived. An application
-			// that is compromised, or merely careless about what it logs, saw
-			// a credential good for every other application beside it.
-			//
-			// Stripping it later does not work: Envoy Gateway applies the
-			// authorization service's header mutations before the remaining
-			// filters, and ext_authz runs ahead of the OIDC filter, so a
-			// cookie removed there would be invisible to the filter that has
-			// to validate it and sign-in would break. Rewriting it at the
-			// router stage needs Envoy Gateway 1.3.
-			//
-			// The cost is one silent round trip to Keycloak the first time a
-			// browser reaches each host, because the Keycloak session already
-			// exists and the redirect comes straight back. Single sign-on is
-			// preserved and so is signing out everywhere at once: the realm
-			// session ends, and the back-channel logout marks it revoked for
-			// every host's cookie at once.
-			"cookieNames": map[string]interface{}{
-				"accessToken": zone.cookie,
-				"idToken":     zone.idCookie,
-			},
-			"forwardAccessToken": authz.forwardToken,
-			"scopes":             []interface{}{"openid", "profile", "email"},
-			"refreshToken":       true,
-		},
+		"oidc": oidc,
 		"extAuth": map[string]interface{}{
 			"failOpen": false,
 			"grpc":     map[string]interface{}{"backendRef": backend},
@@ -242,55 +285,42 @@ func (r *GatewayPlatformReconciler) deleteStaleKernelSecurityPolicies(ctx contex
 
 // bouncerRoute is one line of the bouncer's table (internal/bouncer).
 type bouncerRoute struct {
-	Host              string `json:"host"`
-	Relation          string `json:"relation"`
-	Object            string `json:"object"`
-	AccessTokenCookie string `json:"accessTokenCookie,omitempty"`
-	IDTokenCookie     string `json:"idTokenCookie,omitempty"`
-	EndSessionURL     string `json:"endSessionURL,omitempty"`
-	KeepClientToken   bool   `json:"keepClientToken,omitempty"`
-	ForwardToken      bool   `json:"forwardToken,omitempty"`
-	AuthMode          string `json:"authMode"`
+	Host            string `json:"host"`
+	Relation        string `json:"relation"`
+	Object          string `json:"object"`
+	KeepClientToken bool   `json:"keepClientToken,omitempty"`
+	// IDTokenAudience is the zone's client, on a route that keeps the
+	// caller's own token: whose ID token proves the session there.
+	IDTokenAudience string `json:"idTokenAudience,omitempty"`
+	ForwardToken    bool   `json:"forwardToken,omitempty"`
+	AuthMode        string `json:"authMode"`
 	// DenyPaths are refused at L2 before identity is looked at. Unioned
 	// across every exposure that shares the host.
 	DenyPaths []string `json:"denyPaths,omitempty"`
 }
 
-// endSessionURL is the realm's OIDC logout endpoint.
-//
-// Built rather than discovered. Keycloak publishes it in the realm's
-// well-known document, but the edge authorization service answers requests on
-// the hot path and must not depend on reaching the identity provider to do
-// so: a sign-out that waited on discovery would fail in exactly the situation
-// where a person most wants to sign out, which is when the identity provider
-// is unwell. The shape has been stable across every Keycloak major this
-// platform has run, and it is served under /auth like the rest of the realm.
-func endSessionURL(kernelDomain, realm string) string {
-	if kernelDomain == "" || realm == "" {
-		return ""
-	}
-	return fmt.Sprintf("https://id.%s/auth/realms/%s/protocol/openid-connect/logout", kernelDomain, realm)
-}
-
 // bouncerRouteTable renders the bouncer's table from the routes that carry an
 // L2 question. Sorted by host: one table for one state, however the specs
 // were listed.
-func bouncerRouteTable(specs []kernelHTTPRouteSpec, extra []bouncerRoute, kernelDomain, kernelRealm string) (string, error) {
+//
+// Every route in it needs a session. A route that needs none has no policy
+// and never asks the bouncer; there is no entry that says "let this through".
+func bouncerRouteTable(specs []kernelHTTPRouteSpec, extra []bouncerRoute) (string, error) {
 	var routes []bouncerRoute
 	for _, s := range specs {
 		if s.authz == nil || s.host == "" {
 			continue
 		}
-		routes = append(routes, bouncerRoute{
+		route := bouncerRoute{
 			Host: s.host, Relation: s.authz.relation, Object: s.authz.object,
-			AccessTokenCookie: edgeKernelAccessTokenCookie, ForwardToken: s.authz.forwardToken,
+			ForwardToken:    s.authz.forwardToken,
 			KeepClientToken: s.authz.keepClientToken,
-			// What sign-out needs, written here because the operator knows
-			// the issuer and the realm and the edge must not have to ask.
-			IDTokenCookie: edgeKernelIDTokenCookie,
-			EndSessionURL: endSessionURL(kernelDomain, kernelRealm),
-			AuthMode:      "oidc",
-		})
+			AuthMode:        "oidc",
+		}
+		if s.authz.keepClientToken {
+			route.IDTokenAudience = edgeKernelClientID
+		}
+		routes = append(routes, route)
 	}
 	routes = append(routes, extra...)
 	sort.Slice(routes, func(i, j int) bool { return routes[i].Host < routes[j].Host })
@@ -306,7 +336,7 @@ func (r *GatewayPlatformReconciler) ensureBouncerRouteTable(ctx context.Context,
 	if err != nil {
 		return err
 	}
-	table, err := bouncerRouteTable(specs, extra, r.KernelDomain, r.kernelRealm())
+	table, err := bouncerRouteTable(specs, extra)
 	if err != nil {
 		return err
 	}
@@ -389,9 +419,8 @@ func componentRouteTableEntries(ctx context.Context, c client.Reader) ([]bouncer
 			}
 			byHost[host] = &bouncerRoute{
 				Host: host, Relation: ann[bouncerRelationAnnotation], Object: ann[bouncerObjectAnnotation],
-				AccessTokenCookie: ann[bouncerCookieAnnotation], ForwardToken: ann[bouncerForwardAnnotation] == "true",
-				IDTokenCookie: ann[bouncerIDCookieAnnotation], EndSessionURL: ann[bouncerEndSessionAnnotation],
-				AuthMode: mode, DenyPaths: denied,
+				ForwardToken: ann[bouncerForwardAnnotation] == "true",
+				AuthMode:     mode, DenyPaths: denied,
 			}
 			order = append(order, host)
 		}

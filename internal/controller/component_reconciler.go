@@ -14,6 +14,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"sort"
 	"strings"
 	"time"
 
@@ -113,12 +114,7 @@ const (
 	bouncerRelationAnnotation = "gentianos.io/bouncer-relation"
 	bouncerObjectAnnotation   = "gentianos.io/bouncer-object"
 	bouncerForwardAnnotation  = "gentianos.io/bouncer-forward-token"
-	bouncerCookieAnnotation   = "gentianos.io/bouncer-cookie"
-	// The zone's id token cookie and its realm's end-session endpoint, for
-	// the bouncer's sign-out.
-	bouncerIDCookieAnnotation   = "gentianos.io/bouncer-id-cookie"
-	bouncerEndSessionAnnotation = "gentianos.io/bouncer-end-session"
-	bouncerAuthModeAnnotation   = "gentianos.io/bouncer-mode"
+	bouncerAuthModeAnnotation = "gentianos.io/bouncer-mode"
 	// bouncerDenyPathsAnnotation carries the exposure's denyPaths to the
 	// bouncer's table. Comma-separated because an annotation is a string and a
 	// path cannot contain a comma without being escaped, which none are.
@@ -1027,7 +1023,8 @@ func componentLabels(comp *gentianov1alpha1.Component) map[string]string {
 func (r *ComponentReconciler) ensureExposureRoute(ctx context.Context, comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile, tenant *gentianov1alpha1.Tenant, zone edgeZone, e *gentianov1alpha1.ExposureSpec) (string, error) {
 	host := exposureHost(zone, comp, e)
 	routeName := comp.Name + "-" + e.Name
-	route := buildExposureRoute(comp, routeName, host, zone, e, exposureAuthz(tenant, comp, profile, e.ForwardToken), r.KernelDomain)
+	route := buildExposureRoute(comp, routeName, host, zone, e, exposureAuthz(tenant, comp, profile, e.ForwardToken), r.KernelDomain,
+		componentFramers(zone, comp, profile, host))
 	if err := controllerutil.SetControllerReference(comp, route, r.Scheme); err != nil {
 		return "", err
 	}
@@ -1157,16 +1154,76 @@ func tenantScoped(profile *gentianov1alpha1.ComponentProfile) bool {
 	return false
 }
 
+// zoneDesktopHost is where a zone's desktop answers: the zone's own domain
+// for the platform tenant, console.<domain> for every other.
+func zoneDesktopHost(zone zoneNames) string {
+	if zone.domain == "" {
+		return ""
+	}
+	if zone.kernel {
+		return zone.domain
+	}
+	return consoleHost(zone.domain)
+}
+
+// componentFramers are the hosts that may put one of a component's pages in a
+// frame, besides the page's own: the desktop of the tenant the component
+// belongs to, which opens it in a window, and the component's own other
+// hosts, because a component may be several programs that embed one another
+// (a file store and the document editor it opens).
+//
+// Named, each of them, and never as a wildcard over the zone's domain. The
+// user tenant of a single-tenancy cluster is under the cluster's own domain,
+// beside the platform's desktop and the kernel's consoles, so a wildcard
+// there would name those too.
+//
+// The platform's desktop is not among a tenant's framers. It used to be, on
+// the argument that its tiles open a tenant's apps; platform administrators
+// do not open tenants' apps, and a desktop that may frame every tenant's
+// every page is a place from which all of them can be overlaid. The platform
+// tenant's own components are framed by the platform's desktop for the same
+// reason any tenant's are framed by its own: it is their zone's desktop.
+func componentFramers(zone edgeZone, comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile, host string) []string {
+	seen := map[string]bool{"": true, host: true}
+	var framers []string
+	add := func(h string) {
+		if !seen[h] {
+			seen[h] = true
+			framers = append(framers, h)
+		}
+	}
+	add(zoneDesktopHost(zone.zoneNames))
+	var own []string
+	if profile != nil {
+		for i := range profile.Spec.Expose {
+			e := &profile.Spec.Expose[i]
+			if e.Surface != gentianov1alpha1.SurfaceGateway {
+				continue
+			}
+			if e.Backend.Component != "" && e.Backend.Component != comp.Name {
+				continue
+			}
+			own = append(own, exposureHost(zone, comp, e))
+		}
+	}
+	sort.Strings(own)
+	for _, h := range own {
+		add(h)
+	}
+	return framers
+}
+
 // buildExposureRoute is one exposure as an HTTPRoute on the zone's Gateway.
 //
-// Every rule carries the same frame policy the kernel consoles carry: this
-// component may be embedded by a page on the kernel domain, which is where the
-// desktop lives, and by nothing else. Without it a component is embeddable by
-// any origin, which is the clickjacking exposure the kernel routes closed, and
-// the desktop opens components in frames, so the policy has to admit exactly
-// that and no more. It is not the component's to choose: a component that
-// answered X-Frame-Options: DENY would silently break its own tile.
-func buildExposureRoute(comp *gentianov1alpha1.Component, name, host string, zone edgeZone, e *gentianov1alpha1.ExposureSpec, authz routeAuthz, kernelDomain string) *gatewayv1.HTTPRoute {
+// Every rule carries a frame policy: the component may be embedded by the
+// hosts in framers -- its tenant's desktop and its own other hosts
+// (componentFramers) -- and by nothing else. Without one a component is
+// embeddable by any origin, which is the clickjacking exposure the kernel
+// routes closed, and the desktop opens components in frames, so the policy
+// has to admit exactly that and no more. It is not the component's to choose:
+// a component that answered X-Frame-Options: DENY would silently break its
+// own tile.
+func buildExposureRoute(comp *gentianov1alpha1.Component, name, host string, zone edgeZone, e *gentianov1alpha1.ExposureSpec, authz routeAuthz, kernelDomain string, framers []string) *gatewayv1.HTTPRoute {
 	parent := gatewayParentRef(AuthenticatedGatewayName)
 	ns := gatewayv1.Namespace(servicesNamespace)
 	parent.Namespace = &ns
@@ -1178,7 +1235,7 @@ func buildExposureRoute(comp *gentianov1alpha1.Component, name, host string, zon
 	}
 	var rules []gatewayv1.HTTPRouteRule
 	wholeHost := false
-	frame := kernelConsoleFrameFilters(kernelDomain)
+	frame := frameAncestorsFilters(framers)
 	for _, p := range paths {
 		rules = append(rules, kernelBackendRulePrefixNS(e.Backend.Service, comp.Namespace, e.Backend.Port, p, frame...))
 		wholeHost = wholeHost || p == "/"
@@ -1197,15 +1254,7 @@ func buildExposureRoute(comp *gentianov1alpha1.Component, name, host string, zon
 		bouncerRelationAnnotation: authz.relation,
 		bouncerObjectAnnotation:   authz.object,
 		bouncerForwardAnnotation:  fmt.Sprint(authz.forwardToken),
-		bouncerCookieAnnotation:   zone.cookie,
 		bouncerAuthModeAnnotation: mode,
-		// What sign-out needs: the zone's id token, which is the hint the
-		// realm ends a session on without asking, and where that realm ends
-		// one. Without them the edge drops its own cookies, the realm's
-		// session stands, and the next request is signed straight back in --
-		// a sign-out that reloads the page.
-		bouncerIDCookieAnnotation:   zone.idCookie,
-		bouncerEndSessionAnnotation: endSessionURL(kernelDomain, zone.realm),
 	}
 	// denyPaths is not a route rule. A gateway route matches by prefix, so
 	// the denied path is already inside the rule that serves the host, and

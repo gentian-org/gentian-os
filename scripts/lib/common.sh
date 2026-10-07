@@ -532,6 +532,10 @@ export ESO_CHART_VERSION
 ENVOY_GATEWAY_CHART_VERSION="${ENVOY_GATEWAY_CHART_VERSION:-$(gentian_pin envoy-gateway chart)}"
 ENVOY_GATEWAY_NAMESPACE="${ENVOY_GATEWAY_NAMESPACE:-$(ns_kernel edge)}"
 GENTIAN_GATEWAY_CONTROLLER_NAME="${GENTIAN_GATEWAY_CONTROLLER_NAME:-gateway.envoyproxy.io/gentian-gatewayclass-controller}"
+# The oldest Kubernetes minor this release installs on. It is the pinned Envoy
+# Gateway's: 1.9 is tested on 1.33 to 1.36, and nothing else the installer pulls
+# asks for more. Raise it with the pin that raises it.
+GENTIAN_MIN_KUBERNETES_MINOR=33
 
 usage() {
     cat <<'EOF'
@@ -1829,6 +1833,20 @@ check_prereqs() {
         missing=$((missing + 1))
     else
         success "cluster reachable (context: $(kubectl config current-context 2>/dev/null || echo unknown))"
+        # The cluster's own version, read from the API server. Managed
+        # clusters report a minor like "33+", so only the digits are compared.
+        local k8s_major k8s_minor
+        k8s_major="$(kubectl version -o json 2>/dev/null | jq -r '.serverVersion.major // empty' 2>/dev/null | tr -cd '0-9')"
+        k8s_minor="$(kubectl version -o json 2>/dev/null | jq -r '.serverVersion.minor // empty' 2>/dev/null | tr -cd '0-9')"
+        if [[ -z "${k8s_major}" || -z "${k8s_minor}" ]]; then
+            warn "Could not read the cluster's Kubernetes version; this release needs 1.${GENTIAN_MIN_KUBERNETES_MINOR} or newer."
+        elif (( k8s_major == 1 && k8s_minor < GENTIAN_MIN_KUBERNETES_MINOR )); then
+            error "Kubernetes ${k8s_major}.${k8s_minor} is older than this release supports: 1.${GENTIAN_MIN_KUBERNETES_MINOR} or newer is required."
+            error "  The edge (Envoy Gateway $(gentian_pin envoy-gateway chart)) is not tested on anything older."
+            missing=$((missing + 1))
+        else
+            success "Kubernetes ${k8s_major}.${k8s_minor} (1.${GENTIAN_MIN_KUBERNETES_MINOR} or newer required)"
+        fi
         # These two HEAL rather than check: they delete orphaned webhooks and
         # re-reconcile failed Releases. Preflight runs before the --dry-run gate,
         # so without this guard `--dry-run` would mutate the cluster — which is
@@ -1990,7 +2008,11 @@ check_prereqs() {
         # Check that the edge LoadBalancer service has an external IP.
         local lb_ip lb_label
         if [[ "${ROUTING_MODE:-gateway}" == "gateway" ]]; then
-            lb_label='app.kubernetes.io/name=gateway-helm'
+            # The data plane's Service, which Envoy Gateway labels with the
+            # GatewayClass it serves. Not app.kubernetes.io/name=gateway-helm:
+            # that is the controller's own Service, a ClusterIP that never has
+            # an external address, so looking there always reported none.
+            lb_label="gateway.envoyproxy.io/owning-gatewayclass=${GENTIAN_GATEWAY_CLASS_NAME:-gentian-envoy}"
             lb_ip=$(kubectl get svc -A -l "${lb_label}" \
                 -o jsonpath='{.items[0].status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)
         fi

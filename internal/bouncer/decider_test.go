@@ -16,7 +16,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"net/url"
 	"testing"
 	"time"
 
@@ -24,10 +23,22 @@ import (
 	"github.com/gentian-org/gentian-os/internal/director/authz"
 )
 
-type fakeVerifier struct{ tokens map[string]*authn.Identity }
+// fakeVerifier knows two kinds of token and keeps them apart, as the real one
+// does: an access token is not an ID token and the reverse.
+type fakeVerifier struct {
+	tokens   map[string]*authn.Identity
+	idTokens map[string]map[string]*authn.Identity // client -> raw -> identity
+}
 
 func (f fakeVerifier) Verify(_ context.Context, raw string) (*authn.Identity, error) {
 	if id, ok := f.tokens[raw]; ok {
+		return id, nil
+	}
+	return nil, authn.ErrUnauthenticated
+}
+
+func (f fakeVerifier) VerifyIDToken(_ context.Context, raw, client string) (*authn.Identity, error) {
+	if id, ok := f.idTokens[client][raw]; ok {
 		return id, nil
 	}
 	return nil, authn.ErrUnauthenticated
@@ -58,45 +69,95 @@ func (f *fakeStore) Changes(_ context.Context, _, token string) ([]authz.Change,
 	return nil, token, nil
 }
 
+const kernelClient = "gentian-edge-kernel"
+
 func table() *Table {
 	return &Table{Routes: []Route{
-		{Host: "argocd.k.example", Relation: "can_configure", Object: "cluster:c1", AccessTokenCookie: "at", AuthMode: AuthModeOIDC},
-		{Host: "console.k.example", Relation: "can_enter", Object: "tenant:platform", AccessTokenCookie: "at", ForwardToken: true, AuthMode: AuthModeOIDC},
-		{Host: "id.k.example", Relation: "can_configure", Object: "cluster:c1", AccessTokenCookie: "at", IDTokenCookie: "idt", EndSessionURL: "https://id.k.example/auth/realms/kernel/protocol/openid-connect/logout", KeepClientToken: true, AuthMode: AuthModeOIDC},
+		{Host: "argocd.k.example", Relation: "can_configure", Object: "cluster:c1", AuthMode: AuthModeOIDC},
+		{Host: "console.k.example", Relation: "can_enter", Object: "tenant:platform", ForwardToken: true, AuthMode: AuthModeOIDC},
+		{Host: "id.k.example", Relation: "can_configure", Object: "cluster:c1", KeepClientToken: true, IDTokenAudience: kernelClient, AuthMode: AuthModeOIDC},
 		{Host: "api.k.example", Relation: "can_view", Object: "tenant:platform", AuthMode: AuthModeBearer},
-		{Host: "shop.k.example", Relation: "can_use", Object: "app:acme/odoo", AccessTokenCookie: "at", AuthMode: AuthModeOIDC,
+		{Host: "shop.k.example", Relation: "can_use", Object: "app:acme/odoo", AuthMode: AuthModeOIDC,
 			DenyPaths: []string{"/web/database", "/admin"}},
 	}}
 }
 
 func decider(store *fakeStore) *Decider {
+	root := &authn.Identity{Subject: "root", Realm: "kernel", SessionID: "s1", Email: "root@k.example", Name: "Root"}
 	return New(Options{
-		Verifier: fakeVerifier{tokens: map[string]*authn.Identity{
-			"root-token": {Subject: "root", Realm: "kernel", SessionID: "s1", Email: "root@k.example", Name: "Root"},
-			"mia-token":  {Subject: "mia", Realm: "kernel", SessionID: "s2"},
-		}},
+		Verifier: fakeVerifier{
+			tokens: map[string]*authn.Identity{
+				"root-token": root,
+				// The token the gateway holds after it refreshed root's
+				// session: same person, same session, a new token.
+				"root-token-refreshed": root,
+				"mia-token":            {Subject: "mia", Realm: "kernel", SessionID: "s2"},
+				"no-session-token":     {Subject: "root", Realm: "kernel"},
+			},
+			idTokens: map[string]map[string]*authn.Identity{kernelClient: {
+				"root-id-token": root,
+				"mia-id-token":  {Subject: "mia", Realm: "kernel", SessionID: "s2"},
+			}},
+		},
 		Store: store, Table: table(), CacheTTL: time.Minute,
 		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
 }
 
+func removes(dec Decision, header string) bool {
+	for _, h := range dec.RemoveHeaders {
+		if h == header {
+			return true
+		}
+	}
+	return false
+}
+
+// A signed-in request: the gateway's OAuth2 filter validated the session and
+// put its access token in the Authorization header. The route's relation
+// decides, and the backend gets identity headers in place of the token.
 func TestTheRouteRelationDecidesAndIdentityHeadersReplaceTheToken(t *testing.T) {
 	store := &fakeStore{allow: map[string]bool{"user:root|can_configure|cluster:c1": true}}
 	d := decider(store)
-	dec := d.Decide(context.Background(), Request{Host: "argocd.k.example", Cookies: map[string]string{"at": "root-token"}})
+	dec := d.Decide(context.Background(), Request{Host: "argocd.k.example", Authorization: "Bearer root-token"})
 	if !dec.Allow {
 		t.Fatalf("denied: %s", dec.Reason)
 	}
 	if dec.Headers[HeaderSubject] != "root" || dec.Headers[HeaderEmail] != "root@k.example" {
 		t.Fatalf("headers = %v", dec.Headers)
 	}
-	if len(dec.RemoveHeaders) != 1 || dec.RemoveHeaders[0] != "authorization" {
+	if !removes(dec, "authorization") {
 		t.Fatalf("a route without forwardToken must strip the bearer; got %v", dec.RemoveHeaders)
 	}
 	// mia holds no relation: refused, whatever her token says.
-	dec = d.Decide(context.Background(), Request{Host: "argocd.k.example", Cookies: map[string]string{"at": "mia-token"}})
+	dec = d.Decide(context.Background(), Request{Host: "argocd.k.example", Authorization: "Bearer mia-token"})
 	if dec.Allow || dec.Status != http.StatusForbidden {
 		t.Fatalf("mia: allow=%v status=%d", dec.Allow, dec.Status)
+	}
+}
+
+// Every identity header is set on every allowed request, so one a client sent
+// is replaced even where the token has nothing to put in it, and no request
+// reaches a backend any other way than through an allow that sets them.
+func TestIdentityHeadersAreAlwaysOursNeverTheClients(t *testing.T) {
+	store := &fakeStore{allow: map[string]bool{"user:mia|can_configure|cluster:c1": true}}
+	dec := decider(store).Decide(context.Background(), Request{Host: "argocd.k.example", Authorization: "Bearer mia-token"})
+	if !dec.Allow {
+		t.Fatalf("denied: %s", dec.Reason)
+	}
+	// mia's token names no email and no display name.
+	for _, h := range []string{HeaderSubject, HeaderRealm, HeaderSession, HeaderEmail, HeaderName} {
+		if _, set := dec.Headers[h]; !set {
+			t.Fatalf("%s is not set, so a client-sent one would reach the backend: %v", h, dec.Headers)
+		}
+	}
+	if dec.Headers[HeaderEmail] != "" || dec.Headers[HeaderName] != "" {
+		t.Fatalf("headers = %v", dec.Headers)
+	}
+	// And a refusal sets nothing and reaches nothing.
+	dec = decider(&fakeStore{}).Decide(context.Background(), Request{Host: "argocd.k.example", Authorization: "Bearer mia-token"})
+	if dec.Allow || len(dec.Headers) != 0 {
+		t.Fatalf("a refusal carried headers: %+v", dec)
 	}
 }
 
@@ -106,199 +167,203 @@ func TestTheDesktopRouteKeepsTheToken(t *testing.T) {
 	if !dec.Allow {
 		t.Fatalf("denied: %s", dec.Reason)
 	}
-	if len(dec.RemoveHeaders) != 0 {
+	if removes(dec, "authorization") {
 		t.Fatalf("forwardToken route must keep the bearer; removes %v", dec.RemoveHeaders)
 	}
 }
 
-// The Keycloak console is authorised from its zone cookie like anything else,
-// but the bearer it then sends is its own. Neither flag means the same thing:
-// this route is not forwarded the edge's token, and it must still not be
-// stripped of the one it has.
-func TestAKeepClientTokenRouteIsNotStripped(t *testing.T) {
+// The weakness this order closes. A session whose access token has run out
+// used to pass this service as "no session yet", be refreshed by the filter
+// behind it and go on to the backend unchecked. The filter refreshes first
+// now, so what arrives is the new token and it is checked like any other; and
+// a token that has run out, should one ever arrive, is refused and never
+// waved through.
+func TestTheRequestAfterARefreshIsCheckedOnItsNewToken(t *testing.T) {
 	store := &fakeStore{allow: map[string]bool{"user:root|can_configure|cluster:c1": true}}
-	dec := decider(store).Decide(context.Background(), Request{
-		Host:    "id.k.example",
-		Cookies: map[string]string{"at": "root-token"},
-	})
-	if !dec.Allow {
-		t.Fatalf("denied: %s", dec.Reason)
+	d := decider(store)
+	dec := d.Decide(context.Background(), Request{Host: "argocd.k.example", Authorization: "Bearer root-token-refreshed"})
+	if !dec.Allow || dec.Headers[HeaderSubject] != "root" {
+		t.Fatalf("the refreshed request: %+v", dec)
 	}
-	if len(dec.RemoveHeaders) != 0 {
-		t.Fatalf("the console's own bearer was stripped; removes %v", dec.RemoveHeaders)
+	if store.checks != 1 {
+		t.Fatalf("the relation was asked %d times on the refreshed request, want 1", store.checks)
 	}
-}
-
-// Signing out should not take the person through Keycloak asking whether they
-// meant it. That page appears for any logout with no id_token_hint, and the
-// hint is in the zone's own cookie, so the edge answers with it.
-func TestSignOutCarriesTheHintSoKeycloakDoesNotAsk(t *testing.T) {
-	dec := decider(&fakeStore{}).Decide(context.Background(), Request{
-		Host:    "id.k.example",
-		Path:    SignOutPath,
-		Cookies: map[string]string{"at": "root-token", "idt": "the-id-token"},
-	})
-	if dec.Allow || dec.Status != http.StatusFound {
-		t.Fatalf("allow=%v status=%d", dec.Allow, dec.Status)
+	// The same, for someone whose right is gone: the refresh succeeded at
+	// the realm and the request is still refused here.
+	dec = d.Decide(context.Background(), Request{Host: "argocd.k.example", Authorization: "Bearer mia-token"})
+	if dec.Allow || dec.Status != http.StatusForbidden {
+		t.Fatalf("a refreshed session without the relation: %+v", dec)
 	}
-	u, err := url.Parse(dec.Redirect)
-	if err != nil {
-		t.Fatalf("redirect is not a URL: %q", dec.Redirect)
-	}
-	if u.Host != "id.k.example" || u.Path != "/auth/realms/kernel/protocol/openid-connect/logout" {
-		t.Fatalf("redirect = %s", dec.Redirect)
-	}
-	q := u.Query()
-	if q.Get("id_token_hint") != "the-id-token" {
-		t.Errorf("no hint: %s", dec.Redirect)
-	}
-	// And back to the edge's own logout afterwards, so the zone's cookies go
-	// too. The realm session first, then the edge's, because the other order
-	// throws the hint away before it has been used.
-	if q.Get("post_logout_redirect_uri") != "https://id.k.example/oauth2/logout" {
-		t.Errorf("post-logout target = %q", q.Get("post_logout_redirect_uri"))
+	// "expired-token" is unknown to the verifier, as an expired one is.
+	dec = d.Decide(context.Background(), Request{Host: "argocd.k.example", Authorization: "Bearer expired-token"})
+	if dec.Allow || dec.Status != http.StatusUnauthorized {
+		t.Fatalf("an expired token on an oidc route must be refused, not passed on: %+v", dec)
 	}
 }
 
-// A session the graph refuses everywhere must still be able to end itself.
-// Someone whose account was just deleted is exactly the person who needs to
-// sign out, and asking the store first would refuse them.
-func TestSignOutAsksTheStoreNothing(t *testing.T) {
-	// A store that would deny everything, and errors if consulted.
-	store := &fakeStore{allow: map[string]bool{}}
-	dec := decider(store).Decide(context.Background(), Request{
-		Host:    "argocd.k.example",
-		Path:    SignOutPath,
-		Cookies: map[string]string{"at": "mia-token", "idt": "mias-id-token"},
-	})
-	if dec.Status != http.StatusFound || dec.Redirect == "" {
-		t.Fatalf("a refused session could not sign out: %+v", dec)
-	}
-}
-
-// With no hint there is nothing to gain by going to the realm, so it clears
-// the edge's cookies and stops there, which is what it did before.
-func TestSignOutWithoutAHintFallsBackToTheEdgesOwnLogout(t *testing.T) {
-	dec := decider(&fakeStore{}).Decide(context.Background(), Request{
-		Host:    "id.k.example",
-		Path:    SignOutPath,
-		Cookies: map[string]string{"at": "root-token"},
-	})
-	if dec.Redirect != "https://id.k.example/oauth2/logout" {
-		t.Fatalf("redirect = %q", dec.Redirect)
-	}
-}
-
-// The Host header carries a port on a non-default port, and a
-// post_logout_redirect_uri carrying one will not match what was registered.
-func TestSignOutDropsThePortFromTheReturnAddress(t *testing.T) {
-	dec := decider(&fakeStore{}).Decide(context.Background(), Request{
-		Host:    "id.k.example:8443",
-		Path:    SignOutPath,
-		Cookies: map[string]string{"idt": "the-id-token"},
-	})
-	u, _ := url.Parse(dec.Redirect)
-	if got := u.Query().Get("post_logout_redirect_uri"); got != "https://id.k.example/oauth2/logout" {
-		t.Fatalf("post-logout target = %q", got)
-	}
-}
-
-// The session on an oidc route is the zone's cookie. A bearer in the header
-// belongs to the backend, and judging it as the session is how the Keycloak
-// console broke: its page holds a token minted for realm-management, the edge
-// expects one minted for the director, so the console's own token failed
-// verification, the request was treated as having no session, and the header
-// was stripped before it reached Keycloak.
-func TestAPagesOwnBearerIsNotMistakenForTheSession(t *testing.T) {
-	store := &fakeStore{allow: map[string]bool{"user:root|can_configure|cluster:c1": true}}
-	dec := decider(store).Decide(context.Background(), Request{
-		Host:    "id.k.example",
-		Cookies: map[string]string{"at": "root-token"},
-		// A token this edge cannot verify, because it was not minted for it.
-		Authorization: "Bearer a-token-for-a-different-audience",
-	})
-	if !dec.Allow {
-		t.Fatalf("the zone cookie should have authorised this: %s", dec.Reason)
-	}
-	if !dec.Identified {
-		t.Fatal("the session came from the cookie, so the caller is identified")
-	}
-	for _, h := range dec.RemoveHeaders {
-		if h == "authorization" {
-			t.Fatal("the page's own bearer was stripped; the backend gets nothing to authenticate")
+// Nothing reaches a backend on a session route without a token verified here.
+// Each of these is a request the OAuth2 filter would not have let through
+// with the route configured as the operator writes it; if one arrives anyway
+// -- the filters in the wrong order, a pass-through somebody configured by
+// hand -- the answer is no.
+func TestASessionRouteWithoutAVerifiedTokenIsRefused(t *testing.T) {
+	// root holds every relation asked below, so each refusal is the token's.
+	store := &fakeStore{allow: map[string]bool{
+		"user:root|can_configure|cluster:c1": true,
+		"user:root|can_use|app:acme/odoo":    true,
+	}}
+	d := decider(store)
+	for name, req := range map[string]Request{
+		"no token":                      {Host: "argocd.k.example", Path: "/"},
+		"a forged bearer":               {Host: "argocd.k.example", Path: "/", Authorization: "Bearer forged"},
+		"a token of another scheme":     {Host: "argocd.k.example", Path: "/", Authorization: "Basic cm9vdDpyb290"},
+		"an ID token as the bearer":     {Host: "argocd.k.example", Path: "/", Authorization: "Bearer root-id-token"},
+		"an ID token header, no bearer": {Host: "argocd.k.example", Path: "/", IDToken: "root-id-token"},
+		"a token naming no session":     {Host: "argocd.k.example", Path: "/", Authorization: "Bearer no-session-token"},
+		// The filter answers these two itself. Arriving here means it did
+		// not, and they are then paths like any other.
+		"the callback":            {Host: "argocd.k.example", Path: "/oauth2/callback?code=c&state=s"},
+		"the logout path":         {Host: "argocd.k.example", Path: LogoutPath},
+		"another path under it":   {Host: "argocd.k.example", Path: "/oauth2/anything"},
+		"a preflight":             {Host: "shop.k.example", Path: "/web"},
+		"a health path":           {Host: "shop.k.example", Path: "/healthz"},
+		"a fetch with no session": {Host: "shop.k.example", Path: "/web/dataset/call"},
+	} {
+		dec := d.Decide(context.Background(), req)
+		if dec.Allow {
+			t.Errorf("%s was allowed on a session route: %+v", name, dec)
+			continue
+		}
+		if dec.Status != http.StatusUnauthorized || dec.Redirect != "" || len(dec.Headers) != 0 {
+			t.Errorf("%s: %+v, want a bare 401", name, dec)
 		}
 	}
-	if dec.Headers[HeaderSubject] != "root" {
-		t.Fatalf("identity headers come from the session, not the page's token: %v", dec.Headers)
+	if store.checks != 0 {
+		t.Fatalf("the store was asked %d times about requests with no verified token", store.checks)
 	}
 }
 
-// And with no session at all, a keepClientToken route still must not have its
-// caller's bearer removed: the backend may be able to authenticate it even
-// when the edge cannot.
-func TestAKeepClientTokenRouteWithNoSessionKeepsTheHeader(t *testing.T) {
-	dec := decider(&fakeStore{}).Decide(context.Background(), Request{
-		Host:          "id.k.example",
-		Authorization: "Bearer the-pages-own-token",
-	})
-	if !dec.Allow || dec.Identified {
-		t.Fatalf("an oidc route with no session passes through unidentified: %+v", dec)
-	}
-	for _, h := range dec.RemoveHeaders {
-		if h == "authorization" {
-			t.Fatal("the caller's bearer was stripped")
-		}
-	}
-	// The identity headers still go, or a backend that trusts them trusts a
-	// forgery.
-	if len(dec.RemoveHeaders) != len(identityHeaders) {
-		t.Fatalf("identity headers must still be removed: %v", dec.RemoveHeaders)
-	}
-}
-
-// A route that does NOT keep the client token still has it stripped when there
-// is no session, which is what keeps the edge's token off every other backend.
-func TestAnOrdinaryRouteWithNoSessionStillStripsTheHeader(t *testing.T) {
-	dec := decider(&fakeStore{}).Decide(context.Background(), Request{
-		Host:          "argocd.k.example",
-		Authorization: "Bearer something-unverifiable",
-	})
-	stripped := false
-	for _, h := range dec.RemoveHeaders {
-		if h == "authorization" {
-			stripped = true
-		}
-	}
-	if !stripped {
-		t.Fatalf("removes %v", dec.RemoveHeaders)
-	}
-}
-
-func TestWhatHasNoRouteClassOrNoTokenIsRefused(t *testing.T) {
-	d := decider(&fakeStore{})
+// What has no route class is refused, and a bearer route is what it was: the
+// caller's own token, verified, or a 401.
+func TestWhatHasNoRouteClassIsRefusedAndABearerRouteIsUnchanged(t *testing.T) {
+	store := &fakeStore{allow: map[string]bool{"user:root|can_view|tenant:platform": true}}
+	d := decider(store)
 	if dec := d.Decide(context.Background(), Request{Host: "nothing.k.example", Authorization: "Bearer root-token"}); dec.Allow || dec.Status != http.StatusForbidden {
 		t.Fatalf("no class: %+v", dec)
 	}
-	// On an oidc route a request with no valid session is the OIDC filter's,
-	// which runs behind the bouncer: it passes, with no identity and no bearer.
-	for name, req := range map[string]Request{
-		"no token": {Host: "argocd.k.example"},
-		"forged":   {Host: "argocd.k.example", Authorization: "Bearer forged"},
-	} {
-		dec := d.Decide(context.Background(), req)
-		if !dec.Allow || dec.Identified {
-			t.Fatalf("%s on an oidc route: %+v", name, dec)
-		}
-		if len(dec.Headers) != 0 || len(dec.RemoveHeaders) < 2 || dec.RemoveHeaders[0] != "authorization" {
-			t.Fatalf("%s must carry no identity: %+v", name, dec)
-		}
-	}
-	// On a bearer route the same request is refused here.
 	if dec := d.Decide(context.Background(), Request{Host: "api.k.example"}); dec.Allow || dec.Status != http.StatusUnauthorized {
 		t.Fatalf("no token on a bearer route: %+v", dec)
 	}
 	if dec := d.Decide(context.Background(), Request{Host: "api.k.example", Authorization: "Bearer forged"}); dec.Allow || dec.Status != http.StatusUnauthorized {
 		t.Fatalf("forged on a bearer route: %+v", dec)
+	}
+	// An ID token header means nothing on a bearer route.
+	if dec := d.Decide(context.Background(), Request{Host: "api.k.example", IDToken: "root-id-token"}); dec.Allow {
+		t.Fatalf("an ID token header opened a bearer route: %+v", dec)
+	}
+	dec := d.Decide(context.Background(), Request{Host: "api.k.example", Path: "/v1/things", Authorization: "Bearer root-token"})
+	if !dec.Allow || dec.Headers[HeaderSubject] != "root" || !removes(dec, "authorization") {
+		t.Fatalf("a valid bearer on a bearer route: %+v", dec)
+	}
+	// The old sign-out alias is a session route's. Here it is a path.
+	if dec := d.Decide(context.Background(), Request{Host: "api.k.example", Path: SignOutPath}); dec.Redirect != "" || dec.Status != http.StatusUnauthorized {
+		t.Fatalf("sign-out on a bearer route: %+v", dec)
+	}
+}
+
+// The Keycloak console's Authorization header is the page's own: a token it
+// minted for the Admin REST API. This service must neither judge the session
+// by it nor take it away. The session is the ID token the gateway hands over.
+func TestAKeepClientTokenRouteIsJudgedByTheSessionAndNotByThePagesBearer(t *testing.T) {
+	store := &fakeStore{allow: map[string]bool{"user:root|can_configure|cluster:c1": true}}
+	d := decider(store)
+	dec := d.Decide(context.Background(), Request{
+		Host: "id.k.example", Path: "/auth/admin/realms",
+		Authorization: "Bearer a-token-for-realm-management",
+		IDToken:       "root-id-token",
+	})
+	if !dec.Allow || dec.Headers[HeaderSubject] != "root" {
+		t.Fatalf("denied: %+v", dec)
+	}
+	if removes(dec, "authorization") {
+		t.Fatalf("the console's own bearer was stripped; removes %v", dec.RemoveHeaders)
+	}
+	if !removes(dec, HeaderIDToken) {
+		t.Fatalf("the ID token header went on to the backend; removes %v", dec.RemoveHeaders)
+	}
+	// The relation is asked of the session's person, not the bearer's.
+	dec = d.Decide(context.Background(), Request{
+		Host: "id.k.example", Path: "/auth/admin/realms",
+		Authorization: "Bearer root-token", IDToken: "mia-id-token",
+	})
+	if dec.Allow || dec.Status != http.StatusForbidden {
+		t.Fatalf("mia's session with root's bearer: %+v", dec)
+	}
+}
+
+// And such a route has no other way in. A bearer is not a session there,
+// whoever's it is; an access token is not an ID token; and a route that names
+// no client to hold the ID token against refuses everybody.
+func TestAKeepClientTokenRouteTakesNothingButTheSessionsIDToken(t *testing.T) {
+	store := &fakeStore{allow: map[string]bool{"user:root|can_configure|cluster:c1": true}}
+	d := decider(store)
+	for name, req := range map[string]Request{
+		"no session":                    {Host: "id.k.example", Path: "/auth/admin/"},
+		"a valid bearer and no session": {Host: "id.k.example", Path: "/auth/admin/", Authorization: "Bearer root-token"},
+		"an access token as the ID":     {Host: "id.k.example", Path: "/auth/admin/", IDToken: "root-token"},
+		"a forged ID token":             {Host: "id.k.example", Path: "/auth/admin/", IDToken: "forged"},
+	} {
+		if dec := d.Decide(context.Background(), req); dec.Allow || dec.Status != http.StatusUnauthorized {
+			t.Errorf("%s: %+v, want a 401", name, dec)
+		}
+	}
+	tbl := table()
+	for i := range tbl.Routes {
+		tbl.Routes[i].IDTokenAudience = ""
+	}
+	d.SetTable(tbl)
+	if dec := d.Decide(context.Background(), Request{Host: "id.k.example", IDToken: "root-id-token"}); dec.Allow {
+		t.Fatalf("a route with no client to hold the token against let someone in: %+v", dec)
+	}
+}
+
+// The ID token header is the gateway's to set and only where the route says
+// so. Elsewhere a client may send one; it proves nothing and goes no further.
+func TestAnIDTokenHeaderIsNeverPassedToABackend(t *testing.T) {
+	store := &fakeStore{allow: map[string]bool{"user:root|can_enter|tenant:platform": true}}
+	dec := decider(store).Decide(context.Background(), Request{
+		Host: "console.k.example", Authorization: "Bearer root-token", IDToken: "anything-a-client-sent",
+	})
+	if !dec.Allow || !removes(dec, HeaderIDToken) {
+		t.Fatalf("%+v", dec)
+	}
+}
+
+// The old sign-out path is an alias for the gateway's logout, which ends the
+// edge's session and the realm's. It asks the store nothing and needs no
+// token: a session that is refused everywhere must still be able to end.
+func TestTheOldSignOutPathIsSentToTheGatewaysLogout(t *testing.T) {
+	store := &fakeStore{}
+	d := decider(store)
+	for name, req := range map[string]Request{
+		"signed in":            {Host: "id.k.example", Path: SignOutPath, IDToken: "root-id-token"},
+		"refused everywhere":   {Host: "argocd.k.example", Path: SignOutPath, Authorization: "Bearer mia-token"},
+		"no token at all":      {Host: "argocd.k.example", Path: SignOutPath},
+		"with a query":         {Host: "argocd.k.example", Path: SignOutPath + "?from=desktop"},
+		"behind a deny rule":   {Host: "shop.k.example", Path: SignOutPath},
+		"on a forwarded route": {Host: "console.k.example:443", Path: SignOutPath},
+	} {
+		dec := d.Decide(context.Background(), req)
+		if dec.Allow || dec.Status != http.StatusFound || dec.Redirect != LogoutPath {
+			t.Errorf("%s: %+v, want a 302 to %s", name, dec, LogoutPath)
+		}
+	}
+	if store.checks != 0 {
+		t.Fatalf("signing out asked the store %d times", store.checks)
+	}
+	// Only that path. One that merely starts with it is a path like any other.
+	if dec := d.Decide(context.Background(), Request{Host: "argocd.k.example", Path: SignOutPath + "/x"}); dec.Redirect != "" {
+		t.Fatalf("%+v", dec)
 	}
 }
 
@@ -358,54 +423,45 @@ func TestATableRefusesWhatItCannotDecide(t *testing.T) {
 	}
 }
 
-// Signing out has to survive its own success. Keycloak's back-channel logout
-// records the session as revoked before the browser gets back to the path
-// that clears the Gateway's cookies, so a revoked session must still reach
-// /oauth2/logout. The callback is the same shape from the other side: it
-// completes a sign-in that has no session yet.
-func TestTheEdgesOwnPathsAreNotOursToRefuse(t *testing.T) {
-	// A store that allows nothing and a revoked session: neither may matter.
-	store := &fakeStore{allow: map[string]bool{"user:root|revoked|session:s1": true}}
-	d := decider(store)
-	for _, path := range []string{"/oauth2/logout", "/oauth2/callback"} {
-		dec := d.Decide(context.Background(), Request{
-			Host: "console.k.example", Path: path,
-			Cookies: map[string]string{"at": "root-token"},
-		})
-		if !dec.Allow {
-			t.Errorf("%s was refused: %s", path, dec.Reason)
-		}
-		if dec.Headers[HeaderSubject] != "" {
-			t.Errorf("%s was given an identity this service did not establish", path)
-		}
+// A table written before the cookies stopped being read still loads: what it
+// says about them is ignored, and nothing in it can make this service read
+// one.
+func TestATableThatStillNamesCookiesLoadsAndTheyMeanNothing(t *testing.T) {
+	tbl, err := ParseTable([]byte(`routes:
+- host: argocd.k.example
+  relation: can_configure
+  object: cluster:c1
+  authMode: oidc
+  accessTokenCookie: gentian-kernel-access
+  idTokenCookie: gentian-kernel-id
+  endSessionURL: https://id.k.example/auth/realms/kernel/protocol/openid-connect/logout
+`))
+	if err != nil {
+		t.Fatal(err)
 	}
-	// The same session on an ordinary path is still refused, or the exception
-	// would be a hole rather than a door.
-	dec := d.Decide(context.Background(), Request{
-		Host: "console.k.example", Path: "/desktop",
-		Cookies: map[string]string{"at": "root-token"},
-	})
-	if dec.Allow {
-		t.Error("a revoked session reached the app itself")
+	d := decider(&fakeStore{allow: map[string]bool{"user:root|can_configure|cluster:c1": true}})
+	d.SetTable(tbl)
+	if dec := d.Decide(context.Background(), Request{Host: "argocd.k.example"}); dec.Allow {
+		t.Fatalf("%+v", dec)
 	}
 }
 
-// A person refused on a page needs a way out, because the way out is behind
-// the same refusal: a session naming an account this cluster no longer knows
-// is denied everywhere, including the desktop they would sign out from.
+// A refusal on an oidc route is read by a person, so it carries the page that
+// names the way out; on a bearer route it is a program's and stays a status.
 func TestARefusedBrowserIsToldHowToLeave(t *testing.T) {
 	t.Parallel()
 	store := &fakeStore{allow: map[string]bool{}}
 	d := decider(store)
-	// An oidc route: a person followed a link here.
-	dec := d.Decide(context.Background(), Request{
-		Host: "argocd.k.example", Path: "/", Cookies: map[string]string{"at": "mia-token"},
-	})
-	if dec.Allow || !dec.Browser {
-		t.Fatalf("a refused page must be marked for a browser: allow=%v browser=%v", dec.Allow, dec.Browser)
+	for name, req := range map[string]Request{
+		"no relation":   {Host: "argocd.k.example", Path: "/", Authorization: "Bearer mia-token"},
+		"token refused": {Host: "argocd.k.example", Path: "/", Authorization: "Bearer forged"},
+	} {
+		if dec := d.Decide(context.Background(), req); dec.Allow || !dec.Browser {
+			t.Fatalf("%s: a refused page must be marked for a browser: allow=%v browser=%v", name, dec.Allow, dec.Browser)
+		}
 	}
 	// A bearer route is a program's: it gets the status and nothing else.
-	dec = d.Decide(context.Background(), Request{
+	dec := d.Decide(context.Background(), Request{
 		Host: "api.k.example", Path: "/v1/things", Authorization: "Bearer mia-token",
 	})
 	if dec.Allow || dec.Browser {
@@ -423,7 +479,7 @@ func TestADeniedPathIsRefusedWhoeverIsAsking(t *testing.T) {
 	d := decider(store)
 	allowed := func(path string) Decision {
 		return d.Decide(context.Background(), Request{
-			Host: "shop.k.example", Path: path, Cookies: map[string]string{"at": "root-token"},
+			Host: "shop.k.example", Path: path, Authorization: "Bearer root-token",
 		})
 	}
 	// root holds the relation, so every refusal below is the deny rule.
@@ -445,20 +501,6 @@ func TestADeniedPathIsRefusedWhoeverIsAsking(t *testing.T) {
 	// A query string is not part of the path and must not defeat the rule.
 	if dec := allowed("/admin?x=1"); dec.Allow {
 		t.Fatal("a query string got past the deny rule")
-	}
-}
-
-// Signing in has to keep working behind a deny rule, so the edge's own
-// endpoints are answered before it.
-func TestADenyRuleDoesNotRefuseTheSignInItSitsBehind(t *testing.T) {
-	d := decider(&fakeStore{})
-	// The callback is allowed outright; sign-out answers its own redirect.
-	// Neither may become the deny rule's 403.
-	if dec := d.Decide(context.Background(), Request{Host: "shop.k.example", Path: "/oauth2/callback"}); !dec.Allow {
-		t.Fatalf("the callback was refused behind a deny rule: %s", dec.Reason)
-	}
-	if dec := d.Decide(context.Background(), Request{Host: "shop.k.example", Path: SignOutPath}); dec.Status == http.StatusForbidden {
-		t.Fatalf("signing out was refused behind a deny rule: %s", dec.Reason)
 	}
 }
 
