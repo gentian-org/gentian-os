@@ -334,3 +334,35 @@ func createIfMissing(ctx context.Context, c client.Client, obj client.Object) {
 		_ = c.Create(ctx, obj)
 	}
 }
+
+// startNamespaceFinalizer stands in for the namespace controller, which
+// envtest does not run: a namespace that has been deleted stays Terminating
+// for ever here, because nothing removes the "kubernetes" finalizer from its
+// spec. A tenant's deletion waits for its namespace to be gone, so the suite
+// finishes the namespaces the way the real controller would once they are
+// empty.
+func startNamespaceFinalizer(ctx context.Context, c client.Client) {
+	go func() {
+		ticker := time.NewTicker(200 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				list := &corev1.NamespaceList{}
+				if err := c.List(ctx, list); err != nil {
+					continue
+				}
+				for i := range list.Items {
+					ns := &list.Items[i]
+					if ns.DeletionTimestamp == nil || len(ns.Spec.Finalizers) == 0 {
+						continue
+					}
+					ns.Spec.Finalizers = nil
+					_ = c.SubResource("finalize").Update(ctx, ns)
+				}
+			}
+		}
+	}()
+}

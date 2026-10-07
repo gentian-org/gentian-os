@@ -281,8 +281,7 @@ func (r *TenantReconciler) deleteIdentity(ctx context.Context, tenant *gentianov
 					provNames = appendUniqueStrings(provNames, clientJobName(tenant.Name, app))
 				}
 			}
-			r.deleteProvisioningJobs(ctx, provNames...)
-			return nil
+			return r.deleteProvisioningJobs(ctx, provNames...)
 		}
 		if jobIsFailed(existing) {
 			// The realm was not deleted, or not disabled. Said, and the

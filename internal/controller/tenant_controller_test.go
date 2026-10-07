@@ -331,6 +331,7 @@ func TestMain(m *testing.M) {
 	ctx, cancel := context.WithCancel(context.Background())
 	startXTenantShellSimulator(ctx, testClient)
 	startTenantProvisioningJobSimulator(ctx, testClient)
+	startNamespaceFinalizer(ctx, testClient)
 	go func() { _ = mgr.Start(ctx) }()
 
 	// Stand in for Crossplane and provider-keycloak, which do not run here.
@@ -919,11 +920,12 @@ func TestTenantReconciler_DeleteDeleteRemovesNamespace(t *testing.T) {
 		return err != nil
 	})
 
-	// Namespace should be terminating or gone
+	// The namespace is gone, not merely terminating: the Tenant's finalizer
+	// comes off only once it is, because every volume of the tenant is in it.
 	ns := &corev1.Namespace{}
 	err := testClient.Get(context.Background(), types.NamespacedName{Name: "tenant-destroyer"}, ns)
-	if err == nil && ns.DeletionTimestamp == nil {
-		t.Error("namespace should be deleted or terminating after Delete policy")
+	if err == nil {
+		t.Errorf("the tenant is gone while its namespace is still there (deletionTimestamp %v)", ns.DeletionTimestamp)
 	}
 }
 

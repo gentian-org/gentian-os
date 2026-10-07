@@ -421,10 +421,38 @@ func litellmKeyExists(ctx context.Context, masterKey, virtualKey string) (bool, 
 	}
 }
 
-// deleteAppDeployment is a no-op under C1: App claims are owned by the XTenant
-// Composition and deleted via deleteXTenant cascade.
-func (r *TenantReconciler) deleteAppDeployment(_ context.Context, _ *gentianov1alpha1.Tenant) error {
-	return nil
+// deleteAppDeployment removes the tenant's workloads: every Component in its
+// namespace, and with each the App claim and the Helm release it owns. It
+// reports errDeleteJobPending until none is left.
+//
+// This was a no-op that returned nil, from when the tenant's Composition
+// owned the App claims. Components own them now, and nothing here removed a
+// Component: they went when the namespace was deleted, or by garbage
+// collection after the Tenant was gone -- after the stores, that is, so a
+// tenant's apps were still running while their databases were dropped under
+// them, and with deletionPolicy Retain they kept running until the Tenant
+// object had disappeared. The workloads go first now, which is where the
+// teardown order has them, and the deletion does not move on to the stores
+// while a release is still being uninstalled: a Component is not gone before
+// its release is (its finalizer sees to that).
+func (r *TenantReconciler) deleteAppDeployment(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
+	components := &gentianov1alpha1.ComponentList{}
+	if err := r.List(ctx, components, client.InNamespace(tenantNamespaceName(tenant))); err != nil {
+		return fmt.Errorf("list the components of tenant %s: %w", tenant.Name, err)
+	}
+	if len(components.Items) == 0 {
+		return nil
+	}
+	for i := range components.Items {
+		comp := &components.Items[i]
+		if comp.DeletionTimestamp != nil {
+			continue
+		}
+		if err := r.Delete(ctx, comp); client.IgnoreNotFound(err) != nil {
+			return fmt.Errorf("remove the %s component: %w", comp.Name, err)
+		}
+	}
+	return errDeleteJobPending
 }
 
 // cleanupOrphanedAppWorkload removes tenant-namespace Jobs and orphan Job pods for

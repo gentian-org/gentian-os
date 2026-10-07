@@ -12,6 +12,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	corev1 "k8s.io/api/core/v1"
@@ -152,7 +153,6 @@ func (r *TenantReconciler) ensureTenantEdgeRoutes(ctx context.Context, tenant *g
 func (r *TenantReconciler) deleteEdgeRouting(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
 	nsName := tenantNamespaceName(tenant)
 	effectiveDomain := r.tenantEffectiveDomain(tenant)
-	logger := ctrl.LoggerFrom(ctx)
 
 	if err := r.deleteTenantGateway(ctx, nsName, tenant.Name); err != nil {
 		return err
@@ -175,11 +175,21 @@ func (r *TenantReconciler) deleteEdgeRouting(ctx context.Context, tenant *gentia
 	if effectiveDomain != "" {
 		// Routes only. The records go with the HTTPRoutes: external-dns
 		// removes what it published once the route it published from is gone.
+		//
+		// A route that could not be removed is returned, after both were
+		// tried. It used to be logged and passed over, and the tenant was
+		// then reported deleted with its hostnames still routed to this
+		// cluster's edge -- where the next tenant of that name, or nobody,
+		// answers them.
 		wildcard := "*." + effectiveDomain
+		var routeErrs []error
 		for _, host := range []string{wildcard, effectiveDomain} {
 			if err := edgeDeleteRoute(ctx, r.Ingress, host); err != nil {
-				logger.Error(err, "delete tenant edge route", "host", host)
+				routeErrs = append(routeErrs, fmt.Errorf("delete the edge route of %s: %w", host, err))
 			}
+		}
+		if err := errors.Join(routeErrs...); err != nil {
+			return err
 		}
 	}
 

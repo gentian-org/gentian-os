@@ -87,19 +87,31 @@ func defaultServicesNamespace() string {
 // cleanup Jobs have finished.
 var errDeleteJobPending = provisioner.ErrDeleteJobPending
 
-// deleteProvisioningJobs removes completed provisioning Jobs by name, ignoring
-// not-found and transient errors. Call this after a cleanup Job completes so
-// that the provisioning Jobs are re-created (and the resource re-provisioned)
-// on the next tenant deploy.
-func (r *TenantReconciler) deleteProvisioningJobs(ctx context.Context, jobNames ...string) {
+// deleteProvisioningJobs removes completed provisioning Jobs by name. Call
+// this after a cleanup Job completes so that the provisioning Jobs are
+// re-created (and the resource re-provisioned) on the next tenant deploy.
+//
+// A Job that is not there is done. Anything else is returned: this used to
+// discard every error, so a Job that could not be looked up or deleted
+// stayed, and a tenant made again under the same name found a finished realm
+// Job and never provisioned its realm.
+func (r *TenantReconciler) deleteProvisioningJobs(ctx context.Context, jobNames ...string) error {
 	prop := metav1.DeletePropagationBackground
+	var errs []error
 	for _, name := range jobNames {
 		job, err := r.getProvisioningJob(ctx, name)
-		if err != nil {
+		if errors.IsNotFound(err) {
 			continue
 		}
-		_ = r.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &prop})
+		if err != nil {
+			errs = append(errs, fmt.Errorf("look for the provisioning Job %s: %w", name, err))
+			continue
+		}
+		if err := r.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &prop}); client.IgnoreNotFound(err) != nil {
+			errs = append(errs, fmt.Errorf("delete the provisioning Job %s: %w", name, err))
+		}
 	}
+	return goerrors.Join(errs...)
 }
 
 func envOrDefault(key, fallback string) string {
@@ -662,6 +674,7 @@ func (r *TenantReconciler) reconcileDelete(ctx context.Context, tenant *gentiano
 	// every app the tenant ever had, by the same Jobs an app's purge runs,
 	// and a Job that fails stops the deletion here until it has succeeded.
 	teardown := map[backup.Kind][]func(context.Context, *gentianov1alpha1.Tenant) error{
+		backup.KindWorkloads:     {r.deleteAppDeployment},
 		backup.KindCache:         {r.deleteCache},
 		backup.KindObjectStorage: {r.deleteStorage},
 		backup.KindDatabase:      {r.deleteMariaDB, r.deleteDatabase},
@@ -673,11 +686,6 @@ func (r *TenantReconciler) reconcileDelete(ctx context.Context, tenant *gentiano
 				return res, err
 			}
 		}
-	}
-
-	// Clean up app deployment resources (always, regardless of DeletionPolicy).
-	if err := r.deleteAppDeployment(ctx, tenant); err != nil {
-		return ctrl.Result{}, err
 	}
 
 	// Clean up edge routing (Ingress or Gateway API), wildcard cert, and DNS.
@@ -714,8 +722,10 @@ func (r *TenantReconciler) reconcileDelete(ctx context.Context, tenant *gentiano
 		ns := &corev1.Namespace{}
 		switch err := r.Get(ctx, types.NamespacedName{Name: nsName}, ns); {
 		case err == nil:
-			if err := r.Delete(ctx, ns); client.IgnoreNotFound(err) != nil {
-				return ctrl.Result{}, err
+			if ns.DeletionTimestamp == nil {
+				if err := r.Delete(ctx, ns); client.IgnoreNotFound(err) != nil {
+					return ctrl.Result{}, err
+				}
 			}
 		case !errors.IsNotFound(err):
 			// Not knowing whether the namespace is there is not the same as
@@ -742,6 +752,23 @@ func (r *TenantReconciler) reconcileDelete(ctx context.Context, tenant *gentiano
 		return ctrl.Result{}, err
 	}
 
+	// The namespace has to be gone, not merely told to go. Every volume of
+	// the tenant is in it, and a namespace stays Terminating for as long as
+	// anything in it holds a finalizer. The finalizer used to come off the
+	// Tenant as soon as the delete had been sent: the Tenant disappeared, the
+	// deletion read as finished, and the files were still there -- for good,
+	// when the namespace never finished terminating.
+	if tenant.Spec.DeletionPolicy == gentianov1alpha1.DeletionPolicyDelete {
+		gone, err := r.namespaceGone(ctx, nsName)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		if !gone {
+			logger.Info("waiting for the tenant namespace to be gone", "namespace", nsName)
+			return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
+		}
+	}
+
 	if err := r.purgeTenantKernelResources(ctx, tenant); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -752,6 +779,25 @@ func (r *TenantReconciler) reconcileDelete(ctx context.Context, tenant *gentiano
 
 	controllerutil.RemoveFinalizer(tenant, tenantFinalizer)
 	return ctrl.Result{}, r.Update(ctx, tenant)
+}
+
+// namespaceGone reports whether a namespace no longer exists. It reads the
+// API server when it can: the cache keeps showing a namespace for a moment
+// after it has gone, and, worse, would show "not found" for one it has not
+// seen yet.
+func (r *TenantReconciler) namespaceGone(ctx context.Context, name string) (bool, error) {
+	reader := client.Reader(r.Client)
+	if r.APIReader != nil {
+		reader = r.APIReader
+	}
+	err := reader.Get(ctx, types.NamespacedName{Name: name}, &corev1.Namespace{})
+	if errors.IsNotFound(err) {
+		return true, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("look for the tenant namespace %s: %w", name, err)
+	}
+	return false, nil
 }
 
 // deleteOwnedResourcesInNamespace removes ResourceQuota, LimitRange, and NetworkPolicy
