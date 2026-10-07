@@ -321,3 +321,31 @@ func TestARestoreAskedForAnAppItCannotRestoreIsRefused(t *testing.T) {
 		t.Errorf("conditions = %s", said)
 	}
 }
+
+// A restore that began and then failed is not complete, in the field a
+// reader looks at; and the upload it read is removed, because it ran.
+func TestARestoreThatFailsAfterItBeganSaysItIsNotComplete(t *testing.T) {
+	w := newRestoreWorld(t, nil)
+	ctx := context.Background()
+	// The plan is made and the restore begins.
+	if _, err := w.r.Reconcile(ctx, ctrl.Request{NamespacedName: w.key}); err != nil {
+		t.Fatal(err)
+	}
+	began := w.restore(t)
+	if began.Status.StartedAt == nil {
+		t.Fatal("the restore did not begin")
+	}
+	if _, err := w.r.fail(ctx, began, "RestoreFailed", "wiki: restore did not succeed after 3 attempts"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.r.Reconcile(ctx, ctrl.Request{NamespacedName: w.key}); err != nil {
+		t.Fatal(err)
+	}
+	got := w.restore(t)
+	if got.Status.Phase != gentianov1alpha1.TenantExportPhaseFailed || got.Status.Complete == nil || *got.Status.Complete {
+		t.Fatalf("phase = %s, complete = %v", got.Status.Phase, got.Status.Complete)
+	}
+	if len(w.bundles.removed) != 1 || !got.Status.ImportRemoved {
+		t.Errorf("the upload of a restore that ran and failed was kept: %v", w.bundles.removed)
+	}
+}

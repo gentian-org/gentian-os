@@ -865,6 +865,13 @@ func (r *TenantRestoreReconciler) fail(
 	_ = r.discardStagedRestoreSecrets(ctx, restore)
 	restore.Status.Phase = gentianov1alpha1.TenantExportPhaseFailed
 	restore.Status.CompletedAt = ptrNow()
+	// A restore that began and failed is not complete, and says so in the
+	// field a reader looks at: the apps still Pending in status.apps are the
+	// ones it never reached.
+	if restore.Status.StartedAt != nil {
+		incomplete := false
+		restore.Status.Complete = &incomplete
+	}
 	setRestoreCondition(restore, conditionExportComplete, metav1.ConditionFalse, reason, message)
 	return ctrl.Result{}, r.persist(ctx, restore)
 }
