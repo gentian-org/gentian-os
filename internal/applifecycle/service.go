@@ -54,6 +54,9 @@ type Service struct {
 	actualSource usage.ActualSource
 	// appLocks serializes lifecycle operations per (tenant, profile) — see lockApp.
 	appLocks sync.Map
+	// residueMu lets one removal of catalogue residue run at a time: each
+	// works the list out and then deletes on it.
+	residueMu sync.Mutex
 
 	// vault is where apps' credentials are stored. Nil when the operator was
 	// given no vault to talk to; a purge then fails at its credentials step

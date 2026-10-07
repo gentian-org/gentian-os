@@ -389,6 +389,7 @@ func TestTheRoutesOpenToTheReaderAreTheUshersReads(t *testing.T) {
 		{"POST", "/v1/tenants/demo/actions/provision-app"},
 		{"POST", "/v1/bundles"},
 		{"POST", "/v1/bundles/inspect"},
+		{"POST", "/v1/actions/remove-catalogue-residue"},
 	}
 	for _, c := range directorOnly {
 		if got := answer(mux, c.method, c.path, "usher"); got != http.StatusForbidden {

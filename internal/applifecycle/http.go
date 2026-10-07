@@ -162,6 +162,7 @@ func (h *HTTPServer) routes() *http.ServeMux {
 	h.registerTenantRoutes(guarded)
 	h.registerImportRoutes(guarded)
 	h.registerDefinitionRoutes(guarded)
+	h.registerResidueRoutes(guarded)
 	return mux
 }
 

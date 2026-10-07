@@ -10,7 +10,11 @@ SPDX-License-Identifier: MPL-2.0
 
 package applifecycle
 
-import "github.com/gentian-org/gentian-os/internal/licencereport"
+import (
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	"github.com/gentian-org/gentian-os/internal/licencereport"
+)
 
 // Options configures the lifecycle service.
 type Options struct {
@@ -29,6 +33,11 @@ type Options struct {
 	// vault configured; a purge then fails rather than claim the credentials
 	// destroyed.
 	Vault CredentialStore
+	// LiveReader reads the API server itself rather than the manager's
+	// cache. The catalogue's residue is listed and removed on what it
+	// answers, because what is deleted there is decided on the answer. Nil
+	// reads through the service's client.
+	LiveReader client.Reader
 }
 
 // Result is returned from lifecycle operations.

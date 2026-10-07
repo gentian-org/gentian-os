@@ -86,6 +86,8 @@ rules:
     - compositions
     verbs:
     - get
+    - list
+    - delete
   - apiGroups:
     - apiextensions.k8s.io
     resources:
@@ -328,8 +330,6 @@ rules:
     resources:
     - brandings
     - clusters
-    - componentprofiles
-    - oidcpackcatalogs
     - repositories
     - resourceplans
     - tenantdomains
@@ -341,6 +341,16 @@ rules:
   - apiGroups:
     - gentianos.io
     resources:
+    - componentprofiles
+    - oidcpackcatalogs
+    verbs:
+    - get
+    - list
+    - watch
+    - delete
+  - apiGroups:
+    - gentianos.io
+    resources:
     - customizations
     verbs:
     - get
@@ -348,6 +358,7 @@ rules:
     - watch
     - update
     - patch
+    - delete
   - apiGroups:
     - helm.crossplane.io
     resources:

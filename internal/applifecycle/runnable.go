@@ -40,6 +40,7 @@ func NewRunnableFromEnv(mgr manager.Manager) (*Runnable, error) {
 		MetricsEnabled:    os.Getenv("METRICS_SERVER_ENABLED") == "true",
 		LicenceReport:     licencereport.SettingsFromEnv(),
 		Vault:             vaultFromEnv(),
+		LiveReader:        mgr.GetAPIReader(),
 	})
 	if err != nil {
 		return nil, err
