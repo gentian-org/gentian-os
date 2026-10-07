@@ -142,9 +142,8 @@ spec:
                  predates the key, which is a v4 cluster, and v4's name is the
                  right answer there -- the same reasoning as the control
                  namespace above. This was written as "argocd" four times, so
-                 on v5 the repository Secret and the catalogue ApplicationSet
-                 landed in a namespace that does not exist and Argo CD saw
-                 neither. */}}
+                 on v5 the repository Secret landed in a namespace that does
+                 not exist and Argo CD did not see it. */}}
             {{- $argoNs := dig "kernel.gitopsNamespace" "argocd" $ccData }}
             {{- /* No credential means nothing to wait for, so the artefacts below are
                  emitted immediately rather than never. */}}
@@ -276,9 +275,6 @@ spec:
               artefacts:
                 - argocd-repo-{{ $name }}
                 - appproject-source-{{ $name }}
-                {{- if and $isGit (eq $spec.role "apps") }}
-                - catalogue-{{ $name }}
-                {{- end }}
               {{- else if $satisfied }}
               credentialMessage: "credential present at {{ $cred.vaultPath }}"
               artefacts:
@@ -286,9 +282,6 @@ spec:
                 - credprobe-{{ $name }}
                 - argocd-repo-{{ $name }}
                 - appproject-source-{{ $name }}
-                {{- if and $isGit (eq $spec.role "apps") }}
-                - catalogue-{{ $name }}
-                {{- end }}
               {{- else }}
               credentialMessage: >-
                 requirement {{ $name }} is unsatisfied: no value at
@@ -400,115 +393,14 @@ spec:
               providerConfigRef:
                 name: kubernetes
 
-            {{- if and $isGit (eq $spec.role "apps") }}
-            ---
-            # role: apps on a git repository composes the app catalogue: an
-            # ApplicationSet syncing profile bundles (ComponentProfile + optional
-            # composition.yaml, customizations/, assets/) from it. The schema
-            # already promises this is additive — "a private catalogue
-            # alongside the cluster's" — so every such repository gets its own
-            # ApplicationSet rather than one hardcoded source. The cluster's
-            # default catalogue is just the first claim of this shape;
-            # deleting any of them removes the Applications, and so the
-            # ComponentProfiles, it owns.
-            #
-            # A **files** generator (not directories) because gentian-apps
-            # groups profiles at mixed depth — singletons at
-            # profiles/<family>/<name>/, families with addons at
-            # profiles/<family>/{base,addons,packages}/<name>/. Matching a
-            # marker file rather than a fixed directory depth supports both
-            # without an exclude-list of "known family folders".
-            #
-            # Naming Applications from the ComponentProfile CR (.metadata.name)
-            # rather than the source path matters: ComponentProfile is
-            # cluster-scoped, so metadata.name is globally unique by
-            # definition, whereas leaf directory names are not —
-            # profiles/odoo/addons/crm-ce and a future
-            # profiles/foo/addons/crm-ce would both basename to "crm-ce".
-            apiVersion: kubernetes.crossplane.io/v1alpha2
-            kind: Object
-            metadata:
-              annotations:
-                {{ setResourceNameAnnotation (printf "catalogue-%s" $name) }}
-            spec:
-              forProvider:
-                manifest:
-                  apiVersion: argoproj.io/v1alpha1
-                  kind: ApplicationSet
-                  metadata:
-                    name: catalogue-{{ $name }}
-                    namespace: {{ $argoNs }}
-                    finalizers:
-                      - resources-finalizer.argocd.argoproj.io
-                  spec:
-                    goTemplate: true
-                    goTemplateOptions: ["missingkey=error"]
-                    generators:
-                      - git:
-                          repoURL: {{ $url | quote }}
-                          revision: {{ $spec.branch | quote }}
-                          files:
-                            - path: profiles/**/profile.yaml
-                    template:
-                      metadata:
-                        name: 'catalogue-{{ `{{ .metadata.name }}` }}'
-                        finalizers:
-                          - resources-finalizer.argocd.argoproj.io
-                      spec:
-                        project: gentian
-                        source:
-                          repoURL: {{ $url | quote }}
-                          targetRevision: {{ $spec.branch | quote }}
-                          path: '{{ `{{ .path.path }}` }}'
-                        destination:
-                          server: https://kubernetes.default.svc
-                          namespace: {{ $kernelNs }}
-                        # Only ever list fields the API server *adds by
-                        # itself*, i.e. fields with a CRD default — never one
-                        # a profile is meant to set.
-                        # spec.kernelRequirements.database.allowDynamicDatabaseCreation
-                        # was in this list once: it has no CRD default, Argo
-                        # stopped seeing a diff and reported Synced, and the
-                        # value never reached the cluster — creating a
-                        # database failed with "permission denied".
-                        ignoreDifferences:
-                          - group: gentianos.io
-                            kind: ComponentProfile
-                            jsonPointers:
-                              - /metadata/annotations/argocd.argoproj.io~1tracking-id
-                        # The four jq paths that used to sit here named
-                        # AppProfile fields -- ingress.clusterIssuer,
-                        # additionalIngresses[].clusterIssuer and two
-                        # browserProxy sub-fields -- and ComponentProfile has
-                        # none of them. They are not translated, they are
-                        # dropped, and deliberately so.
-                        #
-                        # An entry here is only correct for a field the API
-                        # server adds BY ITSELF and a profile never sets. The
-                        # comment above records what a wrong one costs:
-                        # allowDynamicDatabaseCreation was listed once, Argo
-                        # stopped seeing a diff, the value never reached the
-                        # cluster, and creating a database failed with
-                        # "permission denied". ComponentProfile's defaults are
-                        # nearly all on fields a profile may legitimately set
-                        # -- the database engine, an OIDC access type, a
-                        # tile's object -- so guessing at four of them would
-                        # be choosing that failure in advance.
-                        #
-                        # The other way round is safe: a default that does
-                        # drift shows the Application OutOfSync, which is
-                        # visible, reproducible, and names the field. Add it
-                        # here then, with the evidence.
-                        syncPolicy:
-                          automated:
-                            prune: true
-                            selfHeal: true
-                          syncOptions:
-                            - CreateNamespace=false
-                            - ServerSideApply=true
-              providerConfigRef:
-                name: kubernetes
-            {{- end }}
+            {{- /* Nothing more for role: apps on a git repository. It composed an
+                 ApplicationSet that synced every profile.yaml under profiles/ of the
+                 repository into the cluster and followed its branch. A profile
+                 now arrives one at a time, through the director, from a
+                 catalogue source and at the digest the install names
+                 (docs/custom-catalogues.md), so a claim of that shape yields the
+                 Argo CD repository and the AppProject source above and nothing
+                 that puts a ComponentProfile on the cluster. */}}
 
             {{- if and $isOci $hasCred (ne $tenant "") }}
             {{- /* A TENANT's registry repository: its credential goes to that

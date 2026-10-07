@@ -1,0 +1,17 @@
+# A public git repository with role: apps. This shape used to compose the
+# ApplicationSet that synced every profile of the repository into the cluster.
+# It no longer does: what is rendered is the Argo CD repository and the
+# AppProject source, and nothing that puts a ComponentProfile on the cluster.
+apiVersion: gentianos.io/v1alpha1
+kind: XRepository
+metadata:
+  name: gentian-apps
+  labels:
+    crossplane.io/claim-name: gentian-apps
+    crossplane.io/claim-namespace: crossplane-system
+spec:
+  type: git
+  role: apps
+  endpoints:
+    inCluster: https://github.com/gentian-org/gentian-apps
+  branch: main

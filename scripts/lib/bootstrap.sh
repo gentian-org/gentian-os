@@ -1639,6 +1639,26 @@ EXPOSURES
     return "${wrote}"
 }
 
+# _remove_retired_apps_repository_claim <kernel dir>
+#
+# Removes the Repository claim earlier installers scaffolded for the app
+# catalogue's git repository, and answers 0 when it removed one.
+#
+# Only the file this installer wrote, recognised by what it declared: the
+# claim named gentian-apps, a git repository with role apps. A file of that
+# name saying anything else is somebody's own and is left alone.
+_remove_retired_apps_repository_claim() {
+    local file="$1/claims/gentian-apps-repository.yaml"
+    [[ -f "${file}" ]] || return 1
+    grep -q '^  name: gentian-apps$' "${file}" || return 1
+    grep -q '^  type: git$' "${file}" || return 1
+    grep -q '^  role: apps$' "${file}" || return 1
+    rm -f "${file}"
+    info "Removed ${file}: profiles are no longer copied from the gentian-apps git repository;"
+    info "  they arrive one at a time from the catalogue source on the Cluster claim."
+    return 0
+}
+
 # _claim_catalogue_section
 #
 # The claim's catalogue section: the App Store people are sent to, and the
@@ -1983,36 +2003,37 @@ EOF
         generated=1
     fi
 
-    # The other three repositories the platform reads: its own charts, the app
-    # catalogue and the desktop. Without a claim each one has no AppProject
-    # source, so Argo CD refuses to deploy from it, and the catalogue-sync
-    # ApplicationSet has nothing to sync -- which reads as an empty catalogue
-    # rather than as a missing declaration.
+    # The other two repositories the platform reads: its own charts and the
+    # desktop. Without a claim each one has no AppProject source, so Argo CD
+    # refuses to deploy from it.
     #
     # Public by default, and that is a real shape rather than a degenerate
     # one: spec.credential is optional precisely so a public repository does
     # not have to name a vault path for a secret that does not exist, which
     # would then sit in the custodian as a requirement nobody can
     # satisfy. A mirror sets the matching AUTH and gets the credential block.
-    local _repo_role _repo_url _repo_branch _repo_auth _repo_file _repo_xrd_role _repo_auth_var
-    for _repo_role in gentian-os gentian-apps gentian-ui; do
+    #
+    # The app catalogue is not one of them. Its git repository was claimed
+    # here so that an ApplicationSet could copy every profile in it into the
+    # cluster; a profile now arrives one at a time through the director, from
+    # the catalogue source the Cluster claim names (_claim_catalogue_section),
+    # and nothing on the cluster reads that git repository. A deployments
+    # checkout scaffolded before then still holds the claim file, and it is
+    # removed here so that a fresh install from it declares no such claim.
+    # Claims are synced without pruning, so on a cluster that already applied
+    # it the Repository stays until it is deleted there; it composes no
+    # ApplicationSet any more either way (docs/install-reference.md).
+    _remove_retired_apps_repository_claim "${kernel_dir}" && generated=1
+    local _repo_role _repo_url _repo_branch _repo_auth _repo_file _repo_auth_var
+    for _repo_role in gentian-os gentian-ui; do
         _repo_file="${kernel_dir}/claims/${_repo_role}-repository.yaml"
         [[ -f "${_repo_file}" ]] && continue
-        # role is the XRD's vocabulary and is not always the repository's
-        # name: the catalogue is "apps".
-        _repo_xrd_role="${_repo_role}"
         case "${_repo_role}" in
             gentian-os)
                 _repo_url="${GENTIAN_OS_REPO:-https://github.com/gentian-org/gentian-os}"
                 _repo_branch="${GENTIAN_OS_BRANCH:-main}"
                 _repo_auth="${GENTIAN_OS_AUTH:-none}"
                 _repo_auth_var=GENTIAN_OS_AUTH ;;
-            gentian-apps)
-                _repo_url="${GENTIAN_APPS_REPO:-https://github.com/gentian-org/gentian-apps}"
-                _repo_branch="${GENTIAN_APPS_BRANCH:-main}"
-                _repo_auth="${GENTIAN_APPS_AUTH:-none}"
-                _repo_auth_var=GENTIAN_APPS_AUTH
-                _repo_xrd_role=apps ;;
             gentian-ui)
                 _repo_url="${GENTIAN_UI_REPO:-https://github.com/gentian-org/gentian-ui}"
                 _repo_branch="${GENTIAN_UI_BRANCH:-main}"
@@ -2035,7 +2056,7 @@ metadata:
   namespace: ${CROSSPLANE_NAMESPACE:-crossplane-system}
 spec:
   type: git
-  role: ${_repo_xrd_role}
+  role: ${_repo_role}
   writable: false
   branch: ${_repo_branch}
   endpoints:

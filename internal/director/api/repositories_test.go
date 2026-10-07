@@ -11,6 +11,7 @@ SPDX-License-Identifier: MPL-2.0
 package api_test
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -34,7 +35,7 @@ func TestATenantsRepositoryIsACommitByThePersonWhoDeclaredIt(t *testing.T) {
 	tom := h.token(t, "tenant-demo", "tom")
 
 	code, body := h.do(t, "PUT", demoRepositories+"team-apps", tom,
-		`{"role":"apps","type":"git","url":"https://git.example.com/demo/apps.git","branch":"release"}`)
+		`{"role":"apps","type":"oci","url":"oci://registry.example.com/demo/charts"}`)
 	if code != http.StatusAccepted {
 		t.Fatalf("declare: %d %v", code, body)
 	}
@@ -43,8 +44,8 @@ func TestATenantsRepositoryIsACommitByThePersonWhoDeclaredIt(t *testing.T) {
 	}
 	file := dt.RemoteFile(t, h.remote, demoDir+"repository-team-apps.yaml")
 	for _, want := range []string{
-		"kind: Repository", "name: team-apps", "role: apps", "type: git", "branch: release",
-		"inCluster: https://git.example.com/demo/apps.git",
+		"kind: Repository", "name: team-apps", "role: apps", "type: oci",
+		"inCluster: oci://registry.example.com/demo/charts",
 		"tenant: demo",
 		"vaultPath: gentian-os/tenants/demo/repositories/team-apps",
 	} {
@@ -63,7 +64,7 @@ func TestATenantsRepositoryIsACommitByThePersonWhoDeclaredIt(t *testing.T) {
 	// Said again, nothing is committed.
 	before := h.tip(t)
 	code, body = h.do(t, "PUT", demoRepositories+"team-apps", tom,
-		`{"role":"apps","type":"git","url":"https://git.example.com/demo/apps.git","branch":"release"}`)
+		`{"role":"apps","type":"oci","url":"oci://registry.example.com/demo/charts"}`)
 	if code != http.StatusOK || body["created"] != false || h.tip(t) != before {
 		t.Fatalf("an unchanged declaration: %d %v", code, body)
 	}
@@ -76,20 +77,20 @@ func TestADeclarationCarriesNoSecretAndCannotNameItsOwner(t *testing.T) {
 	tom := h.token(t, "tenant-demo", "tom")
 	before := h.tip(t)
 	for _, body := range []string{
-		`{"role":"apps","type":"git","url":"https://git.example.com/a.git","password":"hunter2"}`,
-		`{"role":"apps","type":"git","url":"https://git.example.com/a.git","tenant":"solo"}`,
-		`{"role":"apps","type":"git","url":"https://git.example.com/a.git","credential":{"vaultPath":"gentian-os/kernel/repositories/deployments"}}`,
+		`{"role":"apps","type":"oci","url":"oci://git.example.com/a","password":"hunter2"}`,
+		`{"role":"apps","type":"oci","url":"oci://git.example.com/a","tenant":"solo"}`,
+		`{"role":"apps","type":"oci","url":"oci://git.example.com/a","credential":{"vaultPath":"gentian-os/kernel/repositories/deployments"}}`,
 		`{"role":"apps","type":"svn","url":"https://git.example.com/a.git"}`,
 		`{"role":"gentian-os","type":"git","url":"https://git.example.com/a.git"}`,
 		`{"role":"deployments","type":"oci","url":"oci://registry.example.com/a","confirm":"a"}`,
-		`{"role":"apps","type":"git","url":" https://git.example.com/a.git"}`,
-		`{"role":"apps","type":"git","url":""}`,
+		`{"role":"apps","type":"oci","url":" oci://registry.example.com/a"}`,
+		`{"role":"apps","type":"oci","url":""}`,
 	} {
 		if code, _ := h.do(t, "PUT", demoRepositories+"a", tom, body); code != http.StatusBadRequest {
 			t.Errorf("%s: %d, want 400", body, code)
 		}
 	}
-	if code, _ := h.do(t, "PUT", demoRepositories+"Not_A_Name", tom, `{"role":"apps","type":"git","url":"https://x.example/a.git"}`); code != http.StatusBadRequest {
+	if code, _ := h.do(t, "PUT", demoRepositories+"Not_A_Name", tom, `{"role":"apps","type":"oci","url":"oci://x.example/a"}`); code != http.StatusBadRequest {
 		t.Errorf("a name that is not a DNS label: %d", code)
 	}
 	if h.tip(t) != before {
@@ -103,7 +104,7 @@ func TestADeclarationCarriesNoSecretAndCannotNameItsOwner(t *testing.T) {
 // platform operate it.
 func TestWhoMayDeclareARepositoryIsTheStoresAnswer(t *testing.T) {
 	h := start(t)
-	body := `{"role":"apps","type":"git","url":"https://git.example.com/a.git"}`
+	body := `{"role":"apps","type":"oci","url":"oci://git.example.com/a"}`
 	before := h.tip(t)
 
 	for who, token := range map[string]string{
@@ -176,21 +177,21 @@ func TestWhatIsNotAdditiveNeedsTheNameRepeated(t *testing.T) {
 	}
 
 	// A new apps repository needs nothing; moving it does.
-	if code, _ := h.do(t, "PUT", demoRepositories+"apps", tom, `{"role":"apps","type":"git","url":"https://git.example.com/one.git"}`); code != http.StatusAccepted {
+	if code, _ := h.do(t, "PUT", demoRepositories+"apps", tom, `{"role":"apps","type":"oci","url":"oci://git.example.com/one"}`); code != http.StatusAccepted {
 		t.Fatalf("a new apps repository: %d", code)
 	}
 	before := h.tip(t)
-	code, body = h.do(t, "PUT", demoRepositories+"apps", tom, `{"role":"apps","type":"git","url":"https://git.example.com/two.git"}`)
-	if code != http.StatusPreconditionRequired || !strings.Contains(body["error"].(string), "https://git.example.com/one.git") {
+	code, body = h.do(t, "PUT", demoRepositories+"apps", tom, `{"role":"apps","type":"oci","url":"oci://git.example.com/two"}`)
+	if code != http.StatusPreconditionRequired || !strings.Contains(body["error"].(string), "oci://git.example.com/one") {
 		t.Fatalf("a change of address without confirmation: %d %v", code, body)
 	}
 	if h.tip(t) != before {
 		t.Fatal("an unconfirmed change was committed")
 	}
-	if code, _ := h.do(t, "PUT", demoRepositories+"apps", tom, `{"role":"apps","type":"git","url":"https://git.example.com/two.git","confirm":"apps"}`); code != http.StatusAccepted {
+	if code, _ := h.do(t, "PUT", demoRepositories+"apps", tom, `{"role":"apps","type":"oci","url":"oci://git.example.com/two","confirm":"apps"}`); code != http.StatusAccepted {
 		t.Fatalf("confirmed: %d", code)
 	}
-	if file := dt.RemoteFile(t, h.remote, demoDir+"repository-apps.yaml"); !strings.Contains(file, "two.git") || strings.Contains(file, "one.git") {
+	if file := dt.RemoteFile(t, h.remote, demoDir+"repository-apps.yaml"); !strings.Contains(file, "example.com/two") || strings.Contains(file, "example.com/one") {
 		t.Fatalf("the address did not move:\n%s", file)
 	}
 
@@ -225,8 +226,8 @@ func TestANameSomebodyElseDeclaredDoesNotExist(t *testing.T) {
 	tom := h.token(t, "tenant-demo", "tom")
 	tina := h.token(t, "tenant-solo", "tina")
 	alice := h.token(t, "gentian", "alice")
-	body := `{"role":"apps","type":"git","url":"https://git.example.com/a.git"}`
-	theirs := `{"role":"apps","type":"git","url":"https://evil.example.com/a.git","confirm":"shared"}`
+	body := `{"role":"apps","type":"oci","url":"oci://git.example.com/a"}`
+	theirs := `{"role":"apps","type":"oci","url":"oci://evil.example.com/a","confirm":"shared"}`
 
 	if code, _ := h.do(t, "PUT", demoRepositories+"shared", tom, body); code != http.StatusAccepted {
 		t.Fatalf("demo's own: %d", code)
@@ -283,5 +284,33 @@ func TestRemovingTheClustersRepositorySaysTheClusterKeepsIt(t *testing.T) {
 	}
 	if files := dt.Git(t, "", "--git-dir", h.remote, "ls-tree", "-r", "--name-only", "main"); strings.Contains(files, "mirror-repository.yaml") {
 		t.Fatalf("the declaration is still there:\n%s", files)
+	}
+}
+
+// A git repository with role apps was the declaration that copied every
+// profile of the repository into the cluster. Nothing copies profiles any
+// more, so declaring one is refused with what to do instead, for a tenant and
+// for the cluster alike; a deployments repository and a registry are not
+// affected.
+func TestAGitAppsRepositoryIsRefusedWithWhatToDoInstead(t *testing.T) {
+	h := start(t)
+	before := h.tip(t)
+	for path, token := range map[string]string{
+		demoRepositories + "team-apps":   h.token(t, "tenant-demo", "tom"),
+		clusterRepositories + "our-apps": h.token(t, "gentian", "alice"),
+	} {
+		code, body := h.do(t, "PUT", path, token, `{"role":"apps","type":"git","url":"https://git.example.com/demo/apps.git"}`)
+		if code != http.StatusBadRequest {
+			t.Fatalf("%s: %d %v, want 400", path, code, body)
+		}
+		said := fmt.Sprint(body["error"])
+		for _, want := range []string{"no longer declared", "catalogues add", "type oci"} {
+			if !strings.Contains(said, want) {
+				t.Errorf("%s: the refusal does not say %q: %s", path, want, said)
+			}
+		}
+	}
+	if h.tip(t) != before {
+		t.Fatal("a refused declaration moved the repository")
 	}
 }

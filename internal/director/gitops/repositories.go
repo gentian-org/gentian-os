@@ -49,8 +49,10 @@ import (
 
 // Repository roles: what losing one costs.
 //
-// apps is additive: a private catalogue beside the cluster's, and removing it
-// removes those apps. deployments is a source of truth: repointing it changes
+// apps is additive: a registry apps pull their chart and images from, and
+// removing it removes that access. It is an OCI registry; a git repository
+// with this role is refused (CheckRepositoryDeclaration), because profiles are
+// not copied from one. deployments is a source of truth: repointing it changes
 // what everything reconciles from, which is why declaring one is confirmed
 // even when it is new.
 const (
@@ -118,6 +120,17 @@ func CheckRepositoryDeclaration(name string, d *RepositoryDeclaration) error {
 	}
 	if d.Role == RepositoryRoleDeployments && d.Type != "git" {
 		return fmt.Errorf("a deployments repository must be git")
+	}
+	if d.Role == RepositoryRoleApps && d.Type == "git" {
+		// It was the declaration that copied every profile of a git
+		// repository into the cluster. Nothing copies profiles any more, so
+		// such a repository would be an address Argo CD may read and nothing
+		// reads -- and somebody who declared one would wait for apps that
+		// never appear.
+		return fmt.Errorf("a git repository with role apps is no longer declared: profiles are not copied " +
+			"from a git repository any more. To offer your own apps, add a catalogue " +
+			"(kubectl gentian catalogues add <name> <https address>); to let apps pull their chart and " +
+			"images from a private registry, declare it with type oci")
 	}
 	if strings.ContainsAny(d.Branch, " \t\n\r") {
 		return fmt.Errorf("branch must not contain whitespace")

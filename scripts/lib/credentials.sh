@@ -328,7 +328,6 @@ _GENTIAN_CACHED_CREDENTIAL_VARS=(
 GENTIAN_REPO_CREDENTIALS=(
     "deployments-repository|deployments|DEPLOYMENTS|basic"
     "gentian-os-repository|gentian-os|OS|none"
-    "gentian-apps-repository|gentian-apps|APPS|none"
     "gentian-ui-repository|gentian-ui|UI|none"
 )
 

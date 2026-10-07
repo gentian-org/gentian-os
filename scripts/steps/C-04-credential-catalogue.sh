@@ -44,7 +44,6 @@ _cc_render() {
     sed -e "s/^  namespace: gentian-system$/  namespace: $(_cc_ns)/" \
         -e "s#__GENTIAN_DEPLOYMENTS_REPO__#${GENTIAN_DEPLOYMENTS_REPO:-https://github.com/gentian-org/gentian-deployments}#" \
         -e "s#__GENTIAN_OS_REPO__#${GENTIAN_OS_REPO:-https://github.com/gentian-org/gentian-os}#" \
-        -e "s#__GENTIAN_APPS_REPO__#${GENTIAN_APPS_REPO:-https://github.com/gentian-org/gentian-apps}#" \
         -e "s#__GENTIAN_UI_REPO__#${GENTIAN_UI_REPO:-https://github.com/gentian-org/gentian-ui}#" \
         "$(_catalogue_file)"
 }
