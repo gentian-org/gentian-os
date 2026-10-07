@@ -20,6 +20,7 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/backup"
+	"github.com/gentian-org/gentian-os/internal/modelgateway"
 )
 
 // The tenant's record of the stores provisioning made (backup.Provisioned):
@@ -39,13 +40,20 @@ func (r *TenantReconciler) recordProvisionedStores(ctx context.Context, tenant *
 	if err != nil {
 		return err
 	}
+	// On a cluster that serves models every app is registered a key at the
+	// gateway (injectLLMCredentials), whatever its profile declares.
+	models := clusterLLMEnabled(ctx, r.Client)
 	made := map[string]backup.Provisioned{}
 	for _, app := range tenant.Spec.Apps {
 		profile, ok := appProfileFromIndex(profiles, app.Profile)
 		if !ok {
 			continue
 		}
-		if p := backup.ProvisionedOf(backup.InventoryOf(tenant, app.Profile, profile)); !p.Empty() {
+		p := backup.ProvisionedOf(backup.InventoryOf(tenant, app.Profile, profile))
+		if models {
+			p.ModelKey = modelgateway.KeyAlias(tenant.Name, app.Profile)
+		}
+		if !p.Empty() {
 			made[app.Profile] = p
 		}
 	}

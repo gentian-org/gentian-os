@@ -42,7 +42,7 @@ func TestBackupBucketUnitNamesTheBackupBucket(t *testing.T) {
 // tenant that was retired and can still sign in.
 func TestTheRealmScriptsFailWhenTheRealmIsStillThere(t *testing.T) {
 	scripts := map[string]string{
-		"delete":             buildRealmDeleteScript("acme"),
+		"delete":             buildRealmDeleteScript("acme", "kernel"),
 		"disable":            buildRealmDisableScript("acme", "admin@acme.example", "gentian"),
 		"disable, no broker": buildRealmDisableScript("acme", "admin@acme.example", ""),
 	}

@@ -680,6 +680,7 @@ func (r *TenantReconciler) reconcileDelete(ctx context.Context, tenant *gentiano
 	// and a Job that fails stops the deletion here until it has succeeded.
 	teardown := map[backup.Kind][]func(context.Context, *gentianov1alpha1.Tenant) error{
 		backup.KindWorkloads:     {r.deleteAppDeployment},
+		backup.KindModelAccess:   {r.deleteModelAccess},
 		backup.KindCache:         {r.deleteCache},
 		backup.KindObjectStorage: {r.deleteStorage},
 		backup.KindDatabase:      {r.deleteMariaDB, r.deleteDatabase},

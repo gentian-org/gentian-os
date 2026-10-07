@@ -416,6 +416,75 @@ func (c *KeycloakAdminClient) GroupNames(ctx context.Context, realm, prefix stri
 	return out, nil
 }
 
+// builtInClientScopes are the client scopes Keycloak gives every realm. They
+// are the realm's own, whatever a catalogue names its packs' scopes: a pack
+// that called its scope "profile" must not get the realm's profile scope
+// deleted when its app is purged.
+var builtInClientScopes = map[string]bool{
+	"profile": true, "email": true, "address": true, "phone": true, "roles": true, "web-origins": true,
+	"offline_access": true, "microprofile-jwt": true, "acr": true, "basic": true, "service_account": true,
+	"organization": true, "role_list": true, "saml_organization": true,
+}
+
+// IsBuiltInClientScope reports whether a client scope is one Keycloak gives
+// every realm.
+func IsBuiltInClientScope(name string) bool { return builtInClientScopes[name] }
+
+// DeleteClientScope removes a client scope from a realm by name, with its
+// protocol mappers, which are part of it. existed is false, with no error,
+// when the realm has no such scope. One of Keycloak's own scopes is refused.
+//
+// Like DeleteGroup it looks again afterwards: a scope that is still there is
+// an error whatever the delete answered.
+func (c *KeycloakAdminClient) DeleteClientScope(ctx context.Context, realm, name string) (existed bool, err error) {
+	if IsBuiltInClientScope(name) {
+		return false, fmt.Errorf("refusing to delete the client scope %s: it is one Keycloak gives every realm", name)
+	}
+	id, err := c.findClientScopeID(ctx, realm, name)
+	if err != nil {
+		return false, err
+	}
+	if id == "" {
+		return false, nil
+	}
+	token, err := c.adminToken(ctx)
+	if err != nil {
+		return true, err
+	}
+	path := fmt.Sprintf("/admin/realms/%s/client-scopes/%s", url.PathEscape(realm), url.PathEscape(id))
+	status, err := c.doAdmin(ctx, token, http.MethodDelete, path, nil)
+	if err != nil && status != http.StatusNotFound {
+		return true, fmt.Errorf("keycloak delete client scope %s: %w", name, err)
+	}
+	left, err := c.findClientScopeID(ctx, realm, name)
+	if err != nil {
+		return true, err
+	}
+	if left != "" {
+		return true, fmt.Errorf("keycloak still has the client scope %s after deleting it", name)
+	}
+	return true, nil
+}
+
+// findClientScopeID looks a client scope up by its exact name. The endpoint
+// answers with every scope of the realm; it does not page.
+func (c *KeycloakAdminClient) findClientScopeID(ctx context.Context, realm, name string) (string, error) {
+	token, err := c.adminToken(ctx)
+	if err != nil {
+		return "", err
+	}
+	var scopes []keycloakGroupRecord
+	if err := c.getAdminJSON(ctx, token, fmt.Sprintf("/admin/realms/%s/client-scopes", url.PathEscape(realm)), &scopes); err != nil {
+		return "", fmt.Errorf("keycloak list client scopes: %w", err)
+	}
+	for _, s := range scopes {
+		if s.Name == name && s.ID != "" {
+			return s.ID, nil
+		}
+	}
+	return "", nil
+}
+
 func (c *KeycloakAdminClient) findGroupID(ctx context.Context, realm, groupName string) (string, error) {
 	token, err := c.adminToken(ctx)
 	if err != nil {

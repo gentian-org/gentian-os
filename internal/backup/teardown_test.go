@@ -112,7 +112,7 @@ func TestTeardownIsProvisioningReversed(t *testing.T) {
 	if !reflect.DeepEqual(torn, reversed) {
 		t.Fatalf("teardown %v is not provisioning %v reversed", torn, made)
 	}
-	want := []Kind{KindFiles, KindCache, KindObjectStorage, KindDatabase, KindAccessGroup, KindCredentials, KindRecords}
+	want := []Kind{KindFiles, KindModelAccess, KindCache, KindObjectStorage, KindDatabase, KindSignInScope, KindAccessGroup, KindCredentials, KindRecords}
 	if got := AppPurgeOrder(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("an app's purge works in the order %v, want %v", got, want)
 	}
@@ -409,5 +409,57 @@ func TestABucketIsProvisionedBeforeItsObjectsAreRestored(t *testing.T) {
 	}
 	if strings.Contains(write, "mc mb") {
 		t.Error("the restore makes the bucket a second time, by itself")
+	}
+}
+
+// What a tenant has that is no app's, and lies outside what a deletion
+// sweeps by default, has to say what removes it under each policy. The mail
+// records, the client in the kernel realm and the model gateway's team were
+// each left behind for want of exactly that.
+func TestWhatATenantOwnsSaysWhatItsDeletionDoesWithIt(t *testing.T) {
+	seen := map[string]bool{}
+	for _, rule := range TenantOwned {
+		if rule.What == "" || seen[rule.What] {
+			t.Fatalf("%q is empty or listed twice", rule.What)
+		}
+		seen[rule.What] = true
+		for field, value := range map[string]string{"madeBy": rule.MadeBy, "export": rule.Export, "retain": rule.Retain, "delete": rule.Delete} {
+			if value == "" {
+				t.Errorf("%s: nothing is said for %s", rule.What, field)
+			}
+		}
+	}
+	all := ""
+	for _, rule := range TenantOwned {
+		all += rule.What + "\n"
+	}
+	for _, must := range []string{"kernel realm", "model gateway", "mail DNS records", "vault subtree", "namespace", "backup bucket", "record of what was provisioned"} {
+		if !strings.Contains(all, must) {
+			t.Errorf("the list of what a tenant owns does not name its %s", must)
+		}
+	}
+}
+
+// The model key is on record like a store: found after an uninstall, and
+// taken off when it is removed.
+func TestTheModelKeyIsOnRecord(t *testing.T) {
+	p := Provisioned{ModelKey: "demo-wiki"}
+	if p.Empty() || !p.Has(KindModelAccess) || p.Without(KindModelAccess).Has(KindModelAccess) || !p.Without(KindModelAccess).Empty() {
+		t.Errorf("record entry = %+v", p)
+	}
+	// It is no kernel store: it adds nothing to what a destroy Job is run for.
+	if p.Stores() != (Stores{}) {
+		t.Errorf("stores = %+v", p.Stores())
+	}
+	record := NewProvisionedRecord("demo")
+	if _, err := RecordProvisioned(record, "wiki", Provisioned{Bucket: "demo-wiki"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := RecordProvisioned(record, "wiki", p); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := ReadProvisioned(record)
+	if got["wiki"].ModelKey != "demo-wiki" || got["wiki"].Bucket != "demo-wiki" {
+		t.Errorf("recorded = %+v", got["wiki"])
 	}
 }

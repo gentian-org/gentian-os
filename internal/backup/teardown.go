@@ -58,7 +58,16 @@ const (
 	KindObjectStorage Kind = "objectStorage"
 	// KindCache is the app's user in the shared cache.
 	KindCache Kind = "cache"
-	// KindSignInClient is the app's OIDC or SAML client in the tenant's realm.
+	// KindSignInScope is the client scope the app's sign-in pack describes,
+	// with its protocol mappers, in the tenant's realm. It is the realm's
+	// and not the client's, so it does not go when the client does.
+	KindSignInScope Kind = "signInScope"
+	// KindModelAccess is the key the app calls models with at the platform's
+	// model gateway, on a cluster that serves models.
+	KindModelAccess Kind = "modelAccess"
+	// KindSignInClient is the app's OIDC or SAML client in the tenant's
+	// realm, with what is part of it: its client role, its default-scope
+	// assignments, and the access group's mapping to that role.
 	KindSignInClient Kind = "signInClient"
 	// KindWorkloads is the app's Helm release: everything its chart renders
 	// except the volume claims.
@@ -149,6 +158,18 @@ var AppKinds = []KindRule{
 		FoundBy:          "the group's name in the tenant's realm",
 	},
 	{
+		Kind: KindSignInScope, MadeBy: "the tenant's identity Job, from the OIDC pack the app's profile names",
+		Export: Omits, ExportNote: "configuration with nothing of a person's in it; the identity Job makes it again when the app is installed",
+		// Kept at an uninstall although it means nothing without the client:
+		// taking it away there would need the uninstall to talk to the identity
+		// provider and to fail when it cannot, and an uninstall is a commit
+		// the cluster follows, with nobody waiting on an answer. A purge is
+		// asked for, answers, and already talks to the provider for the group.
+		Uninstall: Keeps, AppPurge: Destroys, TenantDelete: Destroys,
+		TenantDeleteNote: "with the realm",
+		FoundBy:          "the pack the app's profile names, which names the scope",
+	},
+	{
 		Kind: KindDatabase, MadeBy: "the tenant reconciler: a role Job and a CloudNativePG Database, or a MariaDB setup Job",
 		Export: Carries, ExportNote: "a dump of the provisioned database; on PostgreSQL also of every other database the app's role owns, which is what a purge drops",
 		Uninstall: Keeps, AppPurge: Destroys, TenantDelete: Destroys,
@@ -167,8 +188,20 @@ var AppKinds = []KindRule{
 		FoundBy: "the tenant's record of what was provisioned",
 	},
 	{
+		Kind: KindModelAccess, MadeBy: "the tenant reconciler, at the model gateway, on a cluster that serves models",
+		Export: Omits, ExportNote: "a credential; registered again when the app is installed",
+		Uninstall: Keeps, AppPurge: Destroys, TenantDelete: Destroys,
+		TenantDeleteNote: "and the tenant's team at the gateway",
+		FoundBy:          "the tenant's record of what was provisioned",
+	},
+	{
 		Kind: KindSignInClient, MadeBy: "the app Composition, or the tenant's identity Job",
 		Export: Carries, ExportNote: "inside the realm export",
+		// The client role, the client's default-scope assignments and the
+		// group's mapping to the role are composed with an Orphan policy, so
+		// Crossplane deletes none of them itself. Each is part of the client
+		// in the identity provider and goes when the client is deleted, which
+		// the Composition does (deletionPolicy: Delete on the Client).
 		Uninstall: Removes, AppPurge: Gone, TenantDelete: Destroys,
 		TenantDeleteNote: "with the realm",
 	},
@@ -183,6 +216,83 @@ var AppKinds = []KindRule{
 		Uninstall: Keeps, AppPurge: Destroys, TenantDelete: Destroys,
 		TenantDeleteNote: "with the tenant's namespace",
 		FoundBy:          "the volume claims in the tenant's namespace, by the release each records (AppVolumes)",
+	},
+}
+
+// TenantRule is one thing a tenant has that is no app's, and what deleting
+// the tenant does with it.
+type TenantRule struct {
+	// What is the thing, as a person would name it.
+	What string
+	// MadeBy says what makes it.
+	MadeBy string
+	// Export says what an export does with it.
+	Export string
+	// Retain and Delete say what deleting the tenant does with it under each
+	// deletion policy, and by what.
+	Retain string
+	Delete string
+}
+
+// TenantOwned is what deleting a tenant removes besides what its apps own.
+// The list exists because several of these lie outside everything a deletion
+// sweeps by default -- outside the tenant's namespace, its realm and its
+// vault subtree, and without the tenant's label -- which is how each of them
+// came to be left behind. Written down, each has to say what removes it.
+var TenantOwned = []TenantRule{
+	{
+		What: "the tenant's namespace, with every workload and volume in it", MadeBy: "the tenant's Composition",
+		Export: "volumes: per app; workloads: not carried",
+		Retain: "kept; its Components and the operator's quota, limits and network policy are removed",
+		Delete: "deleted, and the deletion waits until it is gone",
+	},
+	{
+		What: "the tenant's realm", MadeBy: "the tenant's identity Job and its Composition",
+		Export: "carried: configuration, people and memberships, no passwords",
+		Retain: "disabled",
+		Delete: "deleted; never when it is the kernel realm, which a tenant only adopts",
+	},
+	{
+		What: "the client the tenant's realm signs in to the kernel realm as (broker-<realm>), and the mapper on it", MadeBy: "the tenant's identity Job; the mapper by its Composition",
+		Export: "not carried; made again with the realm",
+		Retain: "kept",
+		Delete: "removed from the kernel realm, by the Job that deletes the realm",
+	},
+	{
+		What: "the tenant's vault subtree", MadeBy: "the tenant reconciler's seeder, and people",
+		Export: "not carried: a bundle holds no stored credential",
+		Retain: "kept",
+		Delete: "deleted; an operator with no vault that was not told to run without one fails here",
+	},
+	{
+		What: "the tenant's team at the model gateway", MadeBy: "the tenant reconciler",
+		Export: "not carried",
+		Retain: "kept",
+		Delete: "removed, after the keys of its apps",
+	},
+	{
+		What: "the tenant's mail routing, its submission and IMAP credentials, and its mail DNS records (DNSEndpoint mail-<tenant>)", MadeBy: "the tenant reconciler, in the mail namespaces",
+		Export: "not carried",
+		Retain: "removed: a retired tenant must stop receiving and sending",
+		Delete: "removed; and its DKIM key and SMTP credentials",
+	},
+	{
+		What: "the tenant's edge: gateway, routes, wildcard certificate, edge routes and edge DNS records", MadeBy: "the tenant reconciler",
+		Export: "not carried",
+		Retain: "removed",
+		Delete: "removed; a route that cannot be removed fails the deletion",
+	},
+	{
+		What: "the tenant's backup bucket", MadeBy: "the first export",
+		Export: "it is where exports go",
+		Retain: "kept",
+		Delete: "destroyed, unless the tenant keeps its bundles (keepBundles)",
+	},
+	{
+		What: "the record of what was provisioned", MadeBy: "the tenant reconciler",
+		Export: "not carried",
+		Retain: "kept, because the stores are",
+		Delete: "deleted, last",
 	},
 }
 

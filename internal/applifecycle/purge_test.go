@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -103,6 +104,10 @@ type fakeGroups struct {
 	deletes          int
 	// realms are the realms asked about, in order.
 	realms []string
+	// scopes are the realm's client scopes; scopesDeleted the ones asked to
+	// be removed.
+	scopes        map[string]bool
+	scopesDeleted []string
 }
 
 func (g *fakeGroups) DeleteGroup(_ context.Context, realm string, name string) (bool, error) {
@@ -115,6 +120,19 @@ func (g *fakeGroups) DeleteGroup(_ context.Context, realm string, name string) (
 	g.deletes++
 	_, existed := g.members[name]
 	delete(g.members, name)
+	return existed, nil
+}
+
+func (g *fakeGroups) DeleteClientScope(_ context.Context, realm string, name string) (bool, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.realms = append(g.realms, realm)
+	if g.fail || g.failDelete {
+		return false, errors.New("keycloak GET /admin/realms/demo/client-scopes: 503 Service Unavailable")
+	}
+	existed := g.scopes[name]
+	delete(g.scopes, name)
+	g.scopesDeleted = append(g.scopesDeleted, name)
 	return existed, nil
 }
 
@@ -907,5 +925,136 @@ func TestAPurgeIsRefusedWhenTheRecordCannotBeRead(t *testing.T) {
 	_, err := w.svc.PurgeApp(context.Background(), "demo", "wiki", "tom")
 	if !errors.Is(err, ErrCannotPurgeNow) || !w.untouched(t) {
 		t.Fatalf("err = %v, untouched = %v", err, w.untouched(t))
+	}
+}
+
+// fakeModels is the model gateway as a purge uses it.
+type fakeModels struct {
+	keys    map[string]bool
+	down    bool
+	deleted []string
+}
+
+func (m *fakeModels) KeyExists(_ context.Context, alias string) (bool, error) {
+	if m.down {
+		return false, errors.New("model gateway /key/list answered 502")
+	}
+	return m.keys[alias], nil
+}
+
+func (m *fakeModels) DeleteKey(_ context.Context, alias string) (bool, error) {
+	if m.down {
+		return false, errors.New("model gateway /key/list answered 502")
+	}
+	existed := m.keys[alias]
+	delete(m.keys, alias)
+	m.deleted = append(m.deleted, alias)
+	return existed, nil
+}
+
+// The key an app called models with is removed at its purge, by the alias
+// on record, and taken off the record. A gateway that does not answer
+// refuses the purge before anything is destroyed; a cluster with no gateway
+// has no key left to remove.
+func TestAPurgeRemovesTheAppsModelKey(t *testing.T) {
+	withKey := func(t *testing.T) *purgeWorld {
+		entry := backup.ProvisionedOf(backup.InventoryOf(demoTenant(), "wiki", wikiProfile()))
+		entry.ModelKey = "demo-wiki"
+		return newPurgeWorld(t, nil, []client.Object{wikiProfile(), provisionedRecord(t, "demo", map[string]backup.Provisioned{
+			"wiki":  entry,
+			"drive": {ModelKey: "demo-drive"},
+		})})
+	}
+
+	w := withKey(t)
+	models := &fakeModels{keys: map[string]bool{"demo-wiki": true, "demo-drive": true}}
+	w.svc.models = func(context.Context) (ModelKeys, bool, error) { return models, true, nil }
+	res, err := w.svc.PurgeApp(context.Background(), "demo", "wiki", "tom")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{KindFiles, KindModelAccess, KindCache, KindObjectStorage, KindDatabase, KindAccessGroup, KindCredentials, KindRecords}
+	if !reflect.DeepEqual(res.Destroyed, want) {
+		t.Errorf("destroyed = %v, want %v", res.Destroyed, want)
+	}
+	if models.keys["demo-wiki"] || !models.keys["demo-drive"] {
+		t.Errorf("keys = %v, want wiki's removed and drive's kept", models.keys)
+	}
+	if !w.provisionedFor(t, "wiki").Empty() || w.provisionedFor(t, "drive").ModelKey != "demo-drive" {
+		t.Errorf("record: wiki %+v, drive %+v", w.provisionedFor(t, "wiki"), w.provisionedFor(t, "drive"))
+	}
+
+	// The gateway does not answer: refused, nothing destroyed.
+	w = withKey(t)
+	down := &fakeModels{down: true}
+	w.svc.models = func(context.Context) (ModelKeys, bool, error) { return down, true, nil }
+	if _, err := w.svc.PurgeApp(context.Background(), "demo", "wiki", "tom"); !errors.Is(err, ErrCannotPurgeNow) || !w.untouched(t) {
+		t.Fatalf("err = %v, untouched = %v", err, w.untouched(t))
+	}
+
+	// No gateway on the cluster any more: the purge completes, and the key
+	// is off the record.
+	w = withKey(t)
+	w.svc.models = func(context.Context) (ModelKeys, bool, error) { return nil, false, nil }
+	if _, err := w.svc.PurgeApp(context.Background(), "demo", "wiki", "tom"); err != nil {
+		t.Fatal(err)
+	}
+	if !w.provisionedFor(t, "wiki").Empty() {
+		t.Errorf("record = %+v", w.provisionedFor(t, "wiki"))
+	}
+}
+
+// The client scope an app's sign-in pack describes is the realm's, not the
+// client's: it outlived the client at every uninstall and nothing removed
+// it. A purge does -- unless an app the tenant still has names the same
+// scope, or the name is one of the identity provider's own.
+func TestAPurgeRemovesTheAppsSignInScope(t *testing.T) {
+	oidcProfile := func(name, pack string) *gentianov1alpha1.ComponentProfile {
+		p := wikiProfile()
+		p.Name = name
+		p.Spec.Extensions = nil
+		p.Spec.Requires.Services.Identity = &gentianov1alpha1.IdentityRequirement{
+			OIDC: &gentianov1alpha1.OIDCClientSpec{ClientID: name, OIDCPackRef: pack}}
+		return p
+	}
+	packs := &gentianov1alpha1.OIDCPackCatalog{
+		ObjectMeta: metav1.ObjectMeta{Name: "catalogue"},
+		Spec: gentianov1alpha1.OIDCPackCatalogSpec{Packs: map[string]gentianov1alpha1.OIDCPackSpec{
+			"wiki-pack":    {ScopeName: "wiki-scope", ClientRole: "user", EntitlementGroup: "wiki"},
+			"shared-pack":  {ScopeName: "shared-scope", ClientRole: "user", EntitlementGroup: "shared"},
+			"builtin-pack": {ScopeName: "profile", ClientRole: "user", EntitlementGroup: "x"},
+		}},
+	}
+	cases := []struct {
+		name, pack string
+		installed  *gentianov1alpha1.ComponentProfile
+		deleted    []string
+	}{
+		{"its own scope", "wiki-pack", nil, []string{"wiki-scope"}},
+		{"a scope an installed app names too", "shared-pack", oidcProfile("drive", "shared-pack"), nil},
+		{"one of the identity provider's own", "builtin-pack", nil, nil},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			objects := []client.Object{oidcProfile("wiki", c.pack), packs}
+			if c.installed != nil {
+				objects = append(objects, c.installed)
+			}
+			w := newPurgeWorld(t, nil, objects)
+			w.groups.scopes = map[string]bool{"wiki-scope": true, "shared-scope": true, "profile": true}
+			res, err := w.svc.PurgeApp(context.Background(), "demo", "wiki", "tom")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Contains(res.Destroyed, KindSignInScope) {
+				t.Errorf("destroyed = %v, want the sign-in scope among them", res.Destroyed)
+			}
+			if !reflect.DeepEqual(w.groups.scopesDeleted, c.deleted) {
+				t.Errorf("scopes deleted = %v, want %v", w.groups.scopesDeleted, c.deleted)
+			}
+			if !w.groups.scopes["profile"] {
+				t.Error("the identity provider's own profile scope was deleted")
+			}
+		})
 	}
 }

@@ -19,9 +19,11 @@ import (
 	"net/http"
 	"time"
 
+	"k8s.io/apimachinery/pkg/api/errors"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/modelgateway"
 )
 
 // LiteLLM teams, one per tenant.
@@ -78,56 +80,11 @@ func ensureLiteLLMTeam(ctx context.Context, masterKey, teamAlias string) error {
 // litellmTeamExists reports whether a team with this alias is already known.
 //
 // /team/list rather than a lookup by alias: LiteLLM has no endpoint that takes
-// one, and the list is small — one entry per tenant.
+// one, and the list is small — one entry per tenant. The reading of it is the
+// model gateway package's, which removing a team uses too.
 func litellmTeamExists(ctx context.Context, masterKey, teamAlias string) (bool, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, litellmProxyBaseURL+"/team/list", nil)
-	if err != nil {
-		return false, err
-	}
-	req.Header.Set("Authorization", "Bearer "+masterKey)
-
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return false, fmt.Errorf("LiteLLM /team/list: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
-		return false, fmt.Errorf("LiteLLM /team/list status %d: %s", resp.StatusCode, string(respBody))
-	}
-
-	// The response is a list of team objects; only the alias matters here, and
-	// LiteLLM has changed the envelope between versions, so decode loosely.
-	var teams []map[string]any
-	raw, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return false, err
-	}
-	if err := json.Unmarshal(raw, &teams); err != nil {
-		// An object, then — but only one that actually carries a teams array.
-		// Decoding into a struct with a `teams` field would accept ANY object,
-		// including LiteLLM's {"detail": ...} error bodies, and report a team
-		// that exists as absent. The key has to be there.
-		var wrapped map[string]json.RawMessage
-		if err2 := json.Unmarshal(raw, &wrapped); err2 != nil {
-			return false, fmt.Errorf("LiteLLM /team/list: unrecognised response: %w", err)
-		}
-		inner, ok := wrapped["teams"]
-		if !ok {
-			return false, fmt.Errorf("LiteLLM /team/list: response has no team list: %s", truncate(raw, 200))
-		}
-		if err2 := json.Unmarshal(inner, &teams); err2 != nil {
-			return false, fmt.Errorf("LiteLLM /team/list: teams is not a list: %w", err2)
-		}
-	}
-	for _, t := range teams {
-		if alias, _ := t["team_alias"].(string); alias == teamAlias {
-			return true, nil
-		}
-	}
-	return false, nil
+	_, found, err := litellmGateway(masterKey).TeamID(ctx, teamAlias)
+	return found, err
 }
 
 // ensureTenantLiteLLMTeam is the reconciler's entry point.
@@ -143,16 +100,59 @@ func (r *TenantReconciler) ensureTenantLiteLLMTeam(ctx context.Context, tenant *
 		// logging on every reconcile of every tenant.
 		return
 	}
-	if err := ensureLiteLLMTeam(ctx, masterKey, tenant.Name); err != nil {
+	if err := ensureLiteLLMTeam(ctx, masterKey, modelgateway.TeamAlias(tenant.Name)); err != nil {
 		log.FromContext(ctx).V(1).Info("LiteLLM team sync deferred",
 			"tenant", tenant.Name, "reason", err.Error())
 	}
 }
 
-// truncate keeps an unexpected response body short enough to log.
-func truncate(b []byte, n int) string {
-	if len(b) <= n {
-		return string(b)
+// deleteModelAccess removes what the model gateway holds for a tenant that is
+// being deleted with its data: the key of every app on record as having one,
+// and the tenant's team.
+//
+// Neither was ever removed. A key registered for an app went on
+// authenticating after the app, and the tenant, were gone -- and the key is
+// made from the tenant's and the app's names, so whoever knew those knew it.
+//
+// With deletionPolicy Retain both stay, as everything does. A cluster with no
+// gateway has neither: the admin key's Secret is what says there is one. A
+// gateway that is there and does not answer fails the pass, and the deletion
+// comes back to it.
+func (r *TenantReconciler) deleteModelAccess(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
+	if tenant.Spec.DeletionPolicy != gentianov1alpha1.DeletionPolicyDelete {
+		return nil
 	}
-	return string(b[:n]) + "…"
+	masterKey, err := r.getLiteLLMMasterKey(ctx)
+	if errors.IsNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("remove the model keys of tenant %s: %w", tenant.Name, err)
+	}
+	gateway := litellmGateway(masterKey)
+
+	recorded, err := r.provisionedStores(ctx, tenant.Name)
+	if err != nil {
+		return err
+	}
+	aliases := map[string]struct{}{}
+	for _, p := range recorded {
+		if p.ModelKey != "" {
+			aliases[p.ModelKey] = struct{}{}
+		}
+	}
+	// And the apps the tenant has now, whose key may have been registered
+	// since the record was last written.
+	for _, app := range tenant.Spec.Apps {
+		aliases[modelgateway.KeyAlias(tenant.Name, app.Profile)] = struct{}{}
+	}
+	for alias := range aliases {
+		if _, err := gateway.DeleteKey(ctx, alias); err != nil {
+			return fmt.Errorf("remove the model key %s of tenant %s: %w", alias, tenant.Name, err)
+		}
+	}
+	if _, err := gateway.DeleteTeam(ctx, modelgateway.TeamAlias(tenant.Name)); err != nil {
+		return fmt.Errorf("remove the model gateway's team of tenant %s: %w", tenant.Name, err)
+	}
+	return nil
 }

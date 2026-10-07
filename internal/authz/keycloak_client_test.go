@@ -230,3 +230,48 @@ func TestDeleteGroupRemovesTheGroupAndIsRepeatable(t *testing.T) {
 		t.Fatal("a group that is still there was reported deleted")
 	}
 }
+
+// A pack's client scope is removed by name, with its mappers; one of
+// Keycloak's own is never removed, whatever a catalogue called its scope.
+func TestDeleteClientScope(t *testing.T) {
+	scopes := map[string]bool{"wiki-scope": true, "drive-scope": true, "profile": true}
+	refuse := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		const base = "/admin/realms/demo/client-scopes"
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/protocol/openid-connect/token"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "t", "expires_in": 300})
+		case r.Method == http.MethodGet && r.URL.Path == base:
+			out := []map[string]any{}
+			for name := range scopes {
+				out = append(out, map[string]any{"id": "id-" + name, "name": name})
+			}
+			_ = json.NewEncoder(w).Encode(out)
+		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, base+"/id-"):
+			if !refuse {
+				delete(scopes, strings.TrimPrefix(r.URL.Path, base+"/id-"))
+			}
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	c := testAdminClient(srv, "admin", "pw")
+	ctx := context.Background()
+
+	existed, err := c.DeleteClientScope(ctx, "demo", "wiki-scope")
+	if err != nil || !existed || scopes["wiki-scope"] || !scopes["drive-scope"] {
+		t.Fatalf("existed = %v, err = %v, scopes = %v", existed, err, scopes)
+	}
+	if existed, err := c.DeleteClientScope(ctx, "demo", "wiki-scope"); err != nil || existed {
+		t.Fatalf("a second removal: %v %v", existed, err)
+	}
+	if _, err := c.DeleteClientScope(ctx, "demo", "profile"); err == nil || !scopes["profile"] {
+		t.Fatalf("one of Keycloak's own scopes was deleted: err = %v, scopes = %v", err, scopes)
+	}
+	refuse = true
+	if _, err := c.DeleteClientScope(ctx, "demo", "drive-scope"); err == nil {
+		t.Fatal("a scope that is still there was reported deleted")
+	}
+}

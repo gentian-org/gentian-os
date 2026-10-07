@@ -74,6 +74,9 @@ type Provisioned struct {
 	Bucket string `json:"bucket,omitempty"`
 	// CacheUser is the user in the shared cache, "" without one.
 	CacheUser string `json:"cacheUser,omitempty"`
+	// ModelKey is the alias of the key registered for the app at the model
+	// gateway, "" when none was: on a cluster that serves no models.
+	ModelKey string `json:"modelKey,omitempty"`
 }
 
 // ProvisionedOf is the record entry of an inventory.
@@ -106,6 +109,8 @@ func (p Provisioned) Has(kind Kind) bool {
 		return p.Bucket != ""
 	case KindCache:
 		return p.CacheUser != ""
+	case KindModelAccess:
+		return p.ModelKey != ""
 	}
 	return false
 }
@@ -120,6 +125,8 @@ func (p Provisioned) Without(kind Kind) Provisioned {
 		p.Bucket = ""
 	case KindCache:
 		p.CacheUser = ""
+	case KindModelAccess:
+		p.ModelKey = ""
 	}
 	return p
 }
@@ -136,6 +143,9 @@ func (p Provisioned) merged(with Provisioned) Provisioned {
 	}
 	if with.CacheUser != "" {
 		p.CacheUser = with.CacheUser
+	}
+	if with.ModelKey != "" {
+		p.ModelKey = with.ModelKey
 	}
 	return p
 }

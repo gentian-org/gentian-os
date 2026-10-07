@@ -18,7 +18,9 @@ import (
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -163,5 +165,70 @@ func TestDeleteAppDeploymentRemovesComponentsAndWaits(t *testing.T) {
 	}
 	if err := c.Get(ctx, client.ObjectKeyFromObject(elsewhere), &gentianov1alpha1.Component{}); err != nil {
 		t.Fatalf("another tenant's component was touched: %v", err)
+	}
+}
+
+// What was made for a tenant in the kernel realm does not go with the
+// tenant's own realm, and has to be removed by name: the client its realm
+// signed in to the kernel realm as. A tenant that adopts the kernel realm has
+// no such client, and a cluster without a kernel realm has neither.
+func TestTheRealmDeleteScriptRemovesTheTenantsClientInTheKernelRealm(t *testing.T) {
+	script := buildRealmDeleteScript("acme", "kernel")
+	for _, want := range []string{
+		`BROKER="broker-acme"`,
+		`/admin/realms/kernel/clients?clientId=${BROKER}`,
+		`select(.clientId == $id)`,
+		`-X DELETE`, `/admin/realms/kernel/clients/${BROKER_ID}`,
+		`answered HTTP ${HTTP}" >&2; exit 1`,
+	} {
+		if !strings.Contains(script, want) {
+			t.Errorf("the script lacks %q:\n%s", want, script)
+		}
+	}
+	// The kernel realm itself is never deleted by this: only the tenant's.
+	if strings.Contains(script, `-X DELETE \`+"\n"+`  -H "Authorization: Bearer ${TOKEN}" \`+"\n"+`  "${KEYCLOAK_URL}/admin/realms/kernel"`) {
+		t.Error("the script deletes the kernel realm")
+	}
+	for name, s := range map[string]string{
+		"no kernel realm":         buildRealmDeleteScript("acme", ""),
+		"the realm is the kernel": buildRealmDeleteScript("kernel", "kernel"),
+	} {
+		if strings.Contains(s, "broker-") {
+			t.Errorf("%s: the script looks for a broker client", name)
+		}
+	}
+}
+
+// A deleted tenant's mail records leave the zone with it. The endpoint is in
+// the mail perimeter's namespace and carries no tenant label, so nothing
+// else takes it.
+func TestDeleteMailRemovesTheTenantsMailRecords(t *testing.T) {
+	scheme := deleteGapsScheme()
+	endpoint := func(name string) *unstructured.Unstructured {
+		obj := &unstructured.Unstructured{}
+		obj.SetGroupVersionKind(dnsEndpointGVK)
+		obj.SetName(name)
+		obj.SetNamespace(mailDMZNamespace)
+		obj.SetLabels(map[string]string{managedByLabel: managedByValue})
+		return obj
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(endpoint("mail-demo"), endpoint("mail-other")).Build()
+	r := &TenantReconciler{Client: c, Scheme: scheme, KernelDomain: "k.example"}
+	for _, policy := range []gentianov1alpha1.DeletionPolicy{gentianov1alpha1.DeletionPolicyRetain, gentianov1alpha1.DeletionPolicyDelete} {
+		tenant := &gentianov1alpha1.Tenant{
+			ObjectMeta: metav1.ObjectMeta{Name: "demo"},
+			Spec:       gentianov1alpha1.TenantSpec{DeletionPolicy: policy},
+		}
+		if err := r.deleteMail(context.Background(), tenant); err != nil {
+			t.Fatalf("%s: %v", policy, err)
+		}
+		gone := endpoint("mail-demo")
+		if err := c.Get(context.Background(), client.ObjectKeyFromObject(gone), gone); !apierrors.IsNotFound(err) {
+			t.Errorf("%s: the tenant's mail records are still published: %v", policy, err)
+		}
+	}
+	kept := endpoint("mail-other")
+	if err := c.Get(context.Background(), client.ObjectKeyFromObject(kept), kept); err != nil {
+		t.Errorf("another tenant's mail records were removed: %v", err)
 	}
 }

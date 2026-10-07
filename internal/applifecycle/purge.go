@@ -27,11 +27,14 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
+	"github.com/gentian-org/gentian-os/internal/authz"
 	"github.com/gentian-org/gentian-os/internal/backup"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"github.com/gentian-org/gentian-os/internal/keycloak"
 	"github.com/gentian-org/gentian-os/internal/layout"
 	"github.com/gentian-org/gentian-os/internal/meta"
+	"github.com/gentian-org/gentian-os/internal/modelgateway"
+	"github.com/gentian-org/gentian-os/internal/oidc"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
@@ -64,6 +67,8 @@ const (
 	KindCredentials   = string(backup.KindCredentials)
 	KindAccessGroup   = string(backup.KindAccessGroup)
 	KindRecords       = string(backup.KindRecords)
+	KindModelAccess   = string(backup.KindModelAccess)
+	KindSignInScope   = string(backup.KindSignInScope)
 )
 
 // kindLabels are the kinds as a person reads them.
@@ -75,6 +80,8 @@ var kindLabels = map[string]string{
 	KindCredentials:   "stored credentials",
 	KindAccessGroup:   "access group",
 	KindRecords:       "provisioning records",
+	KindModelAccess:   "model key",
+	KindSignInScope:   "sign-in scope",
 }
 
 // The bounds of one purge.
@@ -185,6 +192,20 @@ func (s *Service) purgeSteps(tenant *gentianov1alpha1.Tenant, profile *gentianov
 			return s.purgeClusterArtifacts(ctx, tenant, app)
 		},
 	}
+	// The key the app called models with, when one is on record: on a
+	// cluster that serves models.
+	if recorded.ModelKey != "" {
+		how[backup.KindModelAccess] = func(ctx context.Context) error {
+			return s.purgeModelKey(ctx, tenant.Name, app, recorded.ModelKey)
+		}
+	}
+	// The client scope the app's sign-in pack describes, when its profile
+	// signs anybody in.
+	if signsIn(profile) {
+		how[backup.KindSignInScope] = func(ctx context.Context) error {
+			return s.purgeSignInScopes(ctx, tenant, app, profile)
+		}
+	}
 	for kind, job := range stores {
 		how[kind] = func(ctx context.Context) error {
 			if err := s.runKernelJob(ctx, job); err != nil {
@@ -241,6 +262,17 @@ func (s *Service) purgePreflight(ctx context.Context, tenant *gentianov1alpha1.T
 	}
 	if _, err := s.vault.ListChildren(ctx, secrets.AppsPath(tenant.Name)); err != nil {
 		return refuse("the vault does not answer: %v", err)
+	}
+	if recorded.ModelKey != "" {
+		gateway, present, err := s.modelGateway(ctx)
+		if err != nil {
+			return refuse("the model gateway cannot be asked: %v", err)
+		}
+		if present {
+			if _, err := gateway.KeyExists(ctx, recorded.ModelKey); err != nil {
+				return refuse("the model gateway does not answer: %v", err)
+			}
+		}
 	}
 	realm := keycloak.RealmName(tenant)
 	groups, err := s.accessGroups(ctx)
@@ -545,6 +577,163 @@ func (s *Service) purgeCredentials(ctx context.Context, tenant *gentianov1alpha1
 type AccessGroups interface {
 	DeleteGroup(ctx context.Context, realm, groupName string) (existed bool, err error)
 	GroupNames(ctx context.Context, realm, prefix string) ([]string, error)
+	DeleteClientScope(ctx context.Context, realm, name string) (existed bool, err error)
+}
+
+// --- sign-in scope ----------------------------------------------------------
+
+// signsIn reports whether an app, or one of its extensions, signs people in
+// through an OIDC client.
+func signsIn(profile *gentianov1alpha1.ComponentProfile) bool {
+	if profile == nil {
+		return false
+	}
+	if svc := profile.Services(); svc != nil && svc.Identity != nil && svc.Identity.OIDC != nil {
+		return true
+	}
+	for _, ext := range profile.Spec.Extensions {
+		if ext.ServiceRequirements != nil && ext.ServiceRequirements.Identity != nil && ext.ServiceRequirements.Identity.OIDC != nil {
+			return true
+		}
+	}
+	return false
+}
+
+// packScopes are the client scopes the sign-in packs of an app and of its
+// extensions describe: what the tenant's identity Job made in the realm for
+// them. A client with no pack, or a pack that is a service client, has none.
+func (s *Service) packScopes(ctx context.Context, tenantName, app string, profile *gentianov1alpha1.ComponentProfile) ([]string, error) {
+	var scopes []string
+	add := func(key string) error {
+		pack, _, found, err := oidc.ResolvePack(ctx, s.client, key)
+		if err != nil {
+			return fmt.Errorf("read the sign-in pack %s: %w", key, err)
+		}
+		if found && !pack.ServiceClient && pack.ScopeName != "" {
+			scopes = append(scopes, pack.ScopeName)
+		}
+		return nil
+	}
+	// The pack is the one the profile names, else the one called what the
+	// client is; a client is called what the profile says, else after the
+	// tenant and the app. The same resolution provisioning makes.
+	packKey := func(spec *gentianov1alpha1.OIDCClientSpec, name string) string {
+		switch {
+		case spec.OIDCPackRef != "":
+			return spec.OIDCPackRef
+		case spec.ClientID != "":
+			return spec.ClientID
+		}
+		return tenantName + "-" + name
+	}
+	if profile == nil {
+		return nil, nil
+	}
+	if svc := profile.Services(); svc != nil && svc.Identity != nil && svc.Identity.OIDC != nil {
+		if err := add(packKey(svc.Identity.OIDC, app)); err != nil {
+			return nil, err
+		}
+	}
+	for _, ext := range profile.Spec.Extensions {
+		if ext.ServiceRequirements == nil || ext.ServiceRequirements.Identity == nil || ext.ServiceRequirements.Identity.OIDC == nil {
+			continue
+		}
+		if err := add(packKey(ext.ServiceRequirements.Identity.OIDC, gentianov1alpha1.SidecarAppName(app, ext.Name))); err != nil {
+			return nil, err
+		}
+	}
+	return scopes, nil
+}
+
+// purgeSignInScopes removes the client scopes the app's sign-in packs
+// describe from the tenant's realm, with their protocol mappers.
+//
+// The app's client went when it was uninstalled, and what was part of the
+// client -- its role, its default scopes, the group's mapping to the role --
+// went with it. The scope did not: it is the realm's, made by the tenant's
+// identity Job, and nothing ever removed one.
+//
+// A scope is left where an app the tenant still has uses a pack that names
+// the same one -- two profiles may name one pack -- and one of Keycloak's own
+// scopes is never touched, whatever a catalogue called its pack's.
+func (s *Service) purgeSignInScopes(ctx context.Context, tenant *gentianov1alpha1.Tenant, app string, profile *gentianov1alpha1.ComponentProfile) error {
+	scopes, err := s.packScopes(ctx, tenant.Name, app, profile)
+	if err != nil || len(scopes) == 0 {
+		return err
+	}
+	inUse := map[string]bool{}
+	profiles := s.profileLookup(ctx)
+	for _, installed := range tenant.Spec.Apps {
+		other, err := profiles(installed.Profile)
+		if err != nil {
+			return err
+		}
+		used, err := s.packScopes(ctx, tenant.Name, installed.Profile, other)
+		if err != nil {
+			return err
+		}
+		for _, name := range used {
+			inUse[name] = true
+		}
+	}
+	groups, err := s.accessGroups(ctx)
+	if err != nil {
+		return err
+	}
+	realm := keycloak.RealmName(tenant)
+	logger := log.FromContext(ctx).WithName("purge").WithValues("app", app, "realm", realm)
+	for _, name := range scopes {
+		switch {
+		case inUse[name]:
+			logger.Info("leaving a client scope an installed app's sign-in pack names too", "scope", name)
+			continue
+		case authz.IsBuiltInClientScope(name):
+			logger.Info("leaving a client scope that is the identity provider's own", "scope", name)
+			continue
+		}
+		if _, err := groups.DeleteClientScope(ctx, realm, name); err != nil {
+			return fmt.Errorf("delete the client scope %s in realm %s: %w", name, realm, err)
+		}
+	}
+	return nil
+}
+
+// --- model key --------------------------------------------------------------
+
+// ModelKeys is the model gateway as a purge uses it. *modelgateway.Client is
+// one.
+type ModelKeys interface {
+	KeyExists(ctx context.Context, alias string) (bool, error)
+	DeleteKey(ctx context.Context, alias string) (existed bool, err error)
+}
+
+// modelGateway is the cluster's model gateway. present is false when the
+// cluster runs none.
+func (s *Service) modelGateway(ctx context.Context) (ModelKeys, bool, error) {
+	if s.models != nil {
+		return s.models(ctx)
+	}
+	gateway, present, err := modelgateway.FromCluster(ctx, s.client)
+	if err != nil || !present {
+		return nil, false, err
+	}
+	return gateway, true, nil
+}
+
+// purgeModelKey removes the key the app called models with, and takes it
+// off the record. On a cluster that no longer runs a gateway there is no key
+// left to remove: the gateway's keys went with it.
+func (s *Service) purgeModelKey(ctx context.Context, tenantName, app, alias string) error {
+	gateway, present, err := s.modelGateway(ctx)
+	if err != nil {
+		return err
+	}
+	if present {
+		if _, err := gateway.DeleteKey(ctx, alias); err != nil {
+			return fmt.Errorf("delete the model key %s: %w", alias, err)
+		}
+	}
+	return s.forgetProvisioned(ctx, tenantName, app, backup.KindModelAccess)
 }
 
 // purgeAccessGroup removes the app's group, and with it everybody's

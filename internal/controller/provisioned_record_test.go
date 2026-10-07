@@ -168,3 +168,32 @@ func TestTenantDeleteStopsOnAnUnreadableRecord(t *testing.T) {
 		t.Fatal("the buckets step went on without knowing which buckets there are")
 	}
 }
+
+// On a cluster that serves models every app is registered a key at the
+// gateway, whatever its profile declares; the key is on record like a store,
+// so that it is found when the app, or the tenant, goes.
+func TestTheModelKeyIsRecordedWhereModelsAreServed(t *testing.T) {
+	ctx := context.Background()
+	scheme := deleteGapsScheme()
+	tenant := planTenant("demo", "notes")
+	plain := storesProfile("notes", "", false, false)
+
+	t.Setenv("LLM_SUPPORT", "false")
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(plain).Build()
+	r := &TenantReconciler{Client: c, Scheme: scheme}
+	if err := r.recordProvisionedStores(ctx, tenant); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := r.provisionedStores(ctx, "demo"); len(got) != 0 {
+		t.Fatalf("an app with nothing provisioned is on record: %+v", got)
+	}
+
+	t.Setenv("LLM_SUPPORT", "true")
+	if err := r.recordProvisionedStores(ctx, tenant); err != nil {
+		t.Fatal(err)
+	}
+	got, err := r.provisionedStores(ctx, "demo")
+	if err != nil || got["notes"].ModelKey != "demo-notes" {
+		t.Fatalf("recorded = %+v, %v; want the key's alias", got, err)
+	}
+}

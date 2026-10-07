@@ -87,6 +87,8 @@ func TestTheRetainedReadListsAnUninstalledAppAndOmitsAnInstalledOne(t *testing.T
 		// On record as provisioned, and not purged since.
 		KindObjectStorage: RetainedPresent,
 		KindCache:         RetainedPresent,
+		// Nothing registered at a model gateway: this cluster serves none.
+		KindModelAccess: RetainedAbsent,
 	}
 	if !reflect.DeepEqual(wiki.Kinds, want) {
 		t.Errorf("kinds = %v, want %v", wiki.Kinds, want)

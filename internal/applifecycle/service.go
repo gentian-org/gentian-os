@@ -62,6 +62,9 @@ type Service struct {
 	// groups, when set, is the identity provider to use in place of the one
 	// the keycloak-admin Secret names. Tests set it.
 	groups AccessGroups
+	// models, when set, is the model gateway to use in place of the one the
+	// cluster's admin-key Secret names. Tests set it.
+	models func(ctx context.Context) (ModelKeys, bool, error)
 }
 
 // accessGroups is the identity provider's groups, with the administrator

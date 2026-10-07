@@ -35,13 +35,14 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/catalogue"
+	"github.com/gentian-org/gentian-os/internal/modelgateway"
 )
 
 const (
 	conditionAppsReady = "AppsReady"
 
-	litellmMasterKeySecret = "llm-sensitive-values"
-	litellmMasterKeySecKey = "litellm_master_key" //nolint:gosec // Secret key name, not a credential.
+	litellmMasterKeySecret = modelgateway.MasterKeySecret
+	litellmMasterKeySecKey = modelgateway.MasterKeyField
 )
 
 // Where LLM serving runs.
@@ -279,7 +280,7 @@ func (r *TenantReconciler) injectLLMCredentials(ctx context.Context, tenant *gen
 
 	nsName := tenantNamespaceName(tenant)
 	secretName := fmt.Sprintf("llm-credentials-%s", appName)
-	virtualKey := fmt.Sprintf("sk-gentian-%s-%s", tenant.Name, appName)
+	virtualKey := modelgateway.VirtualKey(tenant.Name, appName)
 
 	stringData := map[string]string{
 		"OPENAI_API_BASE":     litellmProxyBaseURL + "/v1",
@@ -329,7 +330,7 @@ func (r *TenantReconciler) injectLLMCredentials(ctx context.Context, tenant *gen
 	if err != nil {
 		return fmt.Errorf("read LiteLLM master key: %w", err)
 	}
-	keyAlias := fmt.Sprintf("%s-%s", tenant.Name, appName)
+	keyAlias := modelgateway.KeyAlias(tenant.Name, appName)
 	return ensureLiteLLMVirtualKey(ctx, masterKey, virtualKey, keyAlias)
 }
 
@@ -356,7 +357,7 @@ func (r *TenantReconciler) getLiteLLMMasterKey(ctx context.Context) (string, err
 // using it, however correct the Secret otherwise looks — confirmed live against this
 // cluster's open-webui deployment before this function existed.
 func ensureLiteLLMVirtualKey(ctx context.Context, masterKey, virtualKey, keyAlias string) error {
-	exists, err := litellmKeyExists(ctx, masterKey, virtualKey)
+	exists, err := litellmKeyExists(ctx, masterKey, keyAlias)
 	if err != nil {
 		return err
 	}
@@ -393,32 +394,17 @@ func ensureLiteLLMVirtualKey(ctx context.Context, masterKey, virtualKey, keyAlia
 	return nil
 }
 
-// litellmKeyExists checks LiteLLM's key database via GET /key/info?key=... — 200 means the
-// key is already registered (nothing to do), 404 means it genuinely is not (create it), any
-// other status is a real error worth surfacing (bad master key, proxy unreachable, etc.).
-func litellmKeyExists(ctx context.Context, masterKey, virtualKey string) (bool, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, litellmProxyBaseURL+"/key/info?key="+virtualKey, nil)
-	if err != nil {
-		return false, err
-	}
-	req.Header.Set("Authorization", "Bearer "+masterKey)
+// litellmGateway is the model gateway at the address this package uses,
+// which a test points at a server of its own.
+func litellmGateway(masterKey string) *modelgateway.Client {
+	return &modelgateway.Client{BaseURL: litellmProxyBaseURL, MasterKey: masterKey}
+}
 
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return false, fmt.Errorf("LiteLLM /key/info: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	switch resp.StatusCode {
-	case http.StatusOK:
-		return true, nil
-	case http.StatusNotFound:
-		return false, nil
-	default:
-		respBody, _ := io.ReadAll(resp.Body)
-		return false, fmt.Errorf("LiteLLM /key/info status %d: %s", resp.StatusCode, string(respBody))
-	}
+// litellmKeyExists reports whether the gateway has a key of this alias
+// (modelgateway.Client.KeyExists, which says why it is asked by alias and not
+// through /key/info).
+func litellmKeyExists(ctx context.Context, masterKey, keyAlias string) (bool, error) {
+	return litellmGateway(masterKey).KeyExists(ctx, keyAlias)
 }
 
 // deleteAppDeployment removes the tenant's workloads: every Component in its

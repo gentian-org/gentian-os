@@ -242,7 +242,7 @@ func (r *TenantReconciler) deleteIdentity(ctx context.Context, tenant *gentianov
 	var makeJob func() *batchv1.Job
 	if tenant.Spec.DeletionPolicy == gentianov1alpha1.DeletionPolicyDelete {
 		jobName = realmDeleteJobName(tenant.Name)
-		makeJob = func() *batchv1.Job { return makeRealmDeleteJob(tenant, realmName) }
+		makeJob = func() *batchv1.Job { return makeRealmDeleteJob(tenant, realmName, r.KernelRealm) }
 	} else {
 		// Retain path: only disable the realm if one was actually provisioned.
 		// If the realm job is absent, no realm exists in Keycloak and there is nothing to disable.
@@ -473,7 +473,7 @@ func makeRealmDisableJob(tenant *gentianov1alpha1.Tenant, realmName, kernelRealm
 	}
 }
 
-func makeRealmDeleteJob(tenant *gentianov1alpha1.Tenant, realmName string) *batchv1.Job {
+func makeRealmDeleteJob(tenant *gentianov1alpha1.Tenant, realmName, kernelRealm string) *batchv1.Job {
 	ttl := meta.ProvisioningJobTTLSeconds
 	deadline := meta.ProvisioningJobActiveDeadlineSeconds
 	return &batchv1.Job{
@@ -492,7 +492,7 @@ func makeRealmDeleteJob(tenant *gentianov1alpha1.Tenant, realmName string) *batc
 				Spec: corev1.PodSpec{
 					RestartPolicy: corev1.RestartPolicyOnFailure,
 					Containers: []corev1.Container{
-						keycloakContainer("delete-realm", buildRealmDeleteScript(realmName)),
+						keycloakContainer("delete-realm", buildRealmDeleteScript(realmName, kernelRealm)),
 					},
 				},
 			},
@@ -798,8 +798,20 @@ fi`,
 // could not delete was recorded as deleted and the tenant's deletion went on
 // without it. Deleted, or already not there, is success; anything else fails
 // the Job, and the deletion comes back to it.
-func buildRealmDeleteScript(realmName string) string {
-	return fmt.Sprintf(`set -eu
+//
+// And what was made for the tenant in the kernel realm, which is not the
+// tenant's and does not go with its realm: the client the tenant's realm
+// signs in to the kernel realm as (broker-<realm>, made by the realm Job),
+// with the protocol mapper the tenant's Composition hangs on it. It used to
+// stay for ever -- a confidential client, with a redirect to a realm that no
+// longer exists -- one per tenant ever deleted. kernelRealm is empty on a
+// cluster with no kernel realm, where there is no such client.
+//
+// The client is looked for by its exact id and removed by the id Keycloak
+// answers with; "not there" is a 200 with an empty list, never inferred from
+// a failed delete.
+func buildRealmDeleteScript(realmName, kernelRealm string) string {
+	script := fmt.Sprintf(`set -eu
 `+keycloak.ShellAdminToken()+`
 HTTP=$(curl -s -o /dev/null -w "%%{http_code}" \
   -X DELETE \
@@ -809,7 +821,29 @@ case "${HTTP}" in
   204) echo "realm %[1]s deleted" ;;
   404) echo "realm %[1]s is not there" ;;
   *) echo "ERROR: deleting realm %[1]s answered HTTP ${HTTP}" >&2; exit 1 ;;
-esac`, realmName)
+esac
+`, realmName)
+	if kernelRealm == "" || kernelRealm == realmName {
+		return script
+	}
+	return script + fmt.Sprintf(`BROKER="broker-%[1]s"
+FOUND=$(curl -sS --fail --max-time 30 -H "Authorization: Bearer ${TOKEN}" \
+  "${KEYCLOAK_URL}/admin/realms/%[2]s/clients?clientId=${BROKER}")
+BROKER_ID=$(printf '%%s' "${FOUND}" | jq -r --arg id "${BROKER}" '.[] | select(.clientId == $id) | .id' | head -n 1)
+if [ -z "${BROKER_ID}" ]; then
+  echo "client ${BROKER} is not in realm %[2]s"
+else
+  HTTP=$(curl -s -o /dev/null -w "%%{http_code}" \
+    -X DELETE \
+    -H "Authorization: Bearer ${TOKEN}" \
+    "${KEYCLOAK_URL}/admin/realms/%[2]s/clients/${BROKER_ID}")
+  case "${HTTP}" in
+    204) echo "client ${BROKER} removed from realm %[2]s, with its mappers" ;;
+    404) echo "client ${BROKER} is not in realm %[2]s" ;;
+    *) echo "ERROR: removing client ${BROKER} from realm %[2]s answered HTTP ${HTTP}" >&2; exit 1 ;;
+  esac
+fi
+`, realmName, kernelRealm)
 }
 
 // buildRealmDisableScript disables a Keycloak realm on Retain undeploy,

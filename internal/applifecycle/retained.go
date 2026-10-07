@@ -275,6 +275,9 @@ func (s *Service) retainedApp(tenant *gentianov1alpha1.Tenant, name string, prof
 		src.databases[name] || recorded.Has(backup.KindDatabase), stores.Database != "")
 	app.Kinds[KindObjectStorage] = store(KindObjectStorage, recorded.Has(backup.KindObjectStorage), stores.S3)
 	app.Kinds[KindCache] = store(KindCache, recorded.Has(backup.KindCache), stores.Redis)
+	// The key at the model gateway: on record when the cluster served models
+	// while the app was installed. Nothing in a profile declares it.
+	app.Kinds[KindModelAccess] = store(KindModelAccess, recorded.Has(backup.KindModelAccess), false)
 
 	// Files: the claims a purge would delete.
 	app.Volumes, _ = appVolumes(src.claims, tenant, name, profile)

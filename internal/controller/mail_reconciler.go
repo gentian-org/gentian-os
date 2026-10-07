@@ -1598,6 +1598,17 @@ func (r *TenantReconciler) deleteMail(ctx context.Context, tenant *gentianov1alp
 		}
 	}
 
+	// The tenant's mail records, removed whatever the deletion policy says,
+	// for the reason the routing above is. The DNSEndpoint is in the mail
+	// perimeter's namespace, not the tenant's, and carries no tenant label, so
+	// neither the namespace's deletion nor the sweep of labelled objects took
+	// it: the domain of a deleted tenant went on publishing an MX for this
+	// cluster, an SPF record authorising it and a DKIM key, for a domain
+	// Postfix had stopped accepting.
+	if err := r.deleteTenantMailDNS(ctx, tenant, mailDMZNamespace); err != nil {
+		return fmt.Errorf("remove the mail DNS records of tenant %s: %w", tenant.Name, err)
+	}
+
 	// The tenant's SASL credentials, removed whatever the deletion policy says.
 	//
 	// DeletionPolicy governs whether the tenant's DATA is kept — a mailbox one
