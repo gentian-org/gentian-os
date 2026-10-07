@@ -300,6 +300,63 @@ updates, all tenants automatically use the new kernel. This is the
 intended behaviour: cluster admins manage kernel versions, tenant
 admins do not.
 
+### 7.4 Upgrades and definitions
+
+A cluster holds two kinds of resource definition for this API group, and they
+reach it by different roads:
+
+| Definition | In the repository | Reaches a cluster by |
+|---|---|---|
+| The operator's own CRDs (`Tenant`, `Component`, `ComponentProfile`, …) | `charts/gentian-os/crds/` | The Argo CD sync of the `gentian-os` Application — the same sync that rolls the operator and the director, CRDs first. |
+| The kinds Crossplane generates (`App`/`XApp`, `XTenant`, `Cluster`, `Repository`, …) and the Compositions | `crossplane/xrds/`, `crossplane/compositions/` | Installer step B-06 only, from the checkout on the install host: `./install.sh --only B-06`. |
+
+An API server prunes what it does not know. When a definition on the cluster is
+older than the software — Argo CD following a branch that moved back under a
+pinned image, a plain `helm upgrade` (which never touches `crds/`), a new image
+rolled without re-running B-06 — a field the software writes is dropped on
+write and nothing fails. So both binaries carry the definitions they were built
+with (`internal/schemacheck`, copied by `make manifests`), and the operator
+compares them with what the cluster serves: at start, then every five minutes,
+and every thirty seconds while something is wrong. For a Crossplane kind it
+reads the CRD Crossplane generated, claim and composite, because that is what
+the API server prunes against. It reads each definition by name and may read
+no other.
+
+**What a person sees** when a definition is older than the software:
+
+- The operator's log names the kind, the fields that would be dropped and the
+  remedy, and a Warning Event `DefinitionsOutdated` is recorded on the
+  operator's pod.
+- Every object a held reconciler would have reconciled carries the condition
+  `DefinitionsCurrent=False`, reason `DefinitionsOutdated`, with the same
+  message. An outdated chart CRD holds every reconciler of the operator's own
+  kinds; an outdated Crossplane kind holds the reconciler that writes it —
+  `XTenant` the tenant's, `App` the component's. The operator keeps running.
+- The director answers `503` to a write that sets one of those fields, naming
+  the definition and the remedy, and commits nothing. Reads, removals and
+  writes that do not touch the field are served. If the director cannot learn
+  the state at all — the operator is unreachable, has not checked yet, or is
+  mid-rollout on another build — it refuses every write that sets a field and
+  says the state could not be confirmed.
+- `GET /v1/definitions` on the operator's listener returns the whole finding:
+  each kind, its state, the missing fields and the remedy. The director's and
+  the usher's identities are admitted to it.
+
+**What to do.** For a chart CRD, sync the `gentian-os` Application at the
+revision the image was built from. For a Crossplane kind, re-run B-06 from a
+current checkout. Nothing has to be restarted: the next check lets the held
+reconcilers go, the condition comes off, and the director serves the writes it
+refused.
+
+A definition that is absent rather than old — Crossplane generates a CRD a
+little after its XRD is applied — is reported as `DefinitionsNotReady` and
+waited for; it holds only the reconciler that writes that kind. On a fresh
+install this does not arise in the normal order: B-06 applies the XRDs and
+waits for them to be established, and the operator arrives at D-01.
+
+Delivering the XRDs and Compositions through Argo CD as well, so that one sync
+moved every definition together, is a possible later step. It is not built.
+
 ## 8. Safety Guards
 
 - **Stateful Argo Apps** (OpenBao, Crossplane) deploy with `prune: false` and `finalizers: []` —
