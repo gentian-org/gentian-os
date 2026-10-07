@@ -33,7 +33,9 @@ info:
     ## What the cluster does
 
     * It sends to one `https` address fixed at install time
-      (`licenceReport.url` in the operator chart). An address that is not
+      (`licenceReport.url` in the operator chart). The installer's default
+      is `https://licence.sovrence.com/api/v1/licence-reports`; that
+      default is provisional. An address that is not
       `https` counts as none and nothing is sent.
     * It follows no redirect. A `3xx` is a report that did not arrive.
     * A status from 200 to 299 is `accepted`. Anything else, or no answer
@@ -54,9 +56,12 @@ info:
       SHA-256 of the raw 32-byte public key, and should match.
     * The public key travels in the report it verifies, so a signature
       proves only that the sender holds that key. What ties a key to a
-      cluster is the receiver's own record: remember the key first seen for
-      a `cluster.id`, and treat a report for that id under another key as a
-      different sender.
+      cluster is the receiver's own record, kept per cluster URL: remember
+      the key first seen for a `cluster.url`, and treat a report for that
+      URL under another key as a different sender. The remembered key is
+      reset by the holder of the account that URL belongs to at the
+      receiver, and by nothing a report says; the next key seen for the
+      URL is then the one remembered.
     * Refuse a `version` it does not know rather than guess at it.
     * Use `sequence` to tell a replayed report from a new one: it counts a
       cluster's reports and never repeats. It may skip numbers — a report

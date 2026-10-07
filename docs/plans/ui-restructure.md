@@ -281,8 +281,12 @@ repository beside the desktop and the admin console.
   from; the app sends no cluster or tenant identifier with it.
 - **It signs the person in to the store only for what concerns the tenant**
   — acquiring, and seeing what the tenant has acquired — with their account
-  at the vendor, as a public client with no secret. That token is valid at
-  the store and nowhere on the cluster. Whether the store serves the tenant
+  at the vendor, as a public client with no secret. Its backend exchanges
+  the code and keeps the token, bound to the administrator's cluster
+  session and never handed to the browser; the issuer redirects to the
+  app's one callback and nowhere else (the exception AD-13 states). That
+  token is valid at the store and nowhere on the cluster, and it is not
+  what pulls images. Whether the store serves the tenant
   is learned at that sign-in, not before; the catalogue is readable either
   way.
 - **Not an entitlement issuer, and neither is the store.** The store decides
@@ -331,7 +335,8 @@ App Store app ─► store   sign-in at the store's issuer (PKCE, tenant_url)
        ◄─ 201 confirmation                        a free app, or no checkout needed
        ◄─ 202 {id, checkoutUrl}                   paid: the checkout opens in a separate window, at the store;
                                                   then GET /v1/acquisitions/{id} until it is confirmed
-   confirmation: {coordinate, version, digest, repository?: {name, type, url, credential}}
+   confirmation: {coordinate, version, digest, repository?: {type, url, credential}}
+   the app computes the repository's name from the tenant and the url (store-contract.md §6.4)
 
   admin says install, for everyone or not          ◆ every call below carries the admin's own token
 App Store app ─► director   PUT  /v1/tenants/{t}/repositories/{name}   {role: apps, type: oci, url}
@@ -407,14 +412,15 @@ could be installed (AD-14).
   function that does not map onto an existing director endpoint.
 - **The App Store app's calls are the user's own.** Settled: the app calls
   the director and the custodian with the signed-in person's token and has
-  no identity of its own. An unattended act — renewing a repository
-  credential before it expires, a scheduled upgrade — has no caller in this
-  design; what would make one is an agent identity with `act` (principle 5),
+  no identity of its own. An unattended act — a scheduled upgrade, say —
+  has no caller in this design (a repository credential does not expire,
+  so none is needed for it); what would make one is an agent identity with `act` (principle 5),
   and it is not built.
 - **What the store's owner still has to decide** is listed with the API
   format: [artefacts/store-api.md](artefacts/store-api.md) §9 — token
-  lifetimes, who may act for a tenant, credential lifetime, who may write a
-  review.
+  lifetimes, how an account becomes a tenant's, who may write a review.
+  Decided since: the tenant administrator's account acts for the tenant,
+  and a repository credential does not expire for now.
 - **Where the desktop's UI state lives.** Preferences and the notification
   inbox are the only state the BFF keeps. A per-tenant database granted as a
   requirement (the `{tenant}_shell` database exists today) is the default;

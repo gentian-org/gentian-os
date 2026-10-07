@@ -51,12 +51,24 @@ info:
     read: the answer is the anonymous one, not an error.
 
     **Signed-in calls** need a token: `GET /v1/tenant` and every
-    `/v1/acquisitions` operation. The person signs in to the store, with an
-    account at the store, by OAuth 2.0 authorization code with PKCE (see
-    `GET /v1/meta` and the security scheme `storeToken`). The app is a
-    public client and holds no client secret. It asks for the sign-in only
-    when the person acquires something or opens what the tenant has
-    acquired.
+    `/v1/acquisitions` operation. The tenant's administrator signs in to
+    the store, with an account at the store, by OAuth 2.0 authorization
+    code with PKCE (see `GET /v1/meta` and the security scheme
+    `storeToken`). The app is a public client and holds no client secret.
+    Its backend on the cluster exchanges the code and keeps the token; the
+    browser is never handed it. The app asks for the sign-in only when the
+    person acquires something or opens what the tenant has acquired.
+
+    ## Accounts and tenants
+
+    A tenant is an organisation in the store's records; an account is a
+    person. They are separate things. The tenant's administrator creates an
+    account at the store's issuer, and the store associates that account
+    with the tenant. By default exactly that one account acts for the
+    tenant. Whether a store lets more accounts act for a tenant, and how,
+    is outside this definition for now. An account that is not associated
+    with the tenant URL in its token is refused on the signed-in calls with
+    the reason `tenant-not-claimed` (see `RefusalReason`).
 
     Whether a store serves a tenant (`tenant-refused`) is a question of the
     signed-in calls only. An anonymous visitor sees the catalogue whatever
@@ -197,7 +209,10 @@ info:
     enumeration as its documented fallback. Anything else is `/v2`.
 servers:
   - url: "{storeUrl}"
-    description: The address a cluster names for its store (`spec.catalogue.storeUrl` on the Cluster claim).
+    description: >-
+      The address a cluster names for its store (`spec.catalogue.storeUrl` on the Cluster claim).
+      A cluster installed with the installer's defaults names `https://store.sovrence.com`;
+      that default is provisional.
     variables:
       storeUrl:
         default: https://store.example
@@ -296,6 +311,9 @@ paths:
                 refused:
                   summary: A tenant the store has no reports for
                   $ref: "#/components/examples/TenantRefused"
+                notClaimed:
+                  summary: An account that is not associated with the tenant
+                  $ref: "#/components/examples/TenantNotClaimed"
         "401":
           $ref: "#/components/responses/Unauthenticated"
         "403":
@@ -715,9 +733,11 @@ paths:
       summary: What this tenant has acquired
       description: |
         Every acquisition recorded for the tenant URL in the token, in any
-        status, newest first. In this listing a confirmation carries no
-        `credential`: a token is handed out by `GET /v1/acquisitions/{id}`
-        and by the two `POST` operations, one acquisition at a time.
+        status, newest first. In this listing a confirmation never carries
+        a `credential`, whatever the scopes of the token: a credential is
+        handed out one acquisition at a time, by the two `POST` operations
+        and by `GET /v1/acquisitions/{id}`, and only to a token with the
+        scope `store.acquire`.
       parameters:
         - name: status
           in: query
@@ -761,7 +781,6 @@ paths:
                           version: 31.0.4
                           digest: sha256:3f6c0a1e5b7d9c2a4e6f8091a3b5c7d9e1f20314253647586970a1b2c3d4e5f6
                           repository:
-                            name: example-apps-7c1d9e02ab
                             type: oci
                             url: oci://registry.store.example/apps
                           addons: []
@@ -931,8 +950,15 @@ paths:
         The outcome of an acquisition. While it is `pending` the answer
         carries `Retry-After`, which a client honours before it asks again
         (and never asks more often than every two seconds). Once it is
-        `confirmed` the answer carries the confirmation, with the
-        repository credential that is valid now.
+        `confirmed` the answer carries the confirmation.
+
+        **Reading the repository credential needs the scope
+        `store.acquire`.** The operation itself needs only `store.read`.
+        Answered to a token that carries `store.acquire` as well, a
+        confirmation's repositories carry the `credential` that is valid
+        now. Answered to a token with `store.read` alone, the confirmation
+        is the same without any `credential` member — it is `200`, not
+        `403`: the acquisition may be read, the secret may not.
 
         The confirmation is for the latest version the acquisition covers,
         or for `version` when the query names one.
@@ -961,7 +987,11 @@ paths:
                 pending:
                   $ref: "#/components/examples/AcquisitionPending"
                 confirmed:
+                  summary: Confirmed, answered to a token with `store.acquire`
                   $ref: "#/components/examples/AcquisitionConfirmed"
+                confirmedReadOnly:
+                  summary: Confirmed, answered to a token with `store.read` alone; no credential
+                  $ref: "#/components/examples/AcquisitionConfirmedNoCredential"
                 cancelled:
                   summary: The person left the checkout
                   value:
@@ -1007,22 +1037,28 @@ paths:
       - $ref: "#/components/parameters/AcquisitionId"
     post:
       tags: [acquisitions]
-      operationId: renewCredential
-      summary: Mint a new repository credential for an acquisition
+      operationId: replaceCredential
+      summary: Replace an acquisition's repository credential now
       description: |
-        Renews the credential of every repository the acquisition's
-        confirmation names, and answers the confirmation with the new
-        credentials in place. It takes no body.
+        Rotation: replaces the credential of every repository the
+        acquisition's confirmation names with a newly minted one, and
+        answers the confirmation with the new credentials in place. It
+        takes no body. It is what an administrator asks for when a
+        credential may have leaked. Nothing calls it on a schedule: a
+        credential does not expire (see `Credential`), so there is nothing
+        to renew.
 
-        The credentials handed out before stay valid until their own
-        `expiresAt`, and for at least 24 hours after this call, so that a
-        cluster in the middle of replacing one never holds a credential the
-        repository refuses. A store may end them earlier only when it ends
-        the acquisition.
+        The credential it replaces keeps working for an overlap of 24 hours
+        from this call and is refused by the repository from then on. The
+        overlap is what lets a cluster in the middle of replacing one never
+        hold only a credential the repository refuses. A store ends the old
+        credential sooner only by ending the acquisition.
 
-        A client renews when `expiresAt` is less than 30 days away, and
-        whenever an administrator asks it to. An acquisition with no
-        repository answers its confirmation unchanged.
+        The user name does not change: it is the tenant's (see
+        `Credential`). Only the token is new.
+
+        An acquisition with no repository answers its confirmation
+        unchanged. Every store serves this operation.
 
         The confirmation is for the version the acquisition was last
         confirmed for; `version` in the query names another.
@@ -1036,7 +1072,7 @@ paths:
             type: string
       responses:
         "200":
-          description: The confirmation, with newly minted credentials.
+          description: The confirmation, with the new credentials.
           headers:
             Cache-Control:
               $ref: "#/components/headers/NoStore"
@@ -1045,7 +1081,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Confirmation"
               examples:
-                renewed:
+                replaced:
                   $ref: "#/components/examples/Confirmation"
         "401":
           $ref: "#/components/responses/Unauthenticated"
@@ -1054,7 +1090,7 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
-          description: The acquisition is not `confirmed`, so it has no credential to renew.
+          description: The acquisition is not `confirmed`, so it has no credential to replace.
           content:
             application/problem+json:
               schema:
@@ -1081,23 +1117,40 @@ components:
       type: http
       scheme: bearer
       description: |
-        An access token issued by the store's own issuer to the person
-        signed in to the App Store app. It is sent as
-        `Authorization: Bearer <token>`. To the cluster's side it is opaque:
-        the app reads nothing from it and only the store validates it.
+        The **store token**: an access token issued by the store's own
+        issuer to the tenant's administrator, signed in to the store through
+        the App Store app. It is sent as `Authorization: Bearer <token>`. To
+        the cluster's side it is opaque: the app reads nothing from it and
+        only the store validates it.
 
         It is required on the signed-in calls — `GET /v1/tenant` and every
         `/v1/acquisitions` operation — and optional on the open reads,
         where it only lets the store personalise an answer.
 
+        ## What it is, and what it is not
+
+        It authenticates the administrator to the store, for what concerns
+        the tenant: its standing and its acquisitions. It is valid at the
+        store and nowhere on the cluster.
+
+        It is **not** what pulls anything. Charts and images are pulled
+        with the tenant's registry credential — the `credential` a
+        confirmation carries (see `Credential`) — which the App Store app
+        hands to the cluster's custodian once and does not keep. The
+        registry never sees the store token, and the store token pulls
+        nothing.
+
         ## Obtaining one
 
         OAuth 2.0 authorization code with PKCE (RFC 6749, RFC 7636), public
-        client, no client secret.
+        client, no client secret: a secret shipped to every cluster is not
+        one. The administrator signs in once; the result is the store token.
 
-        1. The client reads `issuer`, `clientId` and `scopes` from
-           `GET /v1/meta`, and the issuer's endpoints from
-           `{issuer}/.well-known/oauth-authorization-server` (RFC 8414).
+        1. The App Store app's backend reads `issuer`, `clientId` and
+           `scopes` from `GET /v1/meta`, and the issuer's endpoints from
+           `{issuer}/.well-known/oauth-authorization-server` (RFC 8414). It
+           makes `state` and the PKCE verifier and keeps both, with the
+           administrator's cluster session.
         2. It sends the person's browser to the authorization endpoint with
            `response_type=code`, `client_id`, `redirect_uri`, `scope`,
            `state`, `code_challenge`, `code_challenge_method=S256`, and
@@ -1106,20 +1159,48 @@ components:
            the same spelling the cluster's licence report uses for the
            tenant.
         3. The person signs in at the store, with their account there.
-        4. The issuer redirects to `redirect_uri` with `code` and `state`.
-           The client exchanges the code at the token endpoint with
+        4. The issuer redirects the browser to `redirect_uri` with `code`
+           and `state`. That address is the backend's own callback.
+        5. **The backend** exchanges the code at the token endpoint with
            `grant_type=authorization_code`, `code`, `redirect_uri`,
-           `client_id` and `code_verifier`.
+           `client_id` and `code_verifier`. The exchange is made from the
+           cluster, server to server, never from the browser.
+
+        ## Where the token is kept
+
+        In the App Store app's backend on the cluster, bound to the
+        administrator's cluster session, for as long as that session lasts
+        and nowhere durable. It is never handed to the browser: not in a
+        page, not in a cookie, not in an answer of the backend's. The
+        browser carries the code through the redirect and nothing else. The
+        same holds for a refresh token.
+
+        ## The redirect address
+
+        There is exactly one per tenant: the App Store app's own callback,
+
+        `https://store.<the tenant's base domain>/oauth/callback`
+
+        The App Store app is component `app-store` of a tenant, and its
+        host label is `store`. The tenant's base domain is
+        `<tenant>.<cluster domain>` on a multi-tenant cluster, the cluster
+        domain itself for the one user tenant of a single-tenant cluster,
+        or the tenant's custom domain. It is the host of `tenant_url`, so
+        an issuer computes the one address from the request alone —
+        `https://store.<host of tenant_url>/oauth/callback` — and no
+        address is registered per cluster.
 
         ## What the issuer must do
 
         * Accept `clientId` as a public client: no secret, `S256` required,
           a request without a challenge refused.
-        * Accept a `redirect_uri` only when it is `https` and its host is
-          the host of `tenant_url` or a subdomain of it. Redirect URIs are
-          not registered one by one: every cluster has its own hosts. The
-          effect is that a code for a tenant is delivered only to a page
-          served under that tenant's own address.
+        * Accept a `redirect_uri` only when it is, character for character,
+          the one address above computed from the request's `tenant_url`:
+          scheme `https`, the host `store.<host of tenant_url>`, no port,
+          the path `/oauth/callback`, no query and no fragment. Any other address under the tenant's
+          host is refused, as is any other path on the right host. The
+          effect is that a code for a tenant is delivered only to the App
+          Store app's backend of that tenant.
         * Refuse a request with no `tenant_url`, or one that is not in the
           spelling above (`error=invalid_request`).
         * Bind the tenant into the token: whatever form the token takes, the
@@ -1128,8 +1209,9 @@ components:
           must act for that tenant URL and no other. A token is for one
           tenant. A person in charge of two signs in from each.
         * Not refuse the sign-in because the store does not serve the
-          tenant. It issues the token, and `GET /v1/tenant` states the
-          refusal and its reason, so that the app can show it.
+          tenant, or because the account is not associated with it. It
+          issues the token, and `GET /v1/tenant` states the refusal and
+          its reason, so that the app can show it.
 
         A refresh token may be issued; if it is, it rotates on use and is
         bound to the same tenant URL. Lifetimes are the store's to set.
@@ -1138,14 +1220,15 @@ components:
 
         * `store.read` — reading what concerns the token's tenant:
           `GET /v1/tenant` (its standing and notices),
-          `GET /v1/acquisitions`, and `GET /v1/acquisitions/{id}` including
-          the confirmation and the repository credential that is valid now.
-          It is also what lets the store personalise an open read
-          (`acquired`).
-        * `store.acquire` — changing what the tenant has at the store:
-          `POST /v1/acquisitions`, which may start a checkout, and
-          `POST /v1/acquisitions/{id}/credential`, which mints a new
-          credential.
+          `GET /v1/acquisitions`, and `GET /v1/acquisitions/{id}` with its
+          confirmation — **without** any repository credential. It is also
+          what lets the store personalise an open read (`acquired`).
+        * `store.acquire` — changing what the tenant has at the store, and
+          reading a repository credential: `POST /v1/acquisitions`, which
+          may start a checkout; `POST /v1/acquisitions/{id}/credential`,
+          which replaces a credential; and the `credential` members in the
+          answer of `GET /v1/acquisitions/{id}`. No answer carries a
+          `credential` to a token without this scope.
 
         No scope is needed for the open reads, and none covers them: they
         are answered with no token at all. A client asks for both scopes at
@@ -1508,8 +1591,6 @@ components:
             ignores values it does not know. `reviews`: apps have reviews.
             `reports`: apps have evaluations and reports. `checkout`: an
             acquisition may answer `202` with a checkout address.
-            `credential-renewal`: credentials expire and
-            `POST /v1/acquisitions/{id}/credential` is served.
           items:
             type: string
         links:
@@ -1564,8 +1645,14 @@ components:
         * `no-reports-for-tenant` — no licence report lists this tenant URL.
           Either the cluster does not report, or the URL stated at sign-in
           is not the tenant's.
-        * `tenant-not-claimed` — reports exist, and the account signed in is
-          not one the store accepts as acting for this tenant.
+        * `tenant-not-claimed` — reports exist, and the account signed in
+          is not associated with this tenant: it is not the account of the
+          tenant's administrator (or another the store lets act for the
+          tenant). With this reason `GET /v1/tenant` answers
+          `served: false`, every `/v1/acquisitions` operation answers `403`
+          `tenant-refused` — also for an `id` that exists, so that the
+          account learns nothing of the tenant's acquisitions — and an open
+          read is answered as the anonymous one, without `acquired`.
         * `reports-stale` — reports exist and the latest is older than the
           store accepts.
         * `tenant-blocked` — the store has decided not to serve this tenant.
@@ -2020,8 +2107,8 @@ components:
         * `pending` — a checkout is open. `checkoutUrl` is present.
         * `confirmed` — the tenant has the app. `confirmation` is present.
         * `cancelled` — the person left the checkout, or the acquisition
-          was ended later. A cancelled acquisition's credential is no
-          longer renewed.
+          was ended later. Ending an acquisition ends the credential
+          issued for it (see `Credential`).
         * `failed` — the checkout did not complete. `failure` says why.
 
         `pending` becomes one of the other three and never the reverse.
@@ -2089,12 +2176,15 @@ components:
         checks:
 
         1. For each distinct `repository` in the confirmation and its
-           `addons`: declare it for the tenant at the director
+           `addons`: compute the name it is declared under (see
+           `Repository`; the store names nothing on the cluster), declare
+           it for the tenant at the director
            (`PUT /v1/tenants/{t}/repositories/{name}` with
            `{"role": "apps", "type": <type>, "url": <url>}`), then set its
            credential at the custodian
            (`PUT /v1/credentials/repository-<name>` with the fields
-           `username` and `password`, the password being `token`).
+           `username` and `password`, the password being `token`). The
+           credential is handed over once and not kept by the app.
         2. Install at the director
            (`POST /v1/tenants/{t}/apps/{app}` with
            `{"coordinate", "digest", "defaultGrant"}`), `coordinate` and
@@ -2134,21 +2224,31 @@ components:
         The private repository an app's chart and images are pulled from.
         Absent for an app whose artefacts are public: a free app's
         confirmation carries no repository and no credential.
-      required: [name, type, url]
+
+        **The store names nothing on the cluster.** A repository is its
+        `type` and its `url`. The name it is declared under on the cluster
+        is computed there, by the App Store app, from the tenant's name on
+        the cluster and `url`:
+
+            address = url without the leading "oci://", lower-cased
+            slug    = address with every run of characters outside [a-z0-9]
+                      replaced by one "-", leading and trailing "-" removed
+            hash    = the first 8 hexadecimal characters, lower case, of
+                      SHA-256(tenant + LF + address), UTF-8, LF being the
+                      one byte 0x0A
+            stem    = tenant + "-" + slug, cut to its first 31 characters,
+                      trailing "-" removed
+            name    = stem + "-" + hash          (at most 40 characters)
+
+        Tenant `acme` and `oci://registry.store.example/apps` give
+        `acme-registry-store-example-app-991ae7e1`; tenant `demo` and
+        `oci://ghcr.io/example` give `demo-ghcr-io-example-59b6b43d`.
+
+        The same tenant and the same `url` always give the same name, and
+        two tenants never share one. A store therefore hands a tenant the
+        same `url` for the same repository every time, in one spelling.
+      required: [type, url]
       properties:
-        name:
-          type: string
-          description: |
-            The name the repository is declared under on the cluster. A DNS
-            label of at most 40 characters. On a cluster a repository name
-            is one object whoever declares it, so the store must hand each
-            tenant URL a name no other tenant URL is handed, and must hand
-            the same tenant the same name for the same repository every
-            time. A form that does both: a short name of the store's, a
-            hyphen, and the first ten hexadecimal characters of the SHA-256
-            of the tenant URL.
-          pattern: "^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$"
-          examples: [example-apps-7c1d9e02ab]
         type:
           type: string
           description: |
@@ -2182,11 +2282,29 @@ components:
     Credential:
       type: object
       description: |
-        The credential the repository checks on every pull. The store mints
-        it for one tenant; the repository refuses pulls without it. To the
-        cluster it is opaque: the cluster stores it in its vault through the
-        custodian, hands it to what pulls, and never interprets, logs or
-        returns it.
+        The tenant's registry credential: what the repository checks on
+        every pull. The store mints it for one tenant; the repository
+        refuses pulls without it. To the cluster it is opaque: the App
+        Store app hands the user name and the token to the cluster's
+        custodian once, the cluster stores them in its vault, hands them to
+        what pulls, and never interprets, logs or returns them.
+
+        It is not the store token (see the security scheme `storeToken`):
+        that one authenticates a person to the store, this one pulls.
+
+        **One per tenant and repository.** The cluster keeps one credential
+        for each repository address a tenant has declared. Every
+        confirmation a store hands one tenant for the same `url` therefore
+        carries the same `username` and a token that pulls everything that
+        tenant has acquired in that repository.
+
+        **It does not expire, for now.** A store issues credentials with no
+        expiry: `expiresAt` is `null`. Two things end one. *Rotation*:
+        `POST /v1/acquisitions/{id}/credential` replaces it, and the
+        replaced one is refused after the overlap stated there. *The end of
+        the acquisition*: a credential stops pulling an app when the
+        tenant's acquisition of it ends (`cancelled`), and is refused
+        altogether once it serves no acquisition.
 
         Holding it is what makes a private app arrive on a cluster. It does
         not keep the app to one tenant of that cluster: the cluster's chart
@@ -2198,13 +2316,17 @@ components:
         only through a chart that takes `imagePullSecrets` or
         `global.imagePullSecrets`.
 
-        Absent from a `Repository` in `GET /v1/acquisitions`.
+        Absent from a `Repository` in `GET /v1/acquisitions`, and in every
+        answer to a token without the scope `store.acquire`.
       required: [username, token, expiresAt]
       properties:
         username:
           type: string
           description: |
-            The user name the registry expects with the token. Required: the
+            The user name the registry expects with the token. One per
+            tenant: the store chooses it, hands the same one to the same
+            tenant every time, and to no other tenant. The cluster treats
+            it as opaque and stores it beside the token. Required: the
             cluster's chart installer needs a user name and a password, and
             a token with no user name fails there.
           minLength: 1
@@ -2218,9 +2340,11 @@ components:
           type: [string, "null"]
           format: date-time
           description: |
-            When the repository stops accepting the token; `null` when it
-            does not expire. A store that sets it serves
-            `POST /v1/acquisitions/{id}/credential`.
+            `null`: the credential does not expire. A store issues every
+            credential with `null` for now. The member stays in the format,
+            and stays required, so that an expiry can be introduced later
+            without changing it; a client that is handed a date shows it
+            and does nothing else on its account.
     Problem:
       type: object
       description: RFC 9457 problem details, with the members this API adds.
@@ -2273,7 +2397,7 @@ components:
         languages: [en, de, fr, it]
         mediaOrigins: ["https://media.store.example"]
         checkoutOrigins: ["https://store.example"]
-        features: [reviews, reports, checkout, credential-renewal]
+        features: [reviews, reports, checkout]
         links:
           terms: https://store.example/terms
           privacy: https://store.example/privacy
@@ -2312,6 +2436,18 @@ components:
             rel: documentation
             label: Licence reporting
             url: https://store.example/help/reporting
+        notices: []
+    TenantNotClaimed:
+      value:
+        tenantUrl: https://acme.example
+        known: true
+        lastReportAt: "2026-10-06T05:06:07Z"
+        served: false
+        refusal:
+          reason: tenant-not-claimed
+          detail: >-
+            This account is not associated with https://acme.example. The store lets the account of the
+            tenant's administrator act for a tenant.
         notices: []
     AppDetail:
       value:
@@ -2392,25 +2528,23 @@ components:
         version: 31.0.4
         digest: sha256:3f6c0a1e5b7d9c2a4e6f8091a3b5c7d9e1f20314253647586970a1b2c3d4e5f6
         repository:
-          name: example-apps-7c1d9e02ab
           type: oci
           url: oci://registry.store.example/apps
           credential:
             username: tenant-7c1d9e02ab
             token: 3q2-EXAMPLE-ONLY-NOT-A-TOKEN-x7Lk
-            expiresAt: "2027-10-01T00:00:00Z"
+            expiresAt: null
         addons:
           - coordinate: gentian/nextcloud-office-ee
             version: 31.0.4
             digest: sha256:0b1c2d3e4f5a69788796a5f4e3d2c1b00b1c2d3e4f5a69788796a5f4e3d2c1b0
             repository:
-              name: example-apps-7c1d9e02ab
               type: oci
               url: oci://registry.store.example/apps
               credential:
                 username: tenant-7c1d9e02ab
                 token: 3q2-EXAMPLE-ONLY-NOT-A-TOKEN-x7Lk
-                expiresAt: "2027-10-01T00:00:00Z"
+                expiresAt: null
     AcquisitionConfirmed:
       value:
         id: acq_01JA2M8Y
@@ -2426,13 +2560,30 @@ components:
           version: 31.0.4
           digest: sha256:3f6c0a1e5b7d9c2a4e6f8091a3b5c7d9e1f20314253647586970a1b2c3d4e5f6
           repository:
-            name: example-apps-7c1d9e02ab
             type: oci
             url: oci://registry.store.example/apps
             credential:
               username: tenant-7c1d9e02ab
               token: 3q2-EXAMPLE-ONLY-NOT-A-TOKEN-x7Lk
-              expiresAt: "2027-10-01T00:00:00Z"
+              expiresAt: null
+          addons: []
+    AcquisitionConfirmedNoCredential:
+      value:
+        id: acq_01JA2M8Y
+        coordinate: gentian/nextcloud-base-ee
+        status: confirmed
+        createdAt: "2026-10-01T09:14:03Z"
+        updatedAt: "2026-10-01T09:16:40Z"
+        checkoutUrl: null
+        checkoutExpiresAt: null
+        failure: null
+        confirmation:
+          coordinate: gentian/nextcloud-base-ee
+          version: 31.0.4
+          digest: sha256:3f6c0a1e5b7d9c2a4e6f8091a3b5c7d9e1f20314253647586970a1b2c3d4e5f6
+          repository:
+            type: oci
+            url: oci://registry.store.example/apps
           addons: []
     AcquisitionFree:
       value:

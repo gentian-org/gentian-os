@@ -36,7 +36,7 @@ flowchart TB
 
 | Layer | License | Rationale |
 |---|---|---|
-| CRDs, APIs, SDKs, the bundle format, the store contract, conformance suite | **Apache 2.0** | The portability contract; anyone can implement and integrate without friction |
+| CRDs, APIs, SDKs, the bundle format, conformance suite | **Apache 2.0** | The portability contract; anyone can implement and integrate without friction |
 | App template, design system | **Apache 2.0** | Made to be copied into other people's apps, open and closed alike |
 | Core reconcilers, controllers, system services | **MPL 2.0** | Widely accepted by large enterprises; file-level copyleft keeps distributed modifications visible and mergeable |
 | Desktop and Admin Console | **MPL 2.0** | Same as the core they are the face of. Customised through branding and extension points, which are not modifications |

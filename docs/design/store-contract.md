@@ -64,8 +64,10 @@ of the person (§3). And it decides *which build* is installed, by content
 digest (§4).
 
 **How a credential is used.** The tenant declares the repository — a
-`Repository` of `type: oci` — through the director and sets its user name
-and password at the custodian. From that the platform makes one Secret,
+`Repository` of `type: oci` — through the director, under a name the
+cluster's side chooses (for a store's repository the App Store app computes
+it, §6.4), and sets its user name and password at the custodian. From that
+the platform makes one Secret,
 `repository-<name>-pull`, in that tenant's app namespace and in no other. The
 namespace is selected by an exact match on the tenant the director recorded
 from the route the caller was authorised on, not by anything a declaration
@@ -309,8 +311,8 @@ their tenant.
 | `GET /v1/tenant` | `store.read` | Whether the store serves the tenant in the token; if not, the reason; and notices to show (§6.2) |
 | `GET /v1/acquisitions` | `store.read` | What this tenant has acquired |
 | `POST /v1/acquisitions` | `store.acquire` | Acquire an app. `201` with a confirmation; or `202` with a checkout address at the store; or `200` with the acquisition the tenant already has |
-| `GET /v1/acquisitions/{id}` | `store.read` | The outcome: `pending`, `confirmed`, `cancelled` or `failed`; once confirmed, the confirmation with its credential |
-| `POST /v1/acquisitions/{id}/credential` | `store.acquire` | The confirmation again, with newly minted repository credentials |
+| `GET /v1/acquisitions/{id}` | `store.read` | The outcome: `pending`, `confirmed`, `cancelled` or `failed`; once confirmed, the confirmation. Its repository credential is in it only for a token that also carries `store.acquire` |
+| `POST /v1/acquisitions/{id}/credential` | `store.acquire` | Replaces the repository credentials now (rotation) and answers the confirmation with the new ones |
 
 **Open** means no token is needed, and the call is never answered `401` or
 `403`. A token may be presented on a catalogue read; the store may then mark
@@ -319,10 +321,11 @@ information, present only with a token and never required, and a token the
 store cannot use is ignored there rather than refused.
 
 `store.read` covers reading what concerns the token's tenant — its standing,
-its acquisitions, and one acquisition with its confirmation and credential.
-`store.acquire` covers changing what the tenant has at the store — acquiring,
-and minting a new credential. No scope covers the open reads: they need
-none.
+its acquisitions, and one acquisition with its confirmation, without any
+repository credential. `store.acquire` covers changing what the tenant has
+at the store — acquiring, and replacing a credential — and reading a
+repository credential: no answer carries one to a token without it. No
+scope covers the open reads: they need none.
 
 What follows from the open half:
 
@@ -387,22 +390,57 @@ either direction.
 ### 6.1 Signing in to the store
 
 Needed only to acquire and to see the tenant's acquisitions; never to
-browse. A person signs in to the store with an account at the store — not
-the account they are signed in to the cluster with. The flow is OAuth 2.0
-authorization code with PKCE against the store's issuer. The app is a public
-client: it holds no client secret, because a secret shipped to every cluster
-is not one.
+browse. The tenant's administrator signs in at the store's issuer, once,
+with an account at the store — not the account they are signed in to the
+cluster with. The result is a **store token**, which the App Store app uses
+for what concerns the tenant: its standing and its acquisitions.
 
-The request carries `tenant_url`, the address of the tenant the app is
-installed in, and the issuer binds it into the token. From then on every
-signed-in answer is about that tenant. The issuer accepts a redirect only to a host
-under the tenant's own address, so a code for a tenant is delivered only to
-a page served there.
+**Who acts for a tenant at the store.** A tenant is an organisation in the
+store's records, and an account is a person; the two are separate things.
+The tenant's administrator creates an account at the store's issuer, and
+that account is associated with the tenant. By default exactly that one
+account acts for the tenant. More may be allowed later; that is outside the
+definition for now. An account that is not associated with the tenant is
+refused by the store with the reason `tenant-not-claimed` (§6.2), and
+learns nothing of what the tenant has acquired.
 
-This is a code flow run by a component behind the edge, which AD-13 rules
-out for the cluster's own session. It is not that: it is against the store's
-issuer, yields a token valid at the store and nowhere on the cluster, and
-establishes no session with the platform.
+**What the store token is, and is not.** It authenticates the administrator
+to the store, and is valid nowhere on the cluster. It is not what pulls
+images: pulls use the tenant's registry credential, which the confirmation
+carries (§6.4) and which the app hands to the cluster's custodian once.
+
+The flow is OAuth 2.0 authorization code with PKCE against the store's
+issuer. The app is a public client: it holds no client secret, because a
+secret shipped to every cluster is not one. The request carries
+`tenant_url`, the address of the tenant the app is installed in, and the
+issuer binds it into the token. From then on every signed-in answer is
+about that tenant.
+
+The sign-in is held to three conditions:
+
+1. **The backend exchanges the code and keeps the token.** The
+   authorization code is exchanged by the App Store app's backend on the
+   cluster, and the store token is kept there, bound to the administrator's
+   cluster session and for no longer than it. It is never handed to the
+   browser.
+2. **The issuer redirects to exactly one address per tenant**, the App
+   Store app's own callback:
+   `https://store.<the tenant's base domain>/oauth/callback`. The app is
+   component `app-store` of the tenant, with host label `store`; the
+   tenant's base domain is `<tenant>.<cluster domain>` on a multi-tenant
+   cluster, the cluster domain itself for the one user tenant of a
+   single-tenant cluster, or the tenant's custom domain. No other host
+   under the tenant's address receives a code, and no other path.
+3. **Reading a repository credential needs the scope `store.acquire`.** A
+   token with `store.read` alone is answered a confirmation without its
+   credential, and the listing of acquisitions never carries one.
+
+This is a sign-in flow run by a component behind the edge, which AD-13
+rules out. It is the one exception AD-13 states, and the three conditions
+are what make it acceptable: it is against an issuer outside the cluster,
+yields a token valid at the store and nowhere on the cluster, and
+establishes no session with the platform. The cluster's own sign-in stays
+the edge's alone.
 
 ### 6.2 Standing, and the dependence on licence reporting
 
@@ -482,10 +520,9 @@ outcome. The store does not tell the cluster.
   "version": "31.0.4",
   "digest": "sha256:<64 hex>",
   "repository": {                    // absent for an app whose artefacts are public
-    "name": "example-apps-7c1d9e02ab",
     "type": "oci",
     "url": "oci://registry.store.example/apps",
-    "credential": {"username": "…", "token": "…", "expiresAt": "2027-10-01T00:00:00Z"}
+    "credential": {"username": "…", "token": "…", "expiresAt": null}
   },
   "addons": [                        // each with coordinate, version, digest and optionally repository
   ]
@@ -497,22 +534,70 @@ outcome. The store does not tell the cluster.
 | `coordinate` | which entry. Sent to the director as it is |
 | `version` | for a person to read. The cluster does not pin it |
 | `digest` | **what the cluster pins and verifies** (§4) |
-| `repository.name` | the name the repository is declared under. Unique per tenant, and the same each time for the same tenant |
 | `repository.type` | `oci`, and nothing else: it is the only type a tenant's app charts and images are pulled from with a credential today (§2), and the only one accepted from a store (§7) |
 | `repository.url` | the registry the bundle's chart and images are in. It must contain the chart's address — same host and port, its path a prefix by whole segments — and must not overlap another repository the tenant has declared (§2) |
-| `repository.credential` | **opaque to the cluster.** A user name **and** a token, both required, which the store minted for this tenant and the store's repository checks on pull. `expiresAt` may be `null` |
+| `repository.credential` | **opaque to the cluster.** A user name **and** a token, both required, which the store minted for this tenant and the store's repository checks on pull. The user name is one per tenant, chosen by the store. `expiresAt` is `null`: a credential does not expire, for now. Present only in an answer to a token with `store.acquire` |
 | `addons` | add-ons the acquisition includes, each an entry of its own |
 
 A free app's confirmation carries no repository and no credential.
 
+**The cluster names the repository, not the store.** A confirmation carries
+no name for it. The App Store app computes the name of the `Repository`
+claim itself, from the tenant's name on the cluster (the `{t}` of the
+director's routes) and the registry's address (`repository.url`):
+
+```
+address = url without the leading "oci://", lower-cased          host[:port][/path]
+slug    = address with every run of characters outside [a-z0-9]
+          replaced by one "-", then leading and trailing "-" removed
+hash    = the first 8 hexadecimal characters, lower case, of
+          SHA-256( tenant + LF + address )                       UTF-8; LF is the one byte 0x0A
+stem    = tenant + "-" + slug, cut to its first 31 characters,
+          then trailing "-" removed
+name    = stem + "-" + hash                                      at most 40 characters
+```
+
+| Tenant | `url` | `tenant-slug` | Name |
+|---|---|---|---|
+| `acme` | `oci://registry.store.example/apps` | `acme-registry-store-example-apps` (32, cut to 31) | `acme-registry-store-example-app-991ae7e1` |
+| `demo` | `oci://ghcr.io/example` | `demo-ghcr-io-example` (20) | `demo-ghcr-io-example-59b6b43d` |
+
+What the rule gives, and why it is this one:
+
+* **The same tenant and the same address always give the same claim**, so
+  a second app from the same registry declares nothing new and sets the
+  one credential again.
+* **Two tenants never share a name, and neither do two addresses of one
+  tenant.** The hash is always there, not only on a name that was cut: the
+  readable part alone is ambiguous, because a hyphen is all a name has to
+  separate with. Tenant `a-b` with `oci://c.example` and tenant `a` with
+  `oci://b.c.example` both read `a-b-c-example`; they are
+  `a-b-c-example-559df09f` and `a-b-c-example-67520272`. Should two names
+  ever coincide all the same, nothing is overwritten: the director answers
+  a name another tenant holds with `404`, and a name the tenant holds for
+  another address with `428` (§7).
+* **The name is a DNS label**, which is what the director accepts for one
+  (lower-case letters, digits and hyphens, at most 63 characters). It
+  starts with the tenant's name and ends with the hash, so it starts and
+  ends with a letter or a digit.
+* **40 characters, not 63**, because the cluster derives further names from
+  it and each should itself fit in 63: the pull Secret
+  `repository-<name>-pull` (56), the composite the claim is bound to,
+  `<name>-<5 generated characters>` (46), and the credential requirement
+  named after that composite, `repository-<name>-<5>` (57).
+
+It is one function of two strings, to be implemented once, in the App Store
+app, and tested against the two rows above.
+
 **What the app does with it**, each step with the person's own cluster
 token:
 
-1. For each repository named: declares it for the tenant at the director
-   (`PUT /v1/tenants/{t}/repositories/{name}`, role `apps`), which commits
-   the address; then sets its credential at the custodian
-   (`PUT /v1/credentials/repository-{name}`), which writes the token to the
-   vault. Both ask `can_write_credential` on the tenant.
+1. For each repository named: computes its name as above; declares it for
+   the tenant at the director (`PUT /v1/tenants/{t}/repositories/{name}`,
+   role `apps`), which commits the address; then sets its credential at the
+   custodian (`PUT /v1/credentials/repository-{name}`), which writes the
+   user name and the token to the vault. Both ask `can_write_credential` on
+   the tenant. The app hands the credential over once and does not keep it.
 2. Installs at the director (§3) with exactly the confirmation's
    `coordinate` and `digest`, and the `defaultGrant` the person chose.
 3. For the add-ons the confirmation lists: sets the app's add-ons at the
@@ -521,14 +606,21 @@ token:
 The OS decides nothing about supply at any step. Whether the app then
 arrives is the repository's answer to the credential.
 
-**Renewing a credential.** Where `expiresAt` is set, the app asks the store
-for a new one (`POST /v1/acquisitions/{id}/credential`) and sets it at the
-custodian as above. The old one stays valid for at least 24 hours, so there
-is no moment at which the cluster holds only a credential the repository
-refuses. The weakness is stated plainly: the app acts only while an
-administrator is signed in to it, so nothing renews a credential unattended.
-One that expires unrenewed stops new pulls — a pod that is rescheduled onto
-a node without the image does not start — and leaves what is running
+**What ends a credential.** A repository credential does not expire, for
+now: a store issues it with `expiresAt: null`, and nothing has to be
+renewed, attended or not. Two things end one:
+
+* **Rotation.** `POST /v1/acquisitions/{id}/credential` means "replace this
+  credential now" — after a leak, say. The store answers the confirmation
+  with a new token under the same user name; the app sets it at the
+  custodian as above. The replaced one keeps working for 24 hours and is
+  refused from then on, so there is no moment at which the cluster holds
+  only a credential the repository refuses.
+* **The acquisition ending.** A credential stops pulling an app whose
+  acquisition has ended, and is refused altogether once it serves none.
+
+A credential that has ended stops new pulls — a pod that is rescheduled
+onto a node without the image does not start — and leaves what is running
 untouched.
 
 ## 7. Trust
@@ -585,11 +677,13 @@ not from what the App Store app is expected to do.
   involved. A store that could name one would be supplying. The declaration
   an OCI registry gets carries a credential and names no content: what is
   pulled is what the verified bundle names.
-* **Replace a repository the tenant already has.** Declaring a name the
-  tenant holds with another address is answered by the director with `428`
-  and asks for the name to be repeated. The app does not repeat it on a
-  store's word; it stops and shows the administrator what is asked. A name
-  another tenant or the cluster holds is answered `404`.
+* **Replace a repository the tenant already has.** A store names nothing
+  on the cluster: the name is computed from the tenant and the address
+  (§6.4), so another address is another name. Should a computed name all
+  the same be one the tenant holds with another address, the director
+  answers `428` and asks for the name to be repeated. The app does not
+  repeat it on a store's word; it stops and shows the administrator what is
+  asked. A name another tenant or the cluster holds is answered `404`.
 * **Read the cluster, or act on it.** It has no way in and no credential.
 * **Decide who may install**, or lift any check. Every step in §6.4 is asked
   of the person by the director or the custodian.
@@ -826,6 +920,11 @@ index — `GET /v1/tenants/{t}/catalogues` and
 `pe` entries only — so that the digest of an entry can be looked up without
 a store; no screen lists it.
 
+A cluster or a tenant may also have catalogues of its own — added by the
+cluster's administrator, or by a tenant's administrator where the cluster's
+administrator delegated it. They are outside the store and are documented
+with the catalogue format.
+
 A source says nothing about tenants. One the claim names can be installed
 from by every tenant of the cluster; naming it is the platform
 administrator's act, a commit on the claim. There is no tuple for it and no
@@ -873,5 +972,7 @@ the *repository*, for pulls, with the credential the tenant holds.
   It is not that a second tenant of the same cluster can never run what a
   first one fetched.
 * **No writing of reviews** in this version of the API.
-* **How a store ties an account to a tenant**, what it asks of an account
-  before it confirms an app, and how it prices, are the store's own.
+* **How a store first associates the administrator's account with a
+  tenant**, what it asks of an account before it confirms an app, and how
+  it prices, are the store's own. That a tenant is an organisation and
+  that one account acts for it by default is in the contract (§6.1).
