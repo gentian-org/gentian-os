@@ -28,6 +28,7 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/backup"
+	"github.com/gentian-org/gentian-os/internal/controller/provisioner"
 	"github.com/gentian-org/gentian-os/internal/kernel"
 	"github.com/gentian-org/gentian-os/internal/meta"
 )
@@ -38,7 +39,7 @@ const (
 	cacheRequeueAfter       = 2 * time.Second
 	memcachedServiceName    = "memcached"
 	memcachedDeploymentName = "memcached"
-	memcachedPort           = int32(11211)
+	memcachedPort           = provisioner.MemcachedPort
 )
 
 // ensureCache provisions per-app Redis ACL users (via redis-cli Job) and per-tenant
@@ -345,7 +346,7 @@ func (r *TenantReconciler) redisCacheEndpoint(ctx context.Context) (host, port s
 	host = string(secret.Data["host"])
 	port = string(secret.Data["port"])
 	if port == "" {
-		port = "6379"
+		port = fmt.Sprint(provisioner.RedisPort)
 	}
 	if host == "" {
 		return "", "", fmt.Errorf("redis-admin secret missing host")

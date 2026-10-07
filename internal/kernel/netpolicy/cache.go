@@ -14,13 +14,15 @@ import (
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	"github.com/gentian-org/gentian-os/internal/controller/provisioner"
 	"github.com/gentian-org/gentian-os/internal/meta"
 )
 
 const tenantCachePolicyPrefix = "tenant-cache-"
 
-// TenantCacheEgressNetworkPolicy allows app workloads that declare a cache
-// kernel requirement to reach the shared tenant Memcached instance.
+// TenantCacheEgressNetworkPolicy allows app workloads that declare a
+// Memcached cache to reach the tenant's Memcached instance, on its port. An
+// app that declared Redis is not among them: its cache is the shared Redis.
 func TenantCacheEgressNetworkPolicy(tenantName, nsName string, cacheAppNames []string) *networkingv1.NetworkPolicy {
 	if len(cacheAppNames) == 0 {
 		return nil
@@ -45,7 +47,10 @@ func TenantCacheEgressNetworkPolicy(tenantName, nsName string, cacheAppNames []s
 				}},
 			},
 			PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeEgress},
-			Egress:      []networkingv1.NetworkPolicyEgressRule{{To: []networkingv1.NetworkPolicyPeer{cachePeer}}},
+			Egress: []networkingv1.NetworkPolicyEgressRule{{
+				To:    []networkingv1.NetworkPolicyPeer{cachePeer},
+				Ports: []networkingv1.NetworkPolicyPort{tcpPort(provisioner.MemcachedPort)},
+			}},
 		},
 	}
 }
@@ -75,7 +80,10 @@ func TenantCacheIngressNetworkPolicy(tenantName, nsName string, cacheAppNames []
 				MatchLabels: map[string]string{meta.ComponentLabel: meta.TenantCacheComponentValue},
 			},
 			PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeIngress},
-			Ingress:     []networkingv1.NetworkPolicyIngressRule{{From: appPeers}},
+			Ingress: []networkingv1.NetworkPolicyIngressRule{{
+				From:  appPeers,
+				Ports: []networkingv1.NetworkPolicyPort{tcpPort(provisioner.MemcachedPort)},
+			}},
 		},
 	}
 }

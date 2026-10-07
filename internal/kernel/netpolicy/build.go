@@ -17,6 +17,7 @@ import (
 	networkingv1 "k8s.io/api/networking/v1"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/controller/provisioner"
 	"github.com/gentian-org/gentian-os/internal/security"
 )
 
@@ -100,7 +101,9 @@ func cacheAppNames(in BuildInput) []string {
 	seen := map[string]struct{}{}
 	for _, app := range in.Apps {
 		profile := in.Profiles[app.Profile]
-		if profile == nil || profile.Services() == nil || profile.Services().Cache == nil {
+		// Memcached only: it is the cache that lives in the tenant's own
+		// namespace. A Redis app has no business with it.
+		if provisioner.CacheEngineOf(profile) != gentianov1alpha1.CacheEngineMemcached {
 			continue
 		}
 		if _, ok := seen[app.Profile]; ok {
@@ -112,6 +115,17 @@ func cacheAppNames(in BuildInput) []string {
 	return names
 }
 
+// anyProfileUnknown reports whether an installed app's profile could not be
+// read, so that what it declares is not known.
+func (in BuildInput) anyProfileUnknown() bool {
+	for _, app := range in.Apps {
+		if in.Profiles[app.Profile] == nil {
+			return true
+		}
+	}
+	return false
+}
+
 // ManagedPolicyNames returns the set of operator-owned policy names (excluding baseline).
 func ManagedPolicyNames(in BuildInput) map[string]struct{} {
 	names := map[string]struct{}{
@@ -119,7 +133,14 @@ func ManagedPolicyNames(in BuildInput) map[string]struct{} {
 		exportPolicyName(): {},
 	}
 	for _, app := range in.Apps {
-		names[kernelPolicyName(app.Profile)] = struct{}{}
+		// Kept while it is built, and while the profile cannot be read:
+		// what an unknown profile opens is unknown, and its app keeps what
+		// it had. A profile that is known to open nothing here loses the
+		// policy that opened what it used to.
+		profile := in.Profiles[app.Profile]
+		if profile == nil || KernelAccessNetworkPolicy(in.TenantName, in.Namespace, app.Profile, profile, in.Config) != nil {
+			names[kernelPolicyName(app.Profile)] = struct{}{}
+		}
 		names[appInternalPolicyName(app.Profile)] = struct{}{}
 
 		if len(in.grantedEgress(app.Profile, in.Profiles[app.Profile])) > 0 {
@@ -129,7 +150,13 @@ func ManagedPolicyNames(in BuildInput) map[string]struct{} {
 	for _, binding := range in.Bindings {
 		names[contractPolicyName(binding.Name)] = struct{}{}
 	}
-	names[tenantCacheEgressPolicyName()] = struct{}{}
-	names[tenantCacheIngressPolicyName()] = struct{}{}
+	// Only while there is a Memcached app to build them for: named
+	// unconditionally they were never removed, and a tenant whose last such
+	// app had gone kept the policies that app had needed. As above, an app
+	// whose profile cannot be read keeps what it had.
+	if len(cacheAppNames(in)) > 0 || in.anyProfileUnknown() {
+		names[tenantCacheEgressPolicyName()] = struct{}{}
+		names[tenantCacheIngressPolicyName()] = struct{}{}
+	}
 	return names
 }

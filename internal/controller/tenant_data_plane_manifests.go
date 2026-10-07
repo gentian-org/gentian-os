@@ -21,6 +21,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/controller/provisioner"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 )
 
@@ -43,7 +44,7 @@ func (r *TenantReconciler) buildDataPlaneJobs(ctx context.Context, tenant *genti
 		if r.Seeder != nil {
 			creds, seedErr := r.Seeder.SeedDatabase(ctx, tenant.Name, appName, secrets.DatabaseCreds{
 				Host: fmt.Sprintf("%s-rw.%s.svc.cluster.local", cnpgClusterName, postgresNamespace),
-				Port: "5432",
+				Port: fmt.Sprint(provisioner.PostgresPort),
 				Name: dbName,
 				User: roleUserName(tenant.Name, appName),
 			})
@@ -73,7 +74,7 @@ func (r *TenantReconciler) buildDataPlaneJobs(ctx context.Context, tenant *genti
 		if r.Seeder != nil {
 			creds, seedErr := r.Seeder.SeedMariaDB(ctx, tenant.Name, appName, secrets.DatabaseCreds{
 				Host: fmt.Sprintf("%s.%s.svc.cluster.local", "mariadb", mariadbNamespace),
-				Port: "3306",
+				Port: fmt.Sprint(provisioner.MariaDBPort),
 				Name: databaseName(tenant, appName),
 				User: mariadbUserName(tenant.Name, appName),
 			})

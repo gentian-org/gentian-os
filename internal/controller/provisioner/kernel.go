@@ -46,6 +46,48 @@ type JobWaitRequirement struct {
 	JobNameForApp func(tenantName, appName string) string
 }
 
+// The ports the shared stores' pods listen on. An app is handed one of them
+// with its credentials, and its network policy opens that one and no other
+// (internal/kernel/netpolicy), so the two read the same constant. A
+// NetworkPolicy port is the pod's, not the Service's; each of these Services
+// keeps the two the same.
+//
+// The servers themselves are composed by the charts under kernel/services,
+// which also write the address the operator reads for Redis and MinIO; the
+// test beside this file holds those to these numbers.
+const (
+	PostgresPort      int32 = 5432
+	MariaDBPort       int32 = 3306
+	RedisPort         int32 = 6379
+	ObjectStoragePort int32 = 9000
+	MemcachedPort     int32 = 11211
+)
+
+// DatabaseEngineOf is the engine a profile's database requirement names, or
+// "" when it declares no database. An engine left out is postgresql, which is
+// what the API says the field defaults to.
+func DatabaseEngineOf(profile *gentianov1alpha1.ComponentProfile) gentianov1alpha1.DatabaseEngine {
+	if profile == nil || profile.Services() == nil || profile.Services().Database == nil {
+		return ""
+	}
+	if e := profile.Services().Database.Engine; e != "" {
+		return e
+	}
+	return gentianov1alpha1.DatabaseEnginePostgreSQL
+}
+
+// CacheEngineOf is the engine a profile's cache requirement names, or "" when
+// it declares no cache. An engine left out is redis, the field's default.
+func CacheEngineOf(profile *gentianov1alpha1.ComponentProfile) gentianov1alpha1.CacheEngine {
+	if profile == nil || profile.Services() == nil || profile.Services().Cache == nil {
+		return ""
+	}
+	if e := profile.Services().Cache.Engine; e != "" {
+		return e
+	}
+	return gentianov1alpha1.CacheEngineRedis
+}
+
 // MatchMariaDBProfile reports whether an AppProfile requires MariaDB provisioning.
 func MatchMariaDBProfile(profile *gentianov1alpha1.ComponentProfile) bool {
 	return profile.Services() != nil &&
