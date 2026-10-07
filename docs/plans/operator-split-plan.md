@@ -1,1133 +1,1131 @@
-# Director / operator split
+# The operator split: which program does what
 
-Issue #185. Splits the gentian-os process into two binaries with one invariant
-between them:
+## Read this first
 
-```
-human intent ──► director ──writes git only──► Argo CD ──► operator ──writes cluster only──► Crossplane
-```
+This document describes the programs that run the Gentian OS control plane,
+what each one does, and how they work together.
 
-That is the **write** path, and it is the only one this document covered at
-first. Three more roles stand around it, each with one job and none of the
-director's authority (§3.10):
+- Sections 1 and 2 say why there are several programs and list them in one
+  table.
+- Section 3 shows how they interact, in six diagrams.
+- Section 4 has one part per program, all in the same shape: what it does,
+  what it must never do, what it holds, who calls it, what happens when it is
+  down.
+- Section 5 says who decides whether a person may do something.
+- Section 6 says what a break-in at each program would cost, and names the
+  known weaknesses.
+- Sections 7 to 9 cover addresses, what is built and what is not, and a
+  glossary.
 
-```
-arriving   person ──► concierge ──► the right zone's sign-in          (before a session; decides nothing)
-entering   request ──► edge session ──► bouncer ──► backend           (every request; enforces, holds no rule)
-looking    person ──► usher ──► "what is here, what may I open"       (reads only; changes nothing)
-changing   person ──► director ──► git ──► Argo CD ──► operator ──► resources
-                                                          └──► projections ──► bouncer, usher, OpenFGA
-```
+Everything here describes the code and the charts as they are. Where
+something is planned and not built, section 8 says so.
 
-The **director** is the only process that can push to `gentian-deployments`.
-Every push it makes was authenticated by Keycloak and authorised by OpenFGA,
-so the repository becomes an audit log that can be trusted as the single
-source of truth for cluster configuration. The **operator** never holds a git
-credential: it converges the cluster on what Argo CD hands it, and its trust
-in that input comes from the chain in §3.4, not from a shared secret.
+## 1. What this is
 
-The director is the configuration-write PEP of
-[security-principles.md](../security-principles.md) §3 and the change log of
-§7. It closes G1, G2 (its half), G7 (writes) and G11 (its half) in
-[security-gap-closing.md](security-gap-closing.md): cutover steps A–B are
-that plan's wave 1, step C spans waves 1 and 3. It runs in `kernel-control`
-per [architectural-decisions.md](architectural-decisions.md) AD-7; this document uses
-today's namespace names when it describes today's code and the taxonomy's
-when it describes the target.
+Gentian OS used to have one program, the operator, that did everything. It
+changed the cluster, wrote to git, stored secrets, managed people in the
+identity provider and answered every request, and it held every credential
+needed for all of that. A mistake in one request handler, or one break-in,
+could reach everything.
 
-## 1. Decision
+The work is now divided among a small cast of programs. Each has one job and
+one credential that it holds all the time. A mistake or a break-in in one of
+them cannot do what the others can.
 
-Two binaries, one repository, shared `internal/` packages. Not one binary with
-internal discipline, for three reasons that are about the process boundary
-rather than code organisation:
+**The rule: one standing credential per program.** The director holds the
+credential that writes to git. The custodian holds the credential that writes
+secrets. The registrar holds the credential that manages people. The operator
+holds the credentials that change the cluster. No program holds two of these.
+Section 6 says where the rule holds and where it does not yet.
 
-1. **The authorisation check becomes a property of the topology.** If exactly
-   one process holds the push credential and that process is the one doing the
-   ReBAC check, "every change to desired state was authorised" is enforced by
-   deployment shape. No handler added later can bypass it, because no other
-   process can write.
-2. **Blast radius.** Today one pod ([cmd/main.go](../../cmd/main.go)) runs the
-   controllers, the admission webhook, the custodian and the
-   lifecycle API, under one ServiceAccount whose ClusterRole grants
-   `pods/exec` and cluster-wide `secrets` CRUD
-   ([clusterrole.yaml](../../charts/gentian-os/templates/clusterrole.yaml)),
-   while serving an **unauthenticated** HTTP API on `:8082`
-   ([runnable.go](../../internal/applifecycle/runnable.go)). An RCE in a
-   request handler currently reaches Postgres, OpenBao and every tenant's
-   desired state. After the split the request-facing process holds a git
-   credential and read-only cluster access.
-3. **Admission availability.** The Tenant and AppProfile webhooks run in the
-   same process with `failurePolicy: Fail`. A request-driven OOM currently
-   takes down admission cluster-wide.
+**Desired state lives in git.** What the cluster should run (tenants, apps,
+policies, settings) is written as files in one git repository, the deployment
+repository. A change to the cluster is a commit to that repository; a program
+called Argo CD copies the files into the cluster, and the operator makes the
+cluster match them.
 
-If a single binary were kept anyway, the separation would have to be: two
-`main` entry points selected by flag, the git package importable only from the
-director entry point (enforced with a `go list -deps` check in CI), separate
-ServiceAccounts selected by the same flag, and the push credential mounted only
-in the director Deployment. That reproduces most of the cost of two binaries
-and none of the process-boundary benefit, so it is not recommended.
+## 2. The cast at a glance
 
-## 2. What writes today
+A *namespace* is a separate compartment of the cluster. The full list of
+namespaces is in [kernel/namespaces.yaml](../../kernel/namespaces.yaml).
 
-The split has to account for every writer, not only the operator. Inventory:
+### The seven programs
 
-### 2.1 Writers to `gentian-deployments`
+| Program | Its job in one sentence | Runs in | Who may call it | What it holds | What it can change |
+| --- | --- | --- | --- | --- | --- |
+| **Director** | Turns a permitted request for a change into a signed commit in the deployment repository, and passes one-off commands to the operator. | `kernel-control` | The consoles' backends and the command line tool, each with the signed-in person's token. | The credential that pushes to the deployment repository, and the key that signs its commits. | The deployment repository. Nothing in the cluster directly. |
+| **Operator** | Makes the cluster match what git declares, and carries out one-off commands. | `kernel-control` | Argo CD (by applying objects), the director and the usher (on its listener), Keycloak (membership events), the Kubernetes API server (admission checks). | Wide rights in the cluster, Keycloak's administrator credential, a vault role that reads and writes every platform secret. | Everything in the cluster, Keycloak, the vault and OpenFGA. |
+| **Custodian** | Takes a secret from the person entitled to set it and puts it in the vault; never gives one back. | `kernel-control` | The admin console's and the App Store app's backends, with the person's token. | A vault role that can write a secret and cannot read one. | Secrets in the vault (write only). |
+| **Registrar** | Keeps the list of people: invites them, puts them in groups, removes them. | `kernel-control` | The admin console's backend and the command line tool, with the person's token. | One Keycloak client secret per realm, and the login of its own database. | People and groups in Keycloak; a realm's password policy. |
+| **Usher** | Tells a signed-in person what is here, what they may open, and what the cluster currently holds of a tenant. | `kernel-control` | The consoles' backends and the command line tool, with the person's token. | An identity the operator admits to reads only. | Nothing. |
+| **Bouncer** | Checks, for every request at the front door, whether this signed-in person may enter this address. | `kernel-edge` | The Gateway only. | Nothing of its own. | Nothing. It lets a request through or refuses it. |
+| **Concierge** | Shows the page on the cluster's bare domain and sends a visitor to the sign-in of their workspace. | `tenant-platform`, published from `tenant-platform-dmz` | Anybody on the internet; no sign-in. | Nothing. | Nothing. |
 
-| Writer | Path | Identity | Authorised by |
-| --- | --- | --- | --- |
-| Operator lifecycle API | [internal/applifecycle](../../internal/applifecycle/) — `Install`, `Uninstall`, `SetAddons`, `SetResourcePlan` commit and push | operator's push token, `Actor` from an `X-Gentian-Actor` header the caller sets | nobody — the header is trusted |
-| `kubectl gentian` | [scripts/kubectl-gentian](../../scripts/kubectl-gentian) `git_commit_push`, 11 call sites: `tenants deploy/undeploy`, `apps install/uninstall`, deletionPolicy flips around purge | the human's own git credential on their workstation | git host permissions only |
-| `kubectl gentian` fallback | `apply_tenant_manifest_from_git` → `kubectl apply -f` when no Argo app exists | the human's kubeconfig | Kubernetes RBAC only — bypasses git entirely |
-| `install.sh --prepare-deployment` / `--prepare-tenant` | writes local files and **stops**; the human commits ([deployment.md §3](../deployment.md)) | the human | review before commit |
-| App Store backend (`gentian-apps/apps/app-store`) | `services/gitops.py` — commit and push, behind `INSTALL_MODE=gitops`; dormant (no route calls it) but shipped with the repo credential config. Also a dormant direct `patch` of `Tenant.spec.apps` ([ui-restructure.md](ui-restructure.md) §3) | store pod's push token, `actor` from the request | nobody |
-| Humans | direct commits | their git identity | git host permissions |
+Six of the seven also hold the key that opens OpenFGA (all but the
+concierge). That is a known weakness, described in section 6.
 
-Not a writer: argocd-image-updater uses `write-back-method: argocd`
-([gentian-os.yaml](../../kernel/bootstrap/chart/templates/gentian-os.yaml))
-and patches Applications in-cluster.
+### What they stand between
 
-### 2.2 Human-facing writes that bypass git
-
-The admin console (gentian-ui BFF) writes these directly to the API server
-with its own ServiceAccount:
-
-| Object | Console module | Nature |
+| Element | What it is | Runs in |
 | --- | --- | --- |
-| `BackupPolicy` (cluster), `TenantBackupPolicy` | `k8s_backup_policy.py` | desired state — belongs in git |
-| `PlatformSecurityPolicy` | `k8s_authorization.py` | desired state — belongs in git |
-| `AppGrant` | `k8s_authorization.py` | desired state — belongs in git |
-| `TenantExportSchedule` | `k8s_backup_schedules.py` | desired state — belongs in git |
-| `TenantExport`, `TenantRestore` + backup-key `Secret`s | `k8s_backup.py` | one-shot requests carrying secrets — must **not** go to git |
-| Tenant annotation `app-privilege-requested` | `k8s_catalogue.py` | a reconcile kick — should not exist as a write |
+| **Desktop** | The page a signed-in person lands on, with a tile for each thing they may open. One per tenant. Its backend calls the usher and the director. | `tenant-<name>` |
+| **Admin console** | The pages where a tenant admin manages a tenant and a platform admin manages the cluster. One per tenant. Its backend calls the director, the usher, the custodian and the registrar. | `tenant-<name>` |
+| **App Store app** | The pages where a tenant admin finds and installs apps. Its backend calls the store outside the cluster, and the director, the usher and the custodian. | on the cluster, per tenant; see section 8 |
+| **Gateway** | The front door: it terminates TLS, keeps the sign-in session in a cookie, and asks the bouncer before it forwards a request. It is Envoy Gateway. | `kernel-edge` |
+| **Argo CD** | Reads the deployment repository and applies its files to the cluster. It refuses a commit that is not signed by a trusted key. | `kernel-gitops` |
+| **Keycloak** | The identity provider: it holds the people, their passwords and their groups, and issues the tokens that prove who somebody is. People are kept in *realms*: the kernel realm for platform admins, one realm per tenant for everybody else. | `kernel-authentication` |
+| **OpenFGA** | The authorization store: the one place that answers "may this person do this to that". | `kernel-authorization` |
+| **The vault** | The secret store (OpenBao). Passwords, tokens and keys live here and nowhere else. | `kernel-secrets` |
+| **The deployment repository** | The git repository that holds the cluster's desired state. | outside the cluster, at a git host |
+| **The store** | A service outside the cluster, run by a vendor, that describes apps and records what a tenant has acquired. It never calls the cluster. | outside the cluster |
 
-And the lifecycle API itself performs cluster writes from inside the request
-path that are not git edits: `purge.go` (26 KB — exec into the Postgres and
-OpenBao pods, PVC/Pod/Secret/Job deletion), `reconcile.go` (Argo refresh
-annotation), `provisionAppGroupUsers` (Keycloak group membership), and a
-synchronous wait for Ready of up to 15 minutes.
+## 3. How they interact
 
-### 2.3 Credential coupling
+### 3.1 The big picture
 
-Argo CD's read credential and the operator's push credential are **the same
-token**: both are composed from `spec.credential.vaultPath`
-(`gentian-os/kernel/repositories/deployments`) in
-[repository-default.yaml](../../crossplane/compositions/repository-default.yaml)
-— once as the `argocd.argoproj.io/secret-type: repository` Secret, once as
-`.git-credentials` when `writable: true`. Anything that can read the Argo
-Secret can push.
+```mermaid
+flowchart TB
+  subgraph OUT["Outside the cluster"]
+    BR["Browser"]
+    ST["The store"]
+    GIT["The deployment repository"]
+  end
+  subgraph EDGE["kernel-edge"]
+    GW["Gateway"]
+    BO["bouncer"]
+  end
+  subgraph TEN["Tenant namespaces"]
+    CON["Consoles: desktop, admin console, App Store app"]
+    APP["Installed apps"]
+    CG["concierge"]
+  end
+  subgraph CTRL["kernel-control"]
+    DI["director"]
+    US["usher"]
+    CU["custodian"]
+    RE["registrar"]
+    OP["operator"]
+  end
+  subgraph GITOPS["kernel-gitops"]
+    AR["Argo CD"]
+  end
+  subgraph IDP["kernel-authentication"]
+    KC["Keycloak"]
+  end
+  subgraph AZ["kernel-authorization"]
+    FGA["OpenFGA"]
+  end
+  subgraph SEC["kernel-secrets"]
+    VA["The vault"]
+  end
 
-## 3. Target architecture
-
-### 3.1 Director
-
-A plain Deployment (N replicas, no leader election, no controller-runtime
-manager). Built from `cmd/director`. It has:
-
-- An HTTPS API (§3.5) that accepts **only** bearer tokens issued by the
-  Keycloak `kernel` realm or a tenant realm — the same JWKS verification the
-  BFF does in `gentian-ui/backend/app/core/auth.py`. No `X-Gentian-Actor`
-  header, ever; identity is the token's verdict (principle 1). Its callers
-  are each tenant's desktop BFF (`tenant-<t>`, AD-10 — the platform's own in
-  `tenant-platform`), the admin console, the CLI, and the **App Store app**
-  (AD-3) — a platform UI on the cluster, which never holds authority of its
-  own: it calls with the tenant admin's token, and the FGA check is on the
-  human. The store outside the cluster is not a caller: it never calls the
-  cluster. The route is on the kernel
-  gateway, bearer only, behind the gateway `SecurityPolicy` of G3; the
-  director verifies again rather than trusting the hop.
-- An OpenFGA client, which it uses to **ask and never to write**. The store
-  is written by the operator: it establishes the store and the model,
-  projects the cluster's roles from the claim, the tenants and the apps from
-  what Argo CD applied, and membership from Keycloak's signed statements
-  (`internal/controller/authz_projection_reconciler.go`,
-  `membership_listener.go`). The director writes no tuple, at start or with
-  a commit; a relation follows from a commit only once the operator has
-  projected what the commit declared. An earlier form of this plan made the
-  director the store's only writer (AD-12), and that is not what was built.
-  Nothing but the director's code keeps it from writing, though: OpenFGA is
-  configured with one preshared key, the director presents it like every
-  other process, and that key can write (§3.10, the table). The vocabulary
-  is [authorization-model.md](authorization-model.md).
-- A working checkout of `gentian-deployments` and the **only** push
-  credential. Commits are authored as the human (`Name <email>` from the
-  token), committed by the director, and **signed** with a key only the
-  director holds. The commit message carries a trailer with the OpenFGA
-  decision and the request id
-  (`Gentian-Authz: req=<id> user:<sub> can_install_app tenant:<t> allowed`),
-  so one id joins the Keycloak event, the decision log and the commit
-  (principle 7, G10).
-- A **read-only** Kubernetes client for `Tenant`, `App`, `AppProfile` status
-  and the `openfga-runtime` Secret — enough to answer status queries and
-  validate requests. Plus exactly one narrow write grant, `appprofiles`
-  create/update, for materialise-on-reference (§3.6). No `pods/exec`, no
-  `secrets` beyond the one named Secret, no Argo objects.
-- A rate limiter and a decision log: every `Check` it makes is written as
-  `(request id, subject, relation, object, decision)`, plus the commit SHA
-  when one results. The request id arrives as a header from the gateway or
-  is minted here, and is returned in every response.
-
-It does **not**: wait for readiness, purge, exec, touch Keycloak groups, or
-annotate Argo. The commit is the completed action; every write returns `202`
-with the commit. What the cluster made of it is not the director's to say:
-status and every other read of live state is the usher's (§3.10).
-
-### 3.2 Operator
-
-Unchanged in role, smaller in surface. It has no git clone init container,
-no checkout, no `.git-credentials` mount and no git environment: its
-Deployment does not name the deployments repository's credential, and the
-code that cloned, committed and pushed is deleted. Of the
-`GENTIAN_DEPLOYMENTS_*` settings it keeps one, the cluster's id, which is
-what cluster relations are projected about. It reads the repository
-nowhere; what git declares reaches it as objects Argo CD applied. Its HTTP
-listener carries a short, closed list of commands for the director and a
-set of reads for the usher, each admitted by its own ServiceAccount (§3.11). The
-operator's ServiceAccount can still read every Secret, so the repository's
-credential is within its reach as any other Secret is; what changed is that
-nothing hands it over. Purge no longer needs `pods/exec`: it drops a
-database with the same Job a tenant's deletion runs, through the database
-cluster's read-write Service. Purge stays a
-one-shot command, by decision: it is not a reconcile of desired state, and
-nothing continues it in the background. Destroying data is something a person
-asks for once and is answered about once. What a request that died mid-purge
-used to leave behind is dealt with inside that rule instead: every step is
-safe to repeat, the first step that fails ends the purge with an answer that
-names it, what was already destroyed and what was not attempted, the operator
-bounds the whole purge below its caller's deadline so the answer always
-arrives, and the remedy is to ask again (§3.11). Its Jobs run in the
-`system-<engine>` namespaces, never in `kernel-data`.
-
-### 3.3 Argo CD
-
-Stays exactly where it is in the chain: it reads git and applies. Two
-changes:
-
-- It gets its **own, read-only** repository token, distinct from the
-  director's push token (§2.3 is dissolved: two vault paths, or one claim
-  field `credential.push` alongside `credential`).
-- The `gentian` AppProject gets a `spec.sourceIntegrity` policy for the
-  deployments repository (GnuPG, mode `head`, keys: the director's and the
-  break-glass key), so Argo refuses to sync a commit neither signed. This is
-  what lets the operator trust git without trusting the git host. It lands
-  with G11 in wave 3, after the director is the sole pusher; until then the
-  Argo link of §3.4 is branch protection alone. `signatureKeys` is
-  deprecated upstream and is not used. Verified limits: git sources only
-  (the deployments repository is git); an ApplicationSet with a templated
-  `project` is not verified (ours are literal); `argocd app sync --local`
-  stops working; GnuPG only. `head` verifies the target commit, not its
-  ancestry — `strict` would fail on the human bootstrap commits.
-
-### 3.4 Trust chain
-
-```
-Keycloak token ──► director verifies JWKS/iss/aud
-             ──► OpenFGA Check(user, relation, object)
-             ──► signed commit, authored as the human, trailer with decision
-             ──► git host branch protection: only the director's identity may push main
-             ──► Argo AppProject sourceIntegrity (GnuPG, head): only director- or break-glass-signed commits sync
-                 (the recovery kit carries the director's key material by decision — work-packages WP-10 —
-                  so a kit holder can sign as the director; custody and audit carry that link, not the signature)
-             ──► operator reconciles what Argo applied
+  BR --> GW
+  BR --> CG
+  GW -->|"may this person enter"| BO
+  GW --> CON
+  GW --> APP
+  CON --> DI
+  CON --> US
+  CON --> CU
+  CON --> RE
+  CON --> ST
+  DI -->|"signed commit"| GIT
+  DI -->|"commands"| OP
+  US -->|"reads"| OP
+  CU -->|"writes secrets"| VA
+  RE -->|"manages people"| KC
+  GIT --> AR
+  AR -->|"applies objects"| OP
+  OP -->|"reconciles"| APP
+  OP -->|"writes relations"| FGA
+  KC -->|"membership events"| OP
+  BO -.->|"asks"| FGA
+  DI -.->|"asks"| FGA
+  US -.->|"asks"| FGA
+  CU -.->|"asks"| FGA
+  RE -.->|"asks"| FGA
 ```
 
-Each link is independently enforced. Compromise of the git host cannot inject
-config (signature check, once wave 3 lands); compromise of the director's push
-token without its signing key cannot either; a stolen token from realm A cannot
-act on tenant B (FGA); and the operator SA holds nothing that writes git. This
-is principle 2 in one line: Keycloak answers *who*, OpenFGA answers *may*, and
-admission plus the Tenant webhook answer *is this shape allowed* — the
-director consumes all three verdicts and issues none.
+How to read it:
 
-### 3.5 API
+- A person's browser reaches only the Gateway and the concierge. Everything
+  else is inside the cluster.
+- The four programs in the middle (director, usher, custodian, registrar) are
+  called by the consoles' backends, never by a browser directly. Each verifies
+  the person's token and asks OpenFGA (dotted lines) before it acts.
+- A change travels from the director to the deployment repository, from
+  there to Argo CD, and from Argo CD to the operator. The operator is the
+  only program that changes the cluster.
+- Only the operator writes to OpenFGA. Everybody else only asks.
+- Not drawn, to keep the picture readable: the operator also configures
+  Keycloak, the vault and the Gateway's routes.
 
-The existing contract is kept so callers switch by URL, not by rewrite.
+### 3.2 A change, step by step: a tenant admin installs an app
 
-**Every write has a read — of what was declared.** The director is the only
-writer, so it is the only place that knows what git says, and a UI that
-offers a change has to show the declared state it is changing. It is *not*
-the place that knows what exists: that is the cluster, and "what is here and
-what may I open" is the usher's to answer (§3.10), from what the operator
-projected. The reads below that describe declared state stay here; the ones
-every signed-in person needs merely to use the platform — tiles, "what may I
-do", status — move to the usher, so that loading a desktop no longer reaches
-the process that holds the push credential. A UI that cannot read either has
-to guess. The App Store app must show which of the store's entries a tenant
-already has; the console must show which apps are installed, at which
-version, with which addons and integrations enabled, and which users,
-groups, policies and surfaces exist before it can offer a sensible change. Both render from these reads, with the signed-in human's
-token, filtered by that account's relations. No endpoint below exists as a
-write without its matching read, and a new write verb ships with one.
+```mermaid
+sequenceDiagram
+  actor P as Tenant admin
+  participant C as App Store app
+  participant D as director
+  participant F as OpenFGA
+  participant G as Deployment repository
+  participant A as Argo CD
+  participant O as operator
+  participant U as usher
 
-Reads are authorised by `can_view` on a tenant and by `can_configure` or
-`can_audit` on a cluster, never by the write relation: a tenant administrator
-must be able to see the exposure inventory they cannot change.
-
-```
-Writes
-POST   /v1/tenants/{t}                          deploy a definition (today: kubectl gentian tenants deploy)
-DELETE /v1/tenants/{t}                          undeploy
-POST   /v1/tenants/{t}/apps/{p}                 → 202 + Location
-DELETE /v1/tenants/{t}/apps/{p}                 → 202
-PUT    /v1/tenants/{t}/apps/{p}/addons
-PUT    /v1/tenants/{t}/apps/{p}/config          per-install overrides
-PUT    /v1/tenants/{t}/resources
-PUT    /v1/tenants/{t}/policies/{kind}/{name}   backup, grants, export schedules (§2.2)
-PUT    /v1/tenants/{t}/integrations/{contract}  AppGrant: integration consent; `can_grant`
-(people, groups and the realm's settings are not here: they are the registrar's, §3.10)
-PUT    /v1/tenants/{t}/exposure/{inst}/{name}   enable a perimeter surface; `can_expose`
-DELETE /v1/tenants/{t}/exposure/{inst}/{name}   disable it; `can_expose`
-PUT    /v1/tenants/{t}/privileges/{inst}/{name} grant a tenant-scope privilege; `can_approve_privilege`
-DELETE /v1/tenants/{t}/privileges/{inst}/{name} revoke it
-PUT    /v1/clusters/{c}/privileges/{t}/{inst}/{name}  grant a cluster-scope privilege; `can_approve`
-POST   /v1/tenants/{t}/entitlements             a signed grant or revocation from the App Store (§3.8)
-POST   /v1/tenants/{t}/requests/{kind}          export / restore — creates the request CR, secrets via ESO reference only
-POST   /v1/clusters/{c}/shared-apps/{p}         install a `tenancy: shared` profile into `shared-<app>` (AD-4); `can_install_shared`
-PUT    /v1/clusters/{c}/security/{kind}/{name}  PlatformSecurityPolicy, PolicyException, overlays (§7.1)
-PUT    /v1/clusters/{c}/exposure                the cluster exposure ceiling; `can_approve`
-PUT    /v1/clusters/{c}/network | /v1/tenants/{t}/network   egress intent (§7.2)
-PUT    /v1/files/{path}                         break-glass raw edit; FGA relation `can_edit_raw`, always audited
-
-Reads
-GET    /v1/tenants                              list, filtered by what the caller may see
-GET    /v1/tenants/{t}
-GET    /v1/tenants/{t}/apps                     installed, with version, digest and health
-GET    /v1/tenants/{t}/apps/{p}                 config, addons, granted requirements, integrations, surfaces
-GET    /v1/tenants/{t}/apps/{p}/addons          what is enabled now — what the store renders as checked
-GET    /v1/tenants/{t}/resources | /plans | /usage | /report
-GET    /v1/tenants/{t}/policies/{kind}[/{name}]
-GET    /v1/tenants/{t}/integrations             grants in force, and what each profile could consume
-GET    /v1/tenants/{t}/users | /groups          for the console's user administration
-GET    /v1/tenants/{t}/exposure                 surfaces declared, enabled, owner, expiry, review
-GET    /v1/tenants/{t}/exposure/log | /objects  condensed proxy log; public objects via the contract
-GET    /v1/tenants/{t}/network
-GET    /v1/tenants/{t}/privileges               requested, granted, pending, with approver and expiry
-GET    /v1/clusters/{c}/privileges               the security officer's queue across tenants
-GET    /v1/tenants/{t}/entitlements             what this tenant may install, and until when
-GET    /v1/tenants/{t}/requests/{kind}[/{id}]
-GET    /v1/clusters/{c}/shared-apps
-GET    /v1/clusters/{c}/security/{kind}[/{name}]
-GET    /v1/clusters/{c}/exposure                the ceiling, for rendering what an approver may choose
-GET    /v1/clusters/{c}/network
-GET    /v1/operations/{id}                      status of a 202
+  P->>C: Install app X
+  C->>D: POST /v1/tenants/t/apps/X with the person's token
+  D->>D: Verify the token
+  D->>F: May this person install apps in tenant t
+  F-->>D: Yes
+  D->>D: Fetch the app's profile and check its digest
+  D->>G: Signed commit, authored as the person
+  D-->>C: 202 Accepted, with the commit
+  A->>G: Read the new commit and check its signature
+  A->>O: Apply the changed Tenant object
+  O->>O: Check the build, then roll the app out
+  C->>U: GET /v1/tenants/t/apps/status
+  U->>F: May this person view tenant t
+  U->>O: Read the app's state
+  O-->>U: Starting, then running
+  U-->>C: The state
 ```
 
-The App Store app is an ordinary caller of the reads. It is a platform UI on
-the cluster (AD-3) and holds no cluster state of its own and no identity
-toward the cluster: it renders what the director returns for the signed-in
-tenant administrator, which is what lets it show an entry of the store's as
-installed instead of offering a choice the cluster has already made. None of
-what it reads is sent to the store. That does not weaken "the store may
-describe, it may not supply",
-because reading state is not supplying an artefact.
+How to read it:
 
-`/v1/files` exists so "sole writer" survives real operations: a platform
-operator who needs to hand-edit a claim does it through the director, and the
-edit is signed and attributed like any other.
+- The director's answer (202) means "git has it". It does not mean the app
+  runs. The director never waits for the cluster.
+- The commit carries who asked and which permission allowed it, so the
+  repository is also the record of changes.
+- The operator checks that the profile it is about to roll out is exactly the
+  build the install named (section 4.2, "checks before it acts").
+- Whether the app is running is a separate question, asked of the usher.
 
-### 3.6 Authorisation model
+### 3.3 A one-off action: take a backup, or purge an app
 
-The model is [authz/model/v1/model.fga](../../authz/model/v1/model.fga); the rules and the
-per-PEP relation table are in
-[authorization-model.md](authorization-model.md). The director checks
-`can_*` relations only — on `tenant:<t>` for tenant verbs, on `cluster:<c>`
-for cluster verbs, on `catalogue_entry:<cat>/<app>` with user `tenant:<t>`
-for entitlement — and writes the structure tuples listed in
-authorization-model.md §3. It replaces
-[authz/model/v0/model.fga](../../authz/model/v0/model.fga), whose
-`admin: [user] or member` makes every member an admin; nothing of v0 is
-inherited. Memberships reach the store from Keycloak's event
-stream through the director (AD-12), so a freshly granted role is effective
-on the next check within milliseconds and the only "not yet synced" state
-is the reconcile's, which it reports. The 5-minute bridge
-([authz_bridge_reconciler.go](../../internal/controller/authz_bridge_reconciler.go))
-is retired with the split; the director receives Keycloak's events, runs
-the reconcile with a read-only client, and creates the store and model
-itself.
+```mermaid
+sequenceDiagram
+  actor P as Tenant admin
+  participant C as Admin console
+  participant D as director
+  participant F as OpenFGA
+  participant O as operator
+  participant K as Kubernetes API server
 
-Each relation gets a case in `tests.fga.yaml` before the director calls it.
-
-Materialise-on-reference: the director fetches the profile bundle at the
-requested digest from the catalogue source named by the store row — a public
-repository with the cluster's read credential, or a private one with the
-single-use fetch token that arrived with the entitlement grant, discarded
-after the fetch; never from the App Store's own database, which is
-reference data outside the cluster (AD-3) — hands any pull credential to the
-custodian to be written as the caller (no secret enters git;
-[ui-restructure.md](ui-restructure.md) §3), applies the `AppProfile` CR
-(label `gentianos.io/profile-name`, digest annotation), **then** commits.
-Apply-then-commit is the only ordering that fails safe: a failed commit
-leaves an inert, unreferenced CR; commit-then-apply leaves git asserting a
-state the Tenant webhook rejects on every sync. The `catalogue-<repo>`
-ApplicationSet that syncs every profile today is retired with this: the
-cluster holds only the profiles a tenant installed (namespace-cleanup §3.4).
-
-### 3.7 Concurrency
-
-Today `lockApp` is an in-process mutex justified by the operator running a
-single replica, while the lifecycle `Runnable` opts *out* of leader election
-"so any replica can serve" — two comments that contradict each other, kept
-true only by `replicaCount: 1`. The director uses git itself: push, and treat
-a non-fast-forward rejection as the optimistic-concurrency signal — reset to
-the remote, apply the edit again to what is there now, retry, bounded and with
-jitter. Every write is therefore a function of the manifest's current text,
-never a commit to be rebased: two installs into one tenant insert at the same
-line, which git cannot merge, and re-applying also keeps the answer honest
-when the other writer made the same change. Correct across N replicas and
-across the side-by-side period of §6 B when two processes push to one repo.
-
-### 3.8 Entitlements: granted and revoked by the same path
-
-An entitlement arrives as a signed fact from the App Store and becomes a
-`catalogue_entry#entitled@tenant:<t>` tuple with `expires_at` as its condition.
-Expiry alone is not enough: a refund, a downgrade or an abuse takedown has to
-take effect when it happens, not when the grant would have lapsed.
-
-So **revocation travels the same path as the grant**, and overrides it:
-
-```
-POST /v1/tenants/{t}/entitlements
-  { coordinate, granted: false, reason, issued_at, key_id, signature }
+  P->>C: Back up now
+  C->>D: POST /v1/tenants/t/actions/backup with the person's token
+  D->>D: Verify the token
+  D->>F: May this person administer tenant t
+  F-->>D: Yes
+  D->>O: The command, with the director's own workload token and the person's name
+  O->>K: Whose token is this
+  K-->>O: The director's service account
+  O->>O: Create the backup request
+  O-->>D: Started
+  D-->>C: Started
 ```
 
-The director verifies the signature against the store signing keys **pinned
-on the Cluster claim** (`store.signingKeys`, changed only under
-`can_configure`) — never a key fetched at verification time, or whoever
-controls that fetch issues entitlements — commits
-the revocation as a fact in `gentian-deployments`, and deletes the tuple in the
-same operation as the commit. Because the record in git is what the store is
-rebuilt from on start (AD-12), **a later commit wins over an earlier
-`expires_at`**: a revocation committed today ends the entitlement today, and a
-rebuild replays the revocation rather than the grant it supersedes.
+How to read it:
 
-What revocation does *not* do is stop a running app. The tuple governs
-install and upgrade; the pull credential in OpenBao and its `ExternalSecret`
-are removed with it, so the next pod start cannot pull, while running pods are
-unaffected. That is deliberate — a billing event should not take a tenant's
-data offline — and it is the behaviour to state rather than discover.
+- Some requests are not a state to declare but an act to perform once. They
+  produce no commit. Section 4.2 lists them.
+- The operator does not verify the person. It verifies that the caller is the
+  director, by asking the Kubernetes API server whose token was presented.
+- The operator records the name the director passes. It takes the director's
+  word for it.
+- A backup answers when it has started. Purging an app is the exception: the
+  operator answers when the purge is over, and the director waits up to five
+  minutes for that.
 
-`revoked_at` in the store's schema is therefore a record of something
-delivered, never something the cluster polls for: the cluster holds no
-identity toward the store and never calls it.
+### 3.4 A secret: setting a repository password
 
-### 3.9 How a caller gets a token
+```mermaid
+sequenceDiagram
+  actor P as Tenant admin
+  participant C as Admin console
+  participant CU as custodian
+  participant F as OpenFGA
+  participant V as The vault
 
-Every write above is authenticated by a Keycloak token. A browser gets one
-from the edge session (AD-13). The two callers that are not browsers need
-their own path, and neither has one today: the CLI sends
-`X-Gentian-Actor` over a port-forward, which step 0 removes.
-
-**The CLI: the device authorization grant (RFC 8628).** A public client
-`gentian-cli` in the kernel realm, no secret, device grant enabled, audience
-including the director.
-
-```
-kubectl gentian login --cluster <c>
-  1. POST <issuer>/protocol/openid-connect/auth/device   client_id=gentian-cli
-     → device_code, user_code, verification_uri_complete, interval
-  2. print the URL and the short code; open a browser if there is one
-  3. the human authenticates in the browser — password, MFA, whatever the
-     realm requires; the CLI never sees a credential
-  4. poll the token endpoint with device_code at `interval`, honouring
-     authorization_pending and slow_down, until tokens or expiry
-  5. store in ~/.config/gentian/credentials, mode 0600, keyed by cluster:
-     refresh token, access token, expiry
+  P->>C: Set the password of repository R
+  C->>CU: PUT /v1/credentials/repository-R with the person's token
+  CU->>CU: Verify the token
+  CU->>F: May this person write credentials of tenant t
+  F-->>CU: Yes
+  CU->>CU: Try the password against the repository
+  CU->>V: Write the secret, as the custodian, recording who set it
+  CU-->>C: Stored, set by, validated. Never the value
 ```
 
-The device grant rather than a loopback redirect because the common case is
-an operator on a remote shell, where the browser is on a different machine
-and a callback to `localhost` cannot arrive. The same flow works when there
-is a local browser.
+How to read it:
 
-Afterwards each command sends `Authorization: Bearer`, refreshing when the
-access token has expired and re-prompting only when the refresh fails.
-`kubectl gentian logout` calls the revocation endpoint and deletes the file.
+- The custodian writes under its own identity. The vault never sees the
+  person's token.
+- No route of the custodian returns a secret's value, and its vault role
+  could not read one.
+- A repository has two halves. Its address decides what software may enter,
+  so declaring it is a commit made by the director. Its password is a secret,
+  so setting it is the custodian's.
 
-Two properties worth stating. The CLI holds a refresh token, so it is a
-non-browser credential held over time — which is where sender-constrained
-tokens earn their place (WP-1), and not on the browser path. And because the
-token is the human's, a CLI write is attributed to the human in the commit
-and in the decision log, exactly like a console write; the CLI is not an
-identity.
+### 3.5 A person: inviting a user, and how a group becomes access
 
-**The App Store app** authenticates the same way as any other client and
-carries the signed-in administrator's token on an install, so it too needs
-no identity of its own (AD-3). The store outside the cluster is not a client
-at all: it never holds the person's cluster token, because nothing of it runs
-in the person's session with the cluster — its content reaches the cluster
-as data and is rendered by the App Store app. What a store can still do is
-lie about what an app is; what that is bounded by is
-[store-contract.md](../design/store-contract.md) §7.
+```mermaid
+sequenceDiagram
+  actor P as Tenant admin
+  participant C as Admin console
+  participant R as registrar
+  participant F as OpenFGA
+  participant K as Keycloak
+  participant O as operator
+  participant B as bouncer and usher
 
-### 3.10 Concierge, bouncer, usher
+  P->>C: Invite a person into group G
+  C->>R: POST /v1/tenants/t/actions/invite-person with the person's token
+  R->>R: Verify the token
+  R->>F: May this person manage users of tenant t
+  F-->>R: Yes
+  R->>R: Refuse if G is a platform role group
+  R->>K: Create the account and the membership, in the tenant's realm
+  R-->>C: Done
+  K->>O: Signed event: this user's groups are now these
+  O->>F: Write the user's memberships
+  B->>F: Later: may this user open app X
+  F-->>B: Yes, through group G
+```
 
-Three roles the split did not name. Two of them existed under other names;
-the third is new, and is what the director's read routes become.
+How to read it:
 
-| Role | One sentence | Runs in | Holds | Was |
-| --- | --- | --- | --- | --- |
-| **Director** | Turns an authorised intent into a signed commit. | `kernel-control` | the push credential, the signing key | — |
-| **Concierge** | Sends a person who has no session yet to the sign-in of the zone their address belongs to. | the platform tenant's DMZ (`tenant-platform-dmz`), as a perimeter surface of a platform-tenant component | nothing | `sign-in`, beside Keycloak |
-| **Bouncer** | Asks, for every request on the authenticated Gateway, whether this session may enter this host, and refuses when the answer is not yes. | `kernel-edge` | nothing; reads the route table and asks OpenFGA | `edge-authz`, "the shim" |
-| **Usher** | Tells a signed-in person what is here, what they may open, and what the cluster holds of a tenant right now. | `kernel-control`, a Deployment and ServiceAccount of its own | an identity the operator's listener admits to reads and to nothing else: its ServiceAccount, with no RBAC; reads the operator's projection of tiles and asks OpenFGA | the director's `tiles` and its reads of live state |
-| **Custodian** | Takes a credential from the person entitled to set it and puts it in the vault, without anyone being able to take one back out. | `kernel-control`, a Deployment and ServiceAccount of its own | an identity at the vault that can write a credential and cannot read one | `credential manager`, a part of the operator's process |
-| **Registrar** | Keeps the list of people: invites them, puts them in groups, removes them — and cannot touch who holds a platform role. | `kernel-control`, a Deployment and ServiceAccount of its own | a Keycloak client credential for each realm, handed over by the operator; the login of its own database | the director's people, group and realm-settings routes, and the Keycloak credential the director held for them |
+- Keycloak is where a membership is changed. OpenFGA holds a copy of it,
+  written by the operator from Keycloak's signed events.
+- A right follows from a group. Which group gives which right is declared in
+  git and written to OpenFGA by the operator.
+- The bouncer and the usher never read a group from a token. They ask
+  OpenFGA.
+- The registrar refuses any change to a group that carries a platform role,
+  whoever asks (section 4.4).
 
-The names are a cast on purpose: the concierge points you to the right
-door, the bouncer checks you at it, the usher shows you round inside, the
-custodian keeps the keys, the registrar keeps the list of who belongs to the
-house, and the director decides what the house runs. Only the last three
-change anything, and they change different things: the director changes what
-git declares, the custodian what the vault holds, the registrar who is in a
-realm and in which groups. A secret must never be a commit and people do not
-belong in an append-only history, which is why each has a keeper of its own.
-One standing credential per process is the rule the cast follows; the table
-at the end of this section says where it holds and where it does not.
+### 3.6 A request at the front door
 
-**What each must not do** — the contract, stated as the failure it rules out.
+```mermaid
+sequenceDiagram
+  actor P as Person
+  participant G as Gateway
+  participant B as bouncer
+  participant F as OpenFGA
+  participant K as Keycloak
+  participant A as App
 
-- *The concierge is not an authority.* It derives a zone from the part of an
-  address after the `@` and redirects; it asks the cluster nothing about
-  accounts, so it cannot say whether one exists. It may only send a browser to
-  a console of this cluster — `console.<tenant>.<kernel>`, or a custom domain
-  the operator published — never to an address taken from its input. It is
-  the one page on the platform with no session in front of it, which is why
-  it is a perimeter surface in a DMZ and not a path on the identity
-  provider's route.
-- *The bouncer decides nothing.* It verifies the session the edge
-  established and asks the store one question per (session, host), named by
-  the table the operator wrote. A rule that lived in the bouncer would be a
-  second policy, edited by deploying a binary.
-- *The usher changes nothing.* Every answer is the operator's -- the tile
-  projection it wrote, or what its listener says when asked -- given to a
-  caller the store allowed. It holds no git credential, no signing key and no
-  token the Kubernetes API accepts. For the reads of live state it is an
-  enforcement point, not a filter: it verifies the caller's token and asks
-  the store the route's relation before it asks the operator anything, and
-  the operator asks nothing further. It can issue no command: the operator's
-  listener knows it by its ServiceAccount and admits that identity to reads
-  only (§3.11).
-- *The custodian hands nothing back and decides nothing.* It is the
-  director's pattern with the vault where the director has git: it verifies
-  the caller's token, asks the store, and then acts under its own name,
-  recording whose act it was. Who may see that a credential is required and
-  who may set it are the store's answers -- `can_read_credential` and
-  `can_write_credential`, on the cluster for kernel and system credentials
-  and on the tenant for a tenant's. No route returns a credential's value, to
-  anybody, and its vault role has no capability to read one. The vault is
-  never shown a caller's token and is not asked who they are: an earlier
-  shape exchanged that token at the vault and took the vault's verdict, which
-  made a group written into a token a second source of rights. It decides no
-  configuration either. A repository a tenant or the cluster installs from is
-  two things: an address, which says what software may enter and is a commit
-  the director makes, and a password, which is a secret and is the
-  custodian's. The custodian lists the repositories that exist and sets the
-  password of one that is declared -- through the credential requirement the
-  composition emits for it, which is also where the vault path comes from --
-  and it can neither declare a repository nor remove one: it has no such
-  route, and its ClusterRole reads `Repository` objects and nothing more.
-- *The registrar does not decide who may ask, and does not change who
-  holds a platform role.* It is the director's pattern with Keycloak where
-  the director has git: it verifies the caller's token, asks the store the
-  relation the route names -- `can_manage_users` on the tenant for people
-  and groups, `can_set_policy` for the realm's password policy,
-  `can_configure` on the cluster for handing a tenant's administrator account
-  to its holder, `can_audit` on the cluster for the count of accounts -- and
-  then acts under its own client in that tenant's realm. Whose act it was is
-  recorded in a database of its own, and the request id goes with the call
-  so that Keycloak's admin event can be joined to it. It holds one credential
-  per realm and can name no realm it was not handed one for. One thing it
-  refuses whoever asks and whatever the store answers: a change to a group
-  the Cluster claim names for a platform role -- every field of
-  `spec.platformRoles`: `admin`, `securityOfficer`, `auditor`,
-  `serviceAdmin`, `sharedAppsAdmin`, `breakGlass`, and any the schema gains,
-  since the map is read whole -- adding to it, removing from it, renaming,
-  deleting or re-creating it -- and any change to a person who is in one,
-  because changing a role holder's address and mailing a password link
-  replaces them as surely as editing the group does. That includes the
-  activation link for the cluster administrator's own account, which comes
-  from the install host (`./install.sh --activate-admin`). The rule is applied
-  at the one place every write leaves for Keycloak
-  (`internal/registrar/identity/guard.go`), not route by route. It holds no
-  git credential and no vault role, and in the cluster it may read the
-  tenants and the Cluster claim and nothing else.
-- *The director does not answer for the cluster, and not for people.* It
-  keeps the reads of declared state -- what git says -- for the people who
-  may change it, and serves no read of live state but one: the download of a
-  backup's bundle, which stayed because the usher's identity does not fetch one
-  (§3.11). It holds no Keycloak credential and serves no route about a
-  person. It does still ask the operator what its own commits and commands
-  depend on: the plans a choice is validated against, a restore's progress,
-  what is left of a tenant being purged.
+  P->>G: Open app.tenant.example.org
+  G->>B: May this request pass
+  alt No session yet
+    B-->>G: Pass on, with no identity
+    G-->>P: Redirect to sign in
+    P->>K: Sign in
+    K-->>P: Back to the Gateway, which sets the session cookies
+  else Session cookie present
+    B->>B: Verify the token in the cookie
+    B->>F: May this person use this app
+    F-->>B: Yes or no
+    B-->>G: Allow with identity headers, or refuse
+    G->>A: The request, with who the person is
+  end
+```
 
-**Why the usher is not part of the bouncer.** Both are read-only and ask the
-same store, and they share their code: one image, the same verifier, the same
-store client. They are two processes because the bouncer is in the path of
-every request and must stay small, rarely released and reachable only by the
-Gateway, while the usher takes requests from browsers' backends and will grow
-a route per screen. They are also in two namespaces. The edge namespace
-holds what a Gateway must reach -- the Gateways and the bouncer -- and no
-Gateway reaches the usher, so it runs in the control namespace beside the
-director, the custodian and the registrar, where the operator's listener
-can name it as a pod of its own namespace. A tile's host is read from the
-route the operator wrote for it, the same routes the bouncer's table is
-assembled from, and the catalogue is a ConfigMap of its own
-(`gentian-tiles`) that the operator writes into the control namespace for
-the usher to mount; the bouncer's table (`bouncer-routes`) stays in the
-edge namespace and the usher does not read it.
+How to read it:
 
-**Where this is weaker than it should be** — recorded so that the roles are
-not mistaken for the controls.
+- The Gateway asks the bouncer first and runs its own sign-in check second.
+  That order is the Gateway's and cannot be changed.
+- A request with no valid session is not refused by the bouncer. It is passed
+  on with every identity header removed, and the Gateway's sign-in check then
+  sends the browser to Keycloak.
+- A request with a valid session is checked against OpenFGA. The question
+  asked (which permission, on what) comes from a table the operator writes.
+- The app receives headers that say who the person is. The bouncer removes
+  any such header a client sent itself.
+- Section 6 describes two cases where this order lets a request through
+  without the question being asked.
 
-1. *The bouncer is opt-in per route.* It sees a request only where a
-   `SecurityPolicy` attaches it. A route on the authenticated Gateway without
-   one is served with nothing in front of it, and two were: the LiteLLM
-   console, and any component entry whose `authMode` was not `oidc`. Both are
-   closed, and a test now walks the kernel routes, but the shape is still
-   "protected where somebody remembered". The Gateway should refuse by
-   default — the bouncer attached to the Gateway itself, answering "no" for
-   any host it has no line for — so that forgetting a policy closes a route
-   instead of opening it (§8).
-2. *The bouncer's table is assembled from annotations on routes.* The
-   question a route is asked — which relation, on which object — is read
-   from the route's own annotations. That is policy carried by the thing it
-   governs: a route written by anything other than the operator could name a
-   weaker question for itself, and a change to the question does not reach a
-   route that already exists unless the writer remembers annotations (it did
-   not, once). The table should be derived from the `Component` and its
-   profile, which are what the question follows from (§8).
-3. *The bouncer does not guard the perimeter.* Surfaces published from a DMZ
-   have no session; what stands in front of them is the publishing proxy
-   (networking.md, L1′). "The bouncer checks everything" is true of the
-   authenticated Gateway only.
-4. *A right withdrawn takes up to the bouncer's cache lifetime to bite* —
-   five minutes — and a session ended at Keycloak takes up to the access
-   token's lifetime, also five. The design names a changelog poll that would
-   make the first a second or two; it is not built.
-5. *The usher will be asked to become a backend for everything,* and has
-   started to be. Its routes are lists, and lists are where one tenant's
-   objects leak to another. Each route names its object and its relation and
-   is registered through one guard, as the director's are; a route that
-   filters in its handler instead is the mistake to refuse in review. The
-   guard is all there is: the identity the operator's listener admits the
-   usher by is not narrowed by tenant, so a fault in the guard, or whoever
-   takes the process over, reads every tenant's live state.
-6. *The concierge puts an address in a URL.* The sign-in form is filled from
-   `login_hint` on the console's address, carried to the identity provider in
-   the edge's `state`. Nothing is stored, but the address is in browser
-   history and in the edge's access logs. It also depends on the format of
-   `state`, which is the edge's own; when that changes the form is simply
-   not filled.
-7. *Five processes are not five controls.* The concierge is a convenience
-   and could be removed without weakening anything. The usher enforces
-   nothing about tiles, where the bouncer decides each request; for the
-   reads of live state it is the only check there is. The controls are the
-   edge session, the bouncer, the publishing proxies, the director's check
-   before a commit, and the usher's before a read of live state.
-8. *The custodian can write any credential.* That is what it is for, and
-   it is the director's position exactly: one process whose own authority
-   covers everything it is ever asked to do for somebody, with the store as
-   the only thing between a request and that authority. A fault in its check
-   is therefore a fault with the whole of its vault role behind it. What
-   bounds that is that the role cannot read or delete, so the worst a
-   compromised custodian does is overwrite credentials, which is loud; and
-   that it is a process of its own, so nothing else runs under its identity.
-9. *The registrar's rule about platform roles is the registrar's code.* Its
-   Keycloak client holds `manage-users` in the kernel realm, and Keycloak
-   would add anybody to the administrators' group, or to any other role's,
-   for it. The rule stops every caller the store allows, and a fault in a
-   route; it does not stop whoever takes over the process. It covers the
-   groups the Cluster claim names under `spec.platformRoles`, all of them,
-   and nothing the claim does not name: a role left unset has no group, and
-   a group that holds a role by some other route -- a tuple written to the
-   store directly -- is managed like any other group of the kernel realm.
-   What it costs is that no route fills these groups either: who holds a
-   platform role is changed in Keycloak, by somebody who may. Keycloak's
-   fine-grained admin permissions could deny the client the groups
-   themselves; that is not built.
+## 4. The programs, one by one
 
-**What moves, and in what order.**
+### 4.1 Director
 
-| Step | Change |
+**What it does**
+
+- Verifies the caller's token against the realm that issued it. A token must
+  be issued for the audience `gentian-director`.
+- Asks OpenFGA the permission each route names, on the tenant or the cluster
+  the route is about, before doing anything else.
+- Makes each permitted change as one commit to the deployment repository. The
+  commit is authored as the person, signed with the director's key, and
+  carries a line that names the request, the person and the permission that
+  allowed it (`Gentian-Authz: …`).
+- Answers a change with `202` and the commit. It does not wait for the
+  cluster.
+- Handles two writers at once by using git: if a push is rejected because the
+  repository moved, it re-applies the change to the new state and tries
+  again, up to eight times.
+- Before a commit, asks the operator whether the cluster's resource
+  definitions know every field the commit sets, and refuses the commit if a
+  field would be silently dropped.
+- Passes one-off commands to the operator (section 4.2), after the same token
+  and permission check.
+
+Its routes, by group. Every write is a commit unless marked as a command.
+
+| Group | What a caller can do |
 | --- | --- |
-| Rename ✅ | `edge-authz` → `bouncer` (binary, package, Deployment and Service, the route table and its annotations, values, environment); `sign-in` → `concierge` (the gentian-ui app and its image, the Deployment and Service). Done on an empty cluster: the bouncer's Service is named by every session policy, and renaming it under live policies refuses every request until the last one follows. The address a person sees (`/sign-in/`) is not renamed. |
-| Usher, first route ✅ | `GET /v1/tenants/{t}/tiles`: the tiles of one tenant, open to whoever may enter it, each filtered by its own relation, built from the bouncer's table. The desktop's backend calls it in-cluster with the person's token; it has no public route. Tenant namespaces are let through to it as they are to the director: it ran in `kernel-edge` at first and runs in `kernel-control` now (below). |
-| Usher, the rest ✅ | The reads of live state: a tenant's app status, resources (state, plans, usage, report), backups and one backup, backup policy and schedules, integrations and notifications, each under `can_view` on the tenant; and the cluster's resources, backup policy and schedules, platform security and customisations, each under `can_audit` on the cluster. Paths, methods, responses and the relation each asks are the director's; a caller changes the address. The director answers 404 for them, or 405 where a write of declared state keeps the path. The usher asks the operator's listener under a credential of its own that admits reads only -- at first a token the operator minted and wrote into a Secret in `kernel-edge`, now the usher's ServiceAccount (below). Not moved: `me`, which the director still serves; the bundle download; and `GET …/platform-security` at the director, which now answers only the allowlist git declares, for the screen that edits it. The director's `GET /v1/clusters/{c}/tiles` is gone. |
-| The listener's callers ✅ | The usher's Deployment and Service left `kernel-edge` for `kernel-control`, with a ServiceAccount of its own; the tile catalogue is written there, and `usherUrlKey` opens a component's way to the control namespace. Both shared tokens of the operator's listener are gone: the director and the usher each present a ServiceAccount token projected for the audience `gentian-os-operator`, and the operator asks the API server whose it is (§3.11). One NetworkPolicy, on the operator's pods, leaves the listener's port reachable from those two workloads only. Nothing else in `kernel-control` or `kernel-edge` is selected by a policy. |
-| Launch rights ✅ | Tiles of installed catalogue apps need `can_launch` on `app:<t>/<p>`. The operator's projection writes `app#tenant` and `app#entitled` from `Tenant.spec.apps`, by the rule the portal applied: an app's own group entitles it, and a base with activated addons is entitled by the addons' groups. Every entry of `spec.apps`, and every addon activated inside one, is a `Component` the tenant reconciler creates and removes; the Component writes the App claim the app Composition answers, routes the app's exposures behind the zone's session, and asks `can_use` on the app at them. |
-| Concierge to the DMZ ✅ | A component of the platform tenant with one perimeter surface, `authMode: none`, published from `tenant-platform-dmz` with an owner and a review date. The brand files it serves today move with the branding work, not with this. |
-| Registrar ✅ | The director's people, group and realm-settings routes → `registrar` (package, executable, Deployment and ServiceAccount, Service, values `registrar.*`, the profile key `registrarUrlKey`). Paths, methods, bodies and the relation each route asks are unchanged; a caller changes the address. The per-realm Keycloak client is a new one, `gentian-registrar-admin`, with the roles the director's had and no more, handed over in the Secret `gentian-registrar-realms`; the operator removes the director's client from each realm and the Secret it was handed over in. The record of who was allowed to ask moved with the routes, to a database and a login of the registrar's own. A tenant's realm and login domain are read from the Tenant objects, where the director read them from git. The director holds no Keycloak credential, mounts none and answers 404 on every one of these paths. |
-| Repositories ✅ | Declaring and removing a repository left the custodian for the director: `PUT` and `DELETE /v1/tenants/{t}/repositories/{name}` and `/v1/clusters/{c}/repositories/{name}`, under `can_write_credential` on the tenant or the cluster -- the relation the custodian asked. A tenant's is a file beside its manifest, listed in the kustomization Argo CD syncs and prunes; the cluster's is a file in `kernel/claims`. Validation, the derived vault path and the confirmation rule moved with them. Two gaps: the claims are synced without pruning, so removing the cluster's own declaration leaves the object in the cluster until it is deleted there; and repositories created through the custodian before this are in no commit, so the director does not know their names are taken. |
-| Custodian ✅ | `credential manager` → `custodian` (package, executable, Deployment and ServiceAccount, Service, values, environment, the profile key `custodianUrlKey`, the consoles that call it). It left the operator's process for one of its own. It verifies the caller's token, asks the store `can_read_credential` or `can_write_credential` on the cluster or the tenant, and writes as itself with a vault role that cannot read a value. The exchange of a caller's token at the vault is gone, and with it what existed only for it: the vault's JWT role for cluster administrators, the per-tenant auth mounts and their group-bound roles, the director's audience on the vault's roles, and the `groups` scope on the zone clients. |
+| Tenants | List tenants; create one; retire one (remove it and keep its data); purge one (remove it with its data, in two commits, resumed after a restart); set or clear a tenant's custom domain; import a tenant from a backup bundle. |
+| Apps and add-ons | Read what git says a tenant has installed; install an app; uninstall it; choose its add-ons. |
+| Catalogues | List the catalogues a tenant or the cluster installs from and their entries; add or remove a catalogue for the whole cluster or for one tenant; allow or forbid a tenant's own admins to add theirs. |
+| Repositories | Declare or remove a repository (its address) for a tenant or for the cluster. The password is the custodian's. |
+| Exposures | Read what a tenant publishes to the internet; publish or withdraw one exposure. |
+| Privileges | Read which extra privileges a tenant's apps asked for; grant or revoke one. |
+| Settings | Read and change the cluster's settings and its branding; choose a tenant's resource plan; set a tenant's sign-in security policy and the languages its sign-in pages offer; set what an app may consume from other apps. |
+| Backup policy | Set or clear a tenant's backup policy; set the cluster's. |
+| Platform security | Read and replace the list of exceptions to the cluster's default security rules, as git declares it. |
+| Records | Read the history of changes to a tenant or the cluster (from the commits); read who holds which right on a tenant or the cluster (from OpenFGA); answer which permissions the caller holds (`…/me`). |
+| Commands relayed to the operator | Take a backup; delete a backup; upload or inspect a backup bundle; restore (as part of an import); send a notice to a tenant's people; purge the data of an uninstalled app; give an installed app to everybody who is a member now. |
+| One live read | Download a backup bundle. This is the only read of live state the director serves. |
 
-**Who enforces what, and what a compromise of each costs.** Read from the
-code and the chart as they are, not from the names. "Enforces" is where a
-request is refused; a process that only filters what it shows enforces
-nothing.
+When an app is installed from a catalogue, the director fetches the app's
+*component profile* (the file that describes how the app is installed) from
+the catalogue's address, checks that it matches the digest the request named,
+and commits it to the deployment repository together with the exact bytes it
+checked. It fetches only from public
+https addresses, so an address somebody typed cannot be used to reach into
+the cluster ([address.go](../../internal/director/catalogue/address.go)).
 
-| Process | Standing credentials | What it decides or enforces | What somebody who takes it over can do | What bounds that |
-| --- | --- | --- | --- | --- |
-| **Director** | The deployments repository's push credential; the key its commits are signed with; the OpenFGA key. Its ServiceAccount has no RBAC and no token for the Kubernetes API is mounted; what is mounted is a token for that account issued for the operator's listener alone, valid ten minutes, which is how the command door knows it (§3.11). It holds no Keycloak credential and no vault role. | Every change to declared state, the address of a repository software is installed from included, and every command of §3.11: it verifies the caller's token and asks the store the route's relation before it commits or relays. Of live state it serves one read, the download of a backup's bundle. | Push a signed commit of anything, in anybody's name: tenants, apps, policies, repositories, and the Cluster claim -- which names the group that administers the platform and the catalogue sources software comes from. Issue every command of §3.11 for any tenant, naming anybody as the actor, and read whatever the operator's listener serves. Write the store directly (see below). | Nothing prevents it. Every commit stays in git, signed by its key, where it can be seen and reverted. It cannot read a secret from the vault or the cluster and cannot reach a realm. Its identity at the command door cannot be copied out for later: the token is bound to the pod and expires in minutes, so the commands stop when the pod does. |
-| **Operator** | A ServiceAccount whose ClusterRole reads and writes Secrets in every namespace, among much else; Keycloak's administrator credential; a vault role that reads and writes the whole platform path, the master password included; the OpenFGA key. It holds no credential for its own listener: it may ask the API server whose a presented token is (`create` on `tokenreviews`). The deployments repository's credential is not mounted into it and it has no checkout. | It writes the store: the cluster's roles from the claim, the tenants, the apps, and membership from Keycloak's signed statements. It admits or refuses a Tenant at admission. At its listener it asks the API server whose ServiceAccount token was presented and admits two identities of its own namespace -- the director's for everything, the usher's for reads -- and refuses every other. It checks nothing about the person and records the actor the director names. | Everything in the cluster. Every Secret is readable to it, so the director's signing key, the repository's credential and the registrar's realm credentials are too; with those it can also do what they can. | Nothing inside the cluster. It is the trusted base. What protects it is that no person's request reaches it except through its listener, Keycloak's signed statements and the admission webhook. A NetworkPolicy on its pods admits only the director's and the usher's pods to the listener's port; its other ports -- metrics, health, the membership listener, the webhook -- are as open as before. |
-| **Custodian** | A vault role bound to its ServiceAccount that can create and update a value under the platform path and read and write its metadata, and cannot read a value or delete one; the OpenFGA key. In the cluster: read the credential catalogue, the tenants, the Cluster claim and the `Repository` objects; update `ExternalSecret` objects; create and update ConfigMaps in its own namespace; read the vault's CA certificate. | Who may see that a credential is required and who may set one: `can_read_credential` and `can_write_credential`, on the cluster or on a tenant. | Overwrite any credential the platform stores, without being able to read one -- a repository's password among them, but not its address. Write the store directly. | It cannot read or delete a secret, so what it does is loud: things stop working. No git, no Keycloak, and no write of any object that decides configuration. |
-| **Registrar** | One Keycloak client secret per realm (`gentian-registrar-admin`: `view-users`, `query-users`, `query-groups`, `manage-users`, `manage-realm`); the login of its own database; the OpenFGA key. In the cluster: read the tenants and the Cluster claim. | Who may manage a tenant's people (`can_manage_users`), set a realm's password policy (`can_set_policy`), hand over a tenant's administrator account (`can_configure` on the cluster) and count accounts (`can_audit`). That a tenant's request reaches that tenant's realm only. That nobody changes a group the Cluster claim names for a platform role (`spec.platformRoles`, every field) or a person in one. | In every realm, the kernel realm included, whatever those roles allow: create, disable or delete any account, set any password, remove any second factor, change any group membership. That includes the groups behind the platform's roles: the rule that forbids it is the registrar's code, which a takeover replaces, and Keycloak carries the change out for this client. So it can make an administrator of the platform, or a holder of any other platform role. It can also change the realm settings `manage-realm` covers, rewrite its own record of who asked, and write the store directly. | No git, no vault, no write in the cluster. A client per realm and none in `master`; no `manage-clients`, no `manage-identity-providers`, no `impersonation`. Keycloak writes an admin event for each change under the client's service account, and a change with no partner in the registrar's record is what an audit looks for. |
-| **Usher** | The OpenFGA key. A ServiceAccount with no RBAC, and no token for the Kubernetes API mounted; what is mounted is a token for that account issued for the operator's listener alone, valid ten minutes, which the listener admits to reads of live state and nothing else. The table of tiles is a mounted file. | Who may read what the cluster holds of a tenant: `can_view` on the tenant, `can_audit` on the cluster, asked before the operator is. About tiles, nothing: it filters what it lists by the store's answers. | Read every tenant's live state -- app status, resources and usage, the list of backups, policies, integrations, notices -- and show it to anybody; show or hide tiles; read from the store who holds what; write the store directly. | It cannot issue a command, fetch a backup's bundle, read a secret or change anything in git, the vault or the cluster. Its reads at the operator stop with the pod. A tile is not access: the bouncer decides each request. It runs in `kernel-control`, beside the operator, the director, the custodian and the registrar, and no NetworkPolicy separates it from the last three; what it can do to them is what any pod in the cluster can, which is call their routes without a person's token and be refused. |
-| **Bouncer** | The OpenFGA key. No Kubernetes token; the route table is a mounted file. | Every request on a route of the authenticated Gateway that attaches it: it verifies the session's token and asks the store the question the table names for that host. | Admit any signed-in person to any host behind it, or refuse everybody. It is shown the token of every session that passes, and that token is the one the director, the registrar and the custodian accept -- so for a token's lifetime it can ask them for anything that person may ask. It can also write the store directly. | It holds no credential of its own beyond the key, and a token it sees is good only until it expires -- five minutes, by item 4 above. |
-| **Concierge** | None. | Nothing. It redirects a browser to a console of this cluster. | Serve what it likes on the cluster's bare domain, a false sign-in page included, and alter the brand files other pages load from it. | It holds no credential and no session passes through it. |
+**What it must never do**
 
-Three things in that table are weaker than the cast suggests, and they are
-the same for every row.
+- Change the cluster. Its service account has no rights and no token for the
+  Kubernetes API.
+- Write to OpenFGA. It only asks.
+- Hold a Keycloak credential or a vault role, or serve a route about a
+  person.
+- Answer for the live state of the cluster, apart from the bundle download.
+- Put a secret in a commit.
 
-- *One key opens the store for everybody.* OpenFGA is configured with a
-  single preshared key, and the director, the operator, the custodian, the
-  registrar, the usher and the bouncer all present it. Only the operator is
-  meant to write; nothing but the code of the other five keeps them from it.
-  A write to the store can grant any relation, the cluster's `admin`
-  included. Per-process identities at the store, with the right to write
-  given to one, would make "reads the store" a property of the credential.
-- *One audience serves every door.* The zone's token is minted for
-  `gentian-director`, and the director, the custodian, the registrar, the
-  usher and the bouncer all accept that audience. A token relayed to one of
-  them is therefore valid at the others for as long as it lives. Anything
-  that sees a person's token -- the bouncer, a console's backend -- can use
-  it at all of them.
-- *The director's word is taken at the command door, and the usher's at the
-  reads.* The operator establishes which workload is calling, from its
-  ServiceAccount token, and nothing more: it believes the name the director
-  passes as the actor, and for a read it asks nothing about who the read is
-  for (§3.11).
+**What it holds**
 
-### 3.11 The operator's command door
+- The credential that pushes to the deployment repository.
+- The private key its commits are signed with, delivered from the vault.
+- The OpenFGA key.
+- A short-lived token for its own service account, valid only at the
+  operator's listener.
 
-The operator's input is git. That is the rule, and this section is the
-exception to it, kept on purpose and kept small.
+**Who calls it, and whom it calls**
 
-Some things a person asks for are not a state to declare but an act to
-perform once: take a backup now, delete that backup, restore from this
-bundle, send this notification, tear down what an uninstalled app left
-behind. Writing each as a commit would fill the deployments repository with
-entries that describe nothing the cluster should converge on, and a restore
-or a backup carries or produces material that must not be in git at all. So
-the operator keeps an HTTP listener for them, and the director is the only
-caller that may issue one. The same listener answers reads of live state,
-for the director and for the usher.
+- Called by: the desktop's backend (`…/me`), the admin console's backend, the
+  App Store app's backend, and the command line tool (`kubectl gentian`,
+  through a port-forward). It has no address on the Gateway.
+- Calls: Keycloak's public keys (to verify tokens), OpenFGA, the git host,
+  the operator's listener, and catalogue addresses on the internet.
 
-**What goes through it.** The commands, all `POST …/actions/<verb>`:
+**If it is unavailable**
 
-| Command | The director asks the store | What the operator does |
-| --- | --- | --- |
-| `backup` | `can_administer` on the tenant | creates the export request |
-| `delete-backup` | `can_administer` on the tenant | deletes one export and its bundle |
-| `bundles`, `bundles/inspect` | `can_configure` on the cluster | takes an uploaded bundle, or says what one contains |
-| `restore` | `can_configure` on the cluster | creates the restore request from an uploaded bundle |
-| `notify` | `can_administer` on the tenant | publishes one notification to the tenant's people |
-| `purge-app` | `can_install_app` on the tenant | destroys the data of an app that is no longer installed: database, object storage, cache user, files, stored credentials, access group |
-| `provision-app` | `can_grant` on the tenant | puts the tenant's people in an app's group again |
+Nothing can be changed and no command can be issued. Everything that runs
+keeps running, people can sign in and use their apps, and the reads the usher
+serves still work.
 
-and reads of live state. The ones a person asks for -- app status, which
-uninstalled apps still hold data, resources, plans, usage, backups and their schedules, the policy in force,
-integrations, notices, platform security, customisations -- are the usher's
-to relay (§3.10): it verifies the person and asks the store, and is admitted
-here as itself. They are worked out inside the operator, some from
-the usage sampler's database and the desktop's, which is why the usher asks
-for them instead of reading objects: reading would have meant giving the
-usher's ServiceAccount read access to tenants' pods, quotas and backups, and
-a second copy of each computation. The reads
-the director's own work depends on stay the director's: the plans a choice
-is validated against, a restore's progress, what the cluster still holds of
-a tenant being purged, and the stream of a backup's bundle.
+### 4.2 Operator
 
-`purge-app` differs from the rest in one way: its answer is the end of the
-work, not the start of it. The operator destroys kind by kind and answers
-when it is over -- `200` with what was destroyed; `409` having destroyed
-nothing while the app is still the tenant's, still being taken down, or
-without its ComponentProfile on the cluster; `503` having destroyed nothing
-when the vault, the identity provider or the database primary it will need
-does not answer; `500` naming the step that failed, what was already
-destroyed and what was not attempted. The steps, their order and the Jobs
-that destroy each store are the ones a tenant's deletion uses
-([operations.md](../design/operations.md) §9). It gives itself 4 min 30 s for all of it and the director waits
-5 min for this one action (30 s for every other), so a purge is never cut
-off by the request that asked for it. It is and stays a one-shot command:
-nothing reconciles towards "purged" and nothing resumes one; a purge that
-did not complete is asked for again, and every step is safe to repeat. What
-uninstalling keeps and a purge destroys, kind by kind, is in
-[store-contract.md](../design/store-contract.md) §8.
+**What it does: reconcilers**
 
-**The rules of the door.**
+A *reconciler* is a loop that compares what should exist with what does and
+corrects the difference. The operator runs these:
 
-- *Two identities, one of which commands.* A caller presents a
-  ServiceAccount token as its bearer. The kubelet projects it into the
-  director's and the usher's pods for one audience, `gentian-os-operator`
-  (`appLifecycle.audience`), valid ten minutes and replaced before then;
-  each reads it from its file on every request. The operator hands the
-  token to the API server (`TokenReview`, with that audience), requires the
-  answer to say it is authenticated and to name the audience, and admits by
-  the identity returned: `system:serviceaccount:<control namespace>:<the
-  director's ServiceAccount>` for everything, the usher's for the routes
-  registered as reads and for nothing else -- no command, not the bundle
-  download, and not the reads only the director makes. Any other identity
-  is refused with 403, a token the API server does not vouch for with 401.
-  A route is a read only if it is a `GET` and was registered as one, which
-  the code checks. The two names and the audience come from the chart; with
-  none configured the listener refuses every request. A positive answer is
-  kept for thirty seconds under a hash of the token; a refusal is not kept,
-  and when the API server cannot be asked the request is refused. Neither
-  pod has a token the API server accepts and neither ServiceAccount is
-  bound to any role: the token proves which workload is calling and opens
-  nothing else.
-- *Only two pods reach the port.* A NetworkPolicy on the operator's pods
-  admits the director's and the usher's pods, of the same namespace, to the
-  listener's port and nobody else (`networkPolicy.enabled`, on by default).
-  It is the second check, not the first: it holds only where the CNI
-  enforces NetworkPolicy, and it does not stop a process on the node
-  itself.
-- *No person is verified here.* The listener asks the store nothing: by the
-  time a request arrives the director or the usher has verified the caller
-  and asked the route's question. The name recorded against an act is the
-  one the director passes in `X-Gentian-Actor`, and is worth something only
-  because no other identity is admitted to a route that reads it.
-- *A closed list.* A command is added here by a change to this table and
-  to the director's route table together. Anything that can be expressed as
-  desired state is a commit instead and does not belong here. Installing an
-  app, removing one and setting its addons are the director's commits; the
-  three routes that did them here are deleted, with the operator's clone of
-  the deployments repository and everything that pushed to it. There was no
-  write of a resource plan left to delete. A test holds them gone.
-- *Nothing that changes who may do what.* No command writes a relation, a
-  group that carries a right, or a policy. Those are projections of what git
-  declares.
-- *An act, not a state.* Each command answers what was started. Whether it
-  finished is read from the object it created.
-
-**What this costs.** The director's process is admitted to the command
-door beside holding the push credential: whoever takes it over can issue
-every command in the table for any tenant and name anybody as the actor,
-for as long as they hold the pod. The commands are bounded — none reads a
-secret or grants a right — but `delete-backup` and `purge-app` destroy
-data. The usher's process, which faces every console's backend, commands
-nothing and reads any tenant's live state through the read list. What
-changed with ServiceAccount tokens is what a credential taken out of the
-cluster is worth: there is no Secret to copy, a token lives ten minutes
-and dies with its pod, and a token for any other audience is refused. What
-did not change:
-
-- *The operator trusts the director's actor header.* It knows the director
-  is calling and takes its word for whom. The operator re-asking the store
-  with the person's subject would close that, and is not built.
-- *The usher's identity is not narrowed.* It reads every tenant's live
-  state on the read list; nothing at the operator ties a read to the person
-  it is for.
-- *A kept answer outlives its token by up to thirty seconds*, so a deleted
-  pod's token is admitted for that long.
-- *Whoever can create a pod under either ServiceAccount, or mint a token
-  for one, is that caller.* That is `create` on pods or on
-  `serviceaccounts/token` in the control namespace, which the operator's
-  own ClusterRole and a cluster administrator have. The NetworkPolicy does
-  not help against the first: such a pod carries the labels it selects on.
-- *The control namespace is otherwise open.* The policy selects the
-  operator's pods and nothing else; the director, the usher, the custodian
-  and the registrar are reachable from any pod that is not itself confined,
-  and each relies on verifying the caller's token. The operator's metrics,
-  health, membership and webhook ports are open to any source, as before.
-
-## 4. Bootstrap: writing configuration before Keycloak exists
-
-The question is real only for the writes that happen before the director can
-authenticate anyone. Enumerating them shows there are fewer than expected:
-
-| Moment | Write | Who | How it stays secure |
-| --- | --- | --- | --- |
-| `--prepare-deployment` | `clusters/<id>/kernel/{claims,values.yaml}` | human, local files, then their own commit | already the design: install.sh never writes the repo; the human reviews and commits with their own git identity and branch-protection rights |
-| `--prepare-tenant` | `definitions/<t>/tenant.yaml` | same | same |
-| Install steps A–E | none to git | — | install.sh reads git; the only imperative writes are cluster objects (the tier-0 `Repository/deployments` claim in B-09, the bootstrap Applications) |
-| First tenant | `tenants/<t>/tenant.yaml` | after install completes, through the director | Keycloak `kernel` realm (D-06) and OpenFGA store (authz bridge) exist by then |
-
-So the director never needs a bootstrap identity: **nothing during install
-asks it to write**. It comes up at D-01 alongside the operator, fails closed
-(every request 401) until its OIDC issuer is reachable, and becomes usable
-when the portal does.
-
-The bootstrap *exception* is not in the director; it is that humans hold push
-rights on `main` during install. It is closed the same way the OpenBao root
-token exception is closed by
-[E-04-revoke-bootstrap-token](../../scripts/steps/E-04-revoke-bootstrap-token.sh)
-and proven by [internal/handover](../../internal/handover/handover.go):
-
-**E-05-director-handover**
-
-1. The director performs one real signed commit as the installing platform
-   admin (`administrator@<KERNEL_DOMAIN>`, obtained by the same browser login
-   the custodian handover already requires) — a no-op "handover"
-   commit. That commit *is* the proof the write path works, recorded in the
-   `gentian-handover` ConfigMap as `configWritePathProven`.
-2. The git host is configured so only the director's identity may push
-   `main`; the installer prints what it could not verify remotely.
-3. The Argo credential is rotated to the read-only token (§3.3); the push
-   token exists in exactly one Secret, mounted in exactly one Deployment.
-4. *(wave 3, G11 — a later step, not part of the handover gate)*
-   `AppProject/gentian.spec.sourceIntegrity` gets the GnuPG policy for the
-   deployments repository (mode `head`, keys: the director's and the
-   break-glass key from the recovery kit). Because `head` verifies the
-   commit at the sync revision, step 1 must have happened or every
-   Application goes OutOfSync on the last human commit.
-
-Until step 1 succeeds, `E-01-tenants` stays gated, for the same reason the
-credential handover gates it: recovery is cheap on an empty cluster and
-catastrophic on one with tenants.
-
-## 5. What moves
-
-"Copy" during §6 B; the operator-side original is deleted in §6 D.
-
-| Today (operator) | Fate | Destination |
-| --- | --- | --- |
-| `applifecycle/gitops.go`, `gitops_addons.go`, `gitops_resources.go`, `names.go`, `types.go` | copy | `internal/director/gitops` |
-| `applifecycle/http.go`, `http_resources.go`, `resources.go` (plan selection, entitlement ceiling) | copy, drop `Actor`, add auth middleware | `internal/director/api` |
-| `applifecycle/service.go` — `validateProfile` | copy → `ensureProfile` (§3.6) | director |
-| `applifecycle/service.go` — `Install`/`Uninstall` orchestration | rewrite as commit + 202 | director |
-| `applifecycle/wait.go`, `reconcile.go` (Argo refresh) | delete; Argo syncs on host webhook + polling | — |
-| `applifecycle/purge.go` | stays, and stays in the request path: a one-shot command that answers when it is over (§3.2, §3.11) | operator |
-| `applifecycle/service.go` — `provisionAppGroupUsers` | stays; becomes desired-state reconcile of `Tenant.spec.apps` → Keycloak group | operator (`app_privilege_reconciler` already exists) |
-| `custodian/` | later, optional: same class of human-identified write, holds no token of its own, needs no controller-runtime | director, after D |
-| `kubectl-gentian` `git_commit_push` + `kubectl apply` fallback | replaced by director API calls with the user's token (`kubectl gentian login` via device flow) | CLI |
-| Console direct writes (§2.2, desired-state rows) | replaced by director calls with the user's token, as `custodian.py` already forwards it; reads become director reads too — the console keeps no Kubernetes identity (G7, [ui-restructure.md](ui-restructure.md) §2) | tenant desktop BFF (`tenant-<t>`) and the platform tenant's in `tenant-platform`, AD-10 |
-| Console direct writes (§2.2, request rows) | director creates the request CR; secrets stay ESO/OpenBao references — settled by G7: all writes move | director, narrow RBAC on those kinds |
-| `catalogue-<repo>` ApplicationSet (every AppProfile synced to every cluster) | retired; the director materialises on reference (§3.6) | — |
-| App Store (`app-store-me` profile, per tenant) | retired. Its data is served by a store outside the cluster; its interface is the App Store app, which installs through the director with the person's token (AD-3) | a store outside; `gentian-ui/apps/app-store` on the cluster |
-| `chart: initContainers.git-clone-deployments`, `git-credentials` volume, `appLifecycle.*` values | delete | — |
-| `Repository/deployments` composition | split read credential from push credential | Crossplane |
-
-## 6. Cutover
-
-The order you proposed is right. Refinements are marked.
-
-### 0. Authenticate the existing endpoint now (wave 0, G1)
-
-Before any of A–D: bearer verification on `internal/applifecycle/http.go`
-against the kernel and tenant realms, the `X-Gentian-Actor` header ignored,
-the BFF and CLI sending the user's token (the BFF already holds it for the
-custodian). No FGA check yet — that waits for the director — but
-"anyone on the network can push config" ends here, in one change to a live
-endpoint, independent of everything below.
-
-### A. Director standalone, no cluster
-
-- `cmd/director`, `internal/director/{api,authn,authz,gitops}`.
-- Contract tests against: a local bare repo as remote, a mock OIDC issuer
-  (static JWKS), OpenFGA in a container with model v1 and the `tests.fga.yaml`
-  tuples. Cover: unauthenticated → 401; wrong `iss`/`aud` → 401; tenant admin
-  of A writing B → 403; allowed write → signed commit with the expected
-  author/committer/trailer; concurrent writers → both land (§3.7).
-- Existing `gitops_*_test.go` cases port unchanged — they already run against
-  a fixture remote.
-- **Refinement:** ship the chart and RBAC in this step too, rendered but not
-  enabled, so B is a values flip and not a chart change.
-
-### B. Side by side, one function at a time
-
-Deploy the director next to the operator. Both can push (§3.7 handles it).
-Switch callers by URL: `APP_LIFECYCLE_URL` in the BFF, a `DIRECTOR_URL` in
-the CLI. Order, smallest and most API-shaped first:
-
-1. Resources plan (`PUT …/resources`) — already API-only, one file patch.
-2. Apps install/uninstall/addons — the console has no install path today, so
-   this is the CLI plus the App Store app of AD-3: the per-tenant
-   `app-store-me` profile is replaced by a platform UI calling
-   `POST /v1/tenants/{t}/apps/{p}` with the user's token.
-3. Tenant deploy/undeploy — CLI-only today; gains authentication for the
-   first time.
-4. Console desired-state writes (§2.2).
-5. Console request writes.
-
-After each: flip the corresponding operator endpoint to `405` behind a
-per-function flag, run the step's tests, keep the flag for one release.
-
-**Refinement:** the operator's `kubectl apply` fallback in the CLI is deleted
-in step 3, not D — it is the one path that bypasses git entirely.
-
-### C. Bootstrap integration and security challenge
-
-- `D-01-operator` installs both charts; `E-05-director-handover` as in §4.
-- Split the repository credential (§3.3); `B-09` claims both.
-- Challenge list, each a scripted test under `crossplane/tests/e2e` or
-  `scripts/tools`:
-  - push to `main` with the Argo token → rejected by host
-  - push to `main` with a human token after handover → rejected
-  - unsigned commit on `main` (force through as admin) → Argo refuses to sync
-  - director pod's SA: `kubectl auth can-i` matrix shows no `pods/exec`,
-    no `secrets` list, no `apps` create
-  - operator pod: no git credential mounted, no route to the git host
-    (NetworkPolicy)
-  - replayed/expired token → 401; token from tenant realm A on tenant B → 403
-  - OpenFGA unreachable → director fails closed, operator unaffected
-
-### D. Decommission
-
-Delete the operator-side copies from §5, the init container, the values, the
-`X-Gentian-Actor` header everywhere, and the `NeedLeaderElection` special
-case. Purge no longer execs into a pod; whether the operator's `pods/exec` can
-go is a question for whatever else uses it. Confirm the
-ClusterRole no longer lists `argoproj.io` write verbs.
-
-## 7. Adjacent scope the split pulls in
-
-Three things that are not git writers today but become the director's
-business once "intent goes through git, authenticated" is the rule.
-
-### 7.1 Kyverno
-
-**Today.** The baseline `ClusterPolicy` objects live in this repository
-([kernel/security/kyverno/policies/](../../kernel/security/kyverno/policies/))
-and Argo syncs them from `gentian-os` itself
-([05-admission.yaml](../../kernel/appsets/raw/05-admission.yaml)). They are
-release content: changing one is a PR to gentian-os, already authenticated by
-the git host and reviewed. The per-cluster *decision* is the
-`PlatformSecurityPolicy` MAC-waiver allowlist, which the console writes
-directly to the API server; the operator turns an approval into namespace
-labels that the policies' exclusions match
-([mac_waiver_reconciler.go](../../internal/controller/mac_waiver_reconciler.go)).
-Nothing writes `PolicyException`s dynamically.
-
-**Target.** Two layers, each in the repository that owns it:
-
-- Baseline policies stay in gentian-os. Their trust comes from the release
-  pipeline, the same as the operator image.
-- Per-cluster policy is a directory in gentian-deployments,
-  `clusters/<c>/kernel/security/`, synced by one more Application in the
-  claims ApplicationSet. It holds the `PlatformSecurityPolicy` (moved out of
-  the console's direct write, §2.2) and any cluster-specific
-  `PolicyException` or policy overlay an operator adds. Written only through
-  the director: `PUT /v1/clusters/{c}/security/{kind}/{name}`. Two
-  relations, following the role definitions: the `PlatformSecurityPolicy`
-  allowlist approves what escapes the default posture, which is the
-  **security officer's** (`cluster#can_approve` — the one who installs is not
-  the one who approves exceptions, roles-and-authorizations §1); a
-  `PolicyException` or overlay changes what `kernel-admission` enforces,
-  which is break-glass only (`cluster#can_set_admission`).
-
-The webhook that admits a `PlatformSecurityPolicy` does not change; it only
-stops seeing writes from the console SA.
-
-### 7.2 Network policies
-
-**Today.** One NetworkPolicy is hand-authored: the operator chart's, on the
-operator's own pods, which leaves its listener reachable from the director
-and the usher only (§3.11). Nothing else is — not in `kernel/`, the
-compositions, or gentian-deployments. Every one is derived by
-[internal/kernel/netpolicy](../../internal/kernel/netpolicy/) from
-`AppProfile.kernelRequirements` and `security.egress`, the Tenant's apps, and
-cluster config (namespaces, routing mode, API-server CIDR). The inputs are
-already in git; the outputs are computed. There is no authored knob: no
-`Tenant.spec.network`, no cluster egress allowlist.
-
-**Target.** Keep the derivation — committing the derived objects would make a
-second source of truth that drifts from the first and cannot be edited
-meaningfully. What goes to git through the director is the **intent** that is
-missing today:
-
-- `Cluster.spec.network.egressAllow[]` — cluster-wide CIDRs/FQDNs every
-  tenant may reach (a corporate proxy, a license server).
-- `Tenant.spec.network.egressAllow[]` and `denyKernel[]` — per-tenant
-  additions and withdrawals, bounded by the cluster list (a tenant cannot
-  widen past what the cluster allows; the webhook enforces the subset).
-
-The operator merges these into `BuildDesired` alongside the profile-derived
-rules. Both fields land in the claims the director already edits, so no new
-endpoint is needed beyond §3.5's `PUT /v1/files` semantics applied to a
-schema'd field. If an auditor wants the effective policy set, it is a
-read-only rendering (`GET /v1/tenants/{t}/network/effective`) served from the
-cluster, not a commit.
-
-### 7.3 Credential requirements
-
-**Today.** [credentials.yaml](../../credentials.yaml) generates sixteen
-`CredentialRequirement` CRs and
-[C-06](../../scripts/steps/C-06-credential-catalogue.sh) applies every one
-of them to every cluster. The applicability logic exists, but only on the
-installer side and only in shell:
-[`_requirement_applies()`](../../scripts/lib/credentials.sh) gates on
-repository auth type, `INFRA_CHART_PRIVATE`, the DNS and edge-ingress
-provider tables and `CERT_ISSUER_MODE`. The console reads the CRs and so
-shows all sixteen. The `Repository` claims are the one place this is already
-right: their requirement is composed only when the claim declares a
-credential.
-
-**Target.** The rule moves from shell into the catalogue and is evaluated
-against the Cluster claim, which already carries every axis the shell reads:
-
-```yaml
-# credentials.yaml
-- name: smtp-relay
-  appliesWhen:
-    cluster.mail.serviceMode: external
-- name: acme-dns-cloudflare
-  appliesWhen:
-    cluster.certificates.issuerMode: acme-dns01
-    cluster.certificates.dnsProvider: cloudflare
-- name: infra-chart-registry
-  appliesWhen:
-    repository.infra.credential: present
-```
-
-Two steps, in this order:
-
-1. **List-time filtering.** `appliesWhen` is generated into the CR spec; the
-   custodian evaluates it against the Cluster claim when it lists,
-   and the installer's `_requirement_applies()` is regenerated from the same
-   field so the two carriers cannot disagree (`make verify-gen` already
-   asserts this for the rest of the content). The console shows only what
-   applies. No new controller; matches the "no controller" design of the
-   catalogue.
-2. **Emit only what applies.** C-06 stops applying the file. The Cluster
-   composition reads the catalogue (shipped as a ConfigMap by the chart) and
-   composes the applicable `CredentialRequirement`s, the way the Repository
-   composition already does for its own. Requirements then appear and
-   disappear with the claim, and a mode change in git retires the
-   requirement it made obsolete.
-
-The declaration of *which* credentials a cluster expects is therefore the
-Cluster claim — in git, written through the director. The values never are.
-
-### 7.4 Where these land in the cutover
-
-| Item | Cutover step |
+| Reconciler | What it produces |
 | --- | --- |
-| `PlatformSecurityPolicy` via director; `clusters/<c>/kernel/security/` Application | B, step 4 (console desired-state writes) |
-| `Cluster.spec.network`, `Tenant.spec.network`, merge in `BuildDesired` | after B — a CRD change, independent of the split, sequenced here so the new fields never get a console direct-write path |
-| `appliesWhen`, list-time filtering | A — the custodian is the first consumer of the Cluster claim the director reads anyway |
-| Composition-emitted requirements, C-06 retired | C, with the credential split (§3.3) |
+| Tenant | A tenant's namespaces, realm, databases, storage, mail setup, quota and network rules; and one Component for every app and add-on the tenant's manifest lists. |
+| Component | The app itself: its chart installed in the tenant's namespace, the services its component profile requires, and for each address it exposes a route, a session policy and the bouncer's question. |
+| Gateway platform | The shared Gateway objects, the routes of the platform's own tools (Keycloak, Argo CD, the cluster dashboard, the model gateway), their session policies, and the bouncer's route table. |
+| Keycloak platform | Browser security settings in every realm, and the registrar's client and secret in every realm (handed over in a Secret the registrar mounts). |
+| Authorization projection | The contents of OpenFGA; see below. |
+| Tile projection | The list of tiles the usher serves, built from the routes that really exist. |
+| Concierge lookup | The file the concierge uses to send an address on a tenant's custom domain to the right desktop. |
+| Branding | The brand files (colours, logo, manifest) every page loads. |
+| Platform security policy | The list of permitted exceptions to the default security rules, in the form the admission rules read. |
+| App grant | Records that a grant between two apps was taken in. |
+| Integration binding | The credentials and network rule that let one app use a service another app provides. |
+| Backup policy, export schedule, tenant export, tenant restore | Where backups go and the credential for it; backups on a schedule and their expiry; one backup bundle; one restore from a bundle. |
+| Customization | The report of customizations that are overdue for review or have drifted. |
+| DNS publication check, usage sampler | Whether published DNS records are really served; how much each tenant consumes. |
 
-## 8. Open decisions
+**What it does: projections into OpenFGA**
 
-- **Signing key format.** GPG is what Argo verifies today; SSH signing is
-  simpler to hold in OpenBao. Pick GPG unless Argo's SSH verification lands
-  first.
-- **Credential split shape.** Second `Repository` claim (`deployments-push`)
-  vs. a `credential.push` field on the existing one. The field keeps one
-  object per repository, which the XRD's own rationale prefers.
-- **How the App Store app presents the human.** Settled: the user's own
-  token. The app is on the cluster and the store outside it never calls in
-  (AD-3). An exchanged token with `act` is what an unattended act — a
-  scheduled upgrade, renewing a repository credential — would need; it is
-  not built.
-- **Refuse by default at the Gateway.** Attach the bouncer to the
-  authenticated Gateway itself, so a route with no line in its table is
-  refused, and keep the per-route policy for the zone's session only.
-  Recommended: it turns the two holes of §3.10 into something that cannot
-  recur. To verify first: that Envoy Gateway applies a Gateway-level
-  external authorization together with a route-level OIDC session in the
-  order the bouncer needs, and what it does to the edge's own `/oauth2/`
-  paths.
-- **Where the bouncer's table comes from.** From the `Component` and its
-  profile, written by the operator into the table directly, instead of from
-  annotations on the routes. Recommended, with the default above.
-- **Which reads the director keeps.** Declared state for those who may
-  change it; everything a person needs merely to use the platform goes to
-  the usher. The line to hold: a director route that a tenant member's
-  desktop calls on every load is on the wrong side of it.
-- **The concierge's address.** A host of its own in the kernel zone, or the
-  kernel domain's apex itself. The apex is what people type; a perimeter
-  surface on it means the apex is served from the DMZ rather than redirected
-  from the authenticated Gateway.
-- **Whether `custodian` moves in the same milestone.** Recommended no —
-  it is correct today and the move is mechanical once the director exists.
+A *projection* is a copy of facts kept in a second place, always rebuilt from
+the original and never edited there. The operator creates the OpenFGA store
+and its model, and writes four things into it:
+
+- **Platform roles**: which Keycloak group holds which role over the cluster,
+  from `spec.platformRoles` on the Cluster claim.
+- **Tenants**: each tenant attached to the cluster, with its admins',
+  members' and perimeter approvers' groups.
+- **Apps**: each installed app attached to its tenant, with the group whose
+  members may use it.
+- **Memberships**: which person is in which group, from Keycloak's signed
+  events ([membership_listener.go](../../internal/controller/membership_listener.go)).
+
+A role whose group is removed from the claim loses its relation, so a right
+is taken away by editing git.
+
+**What it does: the listener**
+
+The operator keeps one HTTP listener for what cannot be a commit. It serves
+two kinds of route
+([internal/applifecycle](../../internal/applifecycle/)).
+
+*Commands*, for the director only:
+
+| Command | What the operator does |
+| --- | --- |
+| `backup` | Creates the request for one backup of a tenant. |
+| `delete-backup` | Deletes one backup and its bundle. |
+| `bundles`, `bundles/inspect` | Takes an uploaded backup bundle, or says what one contains. |
+| `restore` | Creates the request to restore a tenant from a bundle. |
+| `notify` | Publishes one notice to a tenant's people. |
+| `purge-app` | Destroys what an uninstalled app left behind: database, object storage, cache user, files, stored credentials, access group. |
+| `provision-app` | Puts the tenant's current members into an app's group. |
+
+*Reads*, for the usher and the director:
+
+- per tenant: the state of its apps; which uninstalled apps still hold data;
+  its resource ceiling, the plans it may move to, its usage and usage report;
+  its backups and one backup; its backup policy and schedules; its
+  integrations; its notices;
+- for the cluster: every tenant's resources; the backup policy and schedules;
+  the platform security rules in force; the customization report; the licence
+  report; the result of the definitions check.
+
+Four further reads are for the director only, because its own work depends
+on them: a tenant's installed apps, a tenant's state (needed while purging
+it), a restore's progress, and the download of a backup bundle.
+
+How the listener knows its caller: the director and the usher each present a
+token for their own service account, issued for this listener alone and
+valid for ten minutes. The operator asks the Kubernetes API server whose
+token it is ([auth.go](../../internal/applifecycle/auth.go)). The director's
+identity is admitted to every route, the usher's to the reads only, and every
+other identity is refused. With no caller configured the listener refuses
+every request. A positive answer is remembered for thirty seconds.
+
+**What it does: checks before it acts**
+
+- *The build check.* An install names the digest of the app's component
+  profile. The operator recomputes it from the bytes the director committed
+  and compares the profile in the cluster with them. It rolls out nothing
+  that does not match ([profilebundle](../../internal/profilebundle/)).
+- *The definitions check.* The operator compares the resource definitions the
+  cluster serves with the ones it was built with. Where the cluster's are
+  older, a write would silently lose fields; the operator holds the affected
+  reconcilers and reports what it found
+  ([schemacheck](../../internal/schemacheck/)).
+- *Admission.* It refuses a Tenant object that breaks the rules (for example
+  a second user tenant on a single-tenancy cluster) when the object is
+  applied.
+
+**What it does: the licence report**
+
+When reporting is switched on, the operator sends a signed report of what the
+cluster runs to a configured address: counts and addresses of things, never
+of people. Nothing depends on the answer. Every report is kept, exactly as
+sent, for a platform admin to read
+([licencereport](../../internal/licencereport/)).
+
+**What it must never do**
+
+- Hold a git credential or write to the deployment repository. It has no
+  checkout; what git declares reaches it as objects Argo CD applied.
+- Decide whether a person may do something. That was decided before a
+  request reached it.
+- Offer a command that changes who may do what. No command writes a relation,
+  a group that carries a right, or a policy.
+
+**What it holds**
+
+- A service account with wide rights in the cluster, including reading and
+  writing Secrets in every namespace.
+- Keycloak's administrator credential.
+- A vault role that reads, writes and deletes everything under the platform's
+  path.
+- The OpenFGA key, which it uses to write.
+- The key that signs the licence report.
+
+**Who calls it, and whom it calls**
+
+- Called by: Argo CD, by applying objects; the director and the usher, on the
+  listener; Keycloak, with membership events; the Kubernetes API server, for
+  admission.
+- Calls: the Kubernetes API, Keycloak, the vault, OpenFGA, and the licence
+  report's address when reporting is on.
+
+**If it is unavailable**
+
+Running apps keep running and people can still sign in and use them. Nothing
+new is rolled out, memberships changed in Keycloak do not reach OpenFGA,
+commands and the usher's live reads fail, the director refuses commits that
+set fields (it cannot run the definitions check), and a Tenant object cannot
+be created or changed.
+
+### 4.3 Custodian
+
+**What it does**
+
+- Lists the credentials the cluster or a tenant requires, and says for each
+  whether it is set, by whom and when.
+- Sets a credential: verifies the caller's token, asks OpenFGA, checks the
+  submitted fields against the declared form, tries the credential against
+  the service it is for where that is possible, then writes it to the vault
+  under its own identity and records who set it.
+- Tells everything that uses the credential to read it again at once.
+- Stores a tenant's backup key (the private half), and answers whether one
+  is stored and which public key belongs to it.
+- Lists the repositories a tenant or the cluster installs from.
+- Records that the path for a person to set secrets works: a platform admin
+  has signed in and reached it, and it can log in to the vault. The install
+  waits for this record (the *handover*) before it gives up its own bootstrap
+  access.
+
+Its routes: `GET /v1/credentials`, `GET` and `PUT /v1/credentials/{name}`,
+`GET` and `PUT /v1/backup-identity`, `GET /v1/repositories`.
+
+**What it must never do**
+
+- Return a secret's value, on any route, to anybody.
+- Show the vault a caller's token, or let the vault decide who may write.
+- Declare or remove a repository. It has no such route.
+
+**What it holds**
+
+- A vault role, bound to its own service account, that can create and update
+  a secret and read and write its metadata. It cannot read a secret's value
+  and cannot delete one
+  ([cluster-default.yaml](../../crossplane/compositions/cluster-default.yaml),
+  policy `custodian-write`).
+- The OpenFGA key.
+- In the cluster: read the list of required credentials, the tenants, the
+  Cluster claim and the repositories; ask a secret's consumers to refresh;
+  write the handover record in its own namespace; read the vault's
+  certificate.
+
+**Who calls it, and whom it calls**
+
+- Called by: the admin console's backend and the App Store app's backend.
+- Calls: Keycloak's public keys, OpenFGA, the vault, the Kubernetes API, and
+  the service a credential is for (to try it).
+
+**If it is unavailable**
+
+No secret can be set or rotated through the consoles. Secrets already stored
+keep working.
+
+### 4.4 Registrar
+
+**What it does**
+
+- Lists a tenant's people, one person, its groups, a group's members, the
+  realm's sign-in settings and the templates an invitation may apply.
+- Invites a person, updates one, removes one.
+- Puts a person into a group or takes them out; creates, renames and deletes
+  groups.
+- Sends a password reset; requires or removes a second factor.
+- Sets a realm's password policy.
+- Issues the link that hands a new tenant's admin account to its
+  holder.
+- Counts the accounts on the cluster (a number, no names).
+- Records every act and who was allowed to ask for it, in a database of its
+  own.
+
+Every write is a one-off action
+(`POST /v1/tenants/{t}/actions/…`). None is a commit: people do not belong in
+a history that is kept for ever.
+
+**What it must never do**
+
+- Change who holds a platform role. It refuses, whoever asks and whatever
+  OpenFGA answers, every change to a group the Cluster claim names under
+  `spec.platformRoles`: adding to it, removing from it, renaming, deleting or
+  re-creating it. It also refuses any change to a person who is in such a
+  group, because changing a role holder's address and mailing a password link
+  replaces them. The rule is applied in the one place every write leaves for
+  Keycloak ([guard.go](../../internal/registrar/identity/guard.go)), and a
+  write it does not recognise is refused. If the claim cannot be read, the
+  write is refused.
+- Act in a realm other than the tenant's own.
+- Hold a git credential or a vault role.
+
+**What it holds**
+
+- One Keycloak client secret per realm. The client may view and manage users,
+  query groups, and manage the realm's settings. It may not manage clients or
+  identity providers and may not impersonate anybody. There is none in
+  Keycloak's own master realm.
+- The login of its own database.
+- The OpenFGA key.
+- In the cluster: read the tenants and the Cluster claim. No Secret; its
+  realm secrets are handed over as a mounted file by the operator.
+
+**Who calls it, and whom it calls**
+
+- Called by: the admin console's backend and the command line tool.
+- Calls: Keycloak's public keys and its administration interface, OpenFGA,
+  its database, the Kubernetes API, and a tenant's desktop backend (for the
+  invitation templates, with the caller's token).
+
+**If it is unavailable**
+
+Nobody can be invited, changed or removed through the consoles. Existing
+people can sign in as before.
+
+### 4.5 Usher
+
+**What it does**
+
+It serves reads only. Every route names a permission and what it is about,
+and asks OpenFGA before it answers.
+
+| Read | Permission |
+| --- | --- |
+| A tenant's tiles: the things this person may open, and whether the App Store is offered on this cluster | `can_enter` on the tenant; each tile is then checked separately |
+| The state of a tenant's apps; which uninstalled apps still hold data | `can_view` on the tenant |
+| A tenant's resources, the plans it may move to, its usage and usage report | `can_view` on the tenant |
+| A tenant's backups and one backup, its backup policy and schedules | `can_view` on the tenant |
+| A tenant's integrations and notices | `can_view` on the tenant |
+| Every tenant's resources; the cluster's backup policy and schedules | `can_audit` on the cluster |
+| The platform security rules in force; the customization report; the licence report | `can_audit` on the cluster |
+
+The tiles come from a file the operator writes. All other answers are the
+operator's, fetched over its listener. The usher does not read the cluster
+itself: each answer is worked out inside the operator, and reading the
+objects behind it would mean giving the usher access to every tenant's
+namespace.
+
+**What it must never do**
+
+- Change anything, or issue a command. The operator admits its identity to
+  reads only.
+- Filter a list inside a handler instead of naming the permission on the
+  route. Its routes are lists, and a list is where one tenant's data leaks to
+  another.
+
+**What it holds**
+
+- The OpenFGA key.
+- A short-lived token for its own service account, valid only at the
+  operator's listener, for reads.
+- No rights in the cluster, no git credential, no vault role.
+
+**Who calls it, and whom it calls**
+
+- Called by: the desktop's backend, the admin console's backend, the App
+  Store app's backend, and the command line tool. It has no address on the
+  Gateway.
+- Calls: Keycloak's public keys, OpenFGA, and the operator's listener.
+
+**If it is unavailable**
+
+Desktops show no tiles and the consoles cannot show live state. Apps are
+still reachable at their addresses, and the bouncer still decides every
+request.
+
+### 4.6 Bouncer
+
+**What it does**
+
+- Answers the Gateway, for every request on a route that attaches it: may
+  this request pass.
+- Finds the route's question in a table the operator writes: which
+  permission, on what. A desktop or a console asks `can_enter` on the tenant.
+  An app asks `can_use` on the app. The platform's own tools ask
+  `can_configure` or `can_audit` on the cluster. An address with no line in
+  the table is refused.
+- Refuses a path the app's component profile says is not published, before
+  it looks at who is asking.
+- Reads the person's token from the session cookie, verifies it, and asks
+  OpenFGA the route's question.
+- On "yes", sets the headers that tell the app who the person is, and removes
+  the token unless the route is declared to receive it (the desktops and the
+  admin consoles are, because their backends pass it on).
+- On "no", refuses, with a page that offers to sign out.
+- Lets a request with no valid session pass to the Gateway's own sign-in
+  check, with every identity header removed (section 3.6).
+- Answers the sign-out address itself, so that signing out also ends the
+  session at Keycloak.
+- Remembers a "yes" for five minutes per person, session and address, and
+  forgets all of them when OpenFGA's change log moves. It looks at the change
+  log every two seconds.
+
+**What it must never do**
+
+- Hold a rule of its own. The question comes from the table and the answer
+  from OpenFGA.
+- Let a request through when OpenFGA cannot be reached. It answers 503,
+  except for answers it already remembers.
+
+**What it holds**
+
+- The OpenFGA key. No service account rights, no token for the Kubernetes
+  API. The table is a mounted file.
+
+**Who calls it, and whom it calls**
+
+- Called by: the Gateway.
+- Calls: Keycloak's public keys and OpenFGA.
+
+**If it is unavailable**
+
+The Gateway refuses every request on the routes behind it. The session
+policies the operator writes say so explicitly (`failOpen: false`).
+
+### 4.7 Concierge
+
+**What it does**
+
+- Serves the page on the cluster's bare domain. On a multi-tenancy cluster it
+  asks for an e-mail address and sends the browser to the desktop of the
+  workspace that address belongs to. For a tenant's custom domain it looks
+  the desktop up in a file the operator writes.
+- Serves the cluster's brand files, which every other page loads.
+
+**What it must never do**
+
+- Decide anything, or say whether an account exists. It asks the cluster
+  nothing.
+- Send a browser anywhere but a desktop of this cluster.
+
+**What it holds**
+
+Nothing: no credential, and no session passes through it.
+
+**Who calls it, and whom it calls**
+
+- Called by: anybody. It is the one page with no sign-in in front of it,
+  which is why it is published from the platform tenant's DMZ namespace and
+  not from behind the Gateway's session.
+- Calls: nothing.
+
+**If it is unavailable**
+
+The bare domain shows no page and pages lose the cluster's branding. Anybody
+who knows their desktop's address can still sign in there.
+
+## 5. Who decides what
+
+OpenFGA is the one authority on rights. A *relation* is a named link between
+a person and a thing, for example "may install apps in this tenant". The
+relations that are permissions all start with `can_`. Every program that
+takes a person's request verifies the person's token itself and then asks
+OpenFGA one such question. No program decides from a group in a token, and no
+program takes another program's word for what a person may do, with the one
+exception in section 6 (the operator and the director).
+
+The rights themselves are held by groups in Keycloak: a tenant's admins, its
+members, the holders of each platform role. Sections 3.5
+and 4.2 say how a group becomes a relation.
+
+| Who asks | About | Relation | For what |
+| --- | --- | --- | --- |
+| Bouncer | a tenant | `can_enter` | the tenant's desktop and consoles |
+| Bouncer | an app | `can_use` | the app's own addresses |
+| Bouncer | the cluster | `can_configure`, `can_audit` | the platform's own tools |
+| Usher | a tenant | `can_enter` | the list of tiles |
+| Usher | an app, a tenant or the cluster | `can_launch`, `can_administer`, others | each tile, by the relation the tile names |
+| Usher | a tenant | `can_view` | every read of a tenant's live state |
+| Usher | the cluster | `can_audit` | every read of the cluster's live state |
+| Director | a tenant | `can_view` | reading what git declares for the tenant; downloading a backup |
+| Director | a tenant | `can_install_app` | install, uninstall, add-ons, the tenant's own catalogues, purging an app |
+| Director | a tenant | `can_grant` | what an app may consume; giving an app to every member |
+| Director | a tenant | `can_set_plan` | the resource plan |
+| Director | a tenant | `can_set_policy` | backup policy, sign-in security policy, languages |
+| Director | a tenant | `can_expose` | publishing to the internet |
+| Director | a tenant or the cluster | `can_approve_privilege`, `can_approve` | granting a privilege an app asked for; which of the two depends on the kind of privilege |
+| Director | a tenant | `can_administer` | backup, delete a backup, send a notice, read the change history |
+| Director | the cluster | `can_configure` | settings, branding, tenants, domains, catalogues, the cluster's backup policy, import |
+| Director | the cluster | `can_set_admission` | the list of security exceptions |
+| Director | the cluster | `can_audit` | reading the cluster's settings, tenants, catalogues, changes |
+| Director, custodian | a tenant or the cluster | `can_write_credential` | declaring a repository (director); setting a secret (custodian) |
+| Custodian | a tenant or the cluster | `can_read_credential` | seeing that a secret is required and whether it is set |
+| Registrar | a tenant | `can_manage_users` | people and groups |
+| Registrar | a tenant | `can_set_policy` | the realm's password policy |
+| Registrar | the cluster | `can_configure`, `can_audit` | handing over a tenant's admin account; counting accounts |
+
+Reads are never guarded by the relation of the matching write: somebody who
+may see a tenant may see what it has installed without being allowed to
+change it.
+
+The model itself is [model.fga](../../authz/model/v1/model.fga). The full
+list of relations and the rules behind them are in
+[authorization-model.md](authorization-model.md).
+
+## 6. What a break-in would cost
+
+"Takes over" below means: somebody runs their own code as that program.
+
+| Program | Standing credential | What somebody who takes it over can do | What limits it |
+| --- | --- | --- | --- |
+| **Director** | Push credential and signing key for the deployment repository; identity at the operator's listener | Commit anything to the deployment repository in anybody's name, including a change to who administers the platform and where software comes from. Issue every command for any tenant and name anybody as the one who asked; two commands destroy data. | Every commit stays in git, signed, where it can be seen and reverted. It cannot read a secret and cannot reach Keycloak. Its token for the operator lasts ten minutes and stops working when the pod is gone. |
+| **Operator** | Wide cluster rights, Keycloak's administrator credential, the vault role for everything | Everything. It can read every Secret, and with that it can also do what each of the others can. | Nothing inside the cluster. It is the part the platform trusts. What protects it is that no person's request reaches it directly: only Argo CD, the director and the usher on the listener, Keycloak's signed events and the API server's admission calls. |
+| **Custodian** | Vault role that writes and cannot read | Overwrite any secret the platform stores. | It cannot read or delete a secret, so the damage is loud: things stop working. No git, no Keycloak, and it cannot change any object that decides configuration. |
+| **Registrar** | One Keycloak client secret per realm | In every realm, the kernel realm included: create, disable or delete any account, set any password, remove any second factor, change any group. That includes the groups behind the platform roles, so it can make somebody a platform admin. It can also rewrite its own record. | No git, no vault, no write in the cluster. No client in Keycloak's master realm; it cannot manage clients or identity providers and cannot impersonate. Keycloak records each change it makes. |
+| **Usher** | Identity for reads at the operator's listener | Read every tenant's live state and show it to anybody; show or hide tiles. | It cannot issue a command, download a backup, read a secret, or change anything. A tile is not access: the bouncer decides each request. |
+| **Bouncer** | None of its own | Let any signed-in person into any address behind it, or refuse everybody. It sees the token of every session that passes and can use each one, while it is valid, at the director, the custodian, the registrar and the usher. | A token it sees is good for five minutes (the lifetime Keycloak gives it in a tenant realm). |
+| **Concierge** | None | Show a false sign-in page on the cluster's bare domain, and alter the brand files other pages load. | It holds no credential and no session passes through it. |
+
+### Known weaknesses
+
+These are stated so that the cast is not mistaken for more protection than it
+gives.
+
+1. **One key opens OpenFGA for everybody.** OpenFGA is configured with a
+   single shared key. The director, the operator, the custodian, the
+   registrar, the usher and the bouncer all present it, and the key can
+   write. Only the operator is meant to write; nothing but the code of the
+   other five keeps them from it. A write to OpenFGA can grant any right,
+   including administering the cluster. So a break-in at any of the six is,
+   through this key, a break-in at the authority on rights.
+
+2. **One token audience is accepted at every service.** A person's token is
+   issued for the audience `gentian-director`, and the director, the
+   custodian, the registrar, the usher and the bouncer all accept it. A token
+   passed to one of them is valid at the others for as long as it lives.
+   Anything that sees a person's token (the bouncer, a console's backend) can
+   use it at all of them.
+
+3. **The operator trusts the director's word on who asked.** At its listener
+   the operator establishes which program is calling and nothing more. It
+   records the name the director passes with a command and does not ask
+   OpenFGA about that person again.
+
+4. **The usher's identity can read every tenant's live state.** The operator
+   admits the usher to all the reads, for any tenant. What keeps one tenant's
+   data from another's is the usher's own permission check and nothing at the
+   operator.
+
+5. **The registrar's rule about platform role groups is its own code.** Its
+   Keycloak client may manage users in the kernel realm, and Keycloak would
+   carry out a change to a platform role group for it. The rule stops every
+   caller and every mistake in a route; it does not stop somebody who has
+   taken the program over. It covers the groups the Cluster claim names and
+   no others.
+
+6. **Only the operator's listener has a network policy.** One network policy
+   lets only the director's and the usher's pods reach the listener's port
+   ([networkpolicy.yaml](../../charts/gentian-os/templates/networkpolicy.yaml)).
+   The operator's other ports are open to any source, and nothing restricts
+   who may connect to the director, the usher, the custodian or the
+   registrar. Each relies on verifying the caller's token. The policy also
+   only works where the cluster's network enforces such policies.
+
+7. **Whoever can start a pod as the director is the director.** The operator
+   knows its callers by service account. Anybody who can create a pod under
+   the director's or the usher's service account, or create a token for one,
+   is that caller to the listener. The operator itself can, and so can
+   anybody with full rights on the Kubernetes cluster.
+
+8. **The bouncer acts only where a route attaches it, and reads its question
+   from the route.** A route on the Gateway without a session policy has
+   nothing in front of it. The question a route asks is taken from
+   annotations on the route itself, so a route written by anything other than
+   the operator could name a weaker question.
+
+9. **The session cookie has no explicit SameSite rule.** The session policy
+   the operator writes
+   ([bouncer.go](../../internal/controller/bouncer.go)) sets no SameSite
+   attribute on the Gateway's cookies, so browsers apply their own default.
+   The cluster installs Envoy Gateway 1.2.5
+   ([versions.yaml](../../versions.yaml)). A newer Gateway version would allow
+   setting the attribute, but the upgrade is deliberately not done: the newer
+   version encrypts the token cookies. The bouncer reads the person's token
+   from one of those cookies. A cookie it cannot read is, to the bouncer, a
+   request with no valid session, and on a route with a sign-in session such
+   a request is passed on unchecked (section 3.6). The Gateway's own check
+   would then accept its own cookie, and the request would reach the app
+   without OpenFGA having been asked. The upgrade needs the bouncer to
+   receive the token another way first. *The newer version's behaviour is
+   taken from its release notes and is to be confirmed on a cluster before
+   any upgrade.*
+
+10. **An expired access token with a valid refresh token.** The same path
+    exists today for one request at a time. The access token in the cookie
+    lives five minutes. When it has expired, the bouncer cannot verify it,
+    treats the request as having no session, removes the identity headers and
+    passes it on. The Gateway's session policy has refresh switched on, so
+    the Gateway is expected to fetch a new token and forward that same
+    request. That request then reaches the app without the bouncer's question
+    having been asked and without identity headers. The next request carries
+    the new cookie and is checked normally. *What the Gateway does with the
+    request while it refreshes is not established from this repository and
+    is to be confirmed on a cluster.*
+
+11. **A withdrawn right can last a few minutes.** A right removed in OpenFGA
+    takes effect at the bouncer within about two seconds. A session ended at
+    Keycloak lasts until the access token expires, up to five minutes; there
+    is no immediate revocation.
+
+12. **Argo CD and the director use the same repository credential.** Both
+    are fed from one path in the vault. Argo CD only needs to read; whatever
+    can read Argo CD's copy can push. What still protects the cluster is the
+    signature check: Argo CD does not apply a commit that is not signed by
+    the director's key or the break-glass key.
+
+13. **A person can sign in to the vault's own pages.** Besides the custodian,
+    the vault accepts a sign-in through Keycloak to its own user interface,
+    with one role for platform admins and one for tenant admins. That path
+    can read values, and it is decided by a group in the token, not by
+    OpenFGA.
+
+## 7. Addresses and tenancy in brief
+
+Every cluster has the **platform tenant**. It holds the platform admins and
+runs the platform's own pages. Everybody else lives in a **user tenant**. A
+cluster runs in one of two modes, chosen at install:
+
+| | `multi` | `single` |
+| --- | --- | --- |
+| User tenants | any number | exactly one, named `user` |
+| A user tenant's desktop | `console.<tenant>.<domain>` | `console.<domain>` |
+| Its admin console | `admin.<tenant>.<domain>` | `admin.<domain>` |
+| Its apps | `<app>.<tenant>.<domain>` | `<app>.<domain>` |
+| Who administers it | the tenant admin | the user admin |
+| The bare domain `<domain>` | the concierge's page | leads to the user tenant's desktop |
+
+The same in both modes:
+
+- The platform admin signs in at `platform.<domain>` (the platform tenant's
+  desktop) and administers the cluster at `admin.platform.<domain>`.
+- Keycloak is at `id.<domain>`.
+- A tenant can be given a custom domain; its addresses then sit under that
+  domain.
+
+Each tenant has its own sign-in session. The Gateway keeps one session cookie
+per address, and the bouncer's question is always about the tenant or the app
+the address belongs to.
+
+Detail: [iam.md](../design/iam.md) §1.1a for the modes,
+[routing.md](../design/routing.md) for addresses and certificates,
+[multi-tenancy.md](../design/multi-tenancy.md) for what separates tenants.
+
+## 8. What is done, what is not
+
+### Done
+
+- The seven programs run as described, each as its own deployment. The
+  director, the custodian, the registrar, the usher and the bouncer are built
+  from the operator's source and run from its image, each with its own
+  command.
+- The director is the only program that writes to the deployment repository.
+  Its commits are signed, and Argo CD refuses unsigned ones for that
+  repository.
+- The operator holds no git credential and has no checkout.
+- The operator's listener admits callers by workload identity, with a network
+  policy on its port.
+- The operator creates OpenFGA's store and model and is the only program
+  whose code writes to it: platform roles, tenants, apps, memberships.
+- The custodian writes to the vault as itself, with a role that cannot read.
+- The registrar holds the per-realm Keycloak credentials and enforces the
+  rule about platform role groups.
+- The usher serves the tiles and every read of live state.
+- The bouncer checks every route that has a session policy, and follows
+  OpenFGA's change log.
+- The concierge is published from the platform tenant's DMZ.
+- The consoles hold no credential of their own. They pass on the signed-in
+  person's token.
+- The command line tool signs in as the person (`kubectl gentian login`) and
+  calls the director, the registrar and the usher.
+- Installing the cluster and creating the first commits is described in
+  [GETTING-STARTED.md](../../GETTING-STARTED.md).
+
+### Not built yet
+
+- **The App Store app's placement on tenants.** The app exists; the chart
+  ships no component profile that places it on a tenant, as it does for the
+  desktop and the admin console.
+- **Resource definitions delivered by Argo CD.** Today they can fall behind
+  the software, which is what the definitions check detects.
+- **Separate OpenFGA credentials per program**, with the right to write given
+  to the operator alone (weakness 1).
+- **Token exchange**: a token issued for one service only, so that a token
+  seen by one program is not valid at the others (weakness 2), and so that an
+  unattended act can carry who it is for.
+- **The Gateway upgrade** and the SameSite rule (weakness 9).
+- **Default-deny network policies in the kernel namespaces** (weakness 6).
+- **A read-only repository credential for Argo CD** (weakness 12).
+- **The operator asking OpenFGA again** about the person a command is for
+  (weakness 3).
+- **Refusal by default at the Gateway**: attaching the bouncer to the Gateway
+  itself, so that a route with no line in the table is refused, and writing
+  the table from the Component and its profile instead of from annotations
+  (weakness 8).
+- **Limits on the registrar's client inside Keycloak**, so that Keycloak
+  itself refuses a change to a platform role group (weakness 5).
+- **Immediate revocation** of a session ended at Keycloak (weakness 11).
+- **A rate limit at the director.** There is none.
+- **A route for raw edits of the deployment repository.** The model has the
+  relation `can_edit_raw`; no route uses it.
+- **Removing the cluster's own repository declarations from the cluster.**
+  The cluster's claims are applied without pruning, so a repository removed
+  from git stays in the cluster until it is deleted there.
+
+Three designs sit next to this one and are also not built. They are
+summarised here because no other document carries them.
+
+- *Per-cluster admission exceptions in git.* The baseline admission policies
+  ship with the software. What is in git per cluster today is the list of
+  security exceptions (section 4.1, "Platform security"). Cluster-specific
+  policy exceptions and overlays, in a directory of the deployment repository
+  written only through the director, are not built.
+- *Network intent.* Network policies for tenants and apps are computed by the
+  operator from what each component profile declares; none is written by
+  hand. Fields for a cluster's or a tenant's own allowed outbound
+  destinations do not exist.
+- *Showing only the credentials that apply.* Every required credential is
+  created on every cluster, and the installer decides in a script which ones
+  apply. A rule on each requirement that says when it applies, evaluated
+  against the Cluster claim, is not built.
+
+### Decisions still open
+
+- Whether the bouncer should be attached to the Gateway as a whole, and how
+  the Gateway then orders it with the sign-in check and its own `/oauth2/`
+  addresses.
+- How the bouncer should receive the person's token once the Gateway
+  encrypts its cookies.
+- Whether Argo CD's read credential becomes a second repository declaration
+  or a second field on the existing one.
+- Whether the operator should re-check the person behind a command, or the
+  director's word stays enough.
+- How per-program OpenFGA credentials are issued and rotated.
+
+## 9. Glossary
+
+| Term | Meaning |
+| --- | --- |
+| Director, operator, custodian, registrar, usher, bouncer, concierge | The seven programs; section 2. |
+| Platform admin | A person who administers the cluster. Lives in the kernel realm. |
+| Tenant admin, user admin | A person who administers one tenant. Called tenant admin on a multi-tenancy cluster and user admin on a single-tenancy one. |
+| Tenant | One organisation's separate part of the cluster: its own people, namespaces, data and addresses. |
+| Platform tenant, user tenant | The tenant that holds the platform admins and the platform's own pages; any other tenant. |
+| Realm | A separate set of people in Keycloak. One per tenant, plus the kernel realm. |
+| Token | A signed statement from Keycloak that says who a person is. Valid for a few minutes. |
+| Audience | The service a token says it is issued for. |
+| Service account | The identity a program has inside the cluster. |
+| Workload identity | Proving which program is calling by a token for its service account, instead of a shared password. |
+| Relation | A named link between a person and a thing in OpenFGA. The ones that are permissions start with `can_`. |
+| Projection | A copy of facts kept in a second place, rebuilt from the original and never edited there. |
+| Reconcile, reconciler | To compare what should exist with what does and correct the difference; a loop that does so. |
+| Desired state | What the cluster should run, as written in the deployment repository. |
+| Live state | What the cluster actually holds right now. |
+| Commit | One recorded change in git, with an author. |
+| Command | A one-off act the director passes to the operator; it leaves no commit. |
+| Claim | An object that declares something the cluster should provide. The Cluster claim declares the cluster's own settings. |
+| Catalogue | A list of apps that can be installed, published at an address. |
+| Component profile | The file that describes how one app is installed: its chart, what it needs, what it exposes. |
+| Component | One installed app or add-on of one tenant, as an object in the cluster. |
+| Digest | A fingerprint of a file's exact content. |
+| Exposure | An address at which an app can be reached. |
+| Tile | An entry on the desktop that opens an app or a console. |
+| Handover | The moment a platform admin has signed in and the path for setting secrets is shown to work, after which the installer gives up its own access. |
+| Bundle | The file one backup of a tenant produces. |
+| Session policy | The setting on a route that makes the Gateway require a sign-in and ask the bouncer. |
+| DMZ | A namespace for what is reachable from the internet without a sign-in. |
+| Break-glass key | A second signing key, kept offline, for changing the deployment repository when the director cannot. |

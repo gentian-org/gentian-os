@@ -912,7 +912,7 @@ prerequisite here, not a separate piece of work; it is in
 
 **Moved since.** The routes, the per-realm credential and the record this
 section describes are the registrar's now
-([operator-split-plan.md](operator-split-plan.md) §3.10): a process of its
+([operator-split-plan.md](operator-split-plan.md) §4.4): a process of its
 own, so that the director holds the git credential and nothing that writes a
 realm. The reasoning below stands as it was written; read "the registrar"
 where it says the director holds, serves or records any of it.

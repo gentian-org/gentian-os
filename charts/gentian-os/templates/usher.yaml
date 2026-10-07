@@ -1,6 +1,6 @@
 {{- /*
   The usher: what a signed-in person's desktop asks to learn what is here and
-  what that person may open (operator-split-plan.md §3.10).
+  what that person may open (operator-split-plan.md §4.5).
 
   It runs in the control namespace beside the director, from the operator's
   image with its own command: the edge namespace holds what a Gateway must

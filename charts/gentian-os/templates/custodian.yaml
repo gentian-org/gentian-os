@@ -1,6 +1,6 @@
 {{- /*
   The custodian: what sets a credential in the vault for the person entitled
-  to set it (operator-split-plan.md §3.10).
+  to set it (operator-split-plan.md §4.3).
 
   A Deployment of its own, with a ServiceAccount of its own, as the director
   is. The director is the one thing that may push to git; the custodian is the

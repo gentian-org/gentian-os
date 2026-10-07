@@ -104,7 +104,7 @@ type Repository interface {
 }
 
 // Lifecycle is the operator's listener as the director uses it: the commands
-// of §3.11, and the questions a commit or a command depends on -- which plans
+// of operator-split-plan.md §4.2, and the questions a commit or a command depends on -- which plans
 // a tenant may move to, whether a restore finished, what the cluster still
 // holds of a tenant being purged. No person's read of live state passes
 // through here; those are the usher's. See internal/director/lifecycle.

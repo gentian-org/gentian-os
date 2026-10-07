@@ -101,7 +101,7 @@ BFF in `backend/app`.
   one. That is what keeps a kernel-realm client secret out of
   `tenant-platform`.
 - Tiles are the usher's answer (`GET /v1/tenants/{t}/tiles`,
-  [operator-split-plan.md](operator-split-plan.md) §3.10): the list comes
+  [operator-split-plan.md](operator-split-plan.md) §4.5): the list comes
   back already filtered by `can_launch` for the caller. The BFF does not
   know what an admin is.
 - **A relay for tiles, and nothing administrative.** The desktop shows what
@@ -177,12 +177,12 @@ token to the custodian rather than holding an OpenBao token
   no schema change. The static bundle needs no such wait but gains nothing
   from sharing either (AD-10).
 - Every write is a director call with the user's token
-  ([operator-split-plan.md](operator-split-plan.md) §3.5): policies, grants,
+  ([operator-split-plan.md](operator-split-plan.md) §4.1): policies, grants,
   plans, backup settings and export/restore requests. Every read is a
   director read with the user's token, filtered by the caller's relations.
   The console's `rbac.yaml` has zero rules.
 - **User and group administration** goes through the registrar
-  ([operator-split-plan.md](operator-split-plan.md) §3.10). Identity writes
+  ([operator-split-plan.md](operator-split-plan.md) §4.4). Identity writes
   are performed against Keycloak with a per-realm service identity the
   registrar holds, after an FGA check on the human (`can_manage_users` on
   `tenant`). The console never sees a Keycloak admin credential, and neither
@@ -396,7 +396,7 @@ installs) are sensitive, never by the need to hold a secret.
 in the cluster for this app at this digest, because a tenant installed it —
 not because a catalogue was synced. The `catalogue-<repo>` ApplicationSet
 that syncs every profile to every cluster today is retired with this
-(operator-split-plan.md §3.6).
+(operator-split-plan.md §4.1).
 
 **Without a store.** The same director route, asked from the command line:
 `kubectl gentian apps install …`. No interface on the cluster lists what

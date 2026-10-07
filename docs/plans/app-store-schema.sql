@@ -9,7 +9,7 @@
 -- Holds what was removed from ComponentProfile, plus the commercial data that
 -- never belonged in a cluster.
 --
--- Boundary (AD-3, operator-split-plan §3.6): the store may TRIGGER, it may not
+-- Boundary (AD-3, operator-split-plan §4.1): the store may TRIGGER, it may not
 -- SUPPLY. It calls the director's ingestion endpoint on the kernel gateway,
 -- bearer only. The director then materialises the profile bundle at the
 -- requested digest from the catalogue git repository — never from this

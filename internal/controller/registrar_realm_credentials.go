@@ -43,7 +43,7 @@ import (
 // given what it may use.
 //
 // The credential was the director's until the registrar took the people
-// routes over (operator-split-plan.md §3.10): the same client under the name
+// routes over (operator-split-plan.md §4.4): the same client under the name
 // gentian-director-admin, in a Secret the director mounted. Nothing reads
 // either any more, and a credential nothing reads is still a credential, so
 // each pass removes what is left of them -- see retireDirectorRealmCredentials.

@@ -7,7 +7,7 @@ package is.
 Everything the architecture cleanup has to build, change or remove, grouped
 by component. Each item names the plan that specifies it. Sequencing across
 packages follows the waves of [security-gap-closing.md](security-gap-closing.md)
-and the cutover steps of [operator-split-plan.md](operator-split-plan.md) §6;
+and the split of the operator ([operator-split-plan.md](operator-split-plan.md));
 where an item belongs to one of those it says so. The decisions behind the
 packages are [architectural-decisions.md](architectural-decisions.md).
 
@@ -20,8 +20,8 @@ the cluster in its own repository (WP-14 is its reference implementation).
 The dev cluster is purged and rebuilt in the target layout; release 4.1
 preserves the old installer for any cluster that has not been rebuilt.
 That removes the migration choreography from the critical path: the
-side-by-side cutover (operator-split-plan.md §6 B) and the decommission
-step (§6 D) apply to existing clusters only, and a fresh cluster goes
+side-by-side cutover and the decommission step of the operator split
+apply to existing clusters only, and a fresh cluster goes
 straight to the target. The installer is not rebuilt last — its skeleton
 comes first, because every cluster-dependent package needs the new layout
 to be tested against, and each package then brings its own step.
@@ -33,11 +33,11 @@ to be tested against, and each package then brings its own step.
 | 2 — packages on the fresh cluster | WP-1 deployed (no side-by-side), WP-2, WP-4, WP-5 on-cluster parts and materialise-on-reference against WP-14's catalogue source, WP-9 wave 0 and signing, WP-8 remaining namespaces — each adding its installer step as it lands; **WP-3's event listener deployed and wired**, because the director starts checking here and an empty membership projection denies every write, including phase 3's handover commit | phase 1 | each package's tests; the step's `check()` honest |
 | 3 — handover and challenge | WP-10 `E-05`, credential split, challenge lists; WP-11 deployments layout; WP-13 toggles verified off and on | phase 2 | the challenge list passes as scripted tests on a fresh install |
 | 4 — identities, audit, depth | WP-3 reconcile hardening and drift reporting (the feed itself landed in phase 2), WP-9 identities and agents, WP-4 log store and exposure view, WP-9 data-plane depth (gap-plan waves 2–4) | phase 3 | audit joins on one request id |
-| existing clusters | operator-split-plan.md §6 B and D, or a rebuild from the recovery kit (AD-11) | a passing fresh install | per cluster |
+| existing clusters | a side-by-side cutover and decommission of the old operator paths, or a rebuild from the recovery kit (AD-11) | a passing fresh install | per cluster |
 
 ## WP-1 Director — new binary (`os`)
 
-Specified in [operator-split-plan.md](operator-split-plan.md) §3, §5, §6.
+Described as built in [operator-split-plan.md](operator-split-plan.md) §4.1.
 
 - [ ] **The director writes git and nothing else.** As built it also writes
       authorization state: it creates the OpenFGA store and model at start,
@@ -67,7 +67,7 @@ Specified in [operator-split-plan.md](operator-split-plan.md) §3, §5, §6.
       public client in the kernel realm, audience including the director;
       credentials at `~/.config/gentian/credentials` mode 0600 keyed by
       cluster; refresh on expiry; `logout` revokes and deletes
-      (operator-split-plan §3.9). The Keycloak client ships with it.
+      ([commands.md](../commands.md)). The Keycloak client ships with it.
 - [x] `cmd/director`, `internal/director/{api,authn,authz,gitops}`; no
       controller-runtime. Contract tests: `go test ./internal/director/...`
       (decisions from a table) and `make test-director-contract` (the same
@@ -89,7 +89,7 @@ Specified in [operator-split-plan.md](operator-split-plan.md) §3, §5, §6.
 - [x] Git backend: copy of `applifecycle/gitops*.go`; commits authored as
       the human, committed by the director; trailer with the decision and
       request id; a rejected push re-applies the edit to the new remote state
-      (operator-split-plan §3.7); a failed push leaves nothing behind.
+      (operator-split-plan §4.1); a failed push leaves nothing behind.
 - [ ] Commits **signed** with a key held in OpenBao transit
       (artefacts/roadmap-additions.md). Needs OpenBao; lands with cutover C.
 - [ ] Write API `/v1/tenants/{t}/…`, `/v1/clusters/{c}/…`: apps, addons,
@@ -97,7 +97,7 @@ Specified in [operator-split-plan.md](operator-split-plan.md) §3, §5, §6.
       deploy/undeploy, raw edit (break-glass); every write returns 202 with
       an operation URL.
 - [ ] Read API — **one read per write, no exceptions** (operator-split-plan
-      §3.5). Tenants, installed apps with version, digest, config and addons,
+      §4.1, §4.5). Tenants, installed apps with version, digest, config and addons,
       integrations in force, users and groups, policies, exposure surfaces and
       their enablements, plans and usage, cluster security and
       exposure ceilings, operations, tiles filtered by `can_launch`, and audit

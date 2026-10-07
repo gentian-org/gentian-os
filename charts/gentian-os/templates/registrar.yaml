@@ -1,7 +1,7 @@
 {{- /*
   The registrar: what keeps the list of people -- invites them, puts them in
   groups, removes them -- at Keycloak, for the person entitled to ask
-  (operator-split-plan.md §3.10).
+  (operator-split-plan.md §4.4).
 
   A Deployment of its own, with a ServiceAccount of its own, as the director
   and the custodian are. The director is the one thing that may push to git;

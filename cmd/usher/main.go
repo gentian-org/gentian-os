@@ -9,7 +9,7 @@ SPDX-License-Identifier: MPL-2.0
 */
 
 // usher answers a signed-in person's reads: what is here, and what they may
-// open (operator-split-plan.md §3.10).
+// open (operator-split-plan.md §4.5).
 //
 // It runs beside the bouncer from the same image and with the same two
 // dependencies -- the identity provider's keys and the authorization store --

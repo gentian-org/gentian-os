@@ -9,7 +9,7 @@ SPDX-License-Identifier: MPL-2.0
 */
 
 // Package usher tells a signed-in person what is here and what they may open
-// (operator-split-plan.md §3.10).
+// (operator-split-plan.md §4.5).
 //
 // It changes nothing. Every answer is the operator's -- a projection it
 // wrote, or what it says when asked -- given to a caller the authorization

@@ -585,7 +585,7 @@ API: `GET /v1/tenants/{t}/exposure` (summary),
 under `/v1/clusters/{c}/exposure`. Authorization: `can_view` on the
 tenant for the tenant views and `can_audit` on the cluster for the rest —
 reads never use the write verb, or a tenant administrator could not see an
-inventory they are not the one to change (operator-split-plan.md §3.5).
+inventory they are not the one to change (operator-split-plan.md §5).
 `can_expose` gates the write that creates or removes an enablement.
 
 ### 8.5 Optional contract: `exposure-policy`

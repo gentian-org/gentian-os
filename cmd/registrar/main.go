@@ -10,7 +10,7 @@ SPDX-License-Identifier: MPL-2.0
 
 // registrar keeps the list of people: it invites them, puts them in groups
 // and removes them, at Keycloak, for the person entitled to ask
-// (operator-split-plan.md §3.10).
+// (operator-split-plan.md §4.4).
 //
 // It is a process of its own, as the director and the custodian are, and for
 // their reason. The director holds the credential that pushes to git; while

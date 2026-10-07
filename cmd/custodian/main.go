@@ -9,7 +9,7 @@ SPDX-License-Identifier: MPL-2.0
 */
 
 // custodian takes a credential from the person entitled to set it and puts it
-// in the vault (operator-split-plan.md §3.10).
+// in the vault (operator-split-plan.md §4.3).
 //
 // It is a process of its own, as the director is, and for the director's
 // reason. The director is the only thing that holds the credential to push to
