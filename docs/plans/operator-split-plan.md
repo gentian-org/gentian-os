@@ -402,8 +402,10 @@ Its routes, by group. Every write is a commit unless marked as a command.
 | One live read | Download a backup bundle. This is the only read of live state the director serves. |
 
 When an app is installed from a catalogue, the director fetches the app's
-*component profile* (the file that describes how the app is installed) from
-the catalogue's address, checks that it matches the digest the request named,
+*component profile* (the file that describes how the app is installed, and
+which may hold a few other objects the app needs beside it) from
+the catalogue's address, checks that it matches the digest the request named
+and holds nothing a catalogue of that kind may not bring,
 and commits it to the deployment repository together with the exact bytes it
 checked. It fetches only from public
 https addresses, so an address somebody typed cannot be used to reach into
@@ -527,7 +529,8 @@ every request. A positive answer is remembered for thirty seconds.
 
 - *The build check.* An install names the digest of the app's component
   profile. The operator recomputes it from the bytes the director committed
-  and compares the profile in the cluster with them. It rolls out nothing
+  and compares the profile in the cluster with them, and each other object
+  the file holds. It rolls out nothing
   that does not match ([profilebundle](../../internal/profilebundle/)).
 - *The definitions check.* The operator compares the resource definitions the
   cluster serves with the ones it was built with. Where the cluster's are

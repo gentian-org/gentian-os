@@ -9,13 +9,15 @@ A catalogue is an **https address that serves static files**: an index, and one 
 
 ```
 https://<host>/<path>/index.yaml              what is in the catalogue
-https://<host>/<path>/profiles/<name>.yaml    one ComponentProfile per file
+https://<host>/<path>/profiles/<name>.yaml    one app's bundle per file: its ComponentProfile,
+                                              and what travels with it
 ```
 
 Nothing is copied from a catalogue into a cluster ahead of time. A profile reaches a cluster when a
 tenant installs it: the install names the entry and the digest of the build it means, the director
 fetches that one file, checks it, and commits it to the deployments repository under
-`clusters/<cluster>/catalogue/`. Argo CD applies it from there.
+`clusters/<cluster>/catalogue/`. Argo CD applies it from there — the profile, and with it whatever
+else the file holds (§2).
 
 A catalogue exists on a cluster in one of three ways:
 
@@ -31,19 +33,95 @@ words as a catalogue that does not exist.
 
 ## 2. The format
 
-### `profiles/<name>.yaml`
+### `profiles/<name>.yaml`: the bundle
 
-- **One `ComponentProfile` and nothing else.** A file with a second YAML document is refused.
+**One profile, one file, one fingerprint.** The file is the app's *bundle*: a YAML stream whose first
+document is the `ComponentProfile`. Most bundles are that one document and nothing else. A profile
+that needs other objects on the cluster brings them in the same file, after it, as its *companions*,
+and the digest in the index is taken over the whole file — so an install pinned to a digest is pinned
+to the profile and to every companion with it.
+
+```yaml
+apiVersion: gentianos.io/v1alpha1
+kind: ComponentProfile
+metadata:
+  name: acme-notes
+spec:
+  package:
+    composition: app-acme-notes
+    chart: {repository: oci://registry.example.com/acme/charts, name: notes, version: "1.0.0"}
+  # …
+---
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: app-acme-notes
+  labels:
+    gentianos.io/profile-name: acme-notes
+spec:
+  compositeTypeRef: {apiVersion: gentianos.io/v1alpha1, kind: XApp}
+  # …
+```
+
+The profile:
+
+- **Exactly one `ComponentProfile`, and it is first.**
 - **`metadata.name` equals the file name** without `.yaml`. `profiles/acme-notes.yaml` holds the
-  profile named `acme-notes`.
-- **At most 180 KiB.** The director carries the file's bytes beside the profile so the operator can
-  check them at rollout, and that is what fits.
-- It must not carry the annotations `gentianos.io/profile-bundle` or `gentianos.io/catalogue-origin`.
-  The platform writes those.
-- The name is a DNS label: lower-case letters, digits and hyphens.
+  profile named `acme-notes`. The name is a DNS label: lower-case letters, digits and hyphens.
+- It must not carry the annotations `gentianos.io/profile-bundle` or `gentianos.io/catalogue-origin`
+  (the platform writes those), any label or annotation beginning `argocd.argoproj.io/`, or the label
+  `gentianos.io/profile-name` with another profile's name.
 
 What goes into a profile is described in [design/app-profiles.md](design/app-profiles.md) and, for
 customizing an app, in [app-customization.md](app-customization.md).
+
+**The file is at most 180 KiB**, companions included. The director carries the file's bytes beside
+the profile so the operator can check them at rollout, and that is what fits.
+
+#### What a bundle may hold beside its profile
+
+Everything in the file is applied to the cluster, so what may be in it is a short list. Anything not
+on it — another kind, a second profile, a field or a label the table does not name — and the whole
+bundle is refused: by the director when it is fetched, before anything is written, and again by the
+operator before anything is rolled out.
+
+| Kind | Its name | What else is checked | Applied | Read by |
+|---|---|---|---|---|
+| `Composition` (`apiextensions.crossplane.io/v1`) | `app-<profile>`; at most one | composes `XApp` (`gentianos.io/v1alpha1`) and nothing else; is the one the profile names in `spec.package.composition`; never `app-default` | cluster-wide | Crossplane, to render the app |
+| `OIDCPackCatalog` (`gentianos.io/v1alpha1`) | `<profile>-oidc`; at most one | every pack is for a `clientId` (or `oidcPackRef`) the profile itself states; no `serviceClient` pack | cluster-wide | the operator and the app's Composition, to configure the app's client in a tenant's realm |
+| `ConfigMap` (`v1`) | `<profile>.<asset>` | carries the label `gentianos.io/asset: <asset>`; `data` only, text only | the catalogue's namespace | the app's Composition, which finds it by its two labels |
+| `Customization` (`gentianos.io/v1alpha1`) | `<profile>.<record>` | `spec.target.profile` is this profile; `spec.scope` is `profile` | the catalogue's namespace | the operator, for the customization-debt report |
+
+For every companion:
+
+- **It is owned by its profile, by name.** The names above can only be produced from the profile's
+  own name, so two bundles cannot both claim one object, and a bundle cannot name an object of the
+  platform or of another profile.
+- **It carries the label `gentianos.io/profile-name: <profile>`** and no label beside those the table
+  names. Platform configuration is found by label; a companion cannot say it is some.
+- **It states `apiVersion`, `kind`, `metadata.name`, `metadata.labels` and its `spec` (a ConfigMap:
+  its `data`), and nothing else.** No namespace: a companion that has one is applied where the
+  cluster applies its catalogue (the provisioning namespace), not where it says. No annotations, no
+  owner, no finalizer, no status.
+- **It comes from a catalogue of the whole cluster.** A bundle from a tenant's own catalogue is its
+  profile alone; one that holds a companion is refused, saying so. Each companion is an object of
+  the whole cluster or lives in a namespace of the platform, where a tenant decides nothing.
+
+Secrets, Namespaces, RBAC objects, resource definitions, webhooks, workloads, Compositions of any
+other kind and `AppPackage` presets are not on the list. A preset is presentation: it is published
+under `packages/` for the App Store, and nothing on a cluster reads one.
+
+**A Composition is trusted as the platform's own.** A Composition decides which objects are created
+for an app, and Crossplane creates them with the providers' rights, which reach the whole cluster.
+The checks above settle which Composition a bundle may bring and for which app; they do not, and
+cannot, settle what it does. **A cluster administrator who adds a catalogue for the whole cluster
+trusts every Composition it publishes, now and later, exactly as they trust the platform's.** That
+is why only such a catalogue may bring one, and why delegating catalogues to a tenant's
+administrators (§5) never extends to this.
+
+A profile's Composition renders the app only when it arrived this way: the install is pinned to a
+digest and the bundle of that digest brings `app-<profile>`. `spec.package.composition` by itself
+selects nothing — an app whose bundle brings no Composition is rendered by `app-default`.
 
 ### `index.yaml`
 
@@ -56,8 +134,9 @@ entries:
   trustTier: experimental   # optional; repeats the profile's spec.trustTier
 ```
 
-- **`digest` is the sha256 of the bytes of `profiles/<name>.yaml` exactly as served**, written
-  `sha256:<64 lower-case hex characters>`. `sha256sum profiles/acme-notes.yaml` gives the number.
+- **`digest` is the sha256 of the bytes of `profiles/<name>.yaml` exactly as served** — the whole
+  bundle, the profile and its companions — written `sha256:<64 lower-case hex characters>`.
+  `sha256sum profiles/acme-notes.yaml` gives the number.
 - A cluster lists the **`ce`** and **`pe`** entries. `pe` (private edition) is the one for your own
   apps; `me` and `ee` entries are counted and left to the App Store.
 - An entry without a valid digest is listed and cannot be installed from the listing: there is
@@ -66,7 +145,7 @@ entries:
 - A catalogue without an `index.yaml` works, but cannot be browsed: an entry is then installed by
   naming the catalogue and the digest by hand (`--from` and `--digest`, §5).
 
-Other files beside these (`listings/`, an `index.html`) are ignored by the cluster.
+Other files beside these (`listings/`, `packages/`, an `index.html`) are ignored by the cluster.
 
 ## 3. The worked example: how the default catalogue is produced
 
@@ -74,13 +153,22 @@ The default catalogue, `gentian`, is `https://gentian-org.github.io/gentian-apps
 the [gentian-apps](https://github.com/gentian-org/gentian-apps) repository:
 
 1. The repository keeps each app as a directory, `profiles/[<family>/]<name>/`, holding
-   `profile.yaml` and optionally `listing.yaml`.
+   `profile.yaml`, optionally `listing.yaml`, and the sources of its companions: `composition.yaml`,
+   `oidc-catalog.yaml`, `customizations/<record>.yaml`, files under `assets/`. The directory's
+   `kustomization.yaml` says which of them go into the bundle.
 2. `scripts/build-catalogue-source.py` turns that into the served shape. For every
-   `profiles/**/profile.yaml` it copies the file to `dist/catalogue/profiles/<metadata.name>.yaml`,
-   takes the sha256 of the copy, and writes `dist/catalogue/index.yaml`. The edition is the
-   `edition:` of `listing.yaml`, else the suffix of the name (`-ce`, `-pe`, `-me`, `-ee`), else `ce`.
-   It refuses a profile without a name, two profiles with the same name, and a kind other than
-   `ComponentProfile`, and then exits non-zero.
+   `profiles/**/profile.yaml` it assembles `dist/catalogue/profiles/<metadata.name>.yaml`: the bytes
+   of `profile.yaml` unchanged, then one document for each companion the `kustomization.yaml` lists
+   — each file under `resources`, unchanged, and one `ConfigMap` for each `configMapGenerator` entry,
+   holding the listed files — ordered by kind and then by name. The same tree therefore always
+   gives the same bytes. A profile with no companions is published byte for byte as its
+   `profile.yaml`. The script then takes the sha256 of the assembled file and writes
+   `dist/catalogue/index.yaml`. The edition is the `edition:` of `listing.yaml`, else the suffix of
+   the name (`-ce`, `-pe`, `-me`, `-ee`), else `ce`.
+   It holds every bundle to the rules of §2 and exits non-zero when one breaks them: a profile
+   without a name, two profiles with the same name, a kind other than `ComponentProfile`, a
+   companion of a kind that is not allowed or not named after its profile, a pack or an object
+   two bundles both hold, a bundle over 180 KiB.
 3. The workflow `.github/workflows/apps-ci.yaml` runs the script with `--check` on every push, and
    on `main` the job `publish-catalogue` runs it for real and publishes `dist/catalogue` to GitHub
    Pages (`actions/configure-pages`, `actions/upload-pages-artifact`, `actions/deploy-pages`). The
@@ -167,6 +255,9 @@ Catalogue source at dist/catalogue: 1 entries (1 pe)
 ```
 
 `dist/catalogue` now holds `index.yaml`, `profiles/acme-notes.yaml` and `listings/acme-notes.yaml`.
+This profile has no companions, so the published file is `profile.yaml` byte for byte. A catalogue
+that is added for a whole cluster may give a profile companions: put their sources in the profile's
+directory and list them in a `kustomization.yaml` beside `profile.yaml`, as §3 describes.
 Check the digest yourself:
 
 ```bash
@@ -182,6 +273,9 @@ files there and generate only the index with the tool gentian-os ships:
 ```bash
 python3 scripts/tools/build-catalogue-index.py <directory-holding-profiles/>
 ```
+
+Each file there is then the bundle as served: write the companions into it yourself, after the
+profile, separated by `---`. The tool takes the digest of the whole file.
 
 ### 4.3 Publish it as static files
 
@@ -315,7 +409,8 @@ What was installed from it stays installed.
 
 ## 6. Updates
 
-A changed profile is a new build with a new digest. Publishing it changes nothing on any cluster:
+A changed profile is a new build with a new digest, and so is a changed companion: the digest is of
+the whole file. Publishing it changes nothing on any cluster:
 every install is pinned to the digest it was made at.
 
 To move a tenant to the new build, publish, and install again:
@@ -332,13 +427,29 @@ of the cluster and one moves to a new build, the other's install is still pinned
 the operator holds it as it is (`DigestMismatch` on its Component) and rolls nothing out for it until
 that tenant moves too. Publish a build that must coexist with the old one under a new name.
 
+A companion a new build no longer brings **stays on the cluster**. The Application that applies the
+catalogue directory does not prune, for companions as for profiles, so nothing a bundle brought is
+removed because a file changed. It is no longer checked, and no bundle owns it: remove it by hand
+(`kubectl delete`) once no install is pinned to the build that brought it. An `OIDCPackCatalog` left
+this way is still found by its packs' client ids.
+
 ## 7. What is checked, and what is not
 
 **The catalogue is not trusted.** It is a web server, possibly yours, possibly compromised.
 
-- **The digest pins the profile.** The director refuses bytes that do not hash to the digest the
-  install named, and commits nothing. The operator checks again before every rollout: the profile in
-  the cluster must be what the committed bytes say.
+- **The digest pins the profile and its companions.** The director refuses bytes that do not hash to
+  the digest the install named, and commits nothing. The operator checks again before every rollout:
+  the profile in the cluster must be what the committed bytes say, and so must every companion — a
+  missing one holds the rollout (`CompanionMissing`), and so does one that differs
+  (`CompanionMismatch`, naming it and the field).
+- **How closely a companion is compared.** A ConfigMap's data, an OIDCPackCatalog and a
+  Customization have to be exactly what the bundle says. A Composition is Crossplane's kind and the
+  operator has no schema for it: everything the bundle states has to be in the cluster unchanged,
+  no pipeline step may be added or removed, and what each step is given (`input`, where the
+  templates are) has to be exact; a field added beside those the bundle states, outside an `input`,
+  is not noticed.
+- **What a bundle holds is checked** (§2), at the fetch and again at rollout. A bundle that is the
+  pinned build and holds what it may not is not rolled out (`BundleRefused`).
 - **The digest does not pin the chart or the images the profile names.** A profile says
   `chart: {repository, name, version}`; what that registry serves under that version is the
   registry's to decide. Use immutable chart versions and image digests in your chart if you need the
@@ -382,10 +493,15 @@ they are done once by the tenant's administrator.
 - **Public https addresses only.** A catalogue inside the cluster, on a private network, on another
   port, or behind a redirect is not fetched from. An air-gapped cluster cannot use an in-cluster
   catalogue today.
-- **Profiles only.** A catalogue serves `ComponentProfile`s and nothing beside them. A profile that
-  needs other objects on the cluster — a Composition of its own (`spec.package.composition`), an
-  `OIDCPackCatalog`, `Customization` records — does not bring them; they have to be put there
-  separately. A profile delivered by a chart alone needs none.
+- **A tenant's own catalogue serves profiles only.** Companions (§2) come from a catalogue of the
+  whole cluster. A tenant's own app that needs an OIDC pack or a Composition of its own has to be
+  published in one.
+- **Four kinds of companion, and no others.** A profile that needs anything else on the cluster does
+  not bring it.
+- **Two profiles that declare the same OIDC `clientId` are not told apart.** Each may bring a pack
+  for it, and which one is used is not defined. gentian-apps' build refuses this inside one
+  catalogue; across catalogues nothing does.
+- **Nothing a bundle brought is removed automatically** (§6).
 - **No password-protected catalogues.** No credential is sent to a catalogue. Keep what is private in
   the registry (§8), not in the profile.
 - **No proxy.** The director connects to the catalogue directly.

@@ -159,7 +159,7 @@ hash to the digest, so the two fields travel together or not at all:
 | `400` | the digest is not a sha256 digest, a coordinate comes with none, the coordinate is not `<catalogue>/<app>`, or it names another app |
 | `403` | the caller may not install in this tenant, or asked to install for everyone and may not grant in it |
 | `404` | the source does not serve this entry |
-| `422` | the coordinate's catalogue is not a source this cluster declares, or a digest came with no coordinate: the build could not be verified. Or the entry is larger than the bundle the cluster carries beside a profile (180 KiB), so its digest could not be checked at rollout. Nothing was installed |
+| `422` | the coordinate's catalogue is not a source this cluster declares, or a digest came with no coordinate: the build could not be verified. Or the entry is larger than the bundle the cluster carries beside a profile (180 KiB), so its digest could not be checked at rollout. Or the bundle holds what a bundle may not: a kind that is not a companion, an object that is not this profile's, or any companion when the catalogue is a tenant's own. Nothing was installed |
 | `502` | the source could not be read, or served bytes that do not hash to the digest. Nothing was installed |
 
 **Add-ons.** An add-on is a profile of its own, activated inside an app the
@@ -198,9 +198,13 @@ of what runs. Names inside an app that carries no digest are set as before.
 
 ## 4. The digest
 
-The digest pins the build. It is the sha256 of the profile bundle, and it
-travels with the request: a store's confirmation carries it (§6.4), and so
-does a catalogue source's own index (§9).
+The digest pins the build. It is the sha256 of the profile bundle -- the one
+file a catalogue publishes for an entry, holding the profile and, after it,
+the few other objects the app needs on a cluster, its companions
+([custom-catalogues.md](../custom-catalogues.md) §2) -- and it travels with
+the request: a store's confirmation carries it (§6.4), and so does a
+catalogue source's own index (§9). The digest pins the profile and its
+companions; it does not pin the chart or the images the profile names.
 
 It is not signed and it is not a permission. What it does:
 
@@ -230,8 +234,9 @@ It is not signed and it is not a permission. What it does:
   director therefore commits the verified bytes a second time, beside the
   profile, as a kustomize patch (`catalogue/<name>.bundle.yaml`) that puts
   them on the profile in the annotation `gentianos.io/profile-bundle`,
-  base64-encoded. The profile file itself stays byte for byte what the source
-  served.
+  base64-encoded. The committed file itself stays byte for byte what the
+  source served, and Argo CD applies every document in it: the profile and
+  its companions.
 
   Before it renders anything for a Component whose `profileRef` carries a
   digest, the operator hashes the annotation's bytes itself and compares the
@@ -243,10 +248,17 @@ It is not signed and it is not a permission. What it does:
   build do not hash to the pin, and bytes that are the pinned build beside a
   profile that says something else do not compare.
 
+  The same bytes say what the bundle brings beside the profile, and the
+  operator holds them to the list of what a bundle may bring, as the director
+  did, and then reads each companion from the cluster and compares it with
+  them. All of them have to be there and be what the bundle says.
+
   If either fails, the Component reports `Ready=False` with the reason
   `DigestMismatch` (naming the pinned digest and the one found, or the part
-  of `spec` that differs) or `DigestUnverifiable` (the profile carries no
-  bundle, or one that cannot be read), and an event says the same. Nothing is
+  of `spec` that differs), `DigestUnverifiable` (the profile carries no
+  bundle, or one that cannot be read), `BundleRefused` (the bundle holds
+  what a bundle may not), `CompanionMissing` or `CompanionMismatch` (naming
+  the companion), and an event says the same. Nothing is
   rendered from that profile, and nothing already rolled out is removed: the
   component is held as it runs until the profile is the pinned build again or
   the pin is moved. An install with no digest is not checked.
