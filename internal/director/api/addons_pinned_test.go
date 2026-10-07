@@ -13,6 +13,7 @@ package api_test
 import (
 	"encoding/base64"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -179,11 +180,14 @@ func TestAnAddonIsInstalledAtACoordinateAndDigest(t *testing.T) {
 // with it the whole selection, so no part of a refused request takes effect.
 func TestAnAddonWhoseBuildCannotBeVerifiedIsRefused(t *testing.T) {
 	talk, deck := addonProfile("element-talk"), addonProfile("element-deck")
-	served := map[string]string{"element-talk": talk, "element-deck": "something else\n"}
+	served := map[string]string{"element": elementProfile, "element-talk": talk, "element-deck": "something else\n"}
 	src := addonSource(t, served)
 	h := startWithCatalogue(t, src, map[string]string{"main": src.URL})
 	tom := h.token(t, "tenant-demo", "tom")
-	if code, out := h.do(t, "POST", "/v1/tenants/demo/apps/element", tom, ""); code != http.StatusAccepted {
+	// The base is installed at a stated build, so that what is refused below
+	// is refused for the addon's own build and not for the base's.
+	if code, out := h.do(t, "POST", "/v1/tenants/demo/apps/element", tom,
+		fmt.Sprintf(`{"coordinate":"main/element","digest":%q}`, sha(elementProfile))); code != http.StatusAccepted {
 		t.Fatalf("install = %d %v", code, out)
 	}
 	before := h.tip(t)
@@ -252,5 +256,71 @@ func TestAPinnedAddonOfAnAppThatIsNotInstalledCommitsNothing(t *testing.T) {
 	}
 	if h.tip(t) != before {
 		t.Fatal("a profile was materialised for an app that is not installed")
+	}
+}
+
+// An addon is pinned only inside a pinned app: a stated build of an addon in
+// an app installed at none is refused before anything is fetched, and says
+// how the app is pinned. Names inside such an app are set as they always
+// were, and the same request is accepted once the app carries a digest.
+func TestAPinnedAddonIsRefusedInsideAnAppThatIsNotPinned(t *testing.T) {
+	talk := addonProfile("element-talk")
+	fetched := 0
+	inner := addonSource(t, map[string]string{"element": elementProfile, "element-talk": talk})
+	src := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fetched++
+		resp, err := inner.Client().Get(inner.URL + r.URL.Path)
+		if err != nil {
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		defer func() { _ = resp.Body.Close() }()
+		w.WriteHeader(resp.StatusCode)
+		_, _ = io.Copy(w, resp.Body)
+	}))
+	t.Cleanup(src.Close)
+	h := startWithCatalogue(t, src, map[string]string{"main": src.URL})
+	tom := h.token(t, "tenant-demo", "tom")
+	if code, out := h.do(t, "POST", "/v1/tenants/demo/apps/element", tom, ""); code != http.StatusAccepted {
+		t.Fatalf("install = %d %v", code, out)
+	}
+	before, fetchedBefore := h.tip(t), fetched
+
+	pin := pinnedAddon("main/element-talk", sha(talk))
+	code, out := h.do(t, "PUT", "/v1/tenants/demo/apps/element/addons", tom, `{"addons":["calendar",`+pin+`]}`)
+	said := fmt.Sprint(out["error"])
+	if code != http.StatusUnprocessableEntity ||
+		!strings.Contains(said, "kubectl gentian apps install element --tenant demo") ||
+		!strings.Contains(said, "stated build") {
+		t.Fatalf("a pinned addon inside an unpinned app = %d %v", code, out)
+	}
+	if h.tip(t) != before {
+		t.Fatal("a refused pin moved the repository")
+	}
+	if fetched != fetchedBefore {
+		t.Fatalf("a refused pin fetched from the source %d time(s)", fetched-fetchedBefore)
+	}
+
+	// Names, with no build stated, inside the same unpinned app.
+	if code, out := h.do(t, "PUT", "/v1/tenants/demo/apps/element/addons", tom,
+		`{"addons":["calendar","element-talk"]}`); code != http.StatusAccepted {
+		t.Fatalf("names inside an unpinned app = %d %v", code, out)
+	}
+	if apps := tenantApps(t, h); strings.Join(apps[0].Addons, ",") != "calendar,element-talk" || len(apps[0].AddonPins) != 0 {
+		t.Fatalf("apps = %+v", apps)
+	}
+
+	// Once the app is at a stated build, the request that was refused is
+	// accepted.
+	if code, out := h.do(t, "POST", "/v1/tenants/demo/apps/element", tom,
+		fmt.Sprintf(`{"coordinate":"main/element","digest":%q}`, sha(elementProfile))); code != http.StatusAccepted {
+		t.Fatalf("pinning the app = %d %v", code, out)
+	}
+	if code, out := h.do(t, "PUT", "/v1/tenants/demo/apps/element/addons", tom,
+		`{"addons":["calendar",`+pin+`]}`); code != http.StatusAccepted {
+		t.Fatalf("the same pin inside a pinned app = %d %v", code, out)
+	}
+	if apps := tenantApps(t, h); len(apps[0].AddonPins) != 1 || apps[0].AddonPins[0].Digest != sha(talk) {
+		t.Fatalf("apps = %+v", apps)
 	}
 }

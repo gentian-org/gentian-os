@@ -597,7 +597,11 @@ ladder — same image, same drop-in dirs, same plugin API — so it never restat
 
 An addon can be **pinned to a build**, like an app. The pin is recorded beside
 the list, in `Tenant.spec.apps[].addonPins` (`name`, `digest`, `catalogue`);
-`addons` stays a list of names. A pinned addon is activated only from a
+`addons` stays a list of names. An addon is pinned only inside an app that is
+itself pinned: the director refuses a build stated for an addon of an app
+whose entry carries no `digest`, and says to install the app at a stated build
+first (`kubectl gentian apps install <app> --tenant <t>` pins it). A pinned
+addon is activated only from a
 profile shown to be that build, and its base is held as it runs until it is.
 See [design/store-contract.md](design/store-contract.md) §3 and §4.
 

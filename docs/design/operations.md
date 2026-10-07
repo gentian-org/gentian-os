@@ -175,9 +175,12 @@ one hour. No failure stops anything else.
   `addons`. `users` is the number of people entitled to the add-on, the
   members of its own group, counted as an app's are. The key is always sent,
   `[]` for an app with none. An add-on activated with no pin is not listed,
-  as an app with no `digest` is not. An add-on pinned inside an app that has
-  no `digest` is not reported at all: the app it would be listed under is not
-  in the report, and no entry is made up for it.
+  as an app with no `digest` is not. The director pins an add-on only inside
+  an app that is itself pinned, so a pinned add-on always has a listed app to
+  appear under. A manifest written before that rule may still hold a pinned
+  add-on inside an app with no `digest`; the report still omits it, because
+  the app it would be listed under is not in the report and no entry is made
+  up for it.
 - `coordinate` is `null` for an entry whose install did not record its
   catalogue (`spec.apps[].catalogue`, `addonPins[].catalogue`), and a count
   that could not be had is `null` rather than a smaller number.

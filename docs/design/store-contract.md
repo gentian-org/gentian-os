@@ -179,9 +179,19 @@ the pin is written on the app's entry. Every bundle of a request is fetched
 and checked before the first is committed, so a list one of whose builds
 does not verify changes nothing. The refusals are those of the table above.
 
+**An add-on is pinned only inside a pinned app.** A `{coordinate, digest}`
+entry is accepted only when the app's own entry carries a `digest`.
+Otherwise the request is refused with `422` before anything is fetched or
+written, and the answer says how: install the app at a stated build first —
+`kubectl gentian apps install <app> --tenant <t>` pins it — and set its
+add-ons again. An add-on takes effect in the release of its base, so a
+stated build of an add-on inside a base at no stated build would pin half
+of what runs. Names inside an app that carries no digest are set as before.
+
 | An entry | What happens |
 |---|---|
-| `{coordinate, digest}` | fetched, checked, committed and pinned (§4) |
+| `{coordinate, digest}`, the app itself pinned | fetched, checked, committed and pinned (§4) |
+| `{coordinate, digest}`, the app not pinned | the whole request is refused with `422`; nothing is fetched or written |
 | a name the entry already activates | left as it is: an add-on that was pinned stays pinned |
 | a name that is new to the list | activated unpinned, from the profile the cluster holds |
 | an add-on no longer in the list | deactivated, and its pin removed with it |
@@ -601,7 +611,8 @@ token:
 2. Installs at the director (§3) with exactly the confirmation's
    `coordinate` and `digest`, and the `defaultGrant` the person chose.
 3. For the add-ons the confirmation lists: sets the app's add-ons at the
-   director (§3), each as the item's `coordinate` and `digest`.
+   director (§3), each as the item's `coordinate` and `digest`. Step 2 has
+   pinned the app, which is what the director requires of a pinned add-on.
 
 The OS decides nothing about supply at any step. Whether the app then
 arrives is the repository's answer to the credential.

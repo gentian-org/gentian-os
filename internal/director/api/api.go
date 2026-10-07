@@ -986,6 +986,9 @@ func (a *addonEntry) UnmarshalJSON(raw []byte) error {
 // pin written on the entry. Every bundle is fetched and checked before the
 // first is committed, so a selection one of whose builds does not verify
 // changes nothing.
+//
+// A pinned addon is accepted only for an app whose own entry carries a
+// digest. Names inside an app that carries none are set as before.
 func (s *Server) setAddons(w http.ResponseWriter, r *http.Request, c call) {
 	ctx := r.Context()
 	tenant, profile := r.PathValue("t"), r.PathValue("p")
@@ -1044,12 +1047,28 @@ func (s *Server) setAddons(w http.ResponseWriter, r *http.Request, c call) {
 			s.repoError(w, r, err)
 			return
 		}
-		installed := false
+		installed, basePinned := false, false
 		for _, a := range apps {
-			installed = installed || a.Profile == profile
+			if a.Profile == profile {
+				installed, basePinned = true, a.Digest != ""
+			}
 		}
 		if !installed {
 			s.written(w, r, gitops.Result{Status: "not_installed"}, nil)
+			return
+		}
+		// An addon is pinned only inside a pinned app. An addon takes effect
+		// in the release of its base, so a stated build of an addon inside a
+		// base at no stated build pins half of what runs; and the licence
+		// report lists an addon under its app, which it does not list
+		// without a digest. Refused before anything is fetched.
+		if !basePinned {
+			s.fail(w, r, http.StatusUnprocessableEntity, fmt.Sprintf(
+				"an addon is installed at a stated build only inside an app that is: %s is installed "+
+					"with no digest. Install %s at a stated build first -- "+
+					"`kubectl gentian apps install %s --tenant %s` pins it -- and set its addons again. "+
+					"Addons given by name need no pin. Nothing was fetched or written.",
+				profile, profile, profile, tenant))
 			return
 		}
 		bundles := make([]*catalogue.Profile, 0, len(pinned))
