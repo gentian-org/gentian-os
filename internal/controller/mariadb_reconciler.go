@@ -48,7 +48,7 @@ func (r *TenantReconciler) ensureMariaDB(ctx context.Context, tenant *gentianov1
 func (r *TenantReconciler) collectMariaDBApps(ctx context.Context, tenant *gentianov1alpha1.Tenant, mode AppCollectionMode) ([]string, error) {
 	return r.collectKernelApps(ctx, tenant, mode, matchMariaDBProfile, func(tenantName string) string {
 		return mariadbSetupJobName(tenantName, "")
-	})
+	}, func(p backup.Provisioned) bool { return p.DatabaseEngine == gentianov1alpha1.DatabaseEngineMariaDB })
 }
 
 // ensureMariaDBSetupJob waits for the Crossplane-owned MariaDB setup Job.

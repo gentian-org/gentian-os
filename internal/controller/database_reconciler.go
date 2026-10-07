@@ -100,23 +100,11 @@ func (r *TenantReconciler) ensureDatabase(ctx context.Context, tenant *gentianov
 // collectPostgresApps returns profile names of apps that require a per-tenant
 // PostgreSQL database.
 func (r *TenantReconciler) collectPostgresApps(ctx context.Context, tenant *gentianov1alpha1.Tenant) ([]string, error) {
-	profileIndex, err := loadAppProfileIndex(ctx, r.Client)
-	if err != nil {
-		return nil, err
-	}
-	var pgApps []string
-	for _, app := range tenant.Spec.Apps {
-		profile, ok := appProfileFromIndex(profileIndex, app.Profile)
-		if !ok {
-			continue
-		}
-		if profile.Services() != nil &&
-			profile.Services().Database != nil &&
-			profile.Services().Database.Engine == gentianov1alpha1.DatabaseEnginePostgreSQL {
-			pgApps = append(pgApps, app.Profile)
-		}
-	}
-	return pgApps, nil
+	return r.collectKernelApps(ctx, tenant, CollectForProvision, matchPostgresProfile, nil, nil)
+}
+
+func matchPostgresProfile(profile *gentianov1alpha1.ComponentProfile) bool {
+	return backup.ProfileStores(profile).Database == gentianov1alpha1.DatabaseEnginePostgreSQL
 }
 
 // schemaPreferenceFor reports the search_path order an app's profile asked for.
@@ -192,10 +180,13 @@ func (r *TenantReconciler) deleteDatabase(ctx context.Context, tenant *gentianov
 }
 
 // collectPostgresAppsForDelete is every app a database was provisioned for:
-// the ones the spec names now and the ones a Database CR still records,
-// which covers apps uninstalled without a purge.
+// the ones the spec names now, the ones the tenant's record of what was
+// provisioned names, and the ones a Database CR still records -- the last two
+// cover apps uninstalled without a purge, and the CR also the desktop's own
+// database, which is no app's.
 func (r *TenantReconciler) collectPostgresAppsForDelete(ctx context.Context, tenant *gentianov1alpha1.Tenant) ([]string, error) {
-	apps, err := r.collectPostgresApps(ctx, tenant)
+	apps, err := r.collectKernelApps(ctx, tenant, CollectForDelete, matchPostgresProfile, nil,
+		func(p backup.Provisioned) bool { return p.DatabaseEngine == gentianov1alpha1.DatabaseEnginePostgreSQL })
 	if err != nil {
 		return nil, err
 	}

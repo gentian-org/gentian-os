@@ -46,11 +46,13 @@ import (
 // that app would destroy.
 //
 // It reads, and only reads: objects from the API server, names (never
-// values) from the vault, group names from the identity provider. A kind
-// that could only be examined by running something is reported as unknown
-// rather than examined. That is the object store and the cache, whose
-// contents can be asked only of the store itself, from a Job with its admin
-// credential; and a MariaDB database, for the same reason.
+// values) from the vault, group names from the identity provider. It runs
+// nothing. A bucket, a cache user and a MariaDB database cannot be asked of
+// the API server, and were reported as unknown for that reason; provisioning
+// now records each store it makes (backup.Provisioned), a purge takes the
+// entry out when it has destroyed the store, and this read answers from the
+// record. A kind is unknown only when what would say could not be read this
+// time.
 
 // How one kind of data stands for one app.
 const (
@@ -89,17 +91,17 @@ type RetainedApps struct {
 	Unknown map[string]string `json:"unknown,omitempty"`
 }
 
-const (
-	unknownObjectStorage = "whether a bucket exists can only be asked of the object store, from a Job holding its admin credential; this read runs nothing. Unknown for an app whose profile declares object storage, or whose profile is gone"
-	unknownCache         = "whether a cache user exists can only be asked of the cache, from a Job holding its admin credential; this read runs nothing. Unknown for an app whose profile declares a cache, or whose profile is gone. The keys an app wrote are not attributable to it at all"
-	unknownMariaDB       = "a PostgreSQL database is recorded on the cluster and reported; a MariaDB database is not recorded and could only be asked of the server, so it is unknown for an app whose profile declares one"
-)
+// sourceProvisioned names the record of what was provisioned among the
+// sources that can fail. It is not a kind and is not reported as one.
+const sourceProvisioned = "provisioned"
 
 // retainedSources is what the cluster holds for a tenant, by the name it is
 // held under, before any of it is attributed to an app.
 type retainedSources struct {
 	// databases are the apps a PostgreSQL database is recorded for.
 	databases map[string]bool
+	// provisioned is the record of the stores provisioning made, by app.
+	provisioned map[string]backup.Provisioned
 	// credentials are the keys below the tenant's apps path in the vault: an
 	// app's name, or "{app}-{extension}".
 	credentials map[string]bool
@@ -152,6 +154,9 @@ func (s *Service) RetainedApps(ctx context.Context, tenantName string) (*Retaine
 	for name := range src.databases {
 		names[name] = true
 	}
+	for name := range src.provisioned {
+		names[name] = true
+	}
 	for key := range src.groups {
 		names[extensionOwner(key, profiles)] = true
 	}
@@ -176,13 +181,19 @@ func (s *Service) RetainedApps(ctx context.Context, tenantName string) (*Retaine
 		}
 	}
 
-	out := &RetainedApps{Tenant: tenantName, Apps: []RetainedApp{}, Unknown: map[string]string{
-		KindObjectStorage: unknownObjectStorage,
-		KindCache:         unknownCache,
-		KindDatabase:      unknownMariaDB,
-	}}
+	out := &RetainedApps{Tenant: tenantName, Apps: []RetainedApp{}, Unknown: map[string]string{}}
 	for kind, why := range src.failed {
-		out.Unknown[kind] = why
+		if kind != sourceProvisioned {
+			out.Unknown[kind] = why
+		}
+	}
+	// The record is what says a bucket, a cache user or a MariaDB database
+	// is there; unread, each of them is unknown.
+	if why := src.failed[sourceProvisioned]; why != "" {
+		out.Unknown[KindObjectStorage], out.Unknown[KindCache] = why, why
+		if out.Unknown[KindDatabase] == "" {
+			out.Unknown[KindDatabase] = why
+		}
 	}
 
 	for name := range names {
@@ -240,25 +251,30 @@ func (s *Service) retainedApp(tenant *gentianov1alpha1.Tenant, name string, prof
 		}
 	}
 
-	// Database. The record is PostgreSQL's; for another engine, or none
-	// declared, its absence says nothing or everything respectively.
-	switch {
-	case src.databases[name]:
-		app.Kinds[KindDatabase] = RetainedPresent
-	case stores.Database == gentianov1alpha1.DatabaseEngineMariaDB:
-		app.Kinds[KindDatabase] = RetainedUnknown
-	default:
-		app.Kinds[KindDatabase] = state(KindDatabase, false)
-	}
-
-	declared := func(has bool) string {
-		if profile == nil || has {
+	// The stores. Each is present when the record of what was provisioned
+	// names it -- for a PostgreSQL database also when the cluster's own
+	// Database object does -- and absent when the record was read and does
+	// not. When the record could not be read, a store the profile declares,
+	// or any store of an app whose profile is gone, is unknown.
+	recorded := src.provisioned[name]
+	recordUnread := src.failed[sourceProvisioned] != ""
+	store := func(kind string, present, declared bool) string {
+		switch {
+		case present:
+			return RetainedPresent
+		case recordUnread && (declared || profile == nil):
 			return RetainedUnknown
+		case kind == KindDatabase && src.failed[KindDatabase] != "":
+			// The cluster's own Database objects could not be listed.
+			return RetainedUnknown
+		default:
+			return RetainedAbsent
 		}
-		return RetainedAbsent
 	}
-	app.Kinds[KindObjectStorage] = declared(stores.S3)
-	app.Kinds[KindCache] = declared(stores.Redis)
+	app.Kinds[KindDatabase] = store(KindDatabase,
+		src.databases[name] || recorded.Has(backup.KindDatabase), stores.Database != "")
+	app.Kinds[KindObjectStorage] = store(KindObjectStorage, recorded.Has(backup.KindObjectStorage), stores.S3)
+	app.Kinds[KindCache] = store(KindCache, recorded.Has(backup.KindCache), stores.Redis)
 
 	// Files: the claims a purge would delete.
 	app.Volumes, _ = appVolumes(src.claims, tenant, name, profile)
@@ -310,6 +326,13 @@ func (s *Service) retainedSources(ctx context.Context, tenant *gentianov1alpha1.
 		// No database operator on this cluster, so no databases of its.
 	default:
 		src.failed[KindDatabase] = "the database records could not be listed: " + err.Error()
+	}
+
+	// Every store provisioning made, by the record it keeps of them.
+	if recorded, err := s.provisioned(ctx, tenantName); err != nil {
+		src.failed[sourceProvisioned] = "the record of what was provisioned could not be read: " + err.Error()
+	} else {
+		src.provisioned = recorded
 	}
 
 	// Stored credentials: the names below the tenant's apps path.

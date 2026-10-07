@@ -361,12 +361,16 @@ func (s *Service) PurgeApp(ctx context.Context, tenantName, profile, actor strin
 	}
 	// Everything that can be known beforehand about whether the purge can
 	// finish, before the first thing is destroyed.
-	if err := s.purgePreflight(ctx, tenant, cp); err != nil {
+	recorded, err := s.provisioned(ctx, tenantName)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v. Nothing was destroyed; ask again once that is put right", ErrCannotPurgeNow, err)
+	}
+	if err := s.purgePreflight(ctx, tenant, cp, recorded[profile]); err != nil {
 		return nil, err
 	}
 
 	log.FromContext(ctx).WithName("purge").Info("purging an app", "tenant", tenantName, "app", profile, "actor", actor)
-	destroyed, err := s.purge(ctx, tenant, cp, profile)
+	destroyed, err := s.purge(ctx, tenant, cp, profile, recorded[profile])
 	if err != nil {
 		return nil, err
 	}

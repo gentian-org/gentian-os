@@ -24,6 +24,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/backup"
 	"github.com/gentian-org/gentian-os/internal/keycloak"
 )
 
@@ -83,9 +84,9 @@ func TestTheRetainedReadListsAnUninstalledAppAndOmitsAnInstalledOne(t *testing.T
 		KindFiles:       RetainedPresent,
 		KindCredentials: RetainedPresent,
 		KindAccessGroup: RetainedPresent,
-		// Declared by the profile, and only the store itself could say.
-		KindObjectStorage: RetainedUnknown,
-		KindCache:         RetainedUnknown,
+		// On record as provisioned, and not purged since.
+		KindObjectStorage: RetainedPresent,
+		KindCache:         RetainedPresent,
 	}
 	if !reflect.DeepEqual(wiki.Kinds, want) {
 		t.Errorf("kinds = %v, want %v", wiki.Kinds, want)
@@ -95,10 +96,8 @@ func TestTheRetainedReadListsAnUninstalledAppAndOmitsAnInstalledOne(t *testing.T
 	if want := []string{"wiki-mcp-release-cache", "wiki-release-data"}; !reflect.DeepEqual(wiki.Volumes, want) {
 		t.Errorf("volumes = %v, want %v", wiki.Volumes, want)
 	}
-	for _, kind := range []string{KindObjectStorage, KindCache} {
-		if got.Unknown[kind] == "" {
-			t.Errorf("the answer does not say why %s is unknown", kind)
-		}
+	if len(got.Unknown) != 0 {
+		t.Errorf("everything could be read and the answer still says unknown: %v", got.Unknown)
 	}
 
 	// A read: nothing created, deleted or run, and no credential deleted.
@@ -133,7 +132,13 @@ func TestTheRetainedReadSaysPresentAbsentOrUnknownPerKind(t *testing.T) {
 			Services: &gentianov1alpha1.ServiceRequirements{
 				Database: &gentianov1alpha1.DatabaseRequirement{Engine: gentianov1alpha1.DatabaseEngineMariaDB}}}},
 	}
-	w := newPurgeWorld(t, nil, []client.Object{plain, maria},
+	w := newPurgeWorld(t, nil, []client.Object{plain, maria,
+		// A MariaDB database and a bucket, written down when shop was
+		// installed; cellar's profile declares MariaDB and nothing is on
+		// record for it.
+		provisionedRecord(t, "demo", map[string]backup.Provisioned{
+			"shop": {DatabaseEngine: gentianov1alpha1.DatabaseEngineMariaDB, Database: "demo_shop", DatabaseUser: "demo_shop", Bucket: "demo-shop"},
+		})},
 		// A claim a StatefulSet made for an app whose profile is gone.
 		runtime.Object(&corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{
 			Name: "data-ghost-release-0", Namespace: "tenant-demo",
@@ -159,15 +164,21 @@ func TestTheRetainedReadSaysPresentAbsentOrUnknownPerKind(t *testing.T) {
 			t.Errorf("notes: %s = %q, want %q", kind, notes.Kinds[kind], want)
 		}
 	}
-	// A MariaDB database is not recorded on the cluster.
-	if got := apps["shop"].Kinds[KindDatabase]; got != RetainedUnknown {
-		t.Errorf("shop: database = %q, want unknown", got)
+	// A MariaDB database and a bucket are known from the record of what was
+	// provisioned, without asking the store: present when it names them,
+	// absent when it was read and does not.
+	shop := apps["shop"]
+	if shop.Kinds[KindDatabase] != RetainedPresent || shop.Kinds[KindObjectStorage] != RetainedPresent || shop.Kinds[KindCache] != RetainedAbsent {
+		t.Errorf("shop = %+v", shop)
 	}
-	// No profile: what it declared is not known.
+	// No profile, and nothing on record: only its files are there.
 	ghost := apps["ghost"]
 	if ghost.ProfileAvailable || ghost.Kinds[KindFiles] != RetainedPresent ||
-		ghost.Kinds[KindObjectStorage] != RetainedUnknown || ghost.Kinds[KindCache] != RetainedUnknown {
+		ghost.Kinds[KindObjectStorage] != RetainedAbsent || ghost.Kinds[KindCache] != RetainedAbsent {
 		t.Errorf("ghost = %+v", ghost)
+	}
+	if len(got.Unknown) != 0 {
+		t.Errorf("unknown = %v, want nothing unknown when every source was read", got.Unknown)
 	}
 	// wiki's profile is gone here too, so its extension's vault path is not
 	// known to be its own and is reported under the name a purge would need.
@@ -196,6 +207,23 @@ func TestTheRetainedReadGoesOnWhenASourceCannotBeAsked(t *testing.T) {
 	}
 	if got.Unknown[KindCredentials] == "" || got.Unknown[KindAccessGroup] == "" {
 		t.Errorf("the answer does not say what could not be asked: %v", got.Unknown)
+	}
+
+	// The record of what was provisioned, unreadable: a store the profile
+	// declares is unknown, not absent, and the answer says why.
+	broken := backup.NewProvisionedRecord("demo")
+	broken.Data = map[string]string{"wiki": "{not json"}
+	w2 := newPurgeWorld(t, nil, []client.Object{wikiProfile(), broken})
+	got, err = w2.svc.RetainedApps(context.Background(), "demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	kinds = retainedByProfile(got.Apps)["wiki"].Kinds
+	if kinds[KindObjectStorage] != RetainedUnknown || kinds[KindCache] != RetainedUnknown || kinds[KindDatabase] != RetainedPresent {
+		t.Errorf("with the record unreadable: kinds = %v", kinds)
+	}
+	if got.Unknown[KindObjectStorage] == "" || got.Unknown[KindCache] == "" {
+		t.Errorf("the answer does not say why a bucket and a cache user are unknown: %v", got.Unknown)
 	}
 
 	// The same with no vault configured at all.

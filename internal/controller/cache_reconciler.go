@@ -93,37 +93,20 @@ func (r *TenantReconciler) ensureCache(ctx context.Context, tenant *gentianov1al
 	return ctrl.Result{}, nil
 }
 
-// collectCacheApps inspects AppProfiles and partitions apps by cache engine.
+// collectCacheApps partitions the tenant's apps by cache engine, by the one
+// collection routine every store uses (collectKernelApps). Memcached is one
+// Deployment per tenant in the tenant's own namespace and has nothing to
+// find afterwards, so it is never read from a Job or the record.
 func (r *TenantReconciler) collectCacheApps(ctx context.Context, tenant *gentianov1alpha1.Tenant, mode AppCollectionMode) (redisApps, memcachedApps []string, err error) {
-	profileIndex, err := loadAppProfileIndex(ctx, r.Client)
+	redisApps, err = r.collectKernelApps(ctx, tenant, mode, matchRedisProfile, func(tenantName string) string {
+		return redisACLJobName(tenantName, "")
+	}, func(p backup.Provisioned) bool { return p.Has(backup.KindCache) })
 	if err != nil {
 		return nil, nil, err
 	}
-	for _, app := range tenant.Spec.Apps {
-		profile, ok := appProfileFromIndex(profileIndex, app.Profile)
-		if !ok {
-			continue
-		}
-		if profile.Services() == nil || profile.Services().Cache == nil {
-			continue
-		}
-		switch profile.Services().Cache.Engine {
-		case gentianov1alpha1.CacheEngineRedis:
-			if matchRedisProfile(profile) {
-				redisApps = appendUniqueStrings(redisApps, app.Profile)
-			}
-		case gentianov1alpha1.CacheEngineMemcached:
-			if matchMemcachedProfile(profile) {
-				memcachedApps = appendUniqueStrings(memcachedApps, app.Profile)
-			}
-		}
-	}
-	if mode == CollectForDelete {
-		fromJobs, err := r.listTenantAppsFromJobPrefix(ctx, tenant.Name, redisACLJobName(tenant.Name, ""))
-		if err != nil {
-			return nil, nil, err
-		}
-		redisApps = appendUniqueStrings(redisApps, fromJobs...)
+	memcachedApps, err = r.collectKernelApps(ctx, tenant, mode, matchMemcachedProfile, nil, nil)
+	if err != nil {
+		return nil, nil, err
 	}
 	return redisApps, memcachedApps, nil
 }

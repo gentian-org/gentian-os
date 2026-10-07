@@ -47,6 +47,10 @@ func (r *TenantReconciler) ensureTenantProvisioningManifests(ctx context.Context
 	if err != nil {
 		return fmt.Errorf("build tenant provisioning jobs: %w", err)
 	}
+	// On record before anything is made: see recordProvisionedStores.
+	if err := r.recordProvisionedStores(ctx, tenant); err != nil {
+		return err
+	}
 	stampScriptHashes(jobs)
 	// A Job's pod template is immutable, so re-applying a changed script does
 	// nothing to a Job that already ran: the old script stays the last thing

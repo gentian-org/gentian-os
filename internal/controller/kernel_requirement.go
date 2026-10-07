@@ -19,6 +19,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/backup"
 	"github.com/gentian-org/gentian-os/internal/controller/provisioner"
 )
 
@@ -30,12 +31,20 @@ const (
 	CollectForDelete    = provisioner.CollectForDelete
 )
 
+// collectKernelApps is the apps of a tenant that have one kind of store.
+//
+// For provisioning that is the apps the tenant has now whose profile
+// declares the store (match). For a deletion it is every app the store was
+// ever made for: those, the ones the tenant's record of what was provisioned
+// names (recorded) -- which is how the stores of an app uninstalled long ago
+// are found -- and, while they last, the ones a setup Job still names.
 func (r *TenantReconciler) collectKernelApps(
 	ctx context.Context,
 	tenant *gentianov1alpha1.Tenant,
 	mode AppCollectionMode,
 	match func(*gentianov1alpha1.ComponentProfile) bool,
 	setupJobPrefix func(tenantName string) string,
+	recorded func(backup.Provisioned) bool,
 ) ([]string, error) {
 	profileIndex, err := loadAppProfileIndex(ctx, r.Client)
 	if err != nil {
@@ -60,6 +69,13 @@ func (r *TenantReconciler) collectKernelApps(
 			}
 			apps = appendUniqueStrings(apps, fromJobs...)
 		}
+	}
+	if mode == CollectForDelete && recorded != nil {
+		fromRecord, err := r.recordedApps(ctx, tenant.Name, recorded)
+		if err != nil {
+			return nil, err
+		}
+		apps = appendUniqueStrings(apps, fromRecord...)
 	}
 	return apps, nil
 }

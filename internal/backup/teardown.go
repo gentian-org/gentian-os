@@ -109,6 +109,13 @@ type KindRule struct {
 	TenantDelete Disposition
 	// TenantDeleteNote says by what, where it is not the app's own step.
 	TenantDeleteNote string
+	// FoundBy says how the kind is found for an app that is no longer
+	// installed: by the read of what uninstalled apps hold, by a purge and by
+	// the deletion of the tenant. Uninstalling keeps the kind, the app has
+	// left the tenant's manifest, and something durable has to say the kind
+	// is still there -- a Job that expires does not. Empty for a kind
+	// uninstalling removes.
+	FoundBy string
 }
 
 // AppKinds is every kind of thing an app owns, in the order provisioning
@@ -125,33 +132,39 @@ var AppKinds = []KindRule{
 		Kind: KindRecords, MadeBy: "every provisioning Job, and the operator's labelled Secrets, from the first step on",
 		Export: Omits, ExportNote: "not data; re-made by provisioning",
 		Uninstall: Keeps, AppPurge: Destroys, TenantDelete: Destroys,
+		FoundBy: "the tenant's and the app's labels on each object",
 	},
 	{
 		Kind: KindCredentials, MadeBy: "the tenant reconciler's seeder, and the app Composition for generated secrets",
 		Export: Omits, ExportNote: "derived from the cluster's master password or generated per cluster; a restore re-seeds them and resets each store's password to match",
 		Uninstall: Keeps, AppPurge: Destroys, TenantDelete: Destroys,
 		TenantDeleteNote: "with the tenant's whole vault subtree",
+		FoundBy:          "the names below the tenant's apps path in the vault",
 	},
 	{
 		Kind: KindAccessGroup, MadeBy: "the tenant's identity Job, from Tenant.spec.apps",
 		Export: Carries, ExportNote: "inside the realm export",
 		Uninstall: Keeps, AppPurge: Destroys, TenantDelete: Destroys,
 		TenantDeleteNote: "with the realm",
+		FoundBy:          "the group's name in the tenant's realm",
 	},
 	{
 		Kind: KindDatabase, MadeBy: "the tenant reconciler: a role Job and a CloudNativePG Database, or a MariaDB setup Job",
 		Export: Carries, ExportNote: "pg_dump or mysqldump of the provisioned database",
 		Uninstall: Keeps, AppPurge: Destroys, TenantDelete: Destroys,
+		FoundBy: "the tenant's record of what was provisioned; for PostgreSQL also the CloudNativePG Database object",
 	},
 	{
 		Kind: KindObjectStorage, MadeBy: "the tenant reconciler's bucket Job",
 		Export: Carries, ExportNote: "the bucket's objects; the user and policy are re-made by provisioning",
 		Uninstall: Keeps, AppPurge: Destroys, TenantDelete: Destroys,
+		FoundBy: "the tenant's record of what was provisioned",
 	},
 	{
 		Kind: KindCache, MadeBy: "the tenant reconciler's ACL Job",
 		Export: Omits, ExportNote: "a restored cache is at best useless and at worst stale",
 		Uninstall: Keeps, AppPurge: Destroys, TenantDelete: Destroys,
+		FoundBy: "the tenant's record of what was provisioned",
 	},
 	{
 		Kind: KindSignInClient, MadeBy: "the app Composition, or the tenant's identity Job",
@@ -169,6 +182,7 @@ var AppKinds = []KindRule{
 		Export: Carries, ExportNote: "an archive of each volume claim that is the app's",
 		Uninstall: Keeps, AppPurge: Destroys, TenantDelete: Destroys,
 		TenantDeleteNote: "with the tenant's namespace",
+		FoundBy:          "the volume claims in the tenant's namespace, by the release each records (AppVolumes)",
 	},
 }
 

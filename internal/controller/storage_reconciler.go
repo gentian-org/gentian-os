@@ -85,7 +85,7 @@ func (r *TenantReconciler) ensureStorage(ctx context.Context, tenant *gentianov1
 func (r *TenantReconciler) collectStorageApps(ctx context.Context, tenant *gentianov1alpha1.Tenant, mode AppCollectionMode) ([]string, error) {
 	return r.collectKernelApps(ctx, tenant, mode, matchS3Profile, func(tenantName string) string {
 		return s3BucketJobName(tenantName, "")
-	})
+	}, func(p backup.Provisioned) bool { return p.Has(backup.KindObjectStorage) })
 }
 
 func (r *TenantReconciler) ensureS3BucketJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, appName string) (bool, error) {

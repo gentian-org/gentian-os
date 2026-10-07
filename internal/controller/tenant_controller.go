@@ -781,6 +781,11 @@ func (r *TenantReconciler) reconcileDelete(ctx context.Context, tenant *gentiano
 	if err := r.deleteTenantProvisioningConfigMap(ctx, tenant.Name); err != nil {
 		return ctrl.Result{}, err
 	}
+	// Last: the record of the stores is what a deletion that stopped half-way
+	// finds them by when it resumes.
+	if err := r.deleteProvisionedRecord(ctx, tenant); err != nil {
+		return ctrl.Result{}, err
+	}
 
 	controllerutil.RemoveFinalizer(tenant, tenantFinalizer)
 	return ctrl.Result{}, r.Update(ctx, tenant)

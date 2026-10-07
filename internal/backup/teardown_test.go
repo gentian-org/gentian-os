@@ -60,6 +60,13 @@ func TestEveryKindProvisioningMakesIsAccountedForByExportAndTeardown(t *testing.
 		case rule.Uninstall == Removes && rule.AppPurge != Gone:
 			t.Errorf("%s: uninstalling removes it, so there is nothing for a purge to do, not %q", rule.Kind, rule.AppPurge)
 		}
+		// What uninstalling keeps has to be findable afterwards by something
+		// that does not expire: a MariaDB database, a bucket and a cache user
+		// used to be found only through their setup Jobs, and a tenant
+		// deleted after those were gone left them behind.
+		if rule.Uninstall == Keeps && rule.FoundBy == "" {
+			t.Errorf("%s: uninstalling keeps it and nothing says how it is found afterwards", rule.Kind)
+		}
 		if rule.TenantDelete != Destroys && rule.TenantDelete != Removes {
 			t.Errorf("%s: deleting the tenant must destroy or remove it, not %q", rule.Kind, rule.TenantDelete)
 		}
@@ -74,7 +81,19 @@ func TestEveryKindProvisioningMakesIsAccountedForByExportAndTeardown(t *testing.
 	if len(jobs) != declared {
 		t.Fatalf("a profile can declare %d kinds of store and %d have a destroy Job: %v", declared, len(jobs), jobs)
 	}
+	// And every one of them is written down when it is provisioned: a store
+	// the record leaves out is one nothing finds once its app is uninstalled.
+	recorded := ProvisionedOf(InventoryOf(tenant, "wiki", allStoresProfile()))
+	if recorded.Stores() != all {
+		t.Fatalf("the record of what was provisioned says %+v for a profile that declares %+v", recorded.Stores(), all)
+	}
 	for kind := range jobs {
+		if !recorded.Has(kind) {
+			t.Errorf("%s has a destroy Job and the record of what was provisioned does not name it", kind)
+		}
+		if recorded.Without(kind).Has(kind) {
+			t.Errorf("%s cannot be taken out of the record once it is destroyed", kind)
+		}
 		if !seen[kind] {
 			t.Errorf("the destroy Job for %s is of a kind the table does not list", kind)
 		}
@@ -255,5 +274,19 @@ func TestTheDestroyJobs(t *testing.T) {
 	backupJob := ObjectStorageDestroyJob(tenant, "gentian-backup", DestroyInTheBackground)
 	if !strings.Contains(strings.Join(backupJob.Spec.Template.Spec.Containers[0].Command, " "), "gentian/"+BackupBucket(tenant)) {
 		t.Error("the backup bucket's unit does not name the bucket exports write to")
+	}
+}
+
+// allStoresProfile declares every kernel store a profile can.
+func allStoresProfile() *gentianov1alpha1.ComponentProfile {
+	return &gentianov1alpha1.ComponentProfile{
+		ObjectMeta: metav1.ObjectMeta{Name: "wiki"},
+		Spec: gentianov1alpha1.ComponentProfileSpec{
+			Requires: &gentianov1alpha1.RequirementSpec{Services: &gentianov1alpha1.ServiceRequirements{
+				Database: &gentianov1alpha1.DatabaseRequirement{Engine: gentianov1alpha1.DatabaseEnginePostgreSQL},
+				Storage:  &gentianov1alpha1.StorageRequirement{S3: &gentianov1alpha1.S3Requirement{}},
+				Cache:    &gentianov1alpha1.CacheRequirement{Engine: gentianov1alpha1.CacheEngineRedis},
+			}},
+		},
 	}
 }

@@ -35,6 +35,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/backup"
 	"github.com/gentian-org/gentian-os/internal/director/lifecycle"
 	"github.com/gentian-org/gentian-os/internal/keycloak"
 	"github.com/gentian-org/gentian-os/internal/layout"
@@ -180,6 +181,28 @@ func wikiProfile() *gentianov1alpha1.ComponentProfile {
 	}
 }
 
+// provisionedRecord is the tenant's record of the stores provisioning made.
+func provisionedRecord(t *testing.T, tenant string, entries map[string]backup.Provisioned) *corev1.ConfigMap {
+	t.Helper()
+	record := backup.NewProvisionedRecord(tenant)
+	for app, p := range entries {
+		if _, err := backup.RecordProvisioned(record, app, p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return record
+}
+
+// provisionedFor reads one app's entry back.
+func (w *purgeWorld) provisionedFor(t *testing.T, app string) backup.Provisioned {
+	t.Helper()
+	all, err := w.svc.provisioned(context.Background(), "demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return all[app]
+}
+
 func databaseRecord(tenant, app string) *unstructured.Unstructured {
 	db := &unstructured.Unstructured{}
 	db.SetGroupVersionKind(cnpgDatabaseGVK)
@@ -234,6 +257,25 @@ func newPurgeWorld(t *testing.T, tenant *gentianov1alpha1.Tenant, objects []clie
 		tenant.Spec.Apps = []gentianov1alpha1.TenantApp{{Profile: "drive"}}
 	}
 	objects = append(objects, tenant, databaseRecord("demo", "wiki"), databaseRecord("demo", "drive"))
+	// What provisioning wrote down when the two apps were installed, unless
+	// the test brings a record of its own.
+	// wiki's entry is what its profile declared, as provisioning records it.
+	hasRecord, wiki := false, wikiProfile()
+	for _, o := range objects {
+		if cm, ok := o.(*corev1.ConfigMap); ok && cm.Name == backup.ProvisionedRecordKey("demo").Name {
+			hasRecord = true
+		}
+		if cp, ok := o.(*gentianov1alpha1.ComponentProfile); ok && cp.Name == "wiki" {
+			wiki = cp
+		}
+	}
+	if !hasRecord {
+		objects = append(objects, provisionedRecord(t, "demo", map[string]backup.Provisioned{
+			"wiki": backup.ProvisionedOf(backup.InventoryOf(tenant, "wiki", wiki)),
+			"drive": {DatabaseEngine: gentianov1alpha1.DatabaseEnginePostgreSQL,
+				Database: "demo_drive", DatabaseUser: "demo_drive"},
+		}))
+	}
 	kube = append(kube,
 		// The replica sorts first: whichever pod the API server lists first
 		// is the wrong one to ask.
@@ -360,6 +402,14 @@ func TestAPurgeDestroysEveryKindTheAppOwnsAndNothingElse(t *testing.T) {
 	}
 	if w.recordExists(t, "wiki") || !w.recordExists(t, "drive") {
 		t.Error("the database records: wiki's must go and drive's must stay")
+	}
+	// And the record of what was provisioned: wiki's entry is gone with its
+	// stores, drive's is as it was.
+	if left := w.provisionedFor(t, "wiki"); !left.Empty() {
+		t.Errorf("the purged app is still on record as holding %+v", left)
+	}
+	if !w.provisionedFor(t, "drive").Has(backup.KindDatabase) {
+		t.Error("another app's entry was taken out of the record")
 	}
 
 	// The files, with the finished pod that held one of them.
@@ -812,4 +862,50 @@ func purgeOverHTTP(t *testing.T, w *purgeWorld, profile string) (int, string) {
 	rec := httptest.NewRecorder()
 	h.routes().ServeHTTP(rec, r)
 	return rec.Code, rec.Body.String()
+}
+
+// A store on record is destroyed whether or not the profile still declares
+// it: a profile that has since dropped its bucket has not removed the bucket.
+// And a store whose destruction failed stays on record.
+func TestAPurgeDestroysWhatIsOnRecordAndForgetsOnlyWhatItDestroyed(t *testing.T) {
+	lean := wikiProfile()
+	lean.Spec.Requires.Services.Storage = nil
+	lean.Spec.Requires.Services.Cache = nil
+	// Provisioned when the profile still declared all three.
+	w := newPurgeWorld(t, nil, []client.Object{lean, provisionedRecord(t, "demo", map[string]backup.Provisioned{
+		"wiki": backup.ProvisionedOf(backup.InventoryOf(demoTenant(), "wiki", wikiProfile())),
+	})})
+	w.failJob = "s3-delete-demo-wiki"
+
+	_, err := w.svc.PurgeApp(context.Background(), "demo", "wiki", "tom")
+	var perr *PurgeError
+	if !errors.As(err, &perr) || perr.Step != KindObjectStorage {
+		t.Fatalf("err = %v, want the purge to stop at the bucket the record names", err)
+	}
+	left := w.provisionedFor(t, "wiki")
+	if left.Has(backup.KindCache) {
+		t.Error("the cache user was destroyed and is still on record")
+	}
+	if !left.Has(backup.KindObjectStorage) || !left.Has(backup.KindDatabase) {
+		t.Errorf("stores that were not destroyed are off the record: %+v", left)
+	}
+
+	w.failJob = ""
+	if _, err := w.svc.PurgeApp(context.Background(), "demo", "wiki", "tom"); err != nil {
+		t.Fatal(err)
+	}
+	if !w.created("pg-delete-demo-wiki") || !w.provisionedFor(t, "wiki").Empty() {
+		t.Errorf("the retried purge left %+v on record; Jobs %v", w.provisionedFor(t, "wiki"), w.jobs)
+	}
+}
+
+// A record that cannot be read refuses the purge with nothing destroyed.
+func TestAPurgeIsRefusedWhenTheRecordCannotBeRead(t *testing.T) {
+	broken := backup.NewProvisionedRecord("demo")
+	broken.Data = map[string]string{"wiki": "{not json"}
+	w := newPurgeWorld(t, nil, []client.Object{wikiProfile(), broken})
+	_, err := w.svc.PurgeApp(context.Background(), "demo", "wiki", "tom")
+	if !errors.Is(err, ErrCannotPurgeNow) || !w.untouched(t) {
+		t.Fatalf("err = %v, untouched = %v", err, w.untouched(t))
+	}
 }

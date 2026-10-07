@@ -162,10 +162,15 @@ type purgeStep struct {
 // last the records, which the purge's own Jobs add to. A kind the app does
 // not have is not a step. Which stores it has is declared by its profile and
 // by nothing else, which is why a purge is refused without one.
-func (s *Service) purgeSteps(tenant *gentianov1alpha1.Tenant, profile *gentianov1alpha1.ComponentProfile, app string) []purgeStep {
+//
+// recorded is what the tenant's record says was provisioned for the app. A
+// store it names is destroyed whether or not the profile still declares it:
+// a profile that has since dropped its bucket has not removed the bucket.
+func (s *Service) purgeSteps(tenant *gentianov1alpha1.Tenant, profile *gentianov1alpha1.ComponentProfile, app string, recorded backup.Provisioned) []purgeStep {
 	inv := backup.InventoryOf(tenant, app, profile)
 	extensions := backup.SidecarNames(profile)
-	stores := backup.StoreDestroyJobs(tenant, app, inv.Stores, backup.DestroyWithinARequest)
+	owned := backup.MergeStores(inv.Stores, recorded)
+	stores := backup.StoreDestroyJobs(tenant, app, owned, backup.DestroyWithinARequest)
 	how := map[backup.Kind]func(ctx context.Context) error{
 		backup.KindFiles: func(ctx context.Context) error {
 			return s.purgePVCs(ctx, tenant, app, profile)
@@ -181,19 +186,20 @@ func (s *Service) purgeSteps(tenant *gentianov1alpha1.Tenant, profile *gentianov
 		},
 	}
 	for kind, job := range stores {
-		how[kind] = func(ctx context.Context) error { return s.runKernelJob(ctx, job) }
-	}
-	if inv.DatabaseRecord != "" {
-		drop := how[backup.KindDatabase]
-		how[backup.KindDatabase] = func(ctx context.Context) error {
-			if err := drop(ctx); err != nil {
+		how[kind] = func(ctx context.Context) error {
+			if err := s.runKernelJob(ctx, job); err != nil {
 				return err
 			}
-			// The record of the database goes only now that the database
-			// has: it is what says an uninstalled app still holds one, and
-			// removing it first would leave a database nothing reports if
-			// the drop failed.
-			return s.deleteDatabaseRecord(ctx, tenant.Name, app)
+			// What recorded the store goes only now that the store has: it
+			// is what says an uninstalled app still holds one, and removing
+			// it first would leave a store nothing reports if the Job had
+			// failed.
+			if kind == backup.KindDatabase && owned.Database == gentianov1alpha1.DatabaseEnginePostgreSQL {
+				if err := s.deleteDatabaseRecord(ctx, tenant.Name, app); err != nil {
+					return err
+				}
+			}
+			return s.forgetProvisioned(ctx, tenant.Name, app, kind)
 		}
 	}
 	var steps []purgeStep
@@ -216,12 +222,12 @@ var ErrCannotPurgeNow = errors.New("the purge cannot be completed now")
 // the app's database is of an engine this platform can drop. A purge that
 // would have stopped half-way for any of these stops here instead, with
 // everything still in place.
-func (s *Service) purgePreflight(ctx context.Context, tenant *gentianov1alpha1.Tenant, profile *gentianov1alpha1.ComponentProfile) error {
+func (s *Service) purgePreflight(ctx context.Context, tenant *gentianov1alpha1.Tenant, profile *gentianov1alpha1.ComponentProfile, recorded backup.Provisioned) error {
 	refuse := func(format string, args ...any) error {
 		return fmt.Errorf("%w: %s. Nothing was destroyed; ask again once that is put right",
 			ErrCannotPurgeNow, fmt.Sprintf(format, args...))
 	}
-	switch engine := backup.ProfileStores(profile).Database; engine {
+	switch engine := backup.MergeStores(backup.ProfileStores(profile), recorded).Database; engine {
 	case "", gentianov1alpha1.DatabaseEngineMariaDB:
 	case gentianov1alpha1.DatabaseEnginePostgreSQL:
 		if _, err := s.postgresPrimary(ctx); err != nil {
@@ -251,9 +257,9 @@ func (s *Service) purgePreflight(ctx context.Context, tenant *gentianov1alpha1.T
 //
 // Stopping is deliberate. A step that failed leaves the app in a state nobody
 // has looked at, and carrying on would destroy more on the strength of it.
-func (s *Service) purge(ctx context.Context, tenant *gentianov1alpha1.Tenant, profile *gentianov1alpha1.ComponentProfile, app string) (destroyed []string, err error) {
+func (s *Service) purge(ctx context.Context, tenant *gentianov1alpha1.Tenant, profile *gentianov1alpha1.ComponentProfile, app string, recorded backup.Provisioned) (destroyed []string, err error) {
 	logger := log.FromContext(ctx).WithName("purge").WithValues("tenant", tenant.Name, "app", app)
-	steps := s.purgeSteps(tenant, profile, app)
+	steps := s.purgeSteps(tenant, profile, app, recorded)
 	for i, step := range steps {
 		if err := step.run(ctx); err != nil {
 			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
@@ -316,6 +322,50 @@ func (s *Service) deleteDatabaseRecord(ctx context.Context, tenant, app string) 
 		}
 		if err := wait(ctx); err != nil {
 			return err
+		}
+	}
+}
+
+// --- the record of what was provisioned -------------------------------------
+
+// provisioned reads the tenant's record of what provisioning made, by app. A
+// tenant without a record has had nothing recorded.
+func (s *Service) provisioned(ctx context.Context, tenantName string) (map[string]backup.Provisioned, error) {
+	record := &corev1.ConfigMap{}
+	key := backup.ProvisionedRecordKey(tenantName)
+	if err := s.client.Get(ctx, key, record); err != nil {
+		if apierrors.IsNotFound(err) {
+			return map[string]backup.Provisioned{}, nil
+		}
+		return nil, fmt.Errorf("read the record of what was provisioned for %s (%s/%s): %w", tenantName, key.Namespace, key.Name, err)
+	}
+	return backup.ReadProvisioned(record)
+}
+
+// forgetProvisioned takes one kind out of the app's entry in the record, now
+// that its store is destroyed.
+func (s *Service) forgetProvisioned(ctx context.Context, tenantName, app string, kind backup.Kind) error {
+	key := backup.ProvisionedRecordKey(tenantName)
+	for attempt := 0; ; attempt++ {
+		record := &corev1.ConfigMap{}
+		if err := s.client.Get(ctx, key, record); err != nil {
+			if apierrors.IsNotFound(err) {
+				return nil
+			}
+			return fmt.Errorf("read the record of what was provisioned (%s/%s): %w", key.Namespace, key.Name, err)
+		}
+		changed, err := backup.ForgetProvisioned(record, app, kind)
+		if err != nil || !changed {
+			return err
+		}
+		err = s.client.Update(ctx, record)
+		if err == nil {
+			return nil
+		}
+		// The tenant's reconciler writes the same object when an app is
+		// installed; read it again and take the kind out of what is there now.
+		if !apierrors.IsConflict(err) || attempt >= 4 {
+			return fmt.Errorf("update the record of what was provisioned (%s/%s): %w", key.Namespace, key.Name, err)
 		}
 	}
 }
