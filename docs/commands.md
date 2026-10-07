@@ -155,6 +155,8 @@ kubectl gentian catalogues add acme https://acme.github.io/acme-catalogue --tena
 kubectl gentian catalogues remove acme --tenant demo
 kubectl gentian tenants delegate-catalogues demo on    # demo's administrators may add their own
 kubectl gentian tenants delegate-catalogues demo off
+kubectl gentian catalogues residue                     # what the catalogue left on the cluster
+kubectl gentian catalogues residue remove OIDCPackCatalog/xwiki-ce-oidc   # one object, name typed again
 ```
 
 ```
@@ -171,6 +173,46 @@ refused unless the tenant is delegated, and removes only what the tenant
 added. An address must be a public https one; anything else is refused.
 [custom-catalogues.md](custom-catalogues.md) says how to build and publish a
 catalogue.
+
+Nothing a profile's bundle brought is removed automatically: a piece a newer
+build drops stays, and so does a profile after its last uninstall. `residue`
+lists what is left, and `residue remove` deletes one object of the list —
+never anything a bundle on the cluster still brings.
+
+```
+$ kubectl gentian catalogues residue
+KIND/NAME                               NAMESPACE            PROFILE     WHY             CREATED     IN EFFECT
+ComponentProfile/acme-notes             -                    acme-notes  unused profile  2026-09-30  -
+Composition/app-odoo                    -                    -           unowned         2026-07-02  -
+ConfigMap/element-ce.portal-bridge-sso  kernel-provisioning  element-ce  dropped         2026-10-07  -
+OIDCPackCatalog/gentian-element-oidc    -                    -           unowned         2026-07-02  contested
+OIDCPackCatalog/xwiki-ce-oidc           -                    xwiki-ce    orphaned        2026-08-14  YES
+
+  ComponentProfile/acme-notes: unused profile: no tenant has it installed or switched on as an add-on, and no tenant retains data for it; its bundle brings Composition app-acme-notes, which stay
+  Composition/app-odoo: not owned by any bundle: it names no profile, and no bundle on this cluster brings it
+  ConfigMap/element-ce.portal-bridge-sso: it carries the label gentianos.io/profile-name: element-ce, and the bundle now materialised for element-ce does not bring it
+  OIDCPackCatalog/gentian-element-oidc: not owned by any bundle: it names no profile, and no bundle on this cluster brings it; another catalog also holds: element
+  OIDCPackCatalog/xwiki-ce-oidc: it carries the label gentianos.io/profile-name: xwiki-ce, and no profile xwiki-ce is on this cluster; the only pack for: xwiki
+
+Nothing here is removed automatically. To remove one:
+  kubectl gentian catalogues residue remove <kind>/<name>
+
+$ kubectl gentian catalogues residue remove OIDCPackCatalog/xwiki-ce-oidc
+Removing the OIDCPackCatalog xwiki-ce-oidc deletes it from the cluster. Nothing puts it back but
+installing a build that brings it.
+Type xwiki-ce-oidc to confirm: xwiki-ce-oidc
+Deleted the OIDCPackCatalog xwiki-ce-oidc.
+  the OIDCPackCatalog xwiki-ce-oidc was deleted, asked for by ada@example.com
+```
+
+`IN EFFECT` says whether a leftover OIDC pack catalog is still read when a
+client is configured. The list is for whoever may audit the cluster; removing
+is for whoever may configure it. `--yes` takes the place of typing the name,
+and `--namespace` names the namespace of a ConfigMap or a customization
+record, which is the catalogue's and no other. An unused profile is removed
+from the deployments repository first and deleted from the cluster once Argo
+CD has synced that; [custom-catalogues.md](custom-catalogues.md) §6 has the
+classes and the rules.
 
 Guides:
 

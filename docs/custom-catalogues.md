@@ -427,11 +427,71 @@ of the cluster and one moves to a new build, the other's install is still pinned
 the operator holds it as it is (`DigestMismatch` on its Component) and rolls nothing out for it until
 that tenant moves too. Publish a build that must coexist with the old one under a new name.
 
-A companion a new build no longer brings **stays on the cluster**. The Application that applies the
-catalogue directory does not prune, for companions as for profiles, so nothing a bundle brought is
-removed because a file changed. It is no longer checked, and no bundle owns it: remove it by hand
-(`kubectl delete`) once no install is pinned to the build that brought it. An `OIDCPackCatalog` left
-this way is still found by its packs' client ids.
+### What a newer build leaves behind
+
+**Nothing a bundle brought is removed automatically.** The Application that applies the catalogue
+directory does not prune, for companions as for profiles. A companion a new build no longer brings
+stays on the cluster, and so does a profile after its last uninstall. That is deliberate: a tenant
+moved back to the older build finds its pieces, and the data of an uninstalled app is purged with
+its profile. What stays is no longer checked and no bundle owns it — and an `OIDCPackCatalog` left
+this way is still read.
+
+The cluster's administrator sees what is left, and removes one piece at a time:
+
+```bash
+kubectl gentian catalogues residue
+kubectl gentian catalogues residue remove OIDCPackCatalog/xwiki-ce-oidc
+```
+
+The list holds four classes, each object with the profile it names, why it is listed and when it was
+created (the cluster does not record when a piece stopped being owned):
+
+| `WHY` | What it is |
+|---|---|
+| `dropped` | An object of a companion kind that names a profile on the cluster — by its label `gentianos.io/profile-name`, or by a name only that profile's companion has — and that the bundle now materialised for the profile does not bring. |
+| `orphaned` | One that carries the label of a profile that is not on the cluster. |
+| `unowned` | One that no bundle owns and that names no profile with a bundle: what installations from before bundles left. A `Composition` that composes an app and is not `app-default`, any `OIDCPackCatalog`, and a `ConfigMap` or `Customization` carrying the asset or the profile label. |
+| `unused profile` | A materialised profile that no tenant has installed or switched on as an add-on, and for which no tenant retains data. |
+
+Never listed: `app-default`; anything a chart ships (the platform's profiles, its own pack catalog);
+anything a bundle on the cluster brings; a pack catalog that declares a service client; a
+`Composition` that composes anything but an app; and anything in a namespace other than the one the
+catalogue is applied in — no object of a tenant's namespace is ever looked at. A profile whose bundle
+cannot be read owns nobody knows what, so nothing that names it is listed; and when what a tenant
+retains could not be read, no profile is listed as unused. The list says which of the two it could
+not establish.
+
+**`IN EFFECT` is the one column that says a leftover still changes behaviour.** A client is configured
+from the first `OIDCPackCatalog` on the cluster that holds a pack under its client id, whoever
+brought the catalog, and an app's Composition reads the catalog that carries its profile's label. A
+leftover pack catalog is `YES` when it is the only one holding one of its client ids, or the only
+one labelled for an installed profile; `contested` when another catalog holds the same, and which
+is read is then not defined; `no` otherwise. Removing one that is in effect changes what the next
+sign-in client is given.
+
+Removing asks for the name typed again, and removes exactly the one object named:
+
+- **A companion** is deleted from the cluster by the operator. It works the list out again at that
+  moment and deletes only an object that is on it, so a companion a bundle brings, `app-default`, or
+  a ConfigMap that is nobody's companion is refused with the reason, and so is an object a new
+  install adopted a moment ago. It is also refused while a bundle file in the deployments repository
+  declares the object, or Argo CD still finds it declared: what is declared would be applied again.
+- **An unused profile** is first removed from the deployments repository: its bundle, the carrier
+  beside it and its kustomization entries, as one commit in the person's name. That is refused while
+  any tenant's manifest names the profile, or a tenant retains data for it. The object is then
+  deleted from the cluster by the operator, once Argo CD reports that the directory no longer
+  declares it — a few minutes at most; the list shows the profile until then, and the command can
+  be repeated. Pruning is not switched on for this: it would remove everything else that is left
+  over in the same sync. The companions the profile's bundle brought stay, and are then listed as
+  `orphaned`.
+
+The answer says what was deleted, or why nothing was. From the console's side these are
+`GET /v1/clusters/<cluster>/catalogue/residue` at the usher (whoever may audit the cluster) and
+`POST /v1/clusters/<cluster>/actions/remove-catalogue-residue` at the director (whoever may
+configure it).
+
+The operator may delete a `Composition` for this, a right it did not have. It uses it only for one
+that composes an app, is named `app-<profile>`, is not `app-default` and is on the list when asked.
 
 ## 7. What is checked, and what is not
 
@@ -501,12 +561,14 @@ they are done once by the tenant's administrator.
 - **Two profiles that declare the same OIDC `clientId` are not told apart.** Each may bring a pack
   for it, and which one is used is not defined. gentian-apps' build refuses this inside one
   catalogue; across catalogues nothing does.
-- **Nothing a bundle brought is removed automatically** (§6).
+- **Nothing a bundle brought is removed automatically.** It is listed, and removed one object at a
+  time by the cluster's administrator (§6).
 - **No password-protected catalogues.** No credential is sent to a catalogue. Keep what is private in
   the registry (§8), not in the profile.
 - **No proxy.** The director connects to the catalogue directly.
 - **No console screen.** Catalogues are managed with the commands above.
 - **Profiles are not removed automatically.** A profile stays in `clusters/<cluster>/catalogue/`
-  after the last uninstall, because the data of an uninstalled app is purged with its profile.
+  after the last uninstall, because the data of an uninstalled app is purged with its profile. Once
+  no tenant has it installed or retains data for it, it is listed as an unused profile (§6).
 - **Removing a catalogue does not remove what was installed from it**, and does not free the profile
   names it used.

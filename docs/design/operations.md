@@ -438,6 +438,8 @@ carried, for the apps the bundle's manifest lists (§9.4).
 | Sign-in client, with its client role, default-scope assignments and the group's mapping to the role | the app Composition, or the identity Job | carried, in the realm export | put back, with the realm | removed (Keycloak removes what is part of the client with it) | — | destroyed, with the realm |
 | Workloads (the Helm release) | the app Composition or the component reconciler | nothing: re-made from the profile; the manifest records the build | nothing; the installed build is checked against the manifest's | removed | — | removed, first |
 | Files (the release's volume claims) | the app's chart | an archive per claim that is the app's (`AppVolumes`) | each archive unpacked onto the claim of the same name | kept | destroyed | destroyed, with the namespace |
+| Materialised profile (the `ComponentProfile`, committed under `clusters/<cluster>/catalogue/`) | committed by the director at the digest the install named, applied by Argo CD | nothing: the manifest records the build | nothing; the tenant restored into installs from its own catalogues | kept: a purge of the app reads it to know what the app owns | kept | kept: it is the cluster's and no tenant's |
+| Bundle companions (the Composition, OIDC pack catalog, ConfigMaps and customization records a profile's bundle brings) | applied with the profile, from the same file | nothing | nothing | kept | kept | kept |
 
 So the teardown order is: files, workloads, sign-in client, model key, cache,
 object storage, database, sign-in scope, access group, stored credentials,
@@ -451,6 +453,15 @@ longer has it, removes the vault subtree and, last, the records.
 
 With `deletionPolicy: Retain` a tenant's deletion keeps every kind and removes
 the workloads.
+
+The last two rows are not a tenant's. A profile and its companions belong to
+the cluster, are shared by every tenant that installs the app, and no act on
+a tenant or an app removes them; neither does a newer build that stops
+bringing a companion. They leave by one deliberate act of the cluster's
+administrator, one object at a time: the operator lists what no bundle owns
+any more and the profiles no tenant uses or retains data for, and removes an
+entry of that list on request
+([custom-catalogues.md](../custom-catalogues.md) §6).
 
 ### 9.2 What a tenant has that is no app's
 

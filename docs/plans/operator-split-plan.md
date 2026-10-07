@@ -398,7 +398,7 @@ Its routes, by group. Every write is a commit unless marked as a command.
 | Backup policy | Set or clear a tenant's backup policy; set the cluster's. |
 | Platform security | Read and replace the list of exceptions to the cluster's default security rules, as git declares it. |
 | Records | Read the history of changes to a tenant or the cluster (from the commits); read who holds which right on a tenant or the cluster (from OpenFGA); answer which permissions the caller holds (`…/me`). |
-| Commands relayed to the operator | Take a backup; delete a backup; upload or inspect a backup bundle; restore (as part of an import); send a notice to a tenant's people; purge the data of an uninstalled app; give an installed app to everybody who is a member now. |
+| Commands relayed to the operator | Take a backup; delete a backup; upload or inspect a backup bundle; restore (as part of an import); send a notice to a tenant's people; purge the data of an uninstalled app; give an installed app to everybody who is a member now; remove one object the catalogue left behind. |
 | One live read | Download a backup bundle. This is the only read of live state the director serves. |
 
 When an app is installed from a catalogue, the director fetches the app's
@@ -410,6 +410,13 @@ and commits it to the deployment repository together with the exact bytes it
 checked. It fetches only from public
 https addresses, so an address somebody typed cannot be used to reach into
 the cluster ([address.go](../../internal/director/catalogue/address.go)).
+
+Nothing committed this way is taken out again by itself. Removing a profile
+that no tenant uses is the one commit that does it: the director removes the
+profile's files after checking every tenant's file in git and asking the
+operator whether any tenant still holds data for it, and then has the
+operator delete the object (section 4.2,
+[residue.go](../../internal/director/api/residue.go)).
 
 **What it must never do**
 
@@ -502,6 +509,7 @@ two kinds of route
 | `notify` | Publishes one notice to a tenant's people. |
 | `purge-app` | Destroys what an uninstalled app left behind: database, object storage, cache user, files, stored credentials, access group. |
 | `provision-app` | Puts the tenant's current members into an app's group. |
+| `remove-catalogue-residue` | Deletes one named object that the catalogue left behind, and only if it is on the list below when the command arrives. |
 
 *Reads*, for the usher and the director:
 
@@ -511,7 +519,22 @@ two kinds of route
   integrations; its notices;
 - for the cluster: every tenant's resources; the backup policy and schedules;
   the platform security rules in force; the customization report; the licence
-  report; the result of the definitions check.
+  report; the result of the definitions check; what the catalogue left
+  behind.
+
+*What the catalogue left behind.* Argo CD applies the catalogue directory
+without ever removing anything, so a cluster collects objects that the
+profile file of no app still holds, and profiles no tenant uses. The operator
+lists them: objects of the four kinds a profile's file may hold beside the
+profile, that no profile's file on the cluster holds now; and profiles that
+no tenant has installed and no tenant holds data for. It never lists what a
+chart ships, the Composition every app without its own is built from
+(`app-default`), or anything in a tenant's namespace. `remove-catalogue-residue`
+works that list out again from the API server, deletes the one object named
+if it is on it, and refuses anything else with the reason. It also refuses an
+object Argo CD still finds declared in the directory, because that would be
+applied again; a profile is deleted only once Argo CD reports it gone from
+the directory ([residue.go](../../internal/applifecycle/residue.go)).
 
 Four further reads are for the director only, because its own work depends
 on them: a tenant's installed apps, a tenant's state (needed while purging
@@ -561,7 +584,10 @@ sent, for a platform admin to read
 **What it holds**
 
 - A service account with wide rights in the cluster, including reading and
-  writing Secrets in every namespace.
+  writing Secrets in every namespace. It may delete, and not write, what the
+  catalogue brings: component profiles, OIDC pack catalogs and Compositions.
+  Its code deletes a Composition only as catalogue residue, only under a name
+  a profile's file gives one (`app-<profile>`), and never `app-default`.
 - Keycloak's administrator credential.
 - A vault role that reads, writes and deletes everything under the platform's
   path.
@@ -710,6 +736,7 @@ and asks OpenFGA before it answers.
 | A tenant's integrations and notices | `can_view` on the tenant |
 | Every tenant's resources; the cluster's backup policy and schedules | `can_audit` on the cluster |
 | The platform security rules in force; the customization report; the licence report | `can_audit` on the cluster |
+| What the catalogue left behind: objects no profile's file holds any more, and profiles nobody uses | `can_audit` on the cluster |
 
 The tiles come from a file the operator writes. All other answers are the
 operator's, fetched over its listener. The usher does not read the cluster
@@ -873,7 +900,7 @@ and 4.2 say how a group becomes a relation.
 | Director | a tenant | `can_expose` | publishing to the internet |
 | Director | a tenant or the cluster | `can_approve_privilege`, `can_approve` | granting a privilege an app asked for; which of the two depends on the kind of privilege |
 | Director | a tenant | `can_administer` | backup, delete a backup, send a notice, read the change history |
-| Director | the cluster | `can_configure` | settings, branding, tenants, domains, catalogues, the cluster's backup policy, import |
+| Director | the cluster | `can_configure` | settings, branding, tenants, domains, catalogues, the cluster's backup policy, import, removing what the catalogue left behind |
 | Director | the cluster | `can_set_admission` | the list of security exceptions |
 | Director | the cluster | `can_audit` | reading the cluster's settings, tenants, catalogues, changes |
 | Director, custodian | a tenant or the cluster | `can_write_credential` | declaring a repository (director); setting a secret (custodian) |
@@ -896,7 +923,7 @@ list of relations and the rules behind them are in
 
 | Program | Standing credential | What somebody who takes it over can do | What limits it |
 | --- | --- | --- | --- |
-| **Director** | Push credential and signing key for the deployment repository; identity at the operator's listener | Commit anything to the deployment repository in anybody's name, including a change to who administers the platform and where software comes from. Issue every command for any tenant and name anybody as the one who asked; two commands destroy data. | Every commit stays in git, signed, where it can be seen and reverted. It cannot read a secret and cannot reach Keycloak. Its token for the operator lasts ten minutes and stops working when the pod is gone. |
+| **Director** | Push credential and signing key for the deployment repository; identity at the operator's listener | Commit anything to the deployment repository in anybody's name, including a change to who administers the platform and where software comes from. Issue every command for any tenant and name anybody as the one who asked; two commands destroy data, and one deletes objects the catalogue left behind (never one a profile on the cluster still brings: the operator checks that itself). | Every commit stays in git, signed, where it can be seen and reverted. It cannot read a secret and cannot reach Keycloak. Its token for the operator lasts ten minutes and stops working when the pod is gone. |
 | **Operator** | Wide cluster rights, Keycloak's administrator credential, the vault role for everything | Everything. It can read every Secret, and with that it can also do what each of the others can. | Nothing inside the cluster. It is the part the platform trusts. What protects it is that no person's request reaches it directly: only Argo CD, the director and the usher on the listener, Keycloak's signed events and the API server's admission calls. |
 | **Custodian** | Vault role that writes and cannot read | Overwrite any secret the platform stores. | It cannot read or delete a secret, so the damage is loud: things stop working. No git, no Keycloak, and it cannot change any object that decides configuration. |
 | **Registrar** | One Keycloak client secret per realm | In every realm, the kernel realm included: create, disable or delete any account, set any password, remove any second factor, change any group. That includes the groups behind the platform roles, so it can make somebody a platform admin. It can also rewrite its own record. | No git, no vault, no write in the cluster. No client in Keycloak's master realm; it cannot manage clients or identity providers and cannot impersonate. Keycloak records each change it makes. |
