@@ -128,13 +128,46 @@ state, access, integrations, privileges, uninstall and purge.
 
 ```bash
 kubectl gentian apps list --tenant demo               # what the tenant has installed
-kubectl gentian apps list --tenant demo --available   # what the cluster's catalogue sources offer
-kubectl gentian apps install xwiki-ce --tenant demo   # the build the source lists, pinned by digest
+kubectl gentian apps list --tenant demo --available   # what the tenant's catalogues offer
+kubectl gentian apps install xwiki-ce --tenant demo   # the build the catalogue lists, pinned by digest
 kubectl gentian apps uninstall xwiki-ce --tenant demo
 ```
 
+### Catalogues
+
+A catalogue is an https address apps are installed from. The cluster's
+administrator adds one for every tenant or for one tenant; a tenant's own
+administrator adds one for their tenant where the cluster's administrator
+delegated that.
+
+```bash
+kubectl gentian catalogues list                        # everything the cluster declares
+kubectl gentian catalogues list --tenant demo          # what demo installs from
+kubectl gentian catalogues add acme https://acme.github.io/acme-catalogue                 # for every tenant
+kubectl gentian catalogues add acme https://acme.github.io/acme-catalogue --tenant demo   # for demo only
+kubectl gentian catalogues remove acme --tenant demo
+kubectl gentian tenants delegate-catalogues demo on    # demo's administrators may add their own
+kubectl gentian tenants delegate-catalogues demo off
+```
+
+```
+$ kubectl gentian catalogues list
+CATALOGUE  FOR           ADDED BY     ADDRESS
+gentian    every tenant  the cluster  https://gentian-org.github.io/gentian-apps
+acme       tenant demo   the tenant   https://acme.github.io/acme-catalogue
+Tenants whose administrators may add catalogues of their own: demo.
+```
+
+With `--tenant`, `add` and `remove` are done as the cluster's administrator
+when the person is one, and otherwise as the tenant's administrator: that is
+refused unless the tenant is delegated, and removes only what the tenant
+added. An address must be a public https one; anything else is refused.
+[custom-catalogues.md](custom-catalogues.md) says how to build and publish a
+catalogue.
+
 Guides:
 
+- [custom-catalogues.md](custom-catalogues.md) — publish your own apps to a cluster or a tenant
 - [gentian-apps/docs/custom-app-guide.md](../../gentian-apps/docs/custom-app-guide.md) — build new apps
 - [gentian-apps/docs/app-profile-guide.md](../../gentian-apps/docs/app-profile-guide.md) — publish upstream charts
 
@@ -152,9 +185,9 @@ administrator usually does this from the App Store app; the CLI does the same:
 
 ```bash
 kubectl gentian apps list --tenant demo                              # what the tenant has installed
-kubectl gentian apps list --tenant demo --available                  # what the catalogue sources offer
-kubectl gentian apps install xwiki-ce --tenant demo                  # the build the source lists
-kubectl gentian apps install xwiki-ce --tenant demo --from in-house  # when several sources serve the name
+kubectl gentian apps list --tenant demo --available                  # what the tenant's catalogues offer
+kubectl gentian apps install xwiki-ce --tenant demo                  # the build the catalogue lists
+kubectl gentian apps install xwiki-ce --tenant demo --from in-house  # when several catalogues serve the name
 kubectl gentian apps install xwiki-ce --tenant demo --digest sha256:<64 hex>   # a build you name yourself
 kubectl gentian apps install xwiki-ce --tenant demo --for-everyone   # and grants it to every member
 kubectl gentian apps uninstall xwiki-ce --tenant demo            # removes the app, keeps its data
@@ -162,8 +195,11 @@ kubectl gentian apps uninstall xwiki-ce --tenant demo --purge    # removes the a
 ```
 
 **The command line installs a pinned build.** An app is installed from one
-of the cluster's catalogue sources (`spec.catalogue.sources` on the Cluster
-claim), and `install` sends the director the entry's coordinate and digest:
+of the catalogues the tenant sees — the cluster's and the tenant's own
+(`kubectl gentian catalogues list --tenant demo`) — and `install` sends the
+director the entry's coordinate and digest. Nothing is on a cluster ahead of
+an install: the director fetches that one profile, checks it against the
+digest and commits it.
 
 ```
 $ kubectl gentian apps list --tenant demo --available
@@ -188,7 +224,8 @@ with none. The listing is the director's reading of each source's index, the
 | Several do | `--from <source>` says which; without it nothing is installed |
 | None does | nothing is installed, and the sources are listed. With both `--from` and `--digest` an entry the listing does not show can still be asked for |
 | `--digest` | the build to install instead of the one the listing states. The director fetches the bundle from the source and installs nothing unless it hashes to the digest sent |
-| The cluster declares no catalogue source | nothing can be installed by command; a platform administrator names a source on the Cluster claim |
+| The tenant has no catalogue | nothing can be installed by command; the cluster's administrator adds one (`kubectl gentian catalogues add`) |
+| The name is taken by a profile from another catalogue | nothing is installed, and the refusal says who has to rename ([custom-catalogues.md](custom-catalogues.md) §7) |
 
 The director verifies the bundle against the digest before it commits, and
 the operator verifies it again at rollout

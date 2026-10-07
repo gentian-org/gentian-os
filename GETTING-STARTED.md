@@ -131,7 +131,6 @@ Edit it. These are the values that matter for a first install:
 | `GENTIAN_DEPLOYMENTS_CLUSTER_ID` | This cluster's ID. It names the directory under `clusters/` and, with the stage, the Cluster claim — get it right before step 4, which pushes the tree it names |
 | `GENTIAN_DEPLOYMENTS_STAGE` | `dev`, `staging` or `prod` |
 | `GENTIAN_DEPLOYMENTS_REPO` / `_BRANCH` | Your deployments repository |
-| `GENTIAN_APPS_REPO` / `_BRANCH` | The app catalogue |
 
 Leave the rest at their defaults. The repository URLs, branches and auth modes
 below them are already filled in — they are defaults for a fork or a mirror, not
@@ -152,7 +151,7 @@ stops before touching the cluster if any fail.
 | `deployments-repository` | yes | Write access to the repository from step 1 |
 | `master-password` | yes | At least 16 characters |
 | `infra-chart-registry` | no | Only for a private chart registry |
-| `gentian-os-repository`, `gentian-apps-repository`, `gentian-ui-repository` | no | Only when the matching `GENTIAN_*_AUTH` in `install.env` is not `none` |
+| `gentian-os-repository`, `gentian-ui-repository` | no | Only when the matching `GENTIAN_*_AUTH` in `install.env` is not `none` |
 | Cloudflare API token | under `acme-dns01` | `CF_API_TOKEN` — needed by the default issuer, see below |
 
 Type them when asked. Each reaches OpenBao once it exists, and a later run
@@ -426,14 +425,24 @@ Apps are installed by the tenant's administrator from the App Store, or from
 here:
 
 ```bash
-kubectl gentian apps list --tenant acme --available           # what the cluster's catalogue sources offer
-kubectl gentian apps install nextcloud-base-ce --tenant acme  # the build the source lists, pinned by digest
+kubectl gentian apps list --tenant acme --available           # what the tenant's catalogues offer
+kubectl gentian apps install nextcloud-base-ce --tenant acme  # the build the catalogue lists, pinned by digest
 kubectl gentian apps list --tenant acme                       # what the tenant has
 ```
 
-`install` takes the entry from a catalogue source the Cluster claim names
-(`spec.catalogue.sources`) and pins it to the digest that source lists; see
-[docs/commands.md](docs/commands.md) §6 for `--from` and `--digest`.
+`install` takes the entry from a catalogue the tenant sees and pins it to the
+digest that catalogue lists; see [docs/commands.md](docs/commands.md) §6 for
+`--from` and `--digest`. A new cluster has one catalogue, `gentian`, for every
+tenant. To offer your own apps, publish a catalogue and add it for the cluster
+or for one tenant:
+
+```bash
+kubectl gentian catalogues list
+kubectl gentian catalogues add acme https://acme.github.io/acme-catalogue --tenant acme
+```
+
+[docs/custom-catalogues.md](docs/custom-catalogues.md) explains how to build
+one, step by step.
 
 To remove a tenant, `kubectl gentian tenants retire acme` (or **Retire** in the
 console) — not `kubectl delete`: git is what the cluster reconciles towards, so

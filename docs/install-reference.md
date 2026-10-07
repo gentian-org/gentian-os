@@ -116,7 +116,7 @@ Everything you supply belongs to one of three places.
 | Surface | Carrier | Answers |
 |---|---|---|
 | Repository pointer | `install.env` on the installing machine | Where does this cluster's configuration come from? |
-| Declarative configuration | YAML in `gentian-deployments` and `gentian-apps` | What is this cluster, its tenants, and their apps? |
+| Declarative configuration | YAML in `gentian-deployments` | What is this cluster, its tenants, and their apps? |
 | Credentials | Prompted, written to OpenBao | What secrets does it need that cannot be derived? |
 
 `install.env` is the only non-secret file the installer reads from local disk,
@@ -142,6 +142,7 @@ The template carries one line per setting; the reasoning is here.
 | `GENTIAN_*_AUTH` | `none`, `basic` (username + token) or `bearer` — how the installer authenticates to that repository. The credential itself is prompted for. Deployments defaults to `basic` because a private repository cannot describe its own access; set `none` for a public one. |
 | `GENTIAN_*_REPO` / `_BRANCH` | Point them at a mirror for a forked or air-gapped install; the child ApplicationSets follow. |
 | `GENTIAN_OS_BRANCH` | The ref every in-cluster Application tracks — [deployment.md §4](deployment.md). |
+| `GENTIAN_CATALOGUE_URL` | The address of the default catalogue, `gentian`, written to `spec.catalogue.sources` when step 0 scaffolds a new Cluster claim. Defaults to `https://gentian-org.github.io/gentian-apps`. A public https address; the director fetches from nothing else ([custom-catalogues.md](custom-catalogues.md)). On an existing cluster catalogues are changed with `kubectl gentian catalogues`. |
 | `GENTIAN_FIRST_TENANT` | The name of a tenant for this cluster's users, created by the install: step 0 scaffolds and commits its manifest beside the platform tenant's, `E-01` waits for it, and the handover issues its administrator's activation link. Unset, the install creates no tenant. A DNS label, and not `platform`, `default`, `master` or the kernel realm's name; refused together with `tenancyMode: single`. It is the first tenant only, and each of these writes nothing and says why: a manifest that exists is never rewritten; once the cluster's definition holds another tenant the install points at the director, which is where every later tenant is created; and a tenant that was in the definition before and was removed is not brought back, because a retired tenant keeps its data. |
 | `GENTIAN_FIRST_TENANT_DISPLAY_NAME` | What that tenant is called. Defaults to its name. |
 | `GENTIAN_FIRST_TENANT_RECOVERY_EMAIL` | Where that tenant's administrator's activation link is mailed, when its realm can send mail. Unset, the handover asks; left empty there, or when the realm cannot send yet, the link is shown in the terminal once. Kept here and not in git, like `CLUSTER_ADMIN_RECOVERY_EMAIL`. |
@@ -150,6 +151,56 @@ The template carries one line per setting; the reasoning is here.
 | `GENTIAN_LICENCE_REPORT_URL` | Where the licence report goes, instead of the default address in `kernel/bootstrap/chart/values.yaml`. `https` only. |
 | `OPENBAO_CLI_VERSION` | Which `bao` to fetch when none is on `PATH`. Defaults to the pin in `versions.yaml`, which is where component versions are declared. |
 | `INFRA_CHART_REPO` / `_PRIVATE` | Where the infrastructure charts come from, and whether that registry needs a credential. Install-time rather than cluster state: it decides what the installer does before a cluster exists. |
+
+### Where app profiles come from, and upgrading a cluster that copied them
+
+A `ComponentProfile` reaches a cluster when a tenant installs the app: the
+director fetches that one profile from a catalogue, checks it against the
+digest the install names, and commits it under `clusters/<cluster>/catalogue/`
+in the deployments repository. The catalogues are addresses declared on the
+Cluster claim and on tenants ([custom-catalogues.md](custom-catalogues.md));
+a new claim names the default one.
+
+Earlier installs worked differently: step 0 scaffolded a `Repository` claim for
+the gentian-apps git repository (`type: git`, `role: apps`), and an
+ApplicationSet `catalogue-gentian-apps` copied every profile of that repository
+into the cluster and followed its branch. That is retired. The installer no
+longer writes the claim, and `GENTIAN_APPS_REPO`, `GENTIAN_APPS_BRANCH`,
+`GENTIAN_APPS_AUTH` and the `gentian-apps-repository` credential are gone with
+it; an `install.env` that still sets them is read without effect.
+
+**On a fresh install nothing needs doing.** On a cluster installed before:
+
+- The `catalogue-<name>` ApplicationSet is removed as soon as the cluster runs
+  the new Compositions, and Argo CD prunes the `catalogue-<profile>`
+  Applications it generated and **the ComponentProfiles those own**. Profiles
+  installed through the director are not affected for long: they are in
+  `clusters/<cluster>/catalogue/` and the `gentian-catalogue` Application
+  applies them again.
+- An app that was installed by name from a copied profile is left without its
+  profile. Its workloads keep running; its Component reports `ProfileMissing`
+  and nothing is rolled out for it. Install it again with its coordinate and
+  digest, which fetches the profile and pins the install:
+  `kubectl gentian apps install <app> --tenant <tenant>`. Do this before
+  purging an uninstalled app's data as well: a purge is refused without the
+  profile.
+- An add-on that was switched on by name is the same: the app it is switched
+  on in reports `AddonProfileMissing` until the add-on is given with its
+  coordinate and digest, or switched off.
+- The ApplicationSet synced a profile's whole directory, not only the profile:
+  a `composition.yaml`, an `oidc-catalog.yaml` and `customizations/` beside it
+  were applied too, and pruning removes those with the profiles. A catalogue
+  serves profiles only. An app whose profile names a Composition of its own
+  (`spec.package.composition`) or relies on an OIDC pack shipped beside it
+  needs those objects applied separately before it is installed again.
+- Step 0 removes `claims/gentian-apps-repository.yaml` from the deployments
+  checkout. Claims are synced without pruning, so the `Repository` object stays
+  on the cluster until it is deleted there
+  (`kubectl delete repository gentian-apps -n crossplane-system`); it composes
+  nothing but an Argo CD repository entry in the meantime.
+- A tenant's own `Repository` of `type: git` and `role: apps` copies nothing any
+  more either, and the director refuses to declare a new one. Publish those
+  profiles as a catalogue instead and add it for the tenant.
 
 ### A first tenant, and the bare domain
 
@@ -351,6 +402,12 @@ GENTIAN_DEPLOYMENTS_REPO=https://git.internal/gentian-deployments
 
 Both the Git origin and the image registry are redirected, including for every
 child ApplicationSet the platform creates.
+
+App profiles are not part of this: they are fetched from a catalogue, which is
+a public https address (`GENTIAN_CATALOGUE_URL` for the default one). A
+catalogue on a private network is refused, so a cluster that cannot reach a
+public catalogue has profiles committed into `clusters/<cluster>/catalogue/` by
+hand, as step 0 does for `GENTIAN_DEFAULT_PROFILES`.
 
 `versions.yaml` is the inventory of everything else the install pulls —
 Crossplane, cert-manager, External Secrets Operator, ArgoCD, Envoy Gateway and

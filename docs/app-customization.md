@@ -668,12 +668,16 @@ other catalogue object. Being a cluster object buys three things a file cannot:
   the debt report is computed by the operator, not by a script guessing from YAML.
 
 `AppProfile` and `Composition` are cluster-scoped — there is no per-profile namespace. Profile-scoped
-records therefore land in the **fixed system namespace the catalogue-sync ApplicationSet syncs every
-profile's namespaced objects into** (`gentian-system` on this deployment layout — check
-`crossplane/compositions/repository-default.yaml`'s `template.spec.destination.namespace`, since it
-is a cluster-wide constant, not derived from the profile name). Every `role: apps`, `type: git`
-`Repository` claim composes its own such ApplicationSet — `gentian-apps` is the default one, not a
-special case. Tenant-scoped records land in `tenant-<name>`.
+records belong in the **fixed system namespace the kernel runs in** (`kernel.controlNamespace` of the
+cluster's configuration), a cluster-wide constant that is not derived from the profile name.
+Tenant-scoped records land in `tenant-<name>`.
+
+**A profile-scoped record does not arrive with its profile.** A profile reaches a cluster one at a
+time, from a catalogue, when a tenant installs it ([custom-catalogues.md](custom-catalogues.md)), and
+a catalogue serves `ComponentProfile`s only. The ApplicationSet that used to sync a whole profile
+directory — profile, `customizations/`, `composition.yaml` — from a `role: apps`, `type: git`
+repository is retired, so whatever a profile needs beside itself has to be put on the cluster
+separately.
 
 ```yaml
 apiVersion: gentianos.io/v1alpha1
