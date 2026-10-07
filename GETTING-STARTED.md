@@ -13,7 +13,7 @@ already done, so a second run continues rather than restarting.
 ```
 
 It then waits for the things only you can do: move the kit somewhere safe, sign
-in at `https://console.<your-domain>/`, and supply the runtime credentials the
+in at `https://platform.<your-domain>/`, and supply the runtime credentials the
 console asks for. It sees the sign-in, finishes handover itself, and prints
 `Install Complete`.
 
@@ -35,7 +35,7 @@ steps within it. Five phases, in this order:
 | **B** | `secrets` | B-01 … B-10 | The kernel bootstrap Applications, the transit seal and OpenBao, Crossplane providers and definitions, the seeded credentials, the deployment signing keys |
 | **C** | `platform` | C-01 … C-05 | The Cluster claim, the ApplicationSets, the wildcard certificate, the credential catalogue, the repository hand-off |
 | **D** | `applications` | D-01 … D-05 | The operator and the director, the kernel hostnames resolving, the kernel realm and the platform desktop, OpenBao's OIDC login, the kernel Gateway |
-| **E** | `handover` | E-01 … E-03 | The recovery kit, then revoking the installer's own credential |
+| **E** | `handover` | E-01 … E-04 | The recovery kit, then revoking the installer's own credential; on a single-tenancy cluster, the user tenant after that |
 
 `./install.sh --explain` prints every step with what it provides and what it
 mutates, straight from the step files, so it cannot drift from what runs.
@@ -195,7 +195,7 @@ one. Every question shows its default; Enter takes it.
 | `mail.host` | unset | `external` mode: the relay's hostname. Its credentials are a credential, supplied in step 5 — not asked here |
 | `platform` | detected from the nodes | Detection is wrong for your provider |
 | `storageClass` | the cluster default | The cluster has more than one StorageClass |
-| `tenancyMode` | `multi` | Leave it. `single` is an older arrangement in which the platform tenant is the only tenant; it admits no tenant for users, and is not how a cluster for one organisation is built — name a first tenant instead |
+| `tenancyMode` | `multi` | Who the cluster is for. `multi`: the platform tenant plus any number of user tenants, each at `console.<tenant>.<kernel-domain>`; the install creates none. `single`: the platform tenant plus exactly one user tenant, named `user`, on the cluster's own addresses (`console.<kernel-domain>`); the install creates it after the handover. The platform admin signs in at `platform.<kernel-domain>` either way. See step 7. |
 | First tenant | none | This cluster's users should have a tenant when the install ends: give its name, and the install creates it (step 7). With exactly one, the cluster's bare domain leads straight to its sign-in |
 | `secretMode` | `derived` | You want independent random secrets rather than ones reproducible from the master password |
 | `backup.escrowIdentity` | `true` | The backup key should live in the recovery kit only, never in OpenBao |
@@ -281,22 +281,14 @@ The install pauses here and waits for you. Three things finish it:
    root and printed the path. Put it where your break-glass material already
    lives — a password manager, a sealed vault, offline media. Without it this
    cluster cannot be rebuilt as itself.
-2. **Activate the administrator account and sign in.** `admin@<kernel-domain>`
+2. **Activate the platform admin's account and sign in.** `admin@<kernel-domain>`
    has no password: you set one through a single-use, expiring activation link,
    which also enrols a second factor unless step 0 switched that off. The
    installer mails the link to a recovery address — `CLUSTER_ADMIN_RECOVERY_EMAIL`
    in `install.env`, or the one it asks you for — or, without one, prints it
    here once. Open it, set the password, then sign in at
-   `https://console.<kernel-domain>/`. Nobody else, the installer included,
+   `https://platform.<kernel-domain>/`. Nobody else, the installer included,
    ever knows the password.
-
-   If the install created a first tenant, a second link follows for that
-   tenant's administrator, `admin@<tenant>.<kernel-domain>`, handed over the
-   same way: mailed to `GENTIAN_FIRST_TENANT_RECOVERY_EMAIL` when the tenant's
-   realm can send mail, shown once otherwise. That account signs in at
-   `https://console.<tenant>.<kernel-domain>/`, and it is a different person's
-   account in a different realm: activating it does not finish the handover.
-   Sign in as the cluster administrator first.
 3. **Supply the runtime credentials.** Once signed in, open the **Credentials**
    tab and fill in what the cluster is still missing — SMTP relay, any extra app
    repository and its pull secret.
@@ -310,7 +302,7 @@ profile asks for SMTP reads those credentials from OpenBao, and they are written
 there only once the relay exists — so until you supply it, those apps do not
 install at all: the tenant stays in `Provisioning` and the app's secret never
 syncs. On a cluster with `mail.serviceMode: external` this is the most common
-reason a first tenant appears to hang.
+reason a tenant appears to hang.
 
 The wait is bounded — 30 minutes, `GENTIAN_HANDOVER_WAIT_SECS` to change it —
 and interrupting it costs nothing. Sign in whenever you like, then:
@@ -318,6 +310,31 @@ and interrupting it costs nothing. Sign in whenever you like, then:
 ```bash
 ./install.sh --only E-03
 ```
+
+**On a multi-tenancy cluster the install ends here.** It has created no
+tenant for users; that is the platform admin's next step (step 7).
+
+**On a single-tenancy cluster one step follows**, `E-04-user-tenant`, in the
+same run and with nothing for you to start. The cluster's one tenant for users
+— always named `user` — has been in the deployments repository since step 0
+and was refused all along: the cluster admits no tenant but the platform's
+until the platform admin has signed in. Now that you have, the installer asks
+Argo CD to try it again, waits for the tenant to be Ready (15 minutes,
+`GENTIAN_USER_TENANT_WAIT_SECS`), and hands over its administrator's account
+the way yours was: an activation link for `user-admin@<kernel-domain>`, mailed
+when the tenant's realm can send mail and shown once otherwise. The install
+waits for nothing after that and closes by naming both roles:
+
+- the **platform admin**, in charge of the platform:
+  `https://platform.<kernel-domain>/`
+- the **user admin**, in charge of the users and the user tenant:
+  `https://console.<kernel-domain>/`
+
+They are two accounts in two realms, and may or may not be the same person.
+If the tenant is not Ready within the wait, the install says what it is
+waiting for and does not fail: `kubectl get tenant user` shows its state, and
+`./install.sh --only E-04` — or `kubectl gentian tenants activate-admin user`,
+signed in as the platform admin — issues the link once it is.
 
 ## 6. Check the status
 
@@ -327,7 +344,8 @@ and interrupting it costs nothing. Sign in whenever you like, then:
 
 Every step reads `satisfied`, except steps that do not apply to this cluster —
 those read `undefined`, and `undefined` is never a failure. `E-01-tenants`
-always reads that way (tenants are created after installation); `B-09` and
+always reads that way (it only acts on an uninstall), and `E-04-user-tenant`
+does on a multi-tenancy cluster, where the install creates no tenant; `B-09` and
 `D-04` do so on a cluster without OIDC, `C-03` on one with no DNS provider, and
 `B-10` until the signing keys exist in the deployments repository.
 
@@ -347,49 +365,37 @@ kubectl get managed
 kubectl get application,applicationset -n kernel-gitops
 ```
 
-## 7. Create your first tenant
+## 7. Tenants
 
 A cluster's users live in a tenant of their own. The platform tenant, which
-every cluster has, holds the cluster's administrators and the platform's own
-components and nothing else: it takes no apps, and the director says so if you
-try.
+every cluster has, holds the platform admin and the platform's own components
+and nothing else: it takes no apps, and the director says so if you try. How
+many tenants for users a cluster has is its **tenancy mode**, which step 0
+asked for (`tenancyMode` on the Cluster claim).
 
-**With the install.** Name a first tenant and the install creates it, so the
-cluster is usable when the run ends. Answer the *first tenant* question in
-step 0, or set it in `install.env` (step 0 asks only on a cluster's first run;
-`install.env` is read on every run):
+| | Multi-tenancy (`multi`, the default) | Single-tenancy (`single`) |
+|---|---|---|
+| Tenants for users | any number; you create them | exactly one, named `user`; the install creates it (step 5) |
+| Its desktop | `https://console.<tenant>.<kernel-domain>/` | `https://console.<kernel-domain>/` |
+| Its admin console and apps | `admin.<tenant>.<kernel-domain>`, `<app>.<tenant>.<kernel-domain>` | `admin.<kernel-domain>`, `<app>.<kernel-domain>` |
+| In charge of it | a **tenant admin**, `admin@<tenant>.<kernel-domain>` | the **user admin**, `user-admin@<kernel-domain>` |
+| `https://<kernel-domain>/` and `www.` | a page that asks for an e-mail address and sends each person to their tenant | the user tenant's desktop |
+| `console.<kernel-domain>` | leads to that page | the user tenant's desktop |
+| The **platform admin** | `admin@<kernel-domain>` at `https://platform.<kernel-domain>/`; admin console at `admin.platform.<kernel-domain>` | the same |
 
-```bash
-GENTIAN_FIRST_TENANT=acme                              # a DNS label; not platform, default, kernel or master
-GENTIAN_FIRST_TENANT_DISPLAY_NAME="ACME AG"            # optional; the name otherwise
-GENTIAN_FIRST_TENANT_RECOVERY_EMAIL=owner@acme.example # optional; where its administrator's link is mailed
-```
+**On a single-tenancy cluster there is nothing to create.** A second tenant
+is refused, with a message that names the mode — in the console, by the CLI
+and by the cluster itself. The user admin installs apps for the tenant `user`
+exactly as described below for any tenant. A few host names are the
+platform's own there (`id`, `platform`, `www`, `argocd`, `headlamp`, `llm`,
+`mail`, `imap`, `mail-egress`, `corp`): an app that would answer on one of
+them is refused, and says so on its status.
 
-Step 0 writes `clusters/<cluster-id>/tenants/acme` beside the platform
-tenant's and commits both, signed. `E-01-tenants` waits for the tenant to be
-Ready, and the handover hands its administrator account over (step 5). A
-tenant that is not Ready in time does not stop the install: the run goes on
-to the handover and names the command that hands the account over later.
-
-The manifest carries `gentianos.io/handover-override`, with the reason. The
-cluster otherwise holds every tenant back until an administrator has signed in
-(see *Why handover is gated*), and this one is created before anybody could
-have. It is empty at that point, which is what keeps the exception cheap: sign
-in as the cluster administrator before the tenant is given anything to lose.
-
-**What the bare domain does.** While the cluster has exactly one tenant for
-users, `https://<kernel-domain>/` (and `www.`) leads straight to that tenant's
-sign-in, at `https://console.<tenant>.<kernel-domain>/`. With none, or once
-there are several, it shows a page that asks for an e-mail address and sends
-each person to their own tenant. The switch happens by itself within a minute
-or two of a tenant becoming Ready, appearing or going away. The cluster's
-administrators always sign in at `https://console.<kernel-domain>/`; on a
-cluster with one tenant the bare domain does not take them there.
-
-**Afterwards**, tenants are created through the director — in the admin
-console, or with the `gentian` CLI, which is a command-line client of the same
-director. Either way the director checks that you may, commits the tenant to
-the deployments repository as you, and records it.
+**On a multi-tenancy cluster** the platform admin creates tenants through the
+director — in the admin console, or with the `gentian` CLI, which is a
+command-line client of the same director. Either way the director checks that
+you may, commits the tenant to the deployments repository as you, and records
+it.
 
 **In the console:** **Tenants** → *Bring a tenant on*. Give it a name (any name
 but `default`, which is reserved for the cluster-wide backup policy), a display
@@ -488,10 +494,15 @@ answers any of them without a question: `KERNEL_DOMAIN` (no default — must be
 set), `NETWORK_MODE`, `NODE_IP`, `CERT_ISSUER_MODE`, `ACME_ENV`,
 `DNS_PROVIDER`, `MAIL_SERVICE_MODE`, `EXTERNAL_SMTP_HOST`, `PLATFORM`,
 `STORAGE_CLASS`, `TENANCY_MODE`, `SECRET_MODE`, `BACKUP_ESCROW_IDENTITY`,
-`LLM_SUPPORT`, `GPU_ACCELERATION`, `GENTIAN_FIRST_TENANT` (no first tenant
-unless it is set). The handover wait is skipped, so the run
-ends at `Almost There` and `--only E-03` finishes it once someone has signed
-in.
+`LLM_SUPPORT`, `GPU_ACCELERATION`. The handover wait is skipped, so the run
+ends at `Almost There` and `--only E-03` finishes it once the platform admin
+has signed in. On a single-tenancy cluster (`TENANCY_MODE=single`) the user
+tenant is created after that sign-in and not before: `./install.sh --only
+E-04`, or a plain re-run, asks Argo CD to sync it, waits for it, and issues
+the user admin's activation link — shown in its output, or mailed when the
+tenant's realm can send mail. `kubectl gentian tenants activate-admin user
+[--recovery-email <address>]`, signed in as the platform admin, issues one
+from anywhere.
 
 The installer reads the environment first, then its cache, then OpenBao, and
 prompts for whatever is still missing — so a partly-supplied environment still
@@ -617,9 +628,10 @@ can supply a credential to; revoking it with no recovery kit would mean that
 if the login path later breaks, there is nothing to fall back on. Either gap
 alone makes the recovery "re-initialise OpenBao from scratch", so the
 revocation waits for both. Until it happens, creating tenants is held back.
-The one exception is a first tenant the install itself creates: its manifest
-carries `gentianos.io/handover-override` with the reason, and it holds nothing
-yet.
+There is no exception for the install's own: on a single-tenancy cluster the
+user tenant's manifest is committed in step 0 and the cluster refuses it like
+any other until the platform admin has signed in, which is why `E-04` comes
+after the handover and has to ask Argo CD to try the manifest again.
 
 Where a cluster stands:
 
@@ -638,7 +650,8 @@ token exchange as the login.
 
 ### The administrator has no password
 
-Neither the cluster administrator nor any tenant administrator is given one.
+Neither the platform admin nor any tenant admin (or the user admin of a
+single-tenancy cluster) is given one.
 Each account is created without a password and handed to its holder through a
 single-use, expiring link that sets one (and enrols a second factor, unless
 switched off) — the same way every member is invited. The installer and the
@@ -654,7 +667,7 @@ kubectl gentian tenants activate-admin acme         # a tenant administrator
 or **Tenants → Activate administrator** in the console. Each call issues a new
 link; earlier ones still expire on their own.
 
-The cluster administrator's own account is not handed over that way. The CLI
+The platform admin's own account is not handed over that way. The CLI
 and the console ask the registrar, and the registrar changes nothing about a
 member of the platform administrators' group, whoever asks: it answers 403.
 That account's link comes from the install host:

@@ -24,56 +24,67 @@ user and group store for that organisation.
 | `<tenant>` | Authoritative user/group store for that tenant; per-app OIDC; **where tenant members authenticate** |
 
 - **Members and tenant admins** are stored, and sign in, in the **tenant realm** — each has its own `Cookie → forms` browser flow, so there's no brokering on the sign-in path.
-- The canonical, bookmarkable entry point is the tenant's console, **`https://console.<tenant>.<KERNEL_DOMAIN>/`**: the edge sends the browser to the tenant realm's form, which asks for email and password together.
-- The cluster's bare domain (the apex; `www` redirects to it) is the **concierge**, a page the platform tenant publishes with no session in front of it. It asks for the email only and sends the browser to the console of the workspace the address belongs to (`@<tenant>.<KERNEL_DOMAIN>`, `@<KERNEL_DOMAIN>`, or a tenant's custom domain); an address it cannot place is asked for the workspace's name. It asks the server nothing about accounts, and hands the address on as `login_hint`. When the cluster has exactly one user tenant the concierge asks nothing and sends every visitor to that tenant's console (§1.1a).
+- The canonical, bookmarkable entry point is the tenant's desktop, **`https://console.<tenant>.<KERNEL_DOMAIN>/`** (on a single-tenancy cluster, `https://console.<KERNEL_DOMAIN>/`, §1.1a): the edge sends the browser to the tenant realm's form, which asks for email and password together.
+- What the cluster's bare domain does (the apex; `www` leads where it does) depends on the cluster's tenancy mode (§1.1a). On a **multi-tenancy** cluster it is the **concierge**, a page the platform tenant publishes with no session in front of it. It asks for the email only and sends the browser to the desktop of the workspace the address belongs to (`@<tenant>.<KERNEL_DOMAIN>`, `@<KERNEL_DOMAIN>` for the platform's own people, or a tenant's custom domain); an address it cannot place is asked for the workspace's name. It asks the server nothing about accounts, and hands the address on as `login_hint`. On a **single-tenancy** cluster nobody is asked anything: the bare domain leads to the one user tenant's desktop.
 - **Tenant apps** use the same tenant realm for OIDC, so a session created at portal login is reused silently by every app launch — no broker hop, no second login screen.
-- **Platform admins** sign in in the kernel realm, at `console.<KERNEL_DOMAIN>`; there is no tenant realm for them to be routed to. The kernel realm holds them and nobody else: a cluster's users are never the kernel realm's, however few tenants the cluster has.
+- The **platform admin** signs in in the kernel realm, at `https://platform.<KERNEL_DOMAIN>/`; there is no tenant realm for them to be routed to. The kernel realm holds the platform's administrators and nobody else: a cluster's users are never the kernel realm's, on a single-tenancy cluster any more than on a shared one.
 
-### 1.1a The platform tenant, user tenants, and a single-tenant cluster
+### 1.1a The platform tenant, user tenants, and the two tenancy modes
 
 Every cluster has the **platform tenant** (`Tenant/platform`). It adopts the
 kernel realm instead of getting one of its own, so its people are the
-cluster's administrators, and it runs the platform's own components: the
-desktop and the administration console at `console.` and
-`admin.<KERNEL_DOMAIN>`, and the concierge on the bare domain. What it runs is
-installed with the cluster. It takes no catalogue apps and no add-ons: the
-director refuses both for a tenant whose manifest names a realm other than
-its own (`spec.isolation.keycloakRealm`), with a message that says why, and
-the command line and the console show that message as it is.
+platform's administrators, and it runs the platform's own components: the
+desktop at `platform.<KERNEL_DOMAIN>`, the administration console at
+`admin.platform.<KERNEL_DOMAIN>`, and the concierge on the bare domain. What
+it runs is installed with the cluster. It takes no catalogue apps and no
+add-ons: the director refuses both for a tenant whose manifest names a realm
+other than its own (`spec.isolation.keycloakRealm`), with a message that says
+why, and the command line and the console show that message as it is. It is
+never counted as a tenant for users, under either mode.
 
-Everybody else lives in a **user tenant**: a realm, namespaces, a zone and
-hosts of its own, under `<tenant>.<KERNEL_DOMAIN>` or a custom domain. That is
-true of a cluster built for one organisation as much as of a shared one, so a
-cluster's users never share a realm with its administrators.
+Everybody else lives in a **user tenant**: a realm, namespaces and a zone of
+its own. How many there may be, and where their hosts are, is the cluster's
+**tenancy mode** (`spec.tenancyMode` on the Cluster claim, asked at install):
 
-A **single-tenant cluster** is the platform tenant and exactly one user
-tenant. It is not a setting. The operator counts the user tenants and, while
-there is exactly one and it is Ready, writes `_single.json` into the
-concierge's lookup directory, naming that tenant's console
-(`https://console.<tenant>.<KERNEL_DOMAIN>/`, or `console.` on its custom
-domain). The concierge reads the file on every visit and forwards. The
-platform tenant is never counted, and a tenant being deleted is not either.
+| | `multi` (default) | `single` |
+|---|---|---|
+| User tenants | any number | exactly one, named `user`; any other is refused by the webhook, the reconciler and the director, with a message naming the mode |
+| A user tenant's desktop | `console.<tenant>.<KERNEL_DOMAIN>` | `console.<KERNEL_DOMAIN>` |
+| Its admin console, its apps | `admin.<tenant>.<KERNEL_DOMAIN>`, `<app>.<tenant>.<KERNEL_DOMAIN>` | `admin.<KERNEL_DOMAIN>`, `<app>.<KERNEL_DOMAIN>` |
+| Its realm | `<tenant>` | `user` |
+| Its administrator | the **tenant admin**, `admin@<tenant>.<KERNEL_DOMAIN>` | the **user admin**, `user-admin@<KERNEL_DOMAIN>` |
+| The bare domain, `www` | the concierge's address form | the user tenant's desktop |
+| `console.<KERNEL_DOMAIN>` | sent to the bare domain, like `www` | the user tenant's desktop |
+| The platform admin | `admin@<KERNEL_DOMAIN>`, kernel realm, at `platform.<KERNEL_DOMAIN>` | the same |
 
-What follows from that:
+On a single-tenancy cluster the user tenant has no domain of its own: its base
+domain is the cluster's. Two things follow.
 
-- **Administrators type their own address.** On a single-tenant cluster the
-  bare domain leads to the user tenant, not to `console.<KERNEL_DOMAIN>`, and
-  the concierge's form, which would have placed `admin@<KERNEL_DOMAIN>`, is
-  not shown. The administrators' console is reached by its name.
-- **The forward follows the tenants with a delay.** The operator rewrites the
-  file on every tenant event, and the concierge serves it from a mounted
-  ConfigMap, which the kubelet refreshes within a minute or two. The forward
-  starts that long after the one tenant becomes Ready, and stops that long
-  after a second tenant appears on the cluster or the only one is deleted.
-- **During the delay nobody is signed in to the wrong place.** After a second
-  tenant appears, the bare domain still leads to the first tenant's sign-in
-  for a moment; a person of the second tenant sees a sign-in form that does
-  not know them, and their own console's address works throughout. After the
-  only tenant is deleted, the bare domain leads to a console that is going
-  away until the file is gone, and then shows the concierge's form. Before
-  the one tenant is Ready, the bare domain shows the form.
+- **Two realms share one address space.** The platform's people (kernel
+  realm) and the user tenant's (realm `user`) both have `@<KERNEL_DOMAIN>`
+  addresses. The platform admin is `admin@<KERNEL_DOMAIN>` and stays so -- its
+  password derivation and recovery depend on the name -- so the user tenant's
+  first administrator is `user-admin@<KERNEL_DOMAIN>`. Nothing stops an
+  administrator of either realm from creating a person whose address exists in
+  the other; the two accounts are separate, and they share a mailbox
+  ([multi-tenancy.md §3](multi-tenancy.md)).
+- **Some names are the kernel's.** `id`, `platform`, `www`, `argocd`,
+  `headlamp`, `llm`, `mail`, `imap`, `mail-egress` and `corp` directly under
+  the cluster's domain are the kernel's or the platform tenant's. A component
+  or an app of the user tenant whose host label is one of them is refused,
+  with a `HostReserved` condition that lists them, and nothing of it is
+  installed or routed.
 
-See [admin-console.md §3](admin-console.md#3-identity-topology-suze--keycloak-native) for diagrams and entry-point details.
+Under `multi` a tenant named `user` is an ordinary tenant, at
+`<label>.user.<KERNEL_DOMAIN>`.
+
+**Changing the mode.** `single` to `multi` is always fine. `multi` to `single`
+on a cluster that carries a user tenant other than `user` is refused by the
+director before anything is written, naming the tenants in the way. Where the
+claim is changed some other way, the operator holds each such tenant on its
+next pass: it provisions nothing more for it and says why on its status
+(`TenancyConstraint`), and removes nothing -- its namespaces, data and routes
+stay as they were. The operator reads the mode when it starts.
 
 ### 1.2 Group taxonomy
 

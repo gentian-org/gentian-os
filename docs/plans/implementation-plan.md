@@ -117,7 +117,7 @@ steps yet; `work-packages.md` is where their content lives until they are.
 
 **The platform administrator signs in and sees the cluster, in the plans'
 shape.** `install.sh --layout v5` runs end to end on a purged cluster;
-`admin@<kernel>` signs in once at `console.<kernel>` and sees the platform
+`admin@<kernel>` signs in once at `platform.<kernel>` and sees the platform
 tenant's desktop; the kernel consoles are tiles the director answered from
 that account's relations; each opens signed in, with no second login and no
 token to paste. Nothing about it is a stand-in: the desktop is
@@ -1175,82 +1175,83 @@ names the realm and the reason.
 administrator signs in at its own host, sees its desktop, and is refused
 nothing they hold.
 
-### M2a ◐ A single-tenant cluster is the platform tenant and one user tenant
+### M2a ◐ Two tenancy modes; the platform's own addresses; the user tenant
 
-**What was wrong.** "Single-tenant" meant that the platform tenant was the
-one tenant: the bare domain led to `console.<kernel>`, and the cluster's users
-were the kernel realm's. Two things followed. Those users shared a realm with
-the cluster's administrators, whose accounts administer everything. And they
-could run no apps, because an app's composition takes the tenant's name as its
-realm and the platform tenant's realm is `kernel` — an accident of naming that
-happened to be the right outcome.
+**What was wrong.** "Single-tenant" first meant that the platform tenant was
+the one tenant: the cluster's users were the kernel realm's, sharing a realm
+with the accounts that administer everything, and they could run no apps. It
+then meant "a multi cluster that happens to have one user tenant", detected by
+counting, with the bare domain forwarded by the concierge page and the first
+tenant admitted ahead of the handover by an override. Neither is a thing an
+owner can choose and read back.
 
 **The model.**
 
-1. The platform tenant is the platform's own: the administrators, and the
-   components the install puts there. It takes no catalogue apps or add-ons,
-   and that is a refusal with a reason rather than a composition that fails.
-2. Users live in a user tenant, which is unchanged: a realm, namespaces, a
-   zone and hosts of its own.
-3. Single-tenant means the platform tenant plus exactly one user tenant. It is
-   a property of what exists, not a mode. With exactly one, Ready, the bare
-   domain (and `www`) leads to that tenant's console; with none or several it
-   shows the concierge's form.
-4. The install can create the first user tenant, so a single-tenant cluster
-   comes out of one run.
-
-**Why.** Users must not share a realm with the cluster's administrators, and
-the platform tenant runs only what setup installs. Making it a property of
-what exists means a cluster grows from one tenant to several, or back, without
-anybody changing a setting or the bare domain being left pointing somewhere
-stale.
+1. There are exactly two tenancy modes, chosen at install
+   (`spec.tenancyMode`). `multi`: the platform tenant plus any number of user
+   tenants. `single`: the platform tenant plus exactly one user tenant, named
+   `user`. The platform tenant never counts.
+2. The platform's own addresses are the same on every cluster: the platform
+   admin's desktop at `platform.<kernel>`, the admin console at
+   `admin.platform.<kernel>`, Keycloak at `id.<kernel>`.
+3. Under `multi`, `<kernel>`, `www.<kernel>` and `console.<kernel>` lead to
+   the concierge's address form, and a tenant is at `<label>.<t>.<kernel>`.
+4. Under `single`, the user tenant lives on the cluster's own addresses --
+   `console.<kernel>`, `admin.<kernel>`, `<app>.<kernel>` -- in its own realm,
+   `user`, and `<kernel>` and `www.<kernel>` lead to its desktop.
+5. The install creates the user tenant of a single-tenancy cluster, after the
+   handover and through the gate every tenant passes. Under `multi` it creates
+   none.
 
 **What changes.**
 
 | | what | where |
 |---|---|---|
-| a | The director refuses an app install and an add-on selection for a tenant whose manifest names a realm other than its own, `409` with the reason, before anything is fetched or committed | `internal/director/gitops` (`ErrPlatformTenant`), `internal/director/api` |
-| b | `_single.json` is written when there is exactly one user tenant, not being deleted, and it is Ready; it names `console.<effectiveDomain>`. The platform tenant never counts. `TENANCY_MODE=single` no longer writes it | `internal/controller/concierge_lookup.go` |
-| c | The bare domain's route is unchanged: the concierge on the perimeter, `www` redirecting to it. Tests pin that for none, one and two user tenants | `internal/controller/kernel_gateway_routes.go` and its tests |
-| d | The install takes `GENTIAN_FIRST_TENANT` (asked in step 0, or from `install.env`), scaffolds and commits `tenants/<name>` signed, waits for it in `E-01`, and the handover issues its administrator's activation link. Only the first: never a tenant that exists, never beside another user tenant, never one that was removed | `scripts/lib/bootstrap.sh`, `scripts/lib/common.sh`, `scripts/steps/E-01-tenants.sh`, `scripts/steps/E-03-revoke-bootstrap-token.sh` |
-| e | One function issues an administrator's activation link for any realm; the cluster administrator's and the first tenant's are two calls of it | `scripts/lib/portal-login-bootstrap.sh` |
-| f | The closing output and the docs say where each administrator signs in, and that the bare domain does not lead to `console.<kernel>` on a single-tenant cluster | `scripts/lib/bootstrap.sh`, `GETTING-STARTED.md`, `docs/install-reference.md`, `docs/design/` |
+| a | One rule for "may this cluster carry this tenant": under `single`, the platform tenant (by its realm) and the tenant named `user`, and nothing else. The webhook, the reconciler and the director all ask it. The reconciler holds a refused tenant with `TenancyConstraint` and removes nothing | `internal/tenancy`, `internal/webhook`, `internal/controller/tenant_reconcile_stages.go`, `internal/director/gitops` |
+| b | `multi` → `single` with a user tenant other than `user` is refused by the director with nothing written (`ErrSingleRefused`) | `internal/director/gitops/settings.go` |
+| c | `EffectiveDomain` is the cluster's domain for the tenant named `user` under `single` and for nobody else; the platform tenant is `platform.<kernel>` under both | `api/v1alpha1/tenant_types.go`, `tenancy.go` |
+| d | One derivation of where a zone's hosts are (`zoneNamesOf`, `exposureHostIn`): the platform tenant's desktop on its zone's own name, everything else one label below a zone's domain. Routes name the listener whose certificate covers the host (`listenerFor`) | `internal/controller/component_reconciler.go` |
+| e | The platform tenant gets what every tenant gets for hosts two labels down: a wildcard certificate `*.platform.<kernel>`, the listener for it, and its records | `tenant_edge_manifests.go`, `gateway_platform_reconciler.go` |
+| f | The front door per mode: `www` and, under `multi`, `console.<kernel>` redirect to the bare domain; under `single` the bare domain's `/` and `/sign-in` and `www` redirect to the user tenant's desktop once it is Ready. The concierge stays published for `/branding/` | `kernel_gateway_routes.go` (`kernelFrontDoor`) |
+| g | The concierge's lookup holds custom domains only; `_single.json` is gone | `concierge_lookup.go` |
+| h | The kernel's own host labels are refused to the user tenant of a single-tenancy cluster (`HostReserved`) | `reserved_hosts.go` |
+| i | The kernel zone's client: redirect, post-logout and root URLs on `platform.<kernel>` and `<label>.platform.<kernel>`, beside the kernel consoles | `crossplane/compositions/tenant-default.yaml` |
+| j | The user admin is `user-admin@<kernel>`; the platform admin stays `admin@<kernel>` | `api/v1alpha1/tenant_types.go` |
+| k | The tenant's DKIM record is not published for the cluster's own domain, which the kernel's key signs | `mail_dnsendpoint.go` |
+| l | Install: step 0 asks the mode and, under `single`, scaffolds `tenants/user` with no override; `E-04-user-tenant` runs after `E-03`, asks Argo CD to sync, waits, issues the user admin's link; the closing output names the platform admin and the user admin (or the tenant admin). `GENTIAN_FIRST_TENANT*`, the step-0 question and the wait before the handover are removed | `scripts/lib/bootstrap.sh`, `scripts/lib/common.sh`, `scripts/steps/E-04-user-tenant.sh`, `scripts/tests/test-user-tenant-scaffold.sh` |
 
 **Limits, stated.**
 
-- The forward follows the tenants within a minute or two: the operator
-  rewrites the file at once, and the kubelet refreshes the concierge's mounted
-  ConfigMap on its own period. During that time the bare domain gives the
-  previous answer. Nobody is signed in to the wrong tenant by it — a sign-in
-  form of another realm does not know them — and every console's own address
-  works throughout.
-- The forward is the concierge page's, so it happens in the browser after the
-  page has loaded, not as a redirect at the edge.
-- The first tenant is created before the administrator's first sign-in, which
-  is what otherwise admits tenants (the handover gate). Its manifest carries
-  `gentianos.io/handover-override` with the reason. The gate exists because
-  recovering a broken login path means re-initialising OpenBao, which is cheap
-  on a cluster holding nothing; the tenant holds nothing when it is created,
-  and stops being nothing once its administrator starts using it.
-- A first tenant that is not Ready in time does not stop the install. What it
-  may be waiting for can be something only a signed-in administrator
-  supplies, so blocking the handover on it could never clear.
+- Before the user tenant of a single-tenancy cluster is Ready, the bare
+  domain shows the concierge's form.
+- The operator reads the tenancy mode when it starts.
+- `admin.platform.<kernel>` needs a DNS-01 issuer, as every tenant's wildcard
+  does.
+- On a single-tenancy cluster the kernel realm's people and the user tenant's
+  share one mail domain. A mailbox is its address: the same address in both
+  realms is two accounts and one mailbox, and nothing refuses it. Under
+  `MAIL_RECIPIENT_POLICY=strict` the domain's accepted recipients are read
+  from the kernel realm only.
+- Argo CD stops retrying `tenant-user` about a quarter of an hour into the
+  install. `E-04` asks for a new sync; an unattended install needs
+  `./install.sh --only E-04` (or a sync of that Application) after the
+  platform admin's first sign-in.
 
-**Open.**
+**Open, in gentian-ui.**
 
-- The published concierge page forwards only to `console.<kernel>` and ignores
-  any other target in `_single.json`. Until gentian-ui's page accepts a console
-  of a tenant, the bare domain of a single-tenant cluster shows the form.
-- `tenancyMode: single` still exists and still means the platform tenant
-  alone, on flat hosts. Under this model such a cluster has nowhere for users.
-  Whether the mode is removed is an owner decision; nothing here depends on
-  it, and the install refuses a first tenant together with it.
+- The concierge page sends `@<kernel>` addresses to `console.<kernel>`. Under
+  `multi` that now redirects back to the bare domain; it has to become
+  `platform.<kernel>`. The workspace name `platform` likewise.
+- `forwardWhenSingle` and `singleConsole` read a file that is no longer
+  written, and can go.
 
-**Done when** a fresh install with a first tenant named ends with both
-administrators holding an activation link, the tenant's administrator signs in
-at `console.<tenant>.<kernel>` and installs an app, the same install into the
-platform tenant is refused with the reason, and the bare domain leads to the
-tenant's console, then to the form once a second tenant exists.
+**Done when** a fresh `single` install ends with the platform admin signed in
+at `platform.<kernel>` and the user admin holding an activation link, the user
+admin signs in at `console.<kernel>` and installs an app at `<app>.<kernel>`,
+a second tenant is refused with the mode named, and `<kernel>` leads to the
+desktop; and a fresh `multi` install ends at the handover with no user tenant,
+`<kernel>` and `console.<kernel>` showing the form, and a created tenant at
+`console.<t>.<kernel>`.
 
 ### M3 — the first user invited by a tenant administrator
 

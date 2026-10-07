@@ -33,72 +33,99 @@ ext4 per user).
 
 ## 3. Domains and TLS — Two Planes, Tenant Zones, and Tenancy Mode
 
-Install-time **`TENANCY_MODE`** (`multi` default, set in
-`gentian-deployments/clusters/<cluster>/kernel/cluster-settings.env` and mirrored
-to operator Helm `tenancyMode`) selects the app URL shape of a tenant without a
-custom domain.
-Both modes use the **same central IdP** at `id.<KERNEL_DOMAIN>/realms/<tenant>`.
+The cluster's **tenancy mode** (`spec.tenancyMode` on the Cluster claim,
+`multi` by default; asked at install step 0, `TENANCY_MODE` for an unattended
+first run, mirrored to the operator's Helm `tenancyMode`) says how many user
+tenants the cluster is for and where their hosts are. There are exactly two.
+Both use the **same central IdP** at `id.<KERNEL_DOMAIN>/realms/<realm>`.
 
-| Mode | Cluster profile | Default `effectiveDomain` | Example Jitsi URL |
+| Mode | Tenants | A user tenant's `effectiveDomain` | Example Jitsi URL |
 |---|---|---|---|
-| **`multi`** | Every cluster with user tenants, one or many | `<tenant>.<KERNEL_DOMAIN>` | `https://meet.demo.platform.example.com` |
-| **`single`** | The platform tenant alone (see below) | `<KERNEL_DOMAIN>` (flat) | `https://meet.platform.example.com` |
+| **`multi`** | The platform tenant plus any number of user tenants | `<tenant>.<KERNEL_DOMAIN>` | `https://meet.demo.platform.example.com` |
+| **`single`** | The platform tenant plus exactly one user tenant, named `user` | `<KERNEL_DOMAIN>` itself | `https://meet.platform.example.com` |
 
-**`tenancyMode: single` is not what "single-tenant" means.** It is an older
-arrangement that is still accepted: the platform tenant (`Tenant/platform`, the
-kernel realm's) is the only tenant, and the webhook, the reconciler and the
-director refuse any other. Its domain is the kernel domain, so it gets no
-listener, certificate, DNS records or apex route of its own. Because the
-platform tenant takes no catalogue apps and no user tenant is admitted, a
-cluster in that mode has nowhere for users to live; the install refuses a
-first tenant together with it. A cluster for one organisation is a `multi`
-cluster with one user tenant, described next.
+The platform tenant is in every cluster, is never counted, and is at
+`platform.<KERNEL_DOMAIN>` under either mode.
 
-### The platform tenant, user tenants, and a single-tenant cluster
+### The platform tenant, user tenants, and the two modes
 
-Three statements, and the rest follows from them ([iam.md §1.1a](iam.md) has
-the sign-in side):
+Four statements, and the rest follows from them ([iam.md §1.1a](iam.md) has
+the sign-in side and the table of addresses):
 
-1. **The platform tenant is the platform's own.** It holds the cluster's
+1. **The platform tenant is the platform's own.** It holds the platform's
    administrators (it adopts the kernel realm) and the platform's own
-   components, which are installed with the cluster. Nobody installs catalogue
-   apps or add-ons into it: the director answers `409` with the reason to
-   `POST /v1/tenants/{t}/apps/{p}` and `PUT /v1/tenants/{t}/apps/{p}/addons`
-   for a tenant whose manifest names a realm other than its own. An app's
-   composition takes the tenant's name as its realm, so such an install could
-   never have worked; it is now refused where it is asked for, before anything
-   is fetched or committed.
+   components, which are installed with the cluster: the desktop at
+   `platform.<KERNEL_DOMAIN>`, the administration console at
+   `admin.platform.<KERNEL_DOMAIN>`, the concierge on the bare domain. Nobody
+   installs catalogue apps or add-ons into it: the director answers `409` with
+   the reason to `POST /v1/tenants/{t}/apps/{p}` and
+   `PUT /v1/tenants/{t}/apps/{p}/addons` for a tenant whose manifest names a
+   realm other than its own. An app's composition takes the tenant's name as
+   its realm, so such an install could never have worked; it is refused where
+   it is asked for, before anything is fetched or committed.
 2. **Users live in a user tenant**, which is what a tenant has always been:
-   its own realm, namespaces, zone and hosts.
-3. **Single-tenant means the platform tenant plus exactly one user tenant.**
-   It is a property of what exists. While there is exactly one user tenant and
-   it is Ready, the cluster's bare domain leads to that tenant's console; with
-   none or several it shows the concierge's form
-   ([routing.md §5](routing.md)). Creating a second tenant ends it and
-   retiring one of two starts it, each within a minute or two and with nothing
-   to configure.
+   its own realm, namespaces and zone.
+3. **`multi`: any number of user tenants**, each on its own subdomain or a
+   custom domain. The install creates none; the platform admin does, in the
+   admin console or with `kubectl gentian tenants create`. The bare domain,
+   `www` and `console.<KERNEL_DOMAIN>` lead to the concierge's address form.
+4. **`single`: exactly one user tenant, named `user`, on the cluster's own
+   addresses.** Its desktop is `console.<KERNEL_DOMAIN>`, its admin console
+   `admin.<KERNEL_DOMAIN>`, its apps `<app>.<KERNEL_DOMAIN>`, and the bare
+   domain and `www` lead to its desktop. Its realm is its own, `user`. A
+   second user tenant is refused in three places that share one rule
+   (`internal/tenancy`): the admission webhook, the tenant reconciler and the
+   director, each with a message naming the mode. The install creates the
+   tenant, after the handover
+   ([GETTING-STARTED.md](../../GETTING-STARTED.md#7-tenants)).
 
 The reason for the second statement is the realm. A realm's administrators can
 see and change every account in it, and the kernel realm's accounts are the
 ones that administer the cluster. Users of the cluster's apps do not belong
 there, on a cluster of one organisation any more than on a shared one.
 
-The install can create the first user tenant, so that a single-tenant cluster
-comes out of one run: see
-[GETTING-STARTED.md](../../GETTING-STARTED.md#7-create-your-first-tenant).
+**What the user tenant of a single-tenancy cluster shares with the kernel.**
+Its domain is the cluster's, so it has no listener, certificate, DNS wildcard
+or apex route of its own: the cluster's certificate (`<KERNEL_DOMAIN>` and
+`*.<KERNEL_DOMAIN>`) and catch-all listener serve it. The names the kernel
+answers on at that level -- `id`, `platform`, `www`, `argocd`, `headlamp`,
+`llm`, `mail`, `imap`, `mail-egress`, `corp` -- are refused to its components
+and apps (`HostReserved`).
+
+Its mail domain is the cluster's too, which the kernel realm's people already
+have addresses in. The mail stack keys on the address, not on the realm:
+
+- One mail domain, registered twice (once for the kernel, once for the
+  tenant) and deduplicated; mail for it is signed with the kernel's DKIM key,
+  and that key's record is the one published.
+- A mailbox is its address. `admin@` (the platform admin) and `user-admin@`
+  (the user admin) are different mailboxes. A person created with the same
+  address in both realms is two accounts and **one mailbox**; nothing refuses
+  that.
+- Under `MAIL_RECIPIENT_POLICY=strict` the accepted recipients of the domain
+  are read from the kernel realm only, so the user tenant's people would be
+  refused. The default (`catchall`) accepts both.
+
+**Changing the mode on a running cluster.** `single` to `multi` is always
+fine: the user tenant moves to `<label>.user.<KERNEL_DOMAIN>`. `multi` to
+`single` with a user tenant other than `user` is refused by the director with
+nothing written; a tenant that is there anyway is held by the operator
+(`TenancyConstraint` on its status, nothing more provisioned, nothing
+removed). The operator reads the mode at start.
 
 | Plane | Domain | Example hosts | Origin TLS (cert-manager) | DNS responsibility |
 |---|---|---|---|---|
-| **Kernel** | `KERNEL_DOMAIN` | `portal.platform.example.com`, `id.platform.example.com` | One DNS-01 wildcard `*.<kernel_domain>` at install | Cluster operator (kernel namespace only) |
+| **Kernel** | `KERNEL_DOMAIN` | `id.platform.example.com`, `platform.platform.example.com` (the platform admin's desktop) | One DNS-01 wildcard `*.<kernel_domain>` at install | Cluster operator (kernel namespace only) |
+| **Platform tenant** | `platform.<KERNEL_DOMAIN>` | `admin.platform.platform.example.com` (its admin console) | One DNS-01 wildcard `*.platform.<kernel_domain>`, issued like a tenant's | Platform zone |
 | **Tenant apps** | `effectiveDomain` | `meet.demo.platform.example.com` (multi) or `meet.platform.example.com` (single) | One DNS-01 wildcard `*.<effectiveDomain>` **per tenant** (none on the kernel domain) | Platform zone; the customer's for a custom domain |
 
 **Effective domain** (same for edge routing, mail, OIDC redirect URIs to apps):
 
 - If a `TenantDomain` binds a custom domain → use it (e.g. `acme.com`; see below).
-- Else if `TENANCY_MODE=single` → `<KERNEL_DOMAIN>` (flat URLs).
-- Else (`multi`) → `<tenant-name>.<KERNEL_DOMAIN>` (e.g. `demo.platform.example.com`).
+- Else, for the tenant named `user` under `tenancyMode: single` → `<KERNEL_DOMAIN>` (flat URLs).
+- Else → `<tenant-name>.<KERNEL_DOMAIN>` (e.g. `demo.platform.example.com`; `platform.<KERNEL_DOMAIN>` for the platform tenant, under either mode).
 
-App hostnames are always `{subDomain}.{effectiveDomain}`.
+App hostnames are always `{subDomain}.{effectiveDomain}`. The one host that is not is the platform tenant's desktop, which answers on its `effectiveDomain` itself.
 
 **Portal contact deep links** (video call / chat from the address book): the
 Gentian shell resolves per-tenant app URLs from `effectiveDomain` and entitlement

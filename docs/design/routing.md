@@ -70,11 +70,27 @@ it — `404 route_not_found`, intermittently, depending on which connection
 happened to be open.
 
 The apex carries a redirect to the tenant's console (§5), and it is kept
-reachable by keeping it out of the tenant certificate. A tenant on the kernel
-domain itself -- the platform tenant under `tenancyMode: single` -- gets no listener
-or certificate of its own: `*.<kernelDomain>` beside the catch-all would be the
-more specific match for every kernel host and route them nowhere, so its routes
-attach to `https-wildcard` instead.
+reachable by keeping it out of the tenant certificate.
+
+Two tenants are not like the others.
+
+The **platform tenant** has a listener like any tenant's, for
+`*.platform.<kernelDomain>`, with a wildcard certificate of its own issued the
+way every tenant's is. Its administration console is
+`admin.platform.<kernelDomain>`, two labels under the cluster's domain, which
+the cluster's own certificate (`<kernelDomain>` and `*.<kernelDomain>`) does
+not name. Its desktop is `platform.<kernelDomain>` itself -- the zone's own
+name, not `console.` under it -- which that certificate does name, so the
+desktop's routes attach to `https-wildcard` and there is no apex redirect.
+
+The **user tenant of a single-tenancy cluster** is on the kernel domain itself
+and gets no listener or certificate of its own: `*.<kernelDomain>` beside the
+catch-all would be the more specific match for every kernel host and route
+them nowhere, so its routes attach to `https-wildcard` instead.
+
+The rule a route's listener follows is one line: a host that is the cluster's
+domain or exactly one label under it is on `https-wildcard`; anything deeper is
+on its tenant's listener (`edgeZone.listenerFor`).
 
 The listener hostname also gates route attachment: a route attaches only where
 its hostnames intersect the listener's. `parentRefs.sectionName` narrows that
@@ -131,8 +147,14 @@ The domain model is:
 - `effectiveDomain = ` the custom domain a `TenantDomain` binds (copied to the
   Tenant's `status.domain`), when there is one
 - otherwise:
-  - `TENANCY_MODE=multi`: `<tenant>.<kernelDomain>`
-  - `TENANCY_MODE=single`: `<kernelDomain>`
+  - `<tenant>.<kernelDomain>` -- `platform.<kernelDomain>` for the platform
+    tenant, under either tenancy mode
+  - `<kernelDomain>` for the tenant named `user` under `tenancyMode: single`,
+    and for nobody else
+
+A host is `<subDomain>.<effectiveDomain>`. The one exception is the platform
+tenant's desktop, whose `console` entry answers on `platform.<kernelDomain>`
+itself (`exposureHostIn`).
 
 TLS issuance is handled by cert-manager:
 
@@ -315,37 +337,41 @@ Keycloak OIDC broker policy:
 
 ## 5. Redirects and URL Control
 
-The **kernel** apex -- the cluster's bare domain -- is not routed by the
-kernel at all. It is the first thing anybody typing the cluster's address
-meets, before any session, so it is a perimeter surface: the concierge, a
-component of the platform tenant, published from that tenant's DMZ
-(`tenant-platform-dmz`) on a listener of the perimeter Gateway.
-`www.<kernelDomain>` redirects to the bare domain with an HTTPRoute filter.
+The **kernel** apex -- the cluster's bare domain -- is the first thing anybody
+typing the cluster's address meets, before any session. The concierge, a
+component of the platform tenant, is published on it from that tenant's DMZ
+(`tenant-platform-dmz`) on a listener of the perimeter Gateway, under either
+tenancy mode. What a visitor gets there is the mode's
+([iam.md §1.1a](iam.md)), and the kernel's routes are what differ
+(`kernelFrontDoor` in `kernel_gateway_routes.go`):
 
-What a visitor gets there depends on how many user tenants the cluster has
-(the platform tenant is not one; see [iam.md §1.1a](iam.md)):
+| Host | `multi` | `single` |
+|---|---|---|
+| `<kernelDomain>/` | the concierge's form: asks for an e-mail address and sends the browser to its workspace's desktop | `302` to the user tenant's desktop, `https://console.<kernelDomain>/` (`console.<custom domain>` when a `TenantDomain` binds one) |
+| `<kernelDomain>/branding/` | the cluster's brand, served by the concierge | the same |
+| `www.<kernelDomain>` | `302` to the bare domain | `302` to the user tenant's desktop |
+| `console.<kernelDomain>` | `302` to the bare domain (`kernel-console-redirect`) | the user tenant's desktop itself, routed by its component |
+| `platform.<kernelDomain>` | the platform admin's desktop | the same |
 
-- none, or several: the concierge's form, which asks for an e-mail address
-  and sends the browser to its workspace's console;
-- exactly one, and Ready: the concierge sends the browser straight to that
-  tenant's console, `https://console.<effectiveDomain>/`.
+On a single-tenancy cluster the redirect of the bare domain is two routes for
+the two listeners the name can arrive on. `kernel-apex-perimeter-redirect`
+attaches to the perimeter's listener for the bare domain and matches only `/`
+and `/sign-in`: both are more specific than the concierge's whole-host route
+on the same listener, so a person is sent on, and `/branding/` -- which every
+desktop loads the cluster's brand from -- is still the concierge's.
+`kernel-apex-redirect` is the same redirect on `https-wildcard`, for a cluster
+where nothing is published on the bare domain. Both exist only once the user
+tenant is Ready; until then the bare domain shows the concierge's form. A
+browser sent to a name that is not published yet remembers that it is missing.
 
-The edge is the same in every case. The difference is one file,
-`_single.json`, in the `concierge-lookup` ConfigMap the operator keeps in the
-platform tenant's namespace and the concierge serves under
-`/sign-in/lookup/`. `ConciergeLookupReconciler` re-derives the ConfigMap on
-every tenant event; the page fetches the file uncached on each visit. The
-kubelet refreshes a mounted ConfigMap within a minute or two, which is the
-delay between a tenant appearing, becoming Ready or going away and the bare
-domain following it.
-
-The administrators' console, `console.<kernelDomain>`, is reached by its own
-name. On a cluster with one user tenant the bare domain does not lead to it.
-
-The cluster's brand (`/branding/`) is served by the concierge beside the page.
+Nothing is forwarded by the page. The `concierge-lookup` ConfigMap the
+operator keeps in the platform tenant's namespace holds one file per custom
+domain and nothing else; there is no `_single.json`.
 
 A **tenant** apex redirects to `https://console.<effectiveDomain>/`, path and
-query kept; a tenant on the kernel domain has the kernel's apex instead.
+query kept. Two tenants have none: the platform tenant, whose apex is its
+desktop, and the user tenant of a single-tenancy cluster, whose apex is the
+cluster's.
 
 Application-specific redirects and rewrites are expressed with Gateway API route
 filters or Envoy extension policies where advanced behavior is needed.

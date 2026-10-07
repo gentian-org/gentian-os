@@ -65,7 +65,14 @@ kubectl get tenant demo -w
 The director commits `clusters/<cluster>/tenants/demo/` as you; Argo CD syncs
 it and the operator provisions the realm, namespaces, database and desktop.
 
-Its administrator, `admin@<tenant domain>`, has **no password**. Hand the
+On a single-tenancy cluster (`tenancyMode: single`) there is exactly one tenant
+for users, named `user`, which the install creates; `tenants create` with any
+other name is refused with a message that names the mode, and `user` itself is
+refused only because it exists.
+
+A tenant's administrator — the **tenant admin**, `admin@<tenant domain>`; on a
+single-tenancy cluster the **user admin**, `user-admin@<kernel-domain>` — has
+**no password**. Hand the
 account over with a single-use, expiring activation link — mailed to a recovery
 address, or printed once without one:
 
@@ -367,8 +374,10 @@ helm upgrade gentian-os ... --set usage.metricsServer.enabled=true
 
 ## 7. Administrator Accounts
 
-No administrator is given a password. The cluster administrator
-(`admin@<kernel-domain>`) and every tenant administrator are created without
+No administrator is given a password. The **platform admin**
+(`admin@<kernel-domain>`, who signs in at `https://platform.<kernel-domain>/`)
+and every **tenant admin** — on a single-tenancy cluster, the one **user
+admin**, `user-admin@<kernel-domain>` — are created without
 one and handed over through a single-use, expiring link that sets it — and
 enrols a second factor unless that was switched off — mailed to a recovery
 address or shown once to whoever issued it. There is nothing to retrieve.
@@ -377,11 +386,11 @@ A new link, for a lost password or a link that expired:
 
 ```bash
 kubectl gentian tenants activate-admin <tenant> [--recovery-email <address>]
-./install.sh --activate-admin                        # the cluster administrator
+./install.sh --activate-admin                        # the platform admin
 ```
 
 The first asks the registrar, which changes nothing about a member of a
-group that holds a platform role and answers 403 for the cluster administrator's
+group that holds a platform role and answers 403 for the platform admin's
 account. That account's link comes from the install host, with the installer's
 own credential — which is also the way in when nobody can sign in.
 

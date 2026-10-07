@@ -64,8 +64,9 @@ is the whole of a reconfigure.
 | `missing` | It is not; `apply()` has work to do |
 | `undefined` | The step has nothing persistent to check, or does not apply to this cluster — a feature that is switched off, or no install-time artefact |
 
-`undefined` is never a failure. `E-01-tenants` always reads that way — tenants
-are created after installation; `B-09` and `D-04` do on a cluster without
+`undefined` is never a failure. `E-01-tenants` always reads that way — it acts
+only on an uninstall — and `E-04-user-tenant` does on a multi-tenancy cluster,
+where the install creates no tenant; `B-09` and `D-04` do on a cluster without
 OIDC, `C-03` on one with no DNS provider, `B-10` until the signing keys are in
 the deployments repository.
 
@@ -143,9 +144,8 @@ The template carries one line per setting; the reasoning is here.
 | `GENTIAN_*_REPO` / `_BRANCH` | Point them at a mirror for a forked or air-gapped install; the child ApplicationSets follow. |
 | `GENTIAN_OS_BRANCH` | The ref every in-cluster Application tracks — [deployment.md §4](deployment.md). |
 | `GENTIAN_CATALOGUE_URL` | The address of the default catalogue, `gentian`, written to `spec.catalogue.sources` when step 0 scaffolds a new Cluster claim. Defaults to `https://gentian-org.github.io/gentian-apps`. A public https address; the director fetches from nothing else ([custom-catalogues.md](custom-catalogues.md)). On an existing cluster catalogues are changed with `kubectl gentian catalogues`. |
-| `GENTIAN_FIRST_TENANT` | The name of a tenant for this cluster's users, created by the install: step 0 scaffolds and commits its manifest beside the platform tenant's, `E-01` waits for it, and the handover issues its administrator's activation link. Unset, the install creates no tenant. A DNS label, and not `platform`, `default`, `master` or the kernel realm's name; refused together with `tenancyMode: single`. It is the first tenant only, and each of these writes nothing and says why: a manifest that exists is never rewritten; once the cluster's definition holds another tenant the install points at the director, which is where every later tenant is created; and a tenant that was in the definition before and was removed is not brought back, because a retired tenant keeps its data. |
-| `GENTIAN_FIRST_TENANT_DISPLAY_NAME` | What that tenant is called. Defaults to its name. |
-| `GENTIAN_FIRST_TENANT_RECOVERY_EMAIL` | Where that tenant's administrator's activation link is mailed, when its realm can send mail. Unset, the handover asks; left empty there, or when the realm cannot send yet, the link is shown in the terminal once. Kept here and not in git, like `CLUSTER_ADMIN_RECOVERY_EMAIL`. |
+| `TENANCY_MODE` | `multi` (default) or `single`, for an unattended first run; step 0 asks otherwise. It is written to the Cluster claim (`spec.tenancyMode`), which owns it from then on. See *Tenancy modes* below. |
+| `GENTIAN_USER_TENANT_WAIT_SECS` | How long `E-04` waits for the user tenant of a single-tenancy cluster to be Ready. 900 by default. |
 | `INSTALL_CLUSTER_INFRA` | `0` when cert-manager, CloudNativePG and Reloader are managed elsewhere on this cluster. |
 | `GENTIAN_NO_LICENCE_REPORT` | `1` turns the licence report off, as `--no-licence-report` does; `0` turns it back on. Unset keeps what the cluster has. Off, nothing is sent and the App Store is not offered — [design/operations.md §6.2](design/operations.md). |
 | `GENTIAN_LICENCE_REPORT_URL` | Where the licence report goes, instead of the default address in `kernel/bootstrap/chart/values.yaml`. `https` only. |
@@ -202,29 +202,51 @@ it; an `install.env` that still sets them is read without effect.
   more either, and the director refuses to declare a new one. Publish those
   profiles as a catalogue instead and add it for the tenant.
 
-### A first tenant, and the bare domain
+### Tenancy modes, addresses, and who is in charge
 
-A cluster's users live in a tenant of their own, never in the platform tenant
-([design/multi-tenancy.md §3](design/multi-tenancy.md)). With
-`GENTIAN_FIRST_TENANT` set, one install run ends with that tenant in place:
+A cluster has one of two tenancy modes
+([design/multi-tenancy.md §3](design/multi-tenancy.md)). The platform tenant
+is in both and is never counted.
 
-| | Signs in at | As | Account handed over by |
-|---|---|---|---|
-| Cluster administrator | `https://console.<kernel-domain>/` | `admin@<kernel-domain>`, kernel realm | the handover's first activation link; `./install.sh --activate-admin` for a new one |
-| The tenant's administrator | `https://console.<tenant>.<kernel-domain>/` | `admin@<tenant>.<kernel-domain>`, the tenant's realm | the handover's second activation link; `kubectl gentian tenants activate-admin <tenant>` for a new one |
+| | `multi` | `single` |
+|---|---|---|
+| Tenants for users | any number, created after the install by the platform admin | exactly one, named `user`, created by the install after the handover; any other is refused |
+| **Platform admin** — in charge of the platform | `https://platform.<kernel-domain>/` as `admin@<kernel-domain>`, kernel realm; admin console `admin.platform.<kernel-domain>` | the same |
+| In charge of a tenant and its users | a **tenant admin** per tenant: `https://console.<tenant>.<kernel-domain>/` as `admin@<tenant>.<kernel-domain>`, the tenant's realm | the **user admin**: `https://console.<kernel-domain>/` as `user-admin@<kernel-domain>`, realm `user` |
+| A tenant's admin console and apps | `admin.<tenant>.<kernel-domain>`, `<app>.<tenant>.<kernel-domain>` | `admin.<kernel-domain>`, `<app>.<kernel-domain>` |
+| `https://<kernel-domain>/`, `www.` | the page that asks for an e-mail address | the user tenant's desktop |
+| `console.<kernel-domain>` | redirects to the bare domain | the user tenant's desktop |
+| Identity provider | `id.<kernel-domain>` | the same |
+| Account handed over by | platform admin: the handover's activation link, `./install.sh --activate-admin` for a new one. Tenant admin: the admin console, or `kubectl gentian tenants activate-admin <tenant>` | platform admin: the same. User admin: `E-04`'s activation link, `kubectl gentian tenants activate-admin user` for a new one |
 
-While the cluster has exactly one tenant for users, its bare domain
-(`https://<kernel-domain>/`, and `www.`) leads to that tenant's sign-in. With
-none or several it shows the page that asks for an address. Nothing is
-configured for this: the operator counts the tenants, and the bare domain
-follows within a minute or two. The cluster administrators' console is always
-reached by its own name.
+**How the user tenant of a single-tenancy cluster comes to exist.** Step 0
+scaffolds `clusters/<cluster-id>/tenants/user` beside the platform tenant's
+and commits both, signed. The manifest is the one the director writes for any
+new tenant; nothing in it admits the tenant early. The cluster refuses it
+until the platform admin has signed in once (the handover gate), so through
+the whole install the Argo CD Application `tenant-user` fails and, after ten
+retries over about a quarter of an hour, stops retrying. `E-03` ends the
+handover as on any cluster. `E-04-user-tenant` then asks Argo CD for a new
+sync, waits for `Tenant/user` to be Ready, and issues the user admin's
+activation link. It uses the kubeconfig and the `keycloak-admin` Secret, as
+`--activate-admin` does, and nothing the handover revoked.
 
-The tenant's manifest is written with `gentianos.io/handover-override`,
-because it is created before the administrator's first sign-in, which is what
-otherwise admits tenants. If the tenant is not Ready when `E-01` stops waiting
-(15 minutes, `GENTIAN_FIRST_TENANT_WAIT_SECS`), the install continues and
-`--status` reports `E-01` as outstanding until it is.
+Step 0 writes no user tenant when the definition already holds one, when it
+holds another tenant for users (a single-tenancy cluster carries exactly one,
+and which stays is yours to decide), or when `tenants/user` was there before
+and was removed (a retired tenant keeps its data, and the install does not
+bring it back; `kubectl gentian tenants create user` does). If the tenant is
+not Ready within the wait, the install warns, says how to check, and does not
+fail; `--status` reports `E-04` as outstanding until it is.
+
+On a single-tenancy cluster these names directly under the cluster's domain
+are the platform's own, and a component or app of the user tenant that would
+answer on one is refused (`HostReserved` on its status): `id`, `platform`,
+`www`, `argocd`, `headlamp`, `llm`, `mail`, `imap`, `mail-egress`, `corp`.
+
+The platform tenant's admin console is two labels under the cluster's domain,
+so it has a wildcard certificate of its own, `*.platform.<kernel-domain>`,
+issued by the DNS-01 issuer every tenant's wildcard is issued by.
 
 ### Image tags
 
