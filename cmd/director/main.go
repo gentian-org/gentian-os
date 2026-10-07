@@ -233,41 +233,39 @@ func run(log *slog.Logger) error {
 	// the registrar's now (cmd/registrar), and what is left here verifies a
 	// caller's token against the issuer's public keys and nothing more.
 
-	// Catalogue sources: where a profile is fetched from when a tenant
-	// installs it (AD-3), read from the Cluster claim in git (AD-14).
+	// Catalogues: where a profile is fetched from when a tenant installs it
+	// (AD-3), declared in git (AD-14) -- on the Cluster claim for the ones
+	// every tenant sees, on a tenant's manifest for the ones only it does.
 	//
-	// On the claim and not in this process's environment, because naming a
-	// catalogue source is a decision about what software may enter the
-	// cluster. On the claim it is a commit with an author and a date, next to
-	// everything else the cluster is; in an environment variable it is a
-	// value that changed when somebody rolled a Deployment, and the only
-	// record is whatever the pod spec says now.
+	// In git and not in this process's environment, because naming a
+	// catalogue is a decision about what software may enter the cluster. In
+	// git it is a commit with an author and a date; in an environment
+	// variable it is a value that changed when somebody rolled a Deployment,
+	// and the only record is whatever the pod spec says now.
 	//
-	// The list is read once, at start. A source added to the claim reaches
-	// the director when its Deployment next starts -- which is what an Argo
-	// sync of a changed claim produces anyway. A source is offered to every
-	// tenant. Without any source, this cluster's profiles arrive some other
-	// way and nothing is materialised on reference.
-	var entries *catalogue.Fetcher
-	var declared []gitops.CatalogueSource
+	// They are read when they are needed, per request and per tenant, so a
+	// catalogue added through the API is there for the next install and one
+	// removed is gone. What is read here, once, is only the App Store's
+	// address, and the cluster's own catalogues for the log.
+	//
+	// The fetcher connects to public https addresses and to nothing else
+	// (internal/director/catalogue/address.go): an address somebody typed
+	// must not be a way to reach into the cluster this process runs in.
+	entries := catalogue.NewFetcher()
 	var storeURL string
 	readSources, cancelRead := context.WithTimeout(context.Background(), time.Minute)
 	catalogues, err := repo.Catalogue(readSources)
 	cancelRead()
-	declared, storeURL = catalogues.Sources, catalogues.StoreURL
+	storeURL = catalogues.StoreURL
 	if err != nil {
 		// Not fatal. A director that cannot read the claim still serves
-		// every call that is not an install from a catalogue, and refusing
-		// to start would take the console down with it.
-		log.Warn("catalogue sources could not be read from the Cluster claim; nothing will be materialised",
+		// every call, and reads the claim again when a catalogue is asked
+		// for; refusing to start would take the console down with it.
+		log.Warn("the Cluster claim could not be read at start; its catalogues are read again when they are needed",
 			"error", err)
-	} else if len(declared) > 0 {
-		sources := make(map[string]string, len(declared))
-		for _, src := range declared {
-			sources[src.Name] = src.URL
-			log.Info("catalogue source", "catalogue", src.Name, "url", src.URL)
-		}
-		entries = catalogue.NewFetcher(sources)
+	}
+	for _, src := range catalogues.Sources {
+		log.Info("catalogue of the cluster", "catalogue", src.Name, "url", src.URL)
 	}
 	if storeURL == "" {
 		// Worth one line: without it the cluster's own catalogue view can
@@ -281,11 +279,10 @@ func run(log *slog.Logger) error {
 	// separate interfaces on purpose: Check is the hot path, ViewOf is a
 	// person reviewing who holds what. Neither can write through the API.
 	handler, err := api.New(api.Config{Authn: verifier, Authz: checker, Viewer: checker, Repo: repo, Log: log,
-		Catalogue:        entries,
-		CatalogueSources: declared,
-		StoreURL:         storeURL,
-		Cluster:          cluster,
-		Lifecycle:        lc})
+		Catalogue: entries,
+		StoreURL:  storeURL,
+		Cluster:   cluster,
+		Lifecycle: lc})
 	if err != nil {
 		return err
 	}

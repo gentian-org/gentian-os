@@ -46,7 +46,7 @@ func digestOf(s string) string {
 
 // source serves what it is told to, which is how a compromised one is
 // simulated: the same URL, different bytes.
-func source(t *testing.T, body string) *catalogue.Fetcher {
+func source(t *testing.T, body string) served {
 	t.Helper()
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !strings.HasSuffix(r.URL.Path, "/profiles/nextcloud-base-ce.yaml") {
@@ -56,9 +56,24 @@ func source(t *testing.T, body string) *catalogue.Fetcher {
 		_, _ = w.Write([]byte(body))
 	}))
 	t.Cleanup(srv.Close)
-	f := catalogue.NewFetcher(map[string]string{"main": srv.URL})
-	f.Client = srv.Client() // trusts the test server's certificate and nothing else
-	return f
+	f := catalogue.NewFetcher()
+	// Trusts the test server's certificate and nothing else -- and, being
+	// another client, connects to its loopback address, which the fetcher's
+	// own refuses (address_test.go).
+	f.Client = srv.Client()
+	return served{f, catalogue.Source{Key: "cluster/main", Name: "main", URL: srv.URL}}
+}
+
+// served is a fetcher and the one catalogue the test serves, asked by
+// coordinate the way an install asks.
+type served struct {
+	*catalogue.Fetcher
+	src catalogue.Source
+}
+
+func (s served) Fetch(ctx context.Context, coordinate, digest string) (*catalogue.Profile, error) {
+	_, name, _ := strings.Cut(coordinate, "/")
+	return s.Fetcher.Fetch(ctx, s.src, name, digest)
 }
 
 func TestAProfileArrivesWhenItMatchesTheDigest(t *testing.T) {
@@ -110,28 +125,6 @@ func TestTheBundleHasToBeTheProfileItClaims(t *testing.T) {
 		if _, err := f.Fetch(context.Background(), "main/nextcloud-base-ce", digestOf(body)); err == nil {
 			t.Errorf("%s: accepted", name)
 		}
-	}
-}
-
-// A catalogue this cluster has no source for is not fetched from somewhere
-// guessed.
-func TestAnUnknownCatalogueIsNotFetched(t *testing.T) {
-	f := source(t, nextcloudProfile)
-	_, err := f.Fetch(context.Background(), "somebody-elses/nextcloud-base-ce", digestOf(nextcloudProfile))
-	if !errors.Is(err, catalogue.ErrNotFound) {
-		t.Fatalf("err = %v", err)
-	}
-	if f.Known("somebody-elses") {
-		t.Fatal("an unconfigured catalogue is reported as known")
-	}
-}
-
-// Sources are configuration. http:// is refused — the digest protects the
-// bytes, but a cluster fetching its catalogue in clear announces what it runs.
-func TestSourcesMustBeHTTPS(t *testing.T) {
-	got := catalogue.ParseSources("main=https://a.example/c, other=http://b.example/c, broken, empty=")
-	if len(got) != 1 || got["main"] != "https://a.example/c" {
-		t.Fatalf("parsed = %v", got)
 	}
 }
 

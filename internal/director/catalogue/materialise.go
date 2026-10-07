@@ -36,10 +36,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
-	"time"
 
 	utilyaml "k8s.io/apimachinery/pkg/util/yaml"
 
@@ -60,45 +60,47 @@ var ErrNotFound = errors.New("catalogue: the source does not serve this entry")
 // platform does not control.
 const maxBundle = 1 << 20
 
-// Fetcher reads profile bundles from catalogue sources.
-type Fetcher struct {
-	// Sources maps a catalogue's slug — the first half of a coordinate — to
-	// the base URL its bundles are served from.
-	//
-	// Configuration, not something a caller supplies: an install that could
-	// name its own source would be an install that could name its own
-	// profile, and then the digest is checked against a number the same
-	// person chose.
-	Sources map[string]string
-	Client  *http.Client
+// Source is one catalogue as an install or a listing names it: resolved, by
+// whoever asked, from what the cluster and the tenant declare.
+//
+// Which address a name means is never the caller's to supply. An install
+// that could name its own source would be an install that could name its own
+// profile, and then the digest is checked against a number the same person
+// chose. The name comes from the request; the address comes from the Cluster
+// claim or the tenant's manifest in git.
+type Source struct {
+	// Key tells this catalogue from every other on the cluster:
+	// "cluster/<name>" or "tenant/<tenant>/<name>". Two tenants may each have
+	// a catalogue called the same thing; they are not the same catalogue, and
+	// what is remembered of one is never served for the other.
+	Key string
+	// Name is the catalogue's name: the first half of a coordinate.
+	Name string
+	// URL is the base address its index and profiles are served from.
+	URL string
+}
 
+// Fetcher reads profile bundles and indexes from catalogue sources.
+type Fetcher struct {
+	// Client makes the requests. NewFetcher's refuses every address that is
+	// not a public https one, at the moment it connects (address.go).
+	Client *http.Client
+	// Vet checks an address when a catalogue is added: as it is written, and
+	// what its host resolves to.
+	Vet func(ctx context.Context, address string) error
 	// indexCache holds each source's index between fetches. See index.go.
 	indexCache
 }
 
-// NewFetcher returns a Fetcher with a bounded client.
-func NewFetcher(sources map[string]string) *Fetcher {
+// NewFetcher returns a Fetcher that fetches from public https addresses and
+// from nothing else.
+func NewFetcher() *Fetcher {
 	return &Fetcher{
-		Sources: sources,
-		Client: &http.Client{
-			Timeout: 30 * time.Second,
-			// A catalogue source redirecting somewhere else is a source
-			// changing which host serves the bytes. The digest still protects
-			// what arrives, but there is no reason to follow it.
-			CheckRedirect: func(*http.Request, []*http.Request) error {
-				return http.ErrUseLastResponse
-			},
+		Client: guardedClient(),
+		Vet: func(ctx context.Context, address string) error {
+			return vet(ctx, net.DefaultResolver, address)
 		},
 	}
-}
-
-// Known reports whether a catalogue is one this cluster has a source for.
-func (f *Fetcher) Known(catalogue string) bool {
-	if f == nil {
-		return false
-	}
-	_, ok := f.Sources[catalogue]
-	return ok
 }
 
 // Profile is a materialised catalogue entry.
@@ -117,21 +119,18 @@ type Profile struct {
 // Fetch reads one entry from its source and refuses anything that is not
 // byte-for-byte what the digest names.
 //
-// coordinate is "<catalogue>/<name>"; digest is "sha256:<hex>".
-func (f *Fetcher) Fetch(ctx context.Context, coordinate, digest string) (*Profile, error) {
-	catalogue, name, ok := strings.Cut(coordinate, "/")
-	if !ok || catalogue == "" || name == "" {
+// name is the entry's name, the second half of its coordinate; digest is
+// "sha256:<hex>".
+func (f *Fetcher) Fetch(ctx context.Context, src Source, name, digest string) (*Profile, error) {
+	coordinate := src.Name + "/" + name
+	if src.Name == "" || name == "" || strings.ContainsAny(name, "/\\") {
 		return nil, fmt.Errorf("catalogue: %q is not <catalogue>/<name>", coordinate)
 	}
-	base, ok := f.Sources[catalogue]
-	if !ok {
-		return nil, fmt.Errorf("%w: no source for catalogue %q", ErrNotFound, catalogue)
-	}
+	base := src.URL
 	want, err := normaliseDigest(digest)
 	if err != nil {
 		return nil, err
 	}
-
 	// The layout the conversion tool writes and the store ingests:
 	// profiles/<name>.yaml beside listings/<name>.yaml.
 	ref, err := url.Parse(strings.TrimSuffix(base, "/") + "/profiles/" + url.PathEscape(name) + ".yaml")
@@ -149,6 +148,10 @@ func (f *Fetcher) Fetch(ctx context.Context, coordinate, digest string) (*Profil
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode == http.StatusNotFound {
 		return nil, fmt.Errorf("%w: %s", ErrNotFound, coordinate)
+	}
+	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+		return nil, fmt.Errorf("catalogue: %s redirects elsewhere, and a redirect is not followed: "+
+			"declare the address the catalogue is served from", ref.Host)
 	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("catalogue: %s answered %d", ref.Host, resp.StatusCode)
@@ -226,27 +229,6 @@ func normaliseDigest(digest string) (string, error) {
 		}
 	}
 	return d, nil
-}
-
-// ParseSources reads the source map from its configured spelling:
-// "<slug>=<url>,<slug>=<url>".
-func ParseSources(configured string) map[string]string {
-	out := map[string]string{}
-	for _, part := range strings.Split(configured, ",") {
-		slug, base, ok := strings.Cut(strings.TrimSpace(part), "=")
-		slug, base = strings.TrimSpace(slug), strings.TrimSpace(base)
-		if !ok || slug == "" || base == "" {
-			continue
-		}
-		// http:// is refused: the digest makes the bytes safe, but a cluster
-		// fetching its catalogue in clear is one whose traffic says what it
-		// runs.
-		if !strings.HasPrefix(base, "https://") {
-			continue
-		}
-		out[slug] = base
-	}
-	return out
 }
 
 // documents counts the YAML documents in body that hold anything. A separator

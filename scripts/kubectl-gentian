@@ -21,6 +21,11 @@
 #   kubectl gentian tenants retire <name> [--purge [--keep-bundles]] [--yes]
 #   kubectl gentian tenants import <file.gentian> [--identity-file <f> | --passphrase] [--name <n>]
 #   kubectl gentian tenants import --bucket <b> --prefix <p> [--endpoint <url>] (--identity-file <f> | --passphrase)
+#   kubectl gentian tenants delegate-catalogues <name> on|off
+#
+#   kubectl gentian catalogues list [--tenant <tenant>]
+#   kubectl gentian catalogues add <name> <https-url> [--tenant <tenant>]
+#   kubectl gentian catalogues remove <name> [--tenant <tenant>]
 #
 #   kubectl gentian apps list --tenant <tenant> [--available]
 #   kubectl gentian apps install <app> --tenant <tenant> [--from <source>] [--digest sha256:<hex>] [--for-everyone]
@@ -346,6 +351,35 @@ _ask() {
     rm -f "${out}"
 }
 
+# _try <method> <path> [json-body] — ask the director and do not end the
+# command on a refusal: the status is left in _TRY_STATUS and the answer, or
+# the refusal as the director worded it, in _TRY_ANSWER. For the one place a
+# refusal is an answer: a command that two routes serve, by who is asking.
+_TRY_STATUS=""
+_TRY_ANSWER=""
+
+_try() {
+    local method="$1" path="$2" body="${3:-}" token out
+    need curl jq
+    _connect
+    token="$(_access_token)"
+    out="$(mktemp)"
+    if [[ -n "${body}" ]]; then
+        _TRY_STATUS="$(curl -sS -o "${out}" -w '%{http_code}' -X "${method}" \
+            -H "Authorization: Bearer ${token}" -H "Content-Type: application/json" \
+            -d "${body}" "${_DIR_BASE}${path}")"
+    else
+        _TRY_STATUS="$(curl -sS -o "${out}" -w '%{http_code}' -X "${method}" \
+            -H "Authorization: Bearer ${token}" "${_DIR_BASE}${path}")"
+    fi
+    if [[ "${_TRY_STATUS}" -ge 300 ]]; then
+        _TRY_ANSWER="$(jq -r '.error // .message // .detail // empty' "${out}" 2>/dev/null || true)"
+    else
+        _TRY_ANSWER="$(cat "${out}")"
+    fi
+    rm -f "${out}"
+}
+
 # ---------------------------------------------------------------------------
 # Commands
 # ---------------------------------------------------------------------------
@@ -584,20 +618,15 @@ _tenant_flag() {
     echo "${t}"
 }
 
-# _apps_offers <tenant> — what the cluster's catalogue sources offer, as one
-# JSON document: {sources: [<name>…], unread: [<name>…], entries: [{source,
-# name, version, edition, digest}…]}. The director answers it from each
-# source's index; a source it could not read is named in unread and the rest
-# are still listed. A cluster that declares no source answers no sources.
+# _apps_offers <tenant> — what the catalogues a tenant sees offer -- the
+# cluster's and the tenant's own -- as one JSON document: {sources:
+# [<name>…], unread: [<name>…], entries: [{source, name, version, edition,
+# digest}…]}. The director answers it from each catalogue's index; one it
+# could not read is named in unread and the rest are still listed. A tenant
+# with no catalogue at all answers no sources.
 _apps_offers() {
     local t="$1" answer names name listing entries="[]" unread="[]"
     if ! answer="$( (_call GET "/v1/tenants/${t}/catalogues") 2>&1)"; then
-        # The catalogue routes exist only where the Cluster claim names a
-        # source; without one the director has no such route.
-        if [[ "${answer}" == *"answered 404"* ]]; then
-            echo '{"sources":[],"unread":[],"entries":[]}'
-            return 0
-        fi
         die "${answer#error: }"
     fi
     names="$(printf '%s' "${answer}" | jq -r '.catalogues[].name')"
@@ -614,7 +643,8 @@ _apps_offers() {
 }
 
 # apps list: what the tenant has installed; with --available, what the
-# cluster's catalogue sources offer and whether the tenant has it.
+# catalogues it sees offer -- the cluster's and its own -- and whether the
+# tenant has it.
 cmd_apps_list() {
     local t available="" a
     t="$(_tenant_flag "$@")"
@@ -632,7 +662,7 @@ cmd_apps_list() {
     local offers installed
     offers="$(_apps_offers "${t}")" || exit 1
     [[ "$(printf '%s' "${offers}" | jq -r '.sources | length')" != "0" ]] ||
-        die "this cluster declares no catalogue source, so it offers nothing to install: a platform administrator names one on the Cluster claim (spec.catalogue.sources)"
+        die "${t} has no catalogue to install from: the cluster's administrator adds one (kubectl gentian catalogues add <name> <https-url> [--tenant ${t}])"
     installed="$(_call GET "/v1/tenants/${t}/apps")" || exit 1
     # INSTALLED: yes is this build; "other build" is the app at another digest;
     # unpinned is the app installed with no digest.
@@ -653,10 +683,10 @@ cmd_apps_list() {
     [[ -z "${unread}" ]] || echo "Not read, the director could not reach them: ${unread}." >&2
 }
 
-# apps install: a pinned build from one of the cluster's catalogue sources.
+# apps install: a pinned build from one of the catalogues the tenant sees.
 #
-# The entry is looked up in what the director lists of the sources: the one
-# source that serves the name, or the one --from names when several do. The
+# The entry is looked up in what the director lists of them: the one
+# catalogue that serves the name, or the one --from names when several do. The
 # digest is the one that listing states, unless --digest gives another; either
 # way the director fetches the bundle from the source and installs nothing
 # unless it hashes to the digest sent.
@@ -676,10 +706,10 @@ _apps_install() {
     offers="$(_apps_offers "${t}")" || exit 1
     sources="$(printf '%s' "${offers}" | jq -r '.sources | join(", ")')"
     [[ -n "${sources}" ]] ||
-        die "this cluster declares no catalogue source, so there is nothing to install ${app} from: a platform administrator names one on the Cluster claim (spec.catalogue.sources)"
+        die "${t} has no catalogue to install ${app} from: the cluster's administrator adds one (kubectl gentian catalogues add <name> <https-url> [--tenant ${t}])"
     if [[ -n "${from}" ]]; then
         printf '%s' "${offers}" | jq -e --arg s "${from}" '.sources | index($s) != null' >/dev/null ||
-            die "this cluster has no catalogue source named ${from}; its sources: ${sources}"
+            die "${t} has no catalogue named ${from}; its catalogues: ${sources}"
     fi
     serving="$(printf '%s' "${offers}" | jq -c --arg a "${app}" --arg s "${from}" \
         '[.entries[] | select(.name == $a and ($s == "" or .source == $s))]')"
@@ -689,7 +719,7 @@ _apps_install() {
         # what a cluster may list for itself. Named in full -- source and
         # digest -- an entry can still be asked for: the director verifies it.
         [[ -n "${from}" && -n "${digest}" ]] ||
-            die "${app} is not listed by ${from:-any catalogue source of this cluster} (sources: ${sources}); 'apps list --tenant ${t} --available' shows what is"
+            die "${app} is not listed by ${from:-any catalogue ${t} installs from} (catalogues: ${sources}); 'apps list --tenant ${t} --available' shows what is"
     elif [[ "${count}" != "1" ]]; then
         die "${app} is served by several sources ($(printf '%s' "${serving}" | jq -r 'map(.source) | join(", ")')): say which with --from <source>"
     else
@@ -767,6 +797,150 @@ _purge_app_when_gone() {
     done
     echo "Purged ${app} from ${t}: its data is destroyed ($(jq -r '(.destroyed // []) | join(", ")' "${out}")). This cannot be undone."
     rm -f "${out}"
+}
+
+# ---------------------------------------------------------------------------
+# Catalogues: the addresses apps are installed from
+# ---------------------------------------------------------------------------
+
+# _optional_tenant_flag — the --tenant given, or nothing.
+_optional_tenant_flag() {
+    local t=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --tenant|-t) t="${2:?}"; shift 2 ;;
+            *) shift ;;
+        esac
+    done
+    echo "${t}"
+}
+
+# catalogues list: with --tenant, what that tenant installs from -- the
+# cluster's catalogues and its own. Without, everything the cluster declares:
+# its own catalogues, each tenant's, and which tenants may add their own.
+cmd_catalogues_list() {
+    local t answer
+    t="$(_optional_tenant_flag "$@")"
+    need jq
+    if [[ -n "${t}" ]]; then
+        answer="$(_call GET "/v1/tenants/${t}/catalogues")" || exit 1
+        printf '%s' "${answer}" | jq -r '
+            (["CATALOGUE","FOR","ADDED BY","ADDRESS"] | @tsv),
+            (.catalogues[] | [.name, (if .scope == "cluster" then "every tenant" else "this tenant" end),
+                (if .addedBy == "tenant" then "the tenant" else "the cluster" end), .url] | @tsv)' |
+            column -t -s $'\t'
+        if [[ "$(printf '%s' "${answer}" | jq -r '.delegated')" == "true" ]]; then
+            echo "The administrators of ${t} may add catalogues of their own."
+        else
+            echo "The administrators of ${t} may not add catalogues; the cluster's administrator adds them, or delegates it."
+        fi
+        return 0
+    fi
+    _discover
+    answer="$(_call GET "/v1/clusters/${_CLUSTER}/catalogues")" || exit 1
+    printf '%s' "${answer}" | jq -r '
+        (["CATALOGUE","FOR","ADDED BY","ADDRESS"] | @tsv),
+        (.catalogues[] | [.name, "every tenant", "the cluster", .url] | @tsv),
+        (.tenants[] | .tenant as $t | .catalogues[] |
+            [.name, ("tenant " + $t), (if .addedBy == "tenant" then "the tenant" else "the cluster" end), .url] | @tsv)' |
+        column -t -s $'\t'
+    local delegated
+    delegated="$(printf '%s' "${answer}" | jq -r '[.tenants[] | select(.delegated) | .tenant] | join(", ")')"
+    if [[ -n "${delegated}" ]]; then
+        echo "Tenants whose administrators may add catalogues of their own: ${delegated}."
+    else
+        echo "No tenant's administrators may add catalogues of their own (tenants delegate-catalogues <tenant> on)."
+    fi
+}
+
+# catalogues add / remove: for the whole cluster without --tenant, for one
+# tenant with it.
+#
+# A tenant's catalogue has two routes, by who is asking. The cluster's
+# administrator adds one for the tenant; the tenant's own administrator adds
+# one where that is delegated to the tenant. The first is asked, and when the
+# director answers that the person may not, the second is: the person is told
+# apart by the director, never by this tool.
+_catalogues_change() {
+    local verb="$1" method="$2" name="$3" t="$4" body="${5:-}" via="the cluster's administrator"
+    _discover
+    if [[ -z "${t}" ]]; then
+        _try "${method}" "/v1/clusters/${_CLUSTER}/catalogues/${name}" "${body}"
+    else
+        _try "${method}" "/v1/clusters/${_CLUSTER}/tenants/${t}/catalogues/${name}" "${body}"
+        if [[ "${_TRY_STATUS}" == "403" ]]; then
+            via="the tenant's administrator"
+            _try "${method}" "/v1/tenants/${t}/catalogues/${name}" "${body}"
+        fi
+    fi
+    [[ "${_TRY_STATUS}" -lt 300 ]] || die "the director answered ${_TRY_STATUS}: ${_TRY_ANSWER:-no detail}"
+    local status commit whose="every tenant of this cluster"
+    [[ -z "${t}" ]] || whose="tenant ${t}"
+    status="$(printf '%s' "${_TRY_ANSWER}" | jq -r '.status // ""')"
+    commit="$(printf '%s' "${_TRY_ANSWER}" | jq -r '.commit // "" | .[0:8]')"
+    if [[ "${status}" == "unchanged" ]]; then
+        echo "Catalogue ${name} is already there for ${whose}; nothing was committed."
+    elif [[ "${verb}" == "add" ]]; then
+        echo "Catalogue ${name} added for ${whose}, as ${via}: committed (${commit:-no commit id})."
+        if [[ -n "${t}" ]]; then
+            echo "  kubectl gentian apps list --tenant ${t} --available"
+        else
+            echo "  kubectl gentian apps list --tenant <tenant> --available"
+        fi
+    else
+        echo "Catalogue ${name} removed for ${whose}, as ${via}: committed (${commit:-no commit id})."
+        echo "What was installed from it stays installed; a new install or a new build needs a catalogue that serves it."
+    fi
+}
+
+cmd_catalogues() {
+    local sub="${1:-}"
+    shift || true
+    case "${sub}" in
+        list) cmd_catalogues_list "$@" ;;
+        add|remove)
+            local name="" address="" t="" a
+            while [[ $# -gt 0 ]]; do
+                case "$1" in
+                    --tenant|-t) t="${2:?}"; shift 2 ;;
+                    -*) die "unknown option $1" ;;
+                    *)
+                        if [[ -z "${name}" ]]; then name="$1"
+                        elif [[ -z "${address}" ]]; then address="$1"
+                        else die "unexpected argument $1"
+                        fi
+                        shift ;;
+                esac
+            done
+            if [[ "${sub}" == "add" ]]; then
+                [[ -n "${name}" && -n "${address}" ]] ||
+                    die "usage: kubectl gentian catalogues add <name> <https-url> [--tenant <tenant>]"
+                need jq
+                _catalogues_change add PUT "${name}" "${t}" "$(jq -n --arg u "${address}" '{url: $u}')"
+            else
+                [[ -n "${name}" && -z "${address}" ]] ||
+                    die "usage: kubectl gentian catalogues remove <name> [--tenant <tenant>]"
+                _catalogues_change remove DELETE "${name}" "${t}"
+            fi
+            ;;
+        *) die "usage: kubectl gentian catalogues list|add|remove ..." ;;
+    esac
+}
+
+# tenants delegate-catalogues: whether a tenant's own administrators may add
+# catalogues for their tenant. The cluster administrator's to say.
+cmd_tenants_delegate_catalogues() {
+    local name="${1:-}" state="${2:-}"
+    [[ -n "${name}" && ( "${state}" == "on" || "${state}" == "off" ) ]] ||
+        die "usage: kubectl gentian tenants delegate-catalogues <name> on|off"
+    _discover
+    if [[ "${state}" == "on" ]]; then
+        _call PUT "/v1/clusters/${_CLUSTER}/tenants/${name}/catalogue-delegation" >/dev/null
+        echo "The administrators of ${name} may now add catalogues for their tenant: committed."
+    else
+        _call DELETE "/v1/clusters/${_CLUSTER}/tenants/${name}/catalogue-delegation" >/dev/null
+        echo "The administrators of ${name} may no longer add catalogues: committed. What they added stays until it is removed."
+    fi
 }
 
 cmd_apps() {
@@ -883,10 +1057,12 @@ main() {
                 activate-admin) cmd_tenants_activate_admin "$@" ;;
                 retire) cmd_tenants_retire "$@" ;;
                 import) cmd_tenants_import "$@" ;;
-                *) die "usage: kubectl gentian tenants list|create|activate-admin|retire|import" ;;
+                delegate-catalogues) cmd_tenants_delegate_catalogues "$@" ;;
+                *) die "usage: kubectl gentian tenants list|create|activate-admin|retire|import|delegate-catalogues" ;;
             esac
             ;;
         app|apps) cmd_apps "$@" ;;
+        catalogue|catalogues) cmd_catalogues "$@" ;;
         resource|resources) cmd_resources "$@" ;;
         version|--version|-v) cmd_version ;;
         help|--help|-h) usage ;;

@@ -113,6 +113,17 @@ type TenantSpec struct {
 	// +optional
 	Apps []TenantApp `json:"apps,omitempty"`
 
+	// Catalogue is where this tenant may install from beside the catalogues
+	// the whole cluster offers: the catalogues only this tenant sees, and
+	// whether its own administrators may add them.
+	//
+	// The director reads and writes it, in the tenant's manifest in git.
+	// Nothing in the cluster acts on it: what an install may use is decided
+	// when the director resolves a coordinate, and what a tenant may roll out
+	// is decided by the origin a materialised profile carries.
+	// +optional
+	Catalogue *TenantCatalogue `json:"catalogue,omitempty"`
+
 	// Locales are the languages this tenant's realm renders its login and
 	// account pages in, as ISO 639-1 codes (AD-15). Empty means the
 	// platform's own set.
@@ -381,6 +392,51 @@ type TenantQuotas struct {
 	// +kubebuilder:validation:Minimum=1
 	MaxPods int32 `json:"maxPods,omitempty"`
 }
+
+// TenantCatalogue is a tenant's own catalogues and who may add them.
+type TenantCatalogue struct {
+	// Delegated says the tenant's own administrators may add and remove
+	// catalogues for this tenant. Off unless the cluster's administrator
+	// turns it on; a tenant's administrator cannot.
+	// +optional
+	Delegated bool `json:"delegated,omitempty"`
+
+	// Sources are the catalogues only this tenant sees.
+	// +optional
+	// +listType=map
+	// +listMapKey=name
+	Sources []TenantCatalogueSource `json:"sources,omitempty"`
+}
+
+// TenantCatalogueSource is one catalogue of a tenant: an address that serves
+// index.yaml and profiles/<name>.yaml.
+type TenantCatalogueSource struct {
+	// Name is the catalogue's name: the first half of a coordinate,
+	// <name>/<app>. It is not the name of a catalogue of the whole cluster,
+	// nor of another catalogue of this tenant.
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`
+	// +kubebuilder:validation:MaxLength=63
+	Name string `json:"name"`
+
+	// URL is the https address the catalogue is served from.
+	// +kubebuilder:validation:Pattern=`^https://`
+	// +kubebuilder:validation:MaxLength=2048
+	URL string `json:"url"`
+
+	// AddedBy says who added it: the cluster's administrator, or the
+	// tenant's own under delegation. A tenant's administrator removes only
+	// what the tenant added.
+	// +kubebuilder:validation:Enum=cluster;tenant
+	// +kubebuilder:default=cluster
+	// +optional
+	AddedBy string `json:"addedBy,omitempty"`
+}
+
+// Who added a tenant's catalogue.
+const (
+	CatalogueAddedByCluster = "cluster"
+	CatalogueAddedByTenant  = "tenant"
+)
 
 // TenantApp specifies a desired application installation for a tenant.
 //

@@ -53,6 +53,128 @@ func BundleFile(name string) string { return name + ".bundle.yaml" }
 // there for good.
 var ErrBundleTooLarge = errors.New("catalogue: the profile is too large to carry its bundle")
 
+// ErrProfileStatesOrigin is a served profile that carries an annotation only
+// the platform writes: its bundle, or where it came from.
+var ErrProfileStatesOrigin = errors.New("catalogue: the profile states what only the platform records")
+
+// ErrProfileNameTaken is a profile that cannot be materialised under its name
+// because a profile from somewhere else already has it. ComponentProfiles are
+// cluster-scoped: one name, one profile, whoever published it.
+type ErrProfileNameTaken struct {
+	// Name is the profile's name.
+	Name string
+	// Origin is where the profile being materialised comes from.
+	Origin string
+	// Holder is the origin of the profile that has the name; empty for one
+	// with no recorded origin.
+	Holder string
+	// Platform says the name is one of the profiles the platform ships.
+	Platform bool
+}
+
+func (e *ErrProfileNameTaken) Error() string {
+	return fmt.Sprintf("catalogue: the name %s is taken on this cluster by a profile of another origin", e.Name)
+}
+
+// platformProfiles are the ComponentProfiles the platform's own chart ships
+// (charts/gentian-os/templates/componentprofile-*.yaml). They are not in the
+// deployments repository, so nothing read from it shows the name as taken;
+// a catalogue entry of the same name would have Argo CD and Helm each
+// applying their own profile over the other's. A test holds this list to the
+// chart.
+var platformProfiles = map[string]bool{"admin-console": true, "concierge": true, "desktop": true}
+
+// PlatformProfile reports whether name is a profile the platform ships.
+func PlatformProfile(name string) bool { return platformProfiles[name] }
+
+// MaterialisedProfile is what the deployments repository says about one
+// profile of the cluster's catalogue directory.
+type MaterialisedProfile struct {
+	// Present says the directory holds a profile of this name: one the
+	// director materialised or the installer scaffolded.
+	Present bool
+	// Origin is the catalogue it was materialised from, as its bundle
+	// records it (profilebundle.OriginAnnotation); empty when none is
+	// recorded.
+	Origin string
+}
+
+// ProfileOnCluster answers whether the cluster's catalogue directory holds a
+// profile, and where it came from.
+//
+// "On the cluster" is answered from git, like everything else this service
+// knows: the directory is what Argo CD applies, and a profile reaches the
+// cluster in no other way but the platform's own chart.
+func (g *GitOps) ProfileOnCluster(ctx context.Context, name string) (MaterialisedProfile, error) {
+	if !ValidName(name) {
+		return MaterialisedProfile{}, fmt.Errorf("%w: profile %q", ErrInvalidName, name)
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if err := g.ensureRepoRead(ctx); err != nil {
+		return MaterialisedProfile{}, err
+	}
+	return g.materialised(name)
+}
+
+// materialised reads one profile's presence and origin from the checkout.
+// The caller holds the lock and has synced.
+func (g *GitOps) materialised(name string) (MaterialisedProfile, error) {
+	dir := filepath.Join(g.path, "clusters", g.cluster, CatalogueDir)
+	if _, err := os.Stat(filepath.Join(dir, name+".yaml")); err != nil {
+		if os.IsNotExist(err) {
+			return MaterialisedProfile{}, nil
+		}
+		return MaterialisedProfile{}, err
+	}
+	out := MaterialisedProfile{Present: true}
+	raw, err := os.ReadFile(filepath.Join(dir, BundleFile(name)))
+	if os.IsNotExist(err) {
+		return out, nil
+	}
+	if err != nil {
+		return MaterialisedProfile{}, err
+	}
+	var patch struct {
+		Metadata struct {
+			Annotations map[string]string `json:"annotations"`
+		} `json:"metadata"`
+	}
+	if err := yaml.Unmarshal(raw, &patch); err != nil {
+		return MaterialisedProfile{}, fmt.Errorf("catalogue: the bundle of %s does not parse: %w", name, err)
+	}
+	out.Origin = patch.Metadata.Annotations[profilebundle.OriginAnnotation]
+	return out, nil
+}
+
+// nameTaken applies the rule for a name that is already a profile's.
+//
+// The same origin again is the same catalogue publishing its own entry: a
+// reinstall, or a new build. Otherwise a tenant's catalogue never takes a
+// name somebody else has, and nobody takes a name a tenant's catalogue has --
+// in both directions, because the profile is one object for the whole
+// cluster and a tenant's is installable only in that tenant. Between two
+// catalogues of the whole cluster the later build replaces the earlier, as it
+// always has: an install pinned to the earlier one is then held by the
+// operator, which says so.
+func nameTaken(name, origin string, have MaterialisedProfile) error {
+	if PlatformProfile(name) {
+		return &ErrProfileNameTaken{Name: name, Origin: origin, Platform: true}
+	}
+	if !have.Present || have.Origin == origin {
+		return nil
+	}
+	incoming, err := profilebundle.ParseOrigin(origin)
+	if err != nil {
+		return fmt.Errorf("catalogue: origin %q: %w", origin, err)
+	}
+	holder, err := profilebundle.ParseOrigin(have.Origin)
+	if err != nil || incoming.Tenant != "" || holder.Tenant != "" {
+		return &ErrProfileNameTaken{Name: name, Origin: origin, Holder: have.Origin}
+	}
+	return nil
+}
+
 // MaterialiseProfile writes one profile into the cluster's catalogue
 // directory, with its bundle, if both are not already there byte for byte.
 //
@@ -68,7 +190,12 @@ var ErrBundleTooLarge = errors.New("catalogue: the profile is too large to carry
 // bytes and checks the profile against what they say
 // (internal/profilebundle). The patch is derived from body and from nothing
 // else, and the operator does not take its word for anything.
-func (g *GitOps) MaterialiseProfile(ctx context.Context, name, digest string, body []byte, meta Meta) (Result, error) {
+//
+// origin is the catalogue the bytes were fetched from
+// (profilebundle.ClusterOrigin or TenantOrigin), written on the profile by
+// the same patch. A name another origin holds is refused with
+// ErrProfileNameTaken (see nameTaken), and nothing is written.
+func (g *GitOps) MaterialiseProfile(ctx context.Context, name, digest string, body []byte, origin string, meta Meta) (Result, error) {
 	if !ValidName(name) {
 		return Result{}, fmt.Errorf("%w: profile %q", ErrInvalidName, name)
 	}
@@ -79,12 +206,29 @@ func (g *GitOps) MaterialiseProfile(ctx context.Context, name, digest string, bo
 		return Result{}, fmt.Errorf("%w: %s is %d bytes and the limit is %d",
 			ErrBundleTooLarge, name, len(body), profilebundle.MaxBytes)
 	}
-	bundle, err := renderBundle(name, body)
+	if parsed, err := profilebundle.ParseOrigin(origin); err != nil || parsed.Source == "" {
+		return Result{}, fmt.Errorf("%w: origin %q", ErrInvalidName, origin)
+	}
+	bundle, err := renderBundle(name, body, origin)
 	if err != nil {
 		return Result{}, err
 	}
+
 	g.mu.Lock()
 	defer g.mu.Unlock()
+
+	// Against the remote's own state, not a checkout that may be a few
+	// seconds behind: whether the name is free is the thing being decided.
+	if err := g.ensureRepo(ctx); err != nil {
+		return Result{}, err
+	}
+	have, err := g.materialised(name)
+	if err != nil {
+		return Result{}, err
+	}
+	if err := nameTaken(name, origin, have); err != nil {
+		return Result{}, err
+	}
 
 	dir := filepath.Join(g.path, "clusters", g.cluster, CatalogueDir)
 	path := filepath.Join(dir, name+".yaml")
@@ -155,11 +299,12 @@ func (g *GitOps) MaterialiseProfile(ctx context.Context, name, digest string, bo
 // its namespace, should the document state one although the kind has none --
 // because a patch that names anything else matches nothing, and kustomize
 // then fails the whole directory rather than the one entry.
-func renderBundle(name string, body []byte) ([]byte, error) {
+func renderBundle(name string, body []byte, origin string) ([]byte, error) {
 	var head struct {
 		APIVersion string `json:"apiVersion"`
 		Metadata   struct {
-			Namespace string `json:"namespace"`
+			Namespace   string            `json:"namespace"`
+			Annotations map[string]string `json:"annotations"`
 		} `json:"metadata"`
 	}
 	if err := yaml.Unmarshal(body, &head); err != nil {
@@ -167,6 +312,15 @@ func renderBundle(name string, body []byte) ([]byte, error) {
 	}
 	if head.APIVersion == "" {
 		return nil, fmt.Errorf("catalogue: %s states no apiVersion", name)
+	}
+	// Whose a profile is, is recorded by the director from where it fetched
+	// it. A profile that arrives saying so itself is a catalogue claiming to
+	// be another one.
+	for _, key := range []string{profilebundle.OriginAnnotation, profilebundle.Annotation} {
+		if _, stated := head.Metadata.Annotations[key]; stated {
+			return nil, fmt.Errorf("%w: %s states the annotation %s, which only the platform writes",
+				ErrProfileStatesOrigin, name, key)
+		}
 	}
 	var b strings.Builder
 	b.WriteString("# The bytes of " + name + ".yaml as the catalogue source served them, for the\n")
@@ -181,6 +335,8 @@ func renderBundle(name string, body []byte) ([]byte, error) {
 	}
 	b.WriteString("  annotations:\n")
 	b.WriteString("    " + profilebundle.Annotation + ": \"" + profilebundle.Encode(body) + "\"\n")
+	// Where it was fetched from, and so which tenants may install it.
+	b.WriteString("    " + profilebundle.OriginAnnotation + ": " + quoteScalar(origin) + "\n")
 	return []byte(b.String()), nil
 }
 

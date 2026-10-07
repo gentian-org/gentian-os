@@ -92,22 +92,21 @@ type Listing struct {
 
 // Index fetches and caches one source's index, keeping only the editions a
 // cluster lists for itself.
-func (f *Fetcher) Index(ctx context.Context, catalogue string) (Listing, error) {
+func (f *Fetcher) Index(ctx context.Context, src Source) (Listing, error) {
 	if f == nil {
-		return Listing{}, fmt.Errorf("%w: this cluster has no catalogue sources", ErrNotFound)
+		return Listing{}, fmt.Errorf("%w: this director fetches from no catalogue", ErrNotFound)
 	}
-	base, ok := f.Sources[catalogue]
-	if !ok {
-		return Listing{}, fmt.Errorf("%w: no source for catalogue %q", ErrNotFound, catalogue)
-	}
-	if cached, ok := f.cached(catalogue); ok {
+	// By the catalogue and by its address: a catalogue removed and added
+	// again at another address is another catalogue under the same name.
+	key := src.Key + "\n" + src.URL
+	if cached, ok := f.cached(key); ok {
 		return serve(cached), nil
 	}
-	fresh, err := f.fetchIndex(ctx, catalogue, base)
+	fresh, err := f.fetchIndex(ctx, src.Name, src.URL)
 	if err != nil {
 		return Listing{}, err
 	}
-	f.store(catalogue, fresh)
+	f.store(key, fresh)
 	return serve(fresh), nil
 }
 
@@ -157,6 +156,10 @@ func (f *Fetcher) fetchIndex(ctx context.Context, catalogue, base string) (cache
 		// failing a screen over: it means this catalogue cannot be browsed
 		// from here, which is what an empty listing says.
 		return cachedIndex{at: time.Now()}, nil
+	}
+	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+		return cachedIndex{}, fmt.Errorf("catalogue: %s redirects elsewhere, and a redirect is not followed: "+
+			"declare the address the catalogue is served from", ref.Host)
 	}
 	if resp.StatusCode != http.StatusOK {
 		return cachedIndex{}, fmt.Errorf("catalogue: %s answered %d", ref.Host, resp.StatusCode)

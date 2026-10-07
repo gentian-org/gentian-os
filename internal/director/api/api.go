@@ -41,6 +41,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/director/catalogue"
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
 	"github.com/gentian-org/gentian-os/internal/director/lifecycle"
+	"github.com/gentian-org/gentian-os/internal/profilebundle"
 	"github.com/gentian-org/gentian-os/internal/schemacheck"
 )
 
@@ -74,7 +75,16 @@ type Repository interface {
 	SetClusterBackupPolicy(ctx context.Context, policy gitops.BackupPolicy, meta gitops.Meta) (gitops.Result, error)
 	TenantSecurityPolicy(ctx context.Context, tenant string) (*gitops.SecurityPolicy, error)
 	SetTenantSecurityPolicy(ctx context.Context, tenant string, policy gitops.SecurityPolicy, meta gitops.Meta) (gitops.Result, error)
-	MaterialiseProfile(ctx context.Context, name, digest string, body []byte, meta gitops.Meta) (gitops.Result, error)
+	MaterialiseProfile(ctx context.Context, name, digest string, body []byte, origin string, meta gitops.Meta) (gitops.Result, error)
+	ProfileOnCluster(ctx context.Context, name string) (gitops.MaterialisedProfile, error)
+	Catalogue(ctx context.Context) (gitops.CatalogueSettings, error)
+	TenantCatalogue(ctx context.Context, tenant string) (gitops.TenantCatalogue, error)
+	TenantCatalogues(ctx context.Context) (map[string]gitops.TenantCatalogue, error)
+	AddClusterCatalogueSource(ctx context.Context, name, address string, meta gitops.Meta) (gitops.Result, error)
+	RemoveClusterCatalogueSource(ctx context.Context, name string, meta gitops.Meta) (gitops.Result, error)
+	AddTenantCatalogueSource(ctx context.Context, tenant, name, address string, by gitops.TenantCatalogueActor, meta gitops.Meta) (gitops.Result, error)
+	RemoveTenantCatalogueSource(ctx context.Context, tenant, name string, by gitops.TenantCatalogueActor, meta gitops.Meta) (gitops.Result, error)
+	SetTenantCatalogueDelegation(ctx context.Context, tenant string, delegated bool, meta gitops.Meta) (gitops.Result, error)
 	TenantExposures(ctx context.Context, tenant string) ([]gitops.Exposure, error)
 	PublishExposure(ctx context.Context, tenant string, e gitops.Exposure, meta gitops.Meta) (gitops.Result, error)
 	WithdrawExposure(ctx context.Context, tenant, install, exposure string, meta gitops.Meta) (gitops.Result, error)
@@ -121,14 +131,12 @@ type Config struct {
 	// screen that should have worked.
 	Viewer authz.Viewer
 	Repo   Repository
-	// Catalogue materialises a profile when a tenant installs it (AD-3). Nil
-	// on a cluster whose profiles are still synced wholesale, which is what a
-	// deployment naming no catalogue source is saying.
+	// Catalogue fetches a profile when a tenant installs it (AD-3), and a
+	// catalogue's index when one is listed. Which catalogues there are is
+	// not its to know: they are read from git when they are needed, per
+	// tenant (catalogues.go). Nil is a director that fetches nothing, which
+	// refuses every install from a catalogue and every catalogue added.
 	Catalogue *catalogue.Fetcher
-	// CatalogueSources is spec.catalogue.sources from the Cluster claim: the
-	// same list the Fetcher was built from, in the claim's order, which is
-	// the order the index routes list them in.
-	CatalogueSources []gitops.CatalogueSource
 	// StoreURL is spec.catalogue.storeUrl: where a person is sent for
 	// everything this cluster does not list for itself. Empty is a cluster
 	// that belongs to no store.
@@ -345,14 +353,19 @@ func (s *Server) routes() {
 	s.guarded("GET /v1/tenants/{t}/apps", "can_view", tenantObject, s.listApps)
 	s.guarded("GET /v1/tenants/{t}/apps/{p}/addons", "can_view", tenantObject, s.getAddons)
 
-	// The cluster's own catalogues (AD-14). can_view, like every other read
-	// of a tenant: whoever may see a tenant may see what it could install.
-	// Registered only where there are sources to list, so a cluster that
-	// names none answers 404 rather than an empty screen that looks broken.
-	if s.cfg.Catalogue != nil && len(s.cfg.CatalogueSources) > 0 {
-		s.guarded("GET /v1/tenants/{t}/catalogues", "can_view", tenantObject, s.listCatalogues)
-		s.guarded("GET /v1/tenants/{t}/catalogues/{s}/entries", "can_view", tenantObject, s.listCatalogueEntries)
-	}
+	// The catalogues a tenant sees (AD-14): the cluster's and its own.
+	// can_view, like every other read of a tenant: whoever may see a tenant
+	// may see what it could install.
+	s.guarded("GET /v1/tenants/{t}/catalogues", "can_view", tenantObject, s.listCatalogues)
+	s.guarded("GET /v1/tenants/{t}/catalogues/{s}/entries", "can_view", tenantObject, s.listCatalogueEntries)
+	// A tenant's administrator adding a catalogue for their own tenant.
+	// can_install_app, the relation an install asks: a catalogue decides
+	// what the tenant can install, and nobody who may not install should be
+	// widening that. The relation is not the whole check -- the handler
+	// refuses unless the cluster's administrator delegated this to the
+	// tenant, and removes only what the tenant itself added.
+	s.guarded("PUT /v1/tenants/{t}/catalogues/{s}", "can_install_app", tenantObject, s.addTenantCatalogue)
+	s.guarded("DELETE /v1/tenants/{t}/catalogues/{s}", "can_install_app", tenantObject, s.removeTenantCatalogue)
 
 	// What the caller holds on a tenant, for the desktop: it renders from
 	// the answer -- the admin tile by can_administer, the store by
@@ -392,6 +405,19 @@ func (s *Server) routes() {
 		// tenant: it moves the tenant's hosts, mail and logins.
 		s.guarded("PUT /v1/clusters/{c}/tenants/{t}/domain", "can_configure", s.clusterObject, s.setTenantDomain)
 		s.guarded("DELETE /v1/clusters/{c}/tenants/{t}/domain", "can_configure", s.clusterObject, s.clearTenantDomain)
+		// Where software may enter the cluster: its catalogues. Reading is
+		// can_audit, like the settings; every change is can_configure -- a
+		// catalogue for every tenant, a catalogue for one tenant, and
+		// whether a tenant's own administrators may add theirs. The last is
+		// under /v1/clusters and nowhere else, so that no relation on a
+		// tenant reaches it.
+		s.guarded("GET /v1/clusters/{c}/catalogues", "can_audit", s.clusterObject, s.listClusterCatalogues)
+		s.guarded("PUT /v1/clusters/{c}/catalogues/{s}", "can_configure", s.clusterObject, s.addClusterCatalogue)
+		s.guarded("DELETE /v1/clusters/{c}/catalogues/{s}", "can_configure", s.clusterObject, s.removeClusterCatalogue)
+		s.guarded("PUT /v1/clusters/{c}/tenants/{t}/catalogues/{s}", "can_configure", s.clusterObject, s.addTenantCatalogueAsCluster)
+		s.guarded("DELETE /v1/clusters/{c}/tenants/{t}/catalogues/{s}", "can_configure", s.clusterObject, s.removeTenantCatalogueAsCluster)
+		s.guarded("PUT /v1/clusters/{c}/tenants/{t}/catalogue-delegation", "can_configure", s.clusterObject, s.delegateCatalogues)
+		s.guarded("DELETE /v1/clusters/{c}/tenants/{t}/catalogue-delegation", "can_configure", s.clusterObject, s.undelegateCatalogues)
 		if s.cfg.Lifecycle != nil {
 			// Import: a bundle in, a tenant out (sovereignty-concept.md §4.3).
 			s.guarded("POST /v1/clusters/{c}/bundles", "can_configure", s.clusterObject, s.uploadBundle)
@@ -742,11 +768,15 @@ func (s *Server) install(w http.ResponseWriter, r *http.Request, c call) {
 	// Where the build comes from, settled before anything is asked, fetched
 	// or written: a pin is recorded only for a bundle this director fetched
 	// from a source the cluster declares and saw hash to the digest.
-	catalogueName, entry, ok := s.pinOrigin(w, r, body.Coordinate, body.Digest)
+	source, entry, ok := s.pinOrigin(w, r, tenant, body.Coordinate, body.Digest)
 	if !ok {
 		return
 	}
-	if catalogueName != "" && entry != profile {
+	catalogueName := ""
+	if source != nil {
+		catalogueName = source.Name
+	}
+	if source != nil && entry != profile {
 		// The bundle fetched is the coordinate's and the entry written is the
 		// path's. Two names would commit one profile and install another.
 		s.fail(w, r, http.StatusBadRequest, "the coordinate names a different app than the one being installed")
@@ -776,16 +806,20 @@ func (s *Server) install(w http.ResponseWriter, r *http.Request, c call) {
 	//
 	// A request with neither coordinate nor digest fetches nothing and pins
 	// nothing: it installs a profile the cluster already holds, or states
-	// who an installed app is for.
-	if catalogueName != "" {
-		res, ok := s.materialise(w, r, c, body.Coordinate, body.Digest)
+	// who an installed app is for. The profile has to be there -- nothing
+	// puts profiles on a cluster ahead of an install any more -- and it has
+	// to be one this tenant may have.
+	if source != nil {
+		res, ok := s.materialise(w, r, c, tenant, *source, entry, body.Digest)
 		if !ok {
 			return
 		}
 		if res.Changed {
 			s.cfg.Log.InfoContext(ctx, "materialised a catalogue entry",
-				"request_id", reqID(ctx), "coordinate", body.Coordinate, "commit", res.Commit)
+				"request_id", reqID(ctx), "coordinate", body.Coordinate, "origin", source.origin(tenant), "commit", res.Commit)
 		}
+	} else if !s.onClusterFor(w, r, tenant, profile, "") {
+		return
 	}
 
 	res, err := s.cfg.Repo.InstallFrom(ctx, tenant, profile, body.Digest, catalogueName, body.DefaultGrant, c.meta)
@@ -814,65 +848,115 @@ func (s *Server) refusedInPlatformTenant(w http.ResponseWriter, r *http.Request,
 	return false
 }
 
-// pinOrigin answers which declared catalogue source a coordinate names, and
+// onClusterFor answers whether a profile named with no coordinate is one
+// this tenant can be given: the cluster's catalogue directory holds it, and
+// it is not another tenant's own. When it is not, it writes the refusal and
+// answers false.
+//
+// base is the app an add-on is being switched on in, or "" for an app. The
+// two refusals differ in what they warn of: an app that is not there never
+// appears, and an add-on that is not there is a selection that switches
+// nothing on while every screen shows it selected.
+//
+// One answer for "not there" and for "there, but another tenant's": the
+// profile object is visible to anybody who can read the cluster, but this
+// service is not where one tenant learns what another published.
+func (s *Server) onClusterFor(w http.ResponseWriter, r *http.Request, tenant, name, base string) bool {
+	if !gitops.ValidName(name) {
+		// Not a profile's name, so not a profile; said as the write says it.
+		s.fail(w, r, http.StatusBadRequest, "invalid name")
+		return false
+	}
+	have, err := s.cfg.Repo.ProfileOnCluster(r.Context(), name)
+	if err != nil {
+		s.repoError(w, r, err)
+		return false
+	}
+	if have.Present && profilebundle.UsableBy(have.Origin, tenant) {
+		return true
+	}
+	how := fmt.Sprintf(`give it with its coordinate and digest, {"coordinate": "<catalogue>/%s", "digest": "sha256:<hex>"}, `+
+		`so that it is fetched and checked ('kubectl gentian apps list --tenant %s --available' lists both). %s`,
+		name, tenant, s.declaredSources(r.Context(), tenant))
+	if base != "" {
+		s.fail(w, r, http.StatusUnprocessableEntity, fmt.Sprintf(
+			"add-on %s is named without a build, and no profile of that name is on this cluster for this tenant: "+
+				"switching it on would activate nothing in %s. Nothing was changed; %s", name, base, how))
+		return false
+	}
+	s.fail(w, r, http.StatusUnprocessableEntity, fmt.Sprintf(
+		"%s is named without a build, and no profile of that name is on this cluster for this tenant: "+
+			"profiles are not on a cluster ahead of an install. Nothing was installed; %s", name, how))
+	return false
+}
+
+// pinOrigin answers which catalogue a coordinate names for this tenant, and
 // refuses a request whose build nothing here could verify.
 //
-// An install comes from a catalogue source the cluster declares. So:
+// An install comes from a catalogue the tenant sees: one of the cluster's,
+// or one of its own. So:
 //
-//   - A coordinate whose catalogue is not a declared source is refused. It
-//     used to proceed with no fetch, and the digest beside it was then
-//     recorded on nobody's word but the caller's.
-//   - A digest with no coordinate is refused for the same reason: there is
-//     nowhere to fetch the bytes it is the digest of.
+//   - A coordinate whose catalogue the tenant does not see is refused --
+//     whether nobody declares it or another tenant does, in the same words.
+//   - A digest with no coordinate is refused: there is nowhere to fetch the
+//     bytes it is the digest of.
 //   - A coordinate with no digest is refused, because a fetch from a source
 //     is pinned to the build the request names.
-//   - Neither is not a pin at all, and answers an empty catalogue.
+//   - Neither is not a pin at all, and answers no source.
 //
 // It writes the refusal itself and answers false.
 func (s *Server) pinOrigin(
-	w http.ResponseWriter, r *http.Request, coordinate, digest string,
-) (catalogueName, name string, ok bool) {
+	w http.ResponseWriter, r *http.Request, tenant, coordinate, digest string,
+) (source *visibleSource, name string, ok bool) {
+	ctx := r.Context()
 	if coordinate == "" {
 		if digest != "" {
 			s.fail(w, r, http.StatusUnprocessableEntity,
 				"a digest is checked against the bundle its coordinate names, and this request names none: "+
-					"state the coordinate, <catalogue>/<app>, with the digest. "+s.declaredSources())
-			return "", "", false
+					"state the coordinate, <catalogue>/<app>, with the digest. "+s.declaredSources(ctx, tenant))
+			return nil, "", false
 		}
-		return "", "", true
+		return nil, "", true
 	}
 	catalogueName, name, cut := strings.Cut(coordinate, "/")
-	if !cut || catalogueName == "" || name == "" {
+	if !cut || catalogueName == "" || name == "" || strings.Contains(name, "/") {
 		s.fail(w, r, http.StatusBadRequest, "coordinate must be <catalogue>/<app>")
-		return "", "", false
+		return nil, "", false
 	}
-	if !s.cfg.Catalogue.Known(catalogueName) {
+	found, known, err := s.resolveSource(ctx, tenant, catalogueName)
+	if err != nil {
+		s.repoError(w, r, err)
+		return nil, "", false
+	}
+	if !known || s.cfg.Catalogue == nil {
 		s.fail(w, r, http.StatusUnprocessableEntity, fmt.Sprintf(
-			"%q is not a catalogue source of this cluster, so nothing can be fetched from it or verified; "+
-				"nothing was installed. %s", catalogueName, s.declaredSources()))
-		return "", "", false
+			"%q is not a catalogue this tenant installs from, so nothing can be fetched from it or verified; "+
+				"nothing was installed. %s", catalogueName, s.declaredSources(ctx, tenant)))
+		return nil, "", false
 	}
 	if digest == "" {
 		s.fail(w, r, http.StatusBadRequest,
 			"installing from a catalogue source needs the entry's digest: sha256:<hex>")
-		return "", "", false
+		return nil, "", false
 	}
-	return catalogueName, name, true
+	return &found, name, true
 }
 
-// declaredSources says which catalogue sources the Cluster claim names, for a
-// refusal that has to tell the caller what it could have asked for.
-func (s *Server) declaredSources() string {
-	names := make([]string, 0, len(s.cfg.CatalogueSources))
-	for _, src := range s.cfg.CatalogueSources {
-		if s.cfg.Catalogue.Known(src.Name) {
-			names = append(names, src.Name)
-		}
+// declaredSources says which catalogues a tenant sees, for a refusal that
+// has to tell the caller what it could have asked for.
+func (s *Server) declaredSources(ctx context.Context, tenant string) string {
+	if s.cfg.Catalogue == nil {
+		return "This director fetches from no catalogue."
 	}
-	if len(names) == 0 {
-		return "This cluster declares no catalogue source."
+	sources, _, err := s.visibleSources(ctx, tenant)
+	if err != nil || len(sources) == 0 {
+		return "This tenant has no catalogue to install from."
 	}
-	return "This cluster's catalogue sources: " + strings.Join(names, ", ") + "."
+	names := make([]string, 0, len(sources))
+	for _, src := range sources {
+		names = append(names, src.Name)
+	}
+	return "This tenant's catalogues: " + strings.Join(names, ", ") + "."
 }
 
 // materialise fetches the entry a coordinate names and commits it, so the
@@ -883,35 +967,46 @@ func (s *Server) declaredSources() string {
 // nothing is written. The request says WHAT, the source says the bytes, and
 // only agreement produces an install.
 //
-// The caller has settled, with pinOrigin, that the coordinate's catalogue is
-// a declared source and that a digest was stated.
+// The caller has settled, with pinOrigin, that the tenant sees the catalogue
+// and that a digest was stated.
 func (s *Server) materialise(
-	w http.ResponseWriter, r *http.Request, c call, coordinate, digest string,
+	w http.ResponseWriter, r *http.Request, c call, tenant string, source visibleSource, name, digest string,
 ) (gitops.Result, bool) {
-	profile, ok := s.fetchEntry(w, r, coordinate, digest)
+	profile, ok := s.fetchEntry(w, r, source, name, digest)
 	if !ok {
 		return gitops.Result{}, false
 	}
-	return s.commitEntry(w, r, c, profile)
+	return s.commitEntry(w, r, c, tenant, source, profile)
 }
 
 // fetchEntry reads one bundle from its source and checks it against the
 // digest. It writes nothing.
-func (s *Server) fetchEntry(w http.ResponseWriter, r *http.Request, coordinate, digest string) (*catalogue.Profile, bool) {
+func (s *Server) fetchEntry(
+	w http.ResponseWriter, r *http.Request, source visibleSource, name, digest string,
+) (*catalogue.Profile, bool) {
 	ctx := r.Context()
-	profile, err := s.cfg.Catalogue.Fetch(ctx, coordinate, digest)
+	coordinate := source.Name + "/" + name
+	profile, err := s.cfg.Catalogue.Fetch(ctx, source.Source, name, digest)
 	switch {
 	case errors.Is(err, catalogue.ErrDigestMismatch):
 		// Said plainly and logged, because this is the one failure here that
 		// is not a mistake: the source served something other than the build
 		// that was asked for.
 		s.cfg.Log.ErrorContext(ctx, "a catalogue source served a bundle that is not the build requested",
-			"request_id", reqID(ctx), "coordinate", coordinate)
+			"request_id", reqID(ctx), "coordinate", coordinate, "catalogue", source.Key)
 		s.fail(w, r, http.StatusBadGateway,
 			"the catalogue source served a bundle for "+coordinate+" that is not this entry; nothing was installed")
 		return nil, false
 	case errors.Is(err, catalogue.ErrNotFound):
 		s.fail(w, r, http.StatusNotFound, "the catalogue source does not serve "+coordinate)
+		return nil, false
+	case errors.Is(err, catalogue.ErrAddressRefused):
+		// The address was a public one when the catalogue was added and is
+		// not one now. Logged with what it was, answered without.
+		s.cfg.Log.ErrorContext(ctx, "a catalogue's address is no longer one that is fetched from",
+			"request_id", reqID(ctx), "catalogue", source.Key, "error", err.Error())
+		s.fail(w, r, http.StatusBadGateway, "the address of catalogue "+source.Name+
+			" is not a public https address any more, so nothing is fetched from it; nothing was installed")
 		return nil, false
 	case err != nil:
 		s.fail(w, r, http.StatusBadGateway, "the catalogue entry could not be read: "+err.Error())
@@ -920,22 +1015,64 @@ func (s *Server) fetchEntry(w http.ResponseWriter, r *http.Request, coordinate, 
 	return profile, true
 }
 
-// commitEntry commits a fetched and verified bundle beside its profile.
-func (s *Server) commitEntry(w http.ResponseWriter, r *http.Request, c call, profile *catalogue.Profile) (gitops.Result, bool) {
-	res, err := s.cfg.Repo.MaterialiseProfile(r.Context(), profile.Name, profile.Digest, profile.Body, c.meta)
-	if errors.Is(err, gitops.ErrBundleTooLarge) {
+// commitEntry commits a fetched and verified bundle beside its profile,
+// recorded as coming from the catalogue it was fetched from.
+//
+// ComponentProfiles are cluster-scoped, so a name is one profile for every
+// tenant. A profile from a tenant's own catalogue never takes a name another
+// origin holds, and nothing takes a name a tenant's own catalogue holds: the
+// install is refused, with who has to rename.
+func (s *Server) commitEntry(
+	w http.ResponseWriter, r *http.Request, c call, tenant string, source visibleSource, profile *catalogue.Profile,
+) (gitops.Result, bool) {
+	res, err := s.cfg.Repo.MaterialiseProfile(r.Context(), profile.Name, profile.Digest, profile.Body, source.origin(tenant), c.meta)
+	var taken *gitops.ErrProfileNameTaken
+	switch {
+	case errors.Is(err, gitops.ErrBundleTooLarge):
 		// Refused rather than installed unverifiable: the operator checks a
 		// pinned install against the bundle, and one it cannot be given
 		// would be held at rollout for good.
 		s.fail(w, r, http.StatusUnprocessableEntity,
 			"the catalogue entry "+profile.Name+" is too large to be installed at a digest; nothing was installed")
 		return gitops.Result{}, false
-	}
-	if err != nil {
+	case errors.Is(err, gitops.ErrProfileStatesOrigin):
+		s.fail(w, r, http.StatusUnprocessableEntity, "the catalogue entry "+profile.Name+
+			" carries an annotation only the platform writes (its bundle or its origin); nothing was installed")
+		return gitops.Result{}, false
+	case errors.As(err, &taken):
+		s.cfg.Log.WarnContext(r.Context(), "a profile's name is taken by a profile of another origin",
+			"request_id", reqID(r.Context()), "profile", taken.Name, "origin", taken.Origin, "holder", taken.Holder)
+		s.fail(w, r, http.StatusConflict, nameTakenMessage(taken, tenant, source))
+		return gitops.Result{}, false
+	case err != nil:
 		s.repoError(w, r, err)
 		return gitops.Result{}, false
 	}
 	return res, true
+}
+
+// nameTakenMessage says that a profile's name is taken and who has to rename.
+// It names no other tenant: whose the other profile is, is in the log.
+func nameTakenMessage(taken *gitops.ErrProfileNameTaken, tenant string, source visibleSource) string {
+	name := taken.Name
+	suggestion := fmt.Sprintf("publish it as %s-%s in the catalogue %s and install that", tenant, name, source.Name)
+	switch {
+	case taken.Platform:
+		if source.scope == scopeTenant {
+			return fmt.Sprintf("the name %s is taken on this cluster by a component the platform ships, and a profile is "+
+				"one object for the whole cluster. Nothing was installed; %s", name, suggestion)
+		}
+		return fmt.Sprintf("the name %s is taken on this cluster by a component the platform ships. Nothing was installed; "+
+			"the catalogue %s has to publish its entry under another name", name, source.Name)
+	case source.scope == scopeTenant:
+		return fmt.Sprintf("the name %s is already taken on this cluster by a profile from another catalogue, and a profile "+
+			"is one object for the whole cluster. Nothing was installed; %s", name, suggestion)
+	default:
+		return fmt.Sprintf("the name %s is already taken on this cluster by a profile from a tenant's own catalogue, so "+
+			"the entry of the cluster's catalogue %s cannot be installed under it. Nothing was installed. The tenant that "+
+			"published it has to rename its profile (<tenant>-%s) and install that instead; the cluster's administrator "+
+			"can see whose it is", name, source.Name, name)
+	}
 }
 
 func (s *Server) uninstall(w http.ResponseWriter, r *http.Request, c call) {
@@ -1005,6 +1142,8 @@ func (s *Server) setAddons(w http.ResponseWriter, r *http.Request, c call) {
 	names := make([]string, 0, len(body.Addons))
 	seen := map[string]bool{}
 	var pinned []addonEntry
+	var sources []visibleSource
+	var bare []string
 	var pins []gitops.AddonPin
 	for _, entry := range body.Addons {
 		name := entry.Name
@@ -1019,13 +1158,23 @@ func (s *Server) setAddons(w http.ResponseWriter, r *http.Request, c call) {
 			}
 			// The rule an app's pin is under: a declared source, and a
 			// digest only beside the coordinate it is the digest of.
-			from, addon, ok := s.pinOrigin(w, r, entry.Coordinate, entry.Digest)
+			from, addon, ok := s.pinOrigin(w, r, tenant, entry.Coordinate, entry.Digest)
 			if !ok {
 				return
 			}
+			if from == nil {
+				// An object with neither: not a build, and not a name.
+				s.fail(w, r, http.StatusBadRequest,
+					`an addon is a name or {"coordinate": "<catalogue>/<addon>", "digest": "sha256:<hex>"}`)
+				return
+			}
 			name = addon
+			entry.Name = addon
 			pinned = append(pinned, entry)
-			pins = append(pins, gitops.AddonPin{Name: addon, Digest: entry.Digest, Catalogue: from})
+			sources = append(sources, *from)
+			pins = append(pins, gitops.AddonPin{Name: addon, Digest: entry.Digest, Catalogue: from.Name})
+		} else if name != "" {
+			bare = append(bare, name)
 		}
 		if name == "" {
 			s.fail(w, r, http.StatusBadRequest,
@@ -1038,6 +1187,16 @@ func (s *Server) setAddons(w http.ResponseWriter, r *http.Request, c call) {
 		}
 		seen[name] = true
 		names = append(names, name)
+	}
+
+	// An add-on named with no build is one whose profile the cluster must
+	// already hold. Nothing puts profiles on a cluster ahead of an install,
+	// so a name that matches none is refused here: written to the manifest
+	// it would be a selection every screen shows and nothing acts on.
+	for _, name := range bare {
+		if !s.onClusterFor(w, r, tenant, name, profile) {
+			return
+		}
 	}
 
 	if len(pinned) > 0 {
@@ -1073,15 +1232,15 @@ func (s *Server) setAddons(w http.ResponseWriter, r *http.Request, c call) {
 			return
 		}
 		bundles := make([]*catalogue.Profile, 0, len(pinned))
-		for _, entry := range pinned {
-			bundle, ok := s.fetchEntry(w, r, entry.Coordinate, entry.Digest)
+		for i, entry := range pinned {
+			bundle, ok := s.fetchEntry(w, r, sources[i], entry.Name, entry.Digest)
 			if !ok {
 				return
 			}
 			bundles = append(bundles, bundle)
 		}
 		for i, bundle := range bundles {
-			res, ok := s.commitEntry(w, r, c, bundle)
+			res, ok := s.commitEntry(w, r, c, tenant, sources[i], bundle)
 			if !ok {
 				return
 			}

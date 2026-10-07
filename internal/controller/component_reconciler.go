@@ -161,8 +161,15 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	profile := &gentianov1alpha1.ComponentProfile{}
 	if err := r.Get(ctx, types.NamespacedName{Name: comp.Spec.ProfileRef.Name}, profile); err != nil {
 		if errors.IsNotFound(err) {
-			return r.status(ctx, comp, metav1.ConditionFalse, "ProfileMissing",
-				fmt.Sprintf("ComponentProfile %q is not installed", comp.Spec.ProfileRef.Name), componentRequeue)
+			// Said with what to do: no profile is on a cluster ahead of
+			// an install, so this is an app named without the build to
+			// fetch -- by hand in the manifest, by an import, or left
+			// from when profiles were copied in wholesale.
+			return r.status(ctx, comp, metav1.ConditionFalse, "ProfileMissing", fmt.Sprintf(
+				"ComponentProfile %q is not on this cluster, so there is nothing to install it from: "+
+					"install it with its coordinate and digest so that the profile is fetched "+
+					"(kubectl gentian apps install %s --tenant <tenant>)",
+				comp.Spec.ProfileRef.Name, comp.Spec.ProfileRef.Name), componentRequeue)
 		}
 		return ctrl.Result{}, err
 	}
@@ -230,6 +237,33 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	if tenant == nil {
 		return r.status(ctx, comp, metav1.ConditionFalse, "NoTenant",
 			fmt.Sprintf("namespace %q belongs to no Tenant", comp.Namespace), componentRequeue)
+	}
+	// Whose the profile is, and whether every add-on has one.
+	//
+	// A ComponentProfile is cluster-scoped, and a catalogue need not be: a
+	// tenant may have one only it sees, and what was materialised from it
+	// says so (profilebundle.OriginAnnotation). The director refuses to
+	// install such a profile anywhere else, but the object is there for the
+	// whole cluster and a Component can be written naming it by other means,
+	// so it is refused here as well -- at the same point as the digest, before
+	// anything is rendered, and leaving what is running as it is.
+	//
+	// An add-on switched on by name whose profile is not on the cluster is
+	// held the same way. Profiles are not on a cluster ahead of an install,
+	// and an add-on that resolves to nothing would otherwise be dropped from
+	// the release without a word: selected on every screen, active nowhere.
+	if refusal, err := r.unusableProfile(ctx, comp, profile, tenant.Name); err != nil {
+		return ctrl.Result{}, err
+	} else if refusal != nil {
+		message := refusal.Message + "; nothing is rolled out for " + comp.Name + ", and what is running is left as it is"
+		if r.Recorder != nil && !componentReports(comp, refusal.Reason, message) {
+			r.Recorder.Event(comp, corev1.EventTypeWarning, refusal.Reason, message)
+		}
+		logger.Info("component held: a profile it needs is not one this tenant can use",
+			"component", comp.Name, "namespace", comp.Namespace, "reason", refusal.Reason, "detail", refusal.Message)
+		// Requeued: an add-on's profile arriving is not an event on this
+		// Component.
+		return r.status(ctx, comp, metav1.ConditionFalse, refusal.Reason, message, componentRequeue)
 	}
 
 	// Privileges are requests, never grants (AD-5). Anything the profile asks
@@ -502,6 +536,37 @@ func (r *ComponentReconciler) unverifiedAddon(ctx context.Context, comp *gentian
 		}
 		if refusal := profilebundle.Verify(addon, pin.Digest); refusal != nil {
 			return &profilebundle.Refusal{Reason: refusal.Reason, Message: "addon " + pin.Name + ": " + refusal.Message}, nil
+		}
+	}
+	return nil, nil
+}
+
+// reasonAddonProfileMissing is the condition reason of a Component that
+// activates an add-on whose ComponentProfile is not on the cluster.
+const reasonAddonProfileMissing = "AddonProfileMissing"
+
+// unusableProfile answers why this component cannot be rolled out for its
+// tenant from the profiles it names, or nil: its own profile or an add-on's
+// belongs to another tenant, or an add-on has no profile on the cluster.
+func (r *ComponentReconciler) unusableProfile(
+	ctx context.Context, comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile, tenant string,
+) (*profilebundle.Refusal, error) {
+	if refusal := profilebundle.OwnedByAnother(profile, tenant); refusal != nil {
+		return refusal, nil
+	}
+	for _, name := range comp.Spec.Addons {
+		addon := &gentianov1alpha1.ComponentProfile{}
+		if err := r.Get(ctx, types.NamespacedName{Name: name}, addon); err != nil {
+			if !errors.IsNotFound(err) {
+				return nil, err
+			}
+			return &profilebundle.Refusal{Reason: reasonAddonProfileMissing, Message: fmt.Sprintf(
+				"add-on %s is switched on and its ComponentProfile is not on this cluster, so it would activate nothing: "+
+					"switch it on with its coordinate and digest (<catalogue>/%s and sha256:<hex>) so that it is fetched, or switch it off",
+				name, name)}, nil
+		}
+		if refusal := profilebundle.OwnedByAnother(addon, tenant); refusal != nil {
+			return &profilebundle.Refusal{Reason: refusal.Reason, Message: "add-on " + name + ": " + refusal.Message}, nil
 		}
 	}
 	return nil, nil

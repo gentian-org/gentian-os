@@ -436,7 +436,11 @@ func TestAnUnpinnedAddonIsActivatedAsBefore(t *testing.T) {
 		t.Fatalf("condition = %+v, want the release under way", ready)
 	}
 
-	h = startAddonHarness(t, nil, "")
+	// (With its profile on the cluster: an add-on that has none holds the
+	// base whatever is pinned, component_origin_test.go.)
+	again := materialised(t, talkBundle)
+	again.Annotations = nil
+	h = startAddonHarness(t, again, "")
 	base := &gentianov1alpha1.Component{}
 	if err := h.c.Get(context.Background(), client.ObjectKeyFromObject(h.comp), base); err != nil {
 		t.Fatal(err)

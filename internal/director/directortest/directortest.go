@@ -49,6 +49,49 @@ spec:
 `
 }
 
+// OnCluster are the profiles every fixture repository holds in its catalogue
+// directory: the ones tests install or switch on by name alone, which is
+// valid only for a profile the cluster already has.
+var OnCluster = []string{
+	"element", "nextcloud", "notes", "odoo", "status", "wiki", "board", "calendar", "deck",
+	"app-0", "app-1", "app-2", "app-3", "app-4", "app-5", "element-deck", "element-talk",
+}
+
+// ProfileYAML is a minimal ComponentProfile.
+func ProfileYAML(name string) string {
+	return "apiVersion: gentianos.io/v1alpha1\nkind: ComponentProfile\nmetadata:\n  name: " + name +
+		"\nspec:\n  classes: [app]\n  trustTier: certified\n  version: \"1.0.0\"\n"
+}
+
+// CataloguePath is the repository-relative path of a file in the cluster's
+// catalogue directory.
+func CataloguePath(file string) string {
+	return "clusters/" + Cluster + "/catalogue/" + file
+}
+
+// ClaimPath is the repository-relative path of the Cluster claim.
+const ClaimPath = "clusters/" + Cluster + "/kernel/claims/cluster.yaml"
+
+// Commit writes files into the remote as one commit: what somebody else
+// pushed. Paths are repository-relative.
+func Commit(t testing.TB, remote string, files map[string]string) {
+	t.Helper()
+	work := t.TempDir()
+	Git(t, "", "clone", remote, work)
+	for path, body := range files {
+		full := filepath.Join(work, path)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	Git(t, work, "add", "-A")
+	Git(t, work, "-c", "user.name=seed", "-c", "user.email=seed@example.com", "commit", "-m", "seed")
+	Git(t, work, "push", "origin", "HEAD:main")
+}
+
 // Remote creates a bare repository holding the given tenants and returns its path.
 func Remote(t testing.TB, tenants ...string) string {
 	t.Helper()
@@ -66,6 +109,15 @@ func Remote(t testing.TB, tenants ...string) string {
 	}
 	if err := os.WriteFile(filepath.Join(claims, "cluster.yaml"), []byte("apiVersion: gentianos.io/v1alpha1\nkind: Cluster\nmetadata:\n  name: "+Cluster+"\nspec:\n  kernelDomain: "+KernelDomain+"\n"), 0o644); err != nil {
 		t.Fatal(err)
+	}
+	catalogue := filepath.Join(seed, "clusters", Cluster, "catalogue")
+	if err := os.MkdirAll(catalogue, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range OnCluster {
+		if err := os.WriteFile(filepath.Join(catalogue, name+".yaml"), []byte(ProfileYAML(name)), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 	for _, name := range tenants {
 		dir := filepath.Join(seed, "clusters", Cluster, "tenants", name)

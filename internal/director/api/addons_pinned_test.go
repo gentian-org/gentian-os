@@ -198,7 +198,7 @@ func TestAnAddonWhoseBuildCannotBeVerifiedIsRefused(t *testing.T) {
 		code  int
 		says  string
 	}{
-		"a catalogue the cluster does not declare": {pinnedAddon("elsewhere/element-talk", sha(talk)), http.StatusUnprocessableEntity, "catalogue sources: main."},
+		"a catalogue the cluster does not declare": {pinnedAddon("elsewhere/element-talk", sha(talk)), http.StatusUnprocessableEntity, "This tenant's catalogues: main."},
 		"a digest with no coordinate":              {fmt.Sprintf(`{"digest":%q}`, sha(talk)), http.StatusUnprocessableEntity, "coordinate"},
 		"a coordinate with no digest":              {`{"coordinate":"main/element-talk"}`, http.StatusBadRequest, "digest"},
 		"a digest that is not one":                 {pinnedAddon("main/element-talk", "latest"), http.StatusBadRequest, "sha256"},
@@ -233,7 +233,7 @@ func TestAnAddonWhoseBuildCannotBeVerifiedIsRefused(t *testing.T) {
 		t.Fatalf("install = %d %v", code, out)
 	}
 	if code, out := bare.do(t, "PUT", "/v1/tenants/demo/apps/element/addons", tom, `{"addons":[`+good+`]}`); code != http.StatusUnprocessableEntity ||
-		!strings.Contains(fmt.Sprint(out["error"]), "declares no catalogue source") {
+		!strings.Contains(fmt.Sprint(out["error"]), "fetches from no catalogue") {
 		t.Fatalf("a pinned addon with no source declared = %d %v", code, out)
 	}
 	if code, out := bare.do(t, "PUT", "/v1/tenants/demo/apps/element/addons", tom, `{"addons":["element-talk"]}`); code != http.StatusAccepted {

@@ -26,9 +26,10 @@ import (
 // commit a form would have produced, with the apps list the bundle recorded,
 // so the operator provisions the shells a restore then fills (§4.3).
 //
-// Two fields are not the bundle's to decide. deletionPolicy is Retain: a
+// Three fields are not the bundle's to decide. deletionPolicy is Retain: a
 // tenant that was exported while a purge was under way must not arrive with
-// its purge; and spec.deletion is dropped with it.
+// its purge; and spec.deletion is dropped with it. spec.catalogue is dropped
+// too: a bundle does not bring its own catalogues or its own delegation.
 func (g *GitOps) DeclareTenant(ctx context.Context, name string, spec *gentianov1alpha1.TenantSpec, origin string, meta Meta) (Result, error) {
 	if !ValidName(name) {
 		return Result{}, fmt.Errorf("%w: tenant %q", ErrInvalidName, name)
@@ -56,6 +57,11 @@ func (g *GitOps) DeclareTenant(ctx context.Context, name string, spec *gentianov
 	declared := spec.DeepCopy()
 	declared.DeletionPolicy = gentianov1alpha1.DeletionPolicyRetain
 	declared.Deletion = nil
+	// Nor are its catalogues. Which addresses a tenant installs from, and
+	// whether its own administrators may add more, were decided by the
+	// administrator of the cluster the bundle came from; on this one they
+	// are decided here, through the catalogue routes, after the import.
+	declared.Catalogue = nil
 	body, err := yaml.Marshal(map[string]any{
 		"apiVersion": "gentianos.io/v1alpha1",
 		"kind":       "Tenant",

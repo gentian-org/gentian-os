@@ -283,6 +283,63 @@ spec:
                   - message: either profile or profileRef is required
                     rule: has(self.profile) || has(self.profileRef)
                 type: array
+              catalogue:
+                description: |-
+                  Catalogue is where this tenant may install from beside the catalogues
+                  the whole cluster offers: the catalogues only this tenant sees, and
+                  whether its own administrators may add them.
+
+                  The director reads and writes it, in the tenant's manifest in git.
+                  Nothing in the cluster acts on it: what an install may use is decided
+                  when the director resolves a coordinate, and what a tenant may roll out
+                  is decided by the origin a materialised profile carries.
+                properties:
+                  delegated:
+                    description: |-
+                      Delegated says the tenant's own administrators may add and remove
+                      catalogues for this tenant. Off unless the cluster's administrator
+                      turns it on; a tenant's administrator cannot.
+                    type: boolean
+                  sources:
+                    description: Sources are the catalogues only this tenant sees.
+                    items:
+                      description: |-
+                        TenantCatalogueSource is one catalogue of a tenant: an address that serves
+                        index.yaml and profiles/<name>.yaml.
+                      properties:
+                        addedBy:
+                          default: cluster
+                          description: |-
+                            AddedBy says who added it: the cluster's administrator, or the
+                            tenant's own under delegation. A tenant's administrator removes only
+                            what the tenant added.
+                          enum:
+                          - cluster
+                          - tenant
+                          type: string
+                        name:
+                          description: |-
+                            Name is the catalogue's name: the first half of a coordinate,
+                            <name>/<app>. It is not the name of a catalogue of the whole cluster,
+                            nor of another catalogue of this tenant.
+                          maxLength: 63
+                          pattern: ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$
+                          type: string
+                        url:
+                          description: URL is the https address the catalogue is served
+                            from.
+                          maxLength: 2048
+                          pattern: ^https://
+                          type: string
+                      required:
+                      - name
+                      - url
+                      type: object
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - name
+                    x-kubernetes-list-type: map
+                type: object
               deletion:
                 description: Deletion refines what a Delete leaves behind.
                 properties:

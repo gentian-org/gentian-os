@@ -249,7 +249,7 @@ func TestACoordinateFromAnUndeclaredCatalogueIsRefused(t *testing.T) {
 		}
 		// The refusal names the catalogue asked for and the ones there are.
 		said := fmt.Sprint(out["error"])
-		if !strings.Contains(said, `"elsewhere"`) || !strings.Contains(said, "catalogue sources: main.") {
+		if !strings.Contains(said, `"elsewhere"`) || !strings.Contains(said, "This tenant's catalogues: main.") {
 			t.Fatalf("%s: the refusal does not say what is declared: %q", name, said)
 		}
 	}
@@ -261,13 +261,13 @@ func TestACoordinateFromAnUndeclaredCatalogueIsRefused(t *testing.T) {
 // A cluster that declares no source at all refuses every coordinate, and says
 // that it has none.
 func TestACoordinateIsRefusedWhereNoSourceIsDeclared(t *testing.T) {
-	h := start(t)
+	h := startSeeded(t, nil, nil, withFetcher(nil))
 	tom := h.token(t, "tenant-demo", "tom")
 	before := h.tip(t)
 
 	code, out := h.do(t, "POST", "/v1/tenants/demo/apps/element", tom,
 		fmt.Sprintf(`{"coordinate":"main/element","digest":%q}`, sha(elementProfile)))
-	if code != http.StatusUnprocessableEntity || !strings.Contains(fmt.Sprint(out["error"]), "declares no catalogue source") {
+	if code != http.StatusUnprocessableEntity || !strings.Contains(fmt.Sprint(out["error"]), "has no catalogue to install from") {
 		t.Fatalf("install = %d %v, want 422 saying no source is declared", code, out)
 	}
 	if h.tip(t) != before {

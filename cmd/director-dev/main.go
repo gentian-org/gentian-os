@@ -51,6 +51,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/director/api"
 	"github.com/gentian-org/gentian-os/internal/director/authn"
 	"github.com/gentian-org/gentian-os/internal/director/authz"
+	"github.com/gentian-org/gentian-os/internal/director/catalogue"
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
 )
 
@@ -143,7 +144,11 @@ func run(log *slog.Logger, listen, base string, origins []string, cluster string
 		checker = fga
 	}
 	repo := gitops.NewGitOps(filepath.Join(work, "checkout"), remote, cluster, gitops.Person{})
-	director, err := api.New(api.Config{Authn: verifier, Authz: checker, Repo: repo, Log: log, Cluster: cluster})
+	// The real fetcher: a catalogue added here is fetched from, with the
+	// address checks a cluster's director makes, so only public https
+	// addresses work on a laptop as well.
+	director, err := api.New(api.Config{Authn: verifier, Authz: checker, Repo: repo, Log: log, Cluster: cluster,
+		Catalogue: catalogue.NewFetcher()})
 	if err != nil {
 		return err
 	}

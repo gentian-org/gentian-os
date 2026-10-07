@@ -19,6 +19,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -89,27 +90,60 @@ func start(t *testing.T) *harness {
 	return startWith(t, nil)
 }
 
-// startWithCatalogue is the harness with catalogue sources, for the installs
-// that materialise a profile on reference (AD-3). The fetcher is given the
-// test server's own client, so it trusts that certificate and no other.
-// declared is the sources in the Cluster claim's order; without it they are
-// the fetcher's, in no particular order.
+// startWithCatalogue is the harness with catalogues of the whole cluster, for
+// the installs that materialise a profile on reference (AD-3). They are
+// written on the Cluster claim, which is where the director reads them from
+// when it needs them. The fetcher is given the test server's own client, so
+// it trusts that certificate and no other -- and connects to the test
+// server's loopback address, which the director's own client refuses.
+// declared is the sources in the claim's order; without it they are the
+// map's, by name.
 func startWithCatalogue(
 	t *testing.T, src *httptest.Server, sources map[string]string, declared ...gitops.CatalogueSource,
 ) *harness {
 	t.Helper()
-	return startWith(t, nil, func(cfg *api.Config) {
-		f := catalogue.NewFetcher(sources)
-		f.Client = src.Client()
-		cfg.Catalogue = f
-		if declared == nil {
-			for name, url := range sources {
-				declared = append(declared, gitops.CatalogueSource{Name: name, URL: url})
-			}
+	if declared == nil {
+		names := make([]string, 0, len(sources))
+		for name := range sources {
+			names = append(names, name)
 		}
-		cfg.CatalogueSources = declared
+		sort.Strings(names)
+		for _, name := range names {
+			declared = append(declared, gitops.CatalogueSource{Name: name, URL: sources[name]})
+		}
+	}
+	return startSeeded(t, nil, func(remote string) {
+		dt.Commit(t, remote, map[string]string{dt.ClaimPath: claimWith(declared...)})
+	}, withFetcher(src))
+}
+
+// withFetcher gives the director a fetcher that reaches the test server and
+// accepts any address for a new catalogue. Address checks have tests of their
+// own (catalogue/address_test.go, and catalogues_test.go with the real one).
+func withFetcher(src *httptest.Server) func(*api.Config) {
+	return func(cfg *api.Config) {
+		f := catalogue.NewFetcher()
+		if src != nil {
+			f.Client = src.Client()
+		}
+		f.Vet = func(context.Context, string) error { return nil }
+		cfg.Catalogue = f
 		cfg.StoreURL = "https://store.example.com"
-	})
+	}
+}
+
+// claimWith is the fixture Cluster claim naming catalogues of the cluster.
+func claimWith(sources ...gitops.CatalogueSource) string {
+	claim := "apiVersion: gentianos.io/v1alpha1\nkind: Cluster\nmetadata:\n  name: " + dt.Cluster +
+		"\nspec:\n  kernelDomain: " + dt.KernelDomain + "\n"
+	if len(sources) == 0 {
+		return claim
+	}
+	claim += "  catalogue:\n    storeUrl: https://store.example.com\n    sources:\n"
+	for _, src := range sources {
+		claim += "      - name: " + src.Name + "\n        url: " + src.URL + "\n"
+	}
+	return claim
 }
 
 // startWith is the harness with an operator to ask. lc is what answers the
@@ -117,12 +151,23 @@ func startWithCatalogue(
 // which is what a director configured without one does.
 func startWith(t *testing.T, lc api.Lifecycle, opts ...func(*api.Config)) *harness {
 	t.Helper()
+	return startSeeded(t, lc, nil, opts...)
+}
+
+// startSeeded is startWith for a repository that holds more than the fixture
+// does when the director first reads it. seed is given the remote before the
+// director clones it.
+func startSeeded(t *testing.T, lc api.Lifecycle, seed func(remote string), opts ...func(*api.Config)) *harness {
+	t.Helper()
 	is := dt.NewIssuer(t, "gentian", "tenant-demo", "tenant-solo")
 	v, err := authn.NewVerifier(authn.Config{IssuerBase: is.URL, Audience: audience})
 	if err != nil {
 		t.Fatal(err)
 	}
 	remote := dt.Remote(t, "demo", "solo", "other")
+	if seed != nil {
+		seed(remote)
+	}
 	repo := gitops.NewGitOps(dt.Clone(t, remote), remote, dt.Cluster, gitops.Person{})
 	decisions := &asked{Checker: checker(t)}
 	cfg := api.Config{

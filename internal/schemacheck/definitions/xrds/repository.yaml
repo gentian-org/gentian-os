@@ -72,9 +72,15 @@ spec:
                     - gentian-os
                     - gentian-ui
                   description: >
-                    What this repository is for. apps is additive — a private
-                    catalogue alongside the cluster's, and removing it removes
-                    those apps. deployments is a source of truth: repointing it
+                    What this repository is for. apps is additive — a registry
+                    the tenant's or the cluster's apps pull their chart and
+                    images from, and removing it removes that access. It is
+                    meant for type oci: a git repository with role apps
+                    composes an Argo CD repository and nothing else, because
+                    profiles no longer arrive by syncing one (a catalogue is
+                    an address the director fetches from, declared on the
+                    Cluster claim or the tenant; docs/custom-catalogues.md).
+                    deployments is a source of truth: repointing it
                     changes what everything reconciles from, which is why the
                     API makes that a confirmed operation rather than an edit.
                     gentian-os and gentian-ui name the platform's own source

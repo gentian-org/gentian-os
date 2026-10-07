@@ -263,6 +263,10 @@ func TestAnImportDeclaresTheTenantFromTheBundlesSpec(t *testing.T) {
 		DeletionPolicy: gentianov1alpha1.DeletionPolicyDelete,
 		Deletion:       &gentianov1alpha1.TenantDeletion{KeepBundles: true},
 		Apps:           []gentianov1alpha1.TenantApp{{Profile: "nextcloud-base-ce"}},
+		// Nor with its catalogues, or with leave to add its own.
+		Catalogue: &gentianov1alpha1.TenantCatalogue{Delegated: true, Sources: []gentianov1alpha1.TenantCatalogueSource{
+			{Name: "theirs", URL: "https://elsewhere.example.com/apps", AddedBy: "tenant"},
+		}},
 	}
 	res, err := g.DeclareTenant(ctx, "acme", spec, "export nightly of 2026-10-01", tenantMeta())
 	if err != nil {
@@ -293,6 +297,9 @@ func TestAnImportDeclaresTheTenantFromTheBundlesSpec(t *testing.T) {
 	}
 	if doc.Spec.DeletionPolicy != "Retain" || doc.Spec.Deletion != nil {
 		t.Fatalf("the bundle's purge travelled with it:\n%s", text)
+	}
+	if strings.Contains(text, "catalogue") || strings.Contains(text, "delegated") {
+		t.Fatalf("the bundle's catalogues travelled with it:\n%s", text)
 	}
 	if !strings.Contains(text, "imported from a bundle") {
 		t.Fatal("the manifest does not say where it came from")

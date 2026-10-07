@@ -288,6 +288,13 @@ func metadataDiffers(said, live *gentianov1alpha1.ComponentProfile) string {
 			if key == Annotation || !strings.HasPrefix(key, ownedPrefix) {
 				continue
 			}
+			// Where the profile came from is written beside the bundle by
+			// the director, like the bundle itself, and is not something a
+			// source states. A bundle that does state it is compared above,
+			// like anything else it says.
+			if key == OriginAnnotation && pair.kind == "annotation" {
+				continue
+			}
 			if _, ok := pair.said[key]; !ok {
 				keys = append(keys, key)
 			}
