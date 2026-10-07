@@ -41,6 +41,10 @@ func quiesceScheme(t *testing.T) *runtime.Scheme {
 	if err := clientgoscheme.AddToScheme(s); err != nil {
 		t.Fatalf("add client-go scheme: %v", err)
 	}
+	// The helpers find a tenant's namespace by reading the Tenant.
+	if err := gentianov1alpha1.AddToScheme(s); err != nil {
+		t.Fatalf("add gentian scheme: %v", err)
+	}
 	return s
 }
 
@@ -67,6 +71,7 @@ func getDeployment(t *testing.T, c client.Client, name string) *appsv1.Deploymen
 func quiesceReconciler(objs ...client.Object) *TenantReconciler {
 	s := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(s)
+	_ = gentianov1alpha1.AddToScheme(s)
 	c := fake.NewClientBuilder().WithScheme(s).WithObjects(objs...).Build()
 	return &TenantReconciler{Client: c, Scheme: s}
 }
@@ -605,7 +610,7 @@ func TestAppVolumesReportsAFailedListRatherThanNoVolumes(t *testing.T) {
 	c := fake.NewClientBuilder().WithScheme(s).Build()
 	r := &TenantExportReconciler{Client: c, Scheme: s, VolumeReader: forbiddenReader{}}
 
-	claims, err := r.appVolumes(context.Background(), "demo", "nextcloud-base-ce", nil, nil)
+	claims, err := r.appVolumes(context.Background(), &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "demo"}}, "nextcloud-base-ce", nil, nil)
 	if err == nil {
 		t.Fatalf("appVolumes returned %v and no error", claims)
 	}

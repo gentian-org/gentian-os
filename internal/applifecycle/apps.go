@@ -385,7 +385,7 @@ func (s *Service) PurgeApp(ctx context.Context, tenantName, profile, actor strin
 // the app's own (backup.AppRelease and its neighbours), so that record is
 // what says whether the workloads are gone.
 func (s *Service) appRemnants(ctx context.Context, tenant *gentianov1alpha1.Tenant, profile string, cp *gentianov1alpha1.ComponentProfile) ([]string, error) {
-	ns := layout.Tenant(tenant.Name)
+	ns := tenantNamespace(tenant)
 	var left []string
 	var list gentianov1alpha1.ComponentList
 	if err := s.client.List(ctx, &list, client.InNamespace(ns)); err != nil {

@@ -20,7 +20,7 @@ import (
 // for what went wrong when they did not. These remain as local spellings so the
 // call sites below read the same as they always did.
 
-func tenantNamespace(tenant string) string { return backup.TenantNamespace(tenant) }
+func tenantNamespace(tenant *gentianov1alpha1.Tenant) string { return backup.TenantNamespace(tenant) }
 
 func pgRoleName(tenant, app string) string { return backup.PostgresRole(tenant, app) }
 

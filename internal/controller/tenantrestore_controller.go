@@ -79,6 +79,11 @@ func (r *TenantRestoreReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		}
 		return ctrl.Result{}, err
 	}
+	if ns := backup.TenantNamespace(tenant); ns != restore.Namespace {
+		return r.fail(ctx, restore, "NotATenantNamespace",
+			fmt.Sprintf("tenant %q runs in namespace %q, not in %q where this restore was created",
+				tenantName, ns, restore.Namespace))
+	}
 
 	// Preflight. Everything here is a reason not to start, checked while the
 	// tenant is still untouched.
@@ -398,7 +403,7 @@ func (r *TenantRestoreReconciler) restoreUnits(
 	// is read from its original Secret, which the spec already requires to be
 	// in the tenant namespace.
 	volParams := params
-	volParams.Namespace = backup.TenantNamespace(tenant.Name)
+	volParams.Namespace = backup.TenantNamespace(tenant)
 	volParams.UploadCredentialsSecret = restoreVolumeSecretName(restore.Name)
 	volD := d
 	if dec := restore.Spec.Decryption; dec != nil {
@@ -408,7 +413,7 @@ func (r *TenantRestoreReconciler) restoreUnits(
 			volD.SecretName = dec.IdentitySecretRef.Name
 		}
 	}
-	claims, err := r.Reconciler.appVolumes(ctx, tenant.Name, appName, profile, spec)
+	claims, err := r.Reconciler.appVolumes(ctx, tenant, appName, profile, spec)
 	if err != nil {
 		return nil, err
 	}

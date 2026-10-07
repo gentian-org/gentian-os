@@ -16,7 +16,9 @@ import (
 	"strings"
 	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
@@ -39,6 +41,24 @@ func tenantNameFromNamespace(namespace string) string {
 		return ""
 	}
 	return strings.TrimPrefix(namespace, prefix)
+}
+
+// tenantNamespaceByName is the namespace of the tenant called name, by the one
+// rule there is (backup.TenantNamespace). The helpers that pause, resume and
+// exec into an app are handed a tenant's name, sometimes after the Tenant is
+// gone -- resuming what an export paused must still work then -- so a tenant
+// that is not found is given the namespace the rule gives a tenant that sets
+// nothing. Any other error is returned: not knowing where a tenant's
+// workloads are is not a reason to look somewhere else.
+func tenantNamespaceByName(ctx context.Context, c client.Reader, name string) (string, error) {
+	tenant := &gentianov1alpha1.Tenant{}
+	err := c.Get(ctx, types.NamespacedName{Name: name}, tenant)
+	if apierrors.IsNotFound(err) {
+		tenant = &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: name}}
+	} else if err != nil {
+		return "", fmt.Errorf("read tenant %s to find its namespace: %w", name, err)
+	}
+	return backup.TenantNamespace(tenant), nil
 }
 
 // exportJobName builds a Job name that is unique per export, app and unit, and

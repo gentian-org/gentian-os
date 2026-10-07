@@ -118,7 +118,7 @@ func (s *Service) RetainedApps(ctx context.Context, tenantName string) (*Retaine
 	if err != nil {
 		return nil, err
 	}
-	ns := layout.Tenant(tenantName)
+	ns := tenantNamespace(tenant)
 
 	// What is installed, or still being taken down: none of that is
 	// "retained", whatever it holds.

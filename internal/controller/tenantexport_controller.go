@@ -162,6 +162,14 @@ func (r *TenantExportReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		}
 		return ctrl.Result{}, err
 	}
+	if ns := backup.TenantNamespace(tenant); ns != export.Namespace {
+		// The export finds its tenant by the namespace it is in, and the
+		// tenant says where its workloads are. If the two disagree, every
+		// volume and every pod this export would look for is somewhere else.
+		return r.fail(ctx, export, "NotATenantNamespace",
+			fmt.Sprintf("tenant %q runs in namespace %q, not in %q where this export was created",
+				tenantName, ns, export.Namespace))
+	}
 
 	// One export or restore at a time per tenant. Two concurrent captures would
 	// pause the same app twice and race each other's resume.
@@ -408,12 +416,12 @@ func (r *TenantExportReconciler) captureUnits(
 	// Their credentials come from the staged copy (see ensureVolumeUploadSecret),
 	// which also carries the passphrase for a passphrase-mode export.
 	volParams := params
-	volParams.Namespace = backup.TenantNamespace(tenant.Name)
+	volParams.Namespace = backup.TenantNamespace(tenant)
 	volParams.UploadCredentialsSecret = volumeUploadSecretName(export.Name)
 	if volParams.Encryption.Mode == gentianov1alpha1.ExportEncryptionPassphrase {
 		volParams.Encryption.PassphraseSecret = volumeUploadSecretName(export.Name)
 	}
-	claims, err := r.appVolumes(ctx, tenant.Name, appName, profile, spec)
+	claims, err := r.appVolumes(ctx, tenant, appName, profile, spec)
 	if err != nil {
 		return nil, err
 	}
@@ -458,7 +466,8 @@ func (r *TenantExportReconciler) captureUnits(
 // is the one outcome a backup must never produce quietly.
 func (r *TenantExportReconciler) appVolumes(
 	ctx context.Context,
-	tenantName, appName string,
+	tenant *gentianov1alpha1.Tenant,
+	appName string,
 	profile *gentianov1alpha1.ComponentProfile,
 	spec *gentianov1alpha1.BackupSpec,
 ) ([]string, error) {
@@ -466,7 +475,7 @@ func (r *TenantExportReconciler) appVolumes(
 		return included, nil
 	}
 
-	namespace := backup.TenantNamespace(tenantName)
+	namespace := backup.TenantNamespace(tenant)
 	reader := client.Reader(r.Client)
 	if r.VolumeReader != nil {
 		reader = r.VolumeReader
@@ -475,19 +484,17 @@ func (r *TenantExportReconciler) appVolumes(
 	if err := reader.List(ctx, pvcs, client.InNamespace(namespace)); err != nil {
 		return nil, fmt.Errorf("list claims in %s: %w", namespace, err)
 	}
-	// The chart's name, which is what a PVC's app.kubernetes.io/name is when
-	// it is not the install's own. This was spec.family, which AD-3 moves to
-	// the store listing. Empty only narrows the match, so a profile with no
-	// chart exports less rather than exporting a sibling's volume.
-	family := ""
-	if chart := profile.Chart(); chart != nil {
-		family = chart.Name
-	}
-	var claims []string
-	for _, pvc := range pvcs.Items {
-		if backup.PVCBelongsToApp(pvc, appName, family) {
-			claims = append(claims, pvc.Name)
-		}
+	// Whose a claim is, is the shared inventory's one rule: the one a purge
+	// deletes by and the retained-data read reports by. An export used to
+	// match by label and name alone, and the name match is a substring: with
+	// two apps of one chart, or one app's name beginning another's, it put a
+	// sibling's volume into this app's part of the bundle, and a restore then
+	// wrote it back over the sibling's. A claim on record as another release's
+	// is left to the app whose release it is, which captures it itself.
+	claims, vetoed := backup.AppVolumes(pvcs.Items, tenant, appName, profile)
+	for name, release := range vetoed {
+		log.FromContext(ctx).Info("not this app's volume: it is on record as another Helm release's",
+			"app", appName, "pvc", name, "release", release)
 	}
 	sort.Strings(claims)
 	return claims, nil
@@ -1118,7 +1125,7 @@ func (r *TenantExportReconciler) exportAppSet(
 
 	claims := &unstructured.UnstructuredList{}
 	claims.SetGroupVersionKind(appClaimGVK.GroupVersion().WithKind("AppList"))
-	if err := r.List(ctx, claims, client.InNamespace(backup.TenantNamespace(tenant.Name))); err != nil {
+	if err := r.List(ctx, claims, client.InNamespace(backup.TenantNamespace(tenant))); err != nil {
 		// Not fatal on its own: spec.apps still gives a usable set, and an
 		// export that captures the declared apps beats one that refuses.
 		log.FromContext(ctx).Error(err, "listing App claims; falling back to spec.apps",

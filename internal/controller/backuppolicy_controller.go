@@ -186,7 +186,7 @@ func (r *BackupPolicyReconciler) ensureManagedSchedule(
 	}
 
 	name := managedScheduleName
-	namespace := backup.TenantNamespace(tenant.Name)
+	namespace := backup.TenantNamespace(tenant)
 	existing := &gentianov1alpha1.TenantExportSchedule{}
 	getErr := r.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, existing)
 

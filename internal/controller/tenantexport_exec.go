@@ -24,7 +24,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
-	"github.com/gentian-org/gentian-os/internal/backup"
 )
 
 // AppExecer runs a command inside an app's pod. An interface so tests can
@@ -107,7 +106,11 @@ func (e *PodExecer) Exec(ctx context.Context, namespace, pod, container string, 
 // restore the app is often unready precisely because the hook has not run.
 func (r *TenantReconciler) runningPodForApp(ctx context.Context, tenantName, appName, container string) (*corev1.Pod, error) {
 	pods := &corev1.PodList{}
-	if err := r.List(ctx, pods, client.InNamespace(backup.TenantNamespace(tenantName))); err != nil {
+	namespace, err := tenantNamespaceByName(ctx, r.Client, tenantName)
+	if err != nil {
+		return nil, err
+	}
+	if err := r.List(ctx, pods, client.InNamespace(namespace)); err != nil {
 		return nil, err
 	}
 	var fallback *corev1.Pod

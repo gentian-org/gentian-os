@@ -145,7 +145,7 @@ func NewService(c client.Client, cfg *rest.Config, opts Options) (*Service, erro
 	return svc, nil
 }
 
-func (s *Service) appReadyState(ctx context.Context, tenant, profile string) (bool, string, error) {
+func (s *Service) appReadyState(ctx context.Context, tenant *gentianov1alpha1.Tenant, profile string) (bool, string, error) {
 	obj := &unstructured.Unstructured{}
 	obj.SetGroupVersionKind(appClaimGVK)
 	if err := s.client.Get(ctx, client.ObjectKey{Name: profile, Namespace: tenantNamespace(tenant)}, obj); err != nil {
@@ -195,7 +195,7 @@ func (s *Service) ListInstalled(ctx context.Context, tenant string) ([]Result, e
 				continue
 			}
 		}
-		ready, msg, err := s.appReadyState(ctx, tenant, app.Profile)
+		ready, msg, err := s.appReadyState(ctx, t, app.Profile)
 		if err != nil {
 			return nil, err
 		}

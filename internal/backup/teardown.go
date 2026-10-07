@@ -265,7 +265,7 @@ func InventoryOf(tenant *gentianov1alpha1.Tenant, app string, profile *gentianov
 	if inv.Stores.Redis {
 		inv.CacheUser = RedisACLUser(tenant.Name, app)
 	}
-	inv.Releases = []string{AppRelease(app), DirectRelease(tenant.Name, app)}
+	inv.Releases = []string{AppRelease(app), DirectRelease(TenantNamespace(tenant), app)}
 	for _, ext := range SidecarNames(profile) {
 		inv.Keys = append(inv.Keys, app+"-"+ext)
 		inv.Releases = append(inv.Releases, ExtensionRelease(app, ext))

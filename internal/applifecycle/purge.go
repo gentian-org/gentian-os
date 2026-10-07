@@ -177,7 +177,7 @@ func (s *Service) purgeSteps(tenant *gentianov1alpha1.Tenant, profile *gentianov
 			return s.purgeAccessGroup(ctx, tenant, app, extensions)
 		},
 		backup.KindRecords: func(ctx context.Context) error {
-			return s.purgeClusterArtifacts(ctx, tenant.Name, app)
+			return s.purgeClusterArtifacts(ctx, tenant, app)
 		},
 	}
 	for kind, job := range stores {
@@ -448,35 +448,9 @@ type CredentialStore interface {
 	ListChildren(ctx context.Context, logicalPath string) ([]string, error)
 }
 
-// ownedKeys are the names an app's stores are kept under: its own, and one
-// per extension, which the app Composition keys "{app}-{extension}". An
-// extension's vault path, its access group and its Helm release are all named
-// from its key, exactly as the app's own are from the app's name.
-//
-// A key that is itself an app or add-on of the tenant is left out. Nothing
-// stops an app being called what another app's extension key spells, and what
-// an installed app holds is not another app's to destroy.
+// ownedKeys is the shared inventory's (backup.OwnedKeys).
 func ownedKeys(tenant *gentianov1alpha1.Tenant, app string, extensions []string) []string {
-	inUse := tenantApps(tenant)
-	keys := []string{app}
-	for _, ext := range extensions {
-		if key := app + "-" + ext; !inUse[key] {
-			keys = append(keys, key)
-		}
-	}
-	return keys
-}
-
-// tenantApps are the apps and add-ons the tenant has.
-func tenantApps(tenant *gentianov1alpha1.Tenant) map[string]bool {
-	out := map[string]bool{}
-	for _, a := range tenant.Spec.Apps {
-		out[a.Profile] = true
-		for _, addon := range a.Addons {
-			out[addon] = true
-		}
-	}
-	return out
+	return backup.OwnedKeys(tenant, app, extensions)
 }
 
 // credentialPaths are the vault subtrees one app owns: its own, and one per
@@ -551,15 +525,16 @@ func (s *Service) purgeAccessGroup(ctx context.Context, tenant *gentianov1alpha1
 
 // --- provisioning records ---------------------------------------------------
 
-func (s *Service) purgeClusterArtifacts(ctx context.Context, tenant, app string) error {
+func (s *Service) purgeClusterArtifacts(ctx context.Context, tenant *gentianov1alpha1.Tenant, app string) error {
+	tenantNS := tenantNamespace(tenant)
 	selector := fmt.Sprintf("%s=%s,gentianos.io/app=%s,%s=%s",
-		meta.TenantLabel, tenant, app, meta.ManagedByLabel, meta.ManagedByValue)
+		meta.TenantLabel, tenant.Name, app, meta.ManagedByLabel, meta.ManagedByValue)
 	background := metav1.DeleteOptions{PropagationPolicy: ptr(metav1.DeletePropagationBackground)}
 
 	// Jobs: the kernel's, and the ones the operator creates directly in the
 	// tenant namespace (the app-admins sync among them), which have no owner
 	// that Crossplane deletes with the App claim.
-	for _, ns := range append(platformNamespaces(), tenantNamespace(tenant)) {
+	for _, ns := range append(platformNamespaces(), tenantNS) {
 		jobs, err := s.clientset.BatchV1().Jobs(ns).List(ctx, metav1.ListOptions{LabelSelector: selector})
 		if err != nil {
 			return fmt.Errorf("list the app's Jobs in %s: %w", ns, err)
@@ -576,13 +551,13 @@ func (s *Service) purgeClusterArtifacts(ctx context.Context, tenant, app string)
 	// namespace with their logs and mounted config. Sweeping by the app selector
 	// catches them whatever orphaned them; live pods of the app itself are gone
 	// with the Helm release before a purge is admitted.
-	tenantPods, err := s.clientset.CoreV1().Pods(tenantNamespace(tenant)).
+	tenantPods, err := s.clientset.CoreV1().Pods(tenantNS).
 		List(ctx, metav1.ListOptions{LabelSelector: selector})
 	if err != nil {
 		return fmt.Errorf("list the app's pods: %w", err)
 	}
 	for _, pod := range tenantPods.Items {
-		if err := s.clientset.CoreV1().Pods(tenantNamespace(tenant)).
+		if err := s.clientset.CoreV1().Pods(tenantNS).
 			Delete(ctx, pod.Name, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
 			return fmt.Errorf("delete pod %s: %w", pod.Name, err)
 		}
@@ -594,7 +569,7 @@ func (s *Service) purgeClusterArtifacts(ctx context.Context, tenant, app string)
 	// gentian-trust-anchor-tls (labelled managed-by and tenant, but no app) are not
 	// matched. Secrets owned by an ExternalSecret are already removed with it when
 	// Crossplane deletes the App claim.
-	for _, ns := range append(platformNamespaces(), tenantNamespace(tenant)) {
+	for _, ns := range append(platformNamespaces(), tenantNS) {
 		list, err := s.clientset.CoreV1().Secrets(ns).List(ctx, metav1.ListOptions{LabelSelector: selector})
 		if err != nil {
 			return fmt.Errorf("list the app's Secrets in %s: %w", ns, err)
@@ -611,85 +586,18 @@ func (s *Service) purgeClusterArtifacts(ctx context.Context, tenant, app string)
 // --- files ------------------------------------------------------------------
 
 // appVolumes are the claims in the tenant's namespace that are this app's:
-// what a purge deletes, and what the retained-data read reports. One rule for
-// both, so that what is reported as kept is what a purge would destroy.
-//
-// A claim is the app's when it matches by label or by name (pvcBelongsToApp)
-// and is not on record as another release's. The second half is a veto over
-// the first, and it exists because the damage is asymmetric. The match falls
-// back to a name substring, which reaches a sibling's volume when two
-// profiles share a chart (purging nextcloud-base-ce matches anything
-// containing "nextcloud") or when one app's name begins another's.
-// provider-helm reconciles release *state*, not cluster contents: delete an
-// object out from under a live release and nothing puts it back — not the
-// next sync, not selfHeal, not a pod restart — until someone changes the
-// chart version or a value. The app just runs without it. The cost of leaving
-// a claim wrongly is a leftover volume, which is reported in vetoed.
-//
-// So a claim that names a release is the app's only if the release is: the
-// app's own, one of its declared extensions', or the one a chart delivered
-// without the app Composition is installed as. Those names are exact
-// (backup.AppRelease and its neighbours), which is also how a claim an
-// uninstall kept is known to be this app's: it still carries its release.
-// When the profile is gone the extensions are not known, and any release
-// shaped like one of the app's counts — unless it is the release of an app
-// the tenant has. A claim that names no release is matched by label and name
-// alone, as before.
-//
-// The chart's name is what a claim's app.kubernetes.io/name is likely to be
-// when it is not the install's own name. Without a profile it is empty, which
-// only narrows the match: a volume is left behind rather than a sibling's
-// taken with it, which is the right way round for a purge.
+// what a purge deletes, what the retained-data read reports and what an
+// export copies. The rule is the shared inventory's (backup.AppVolumes).
 func appVolumes(claims []corev1.PersistentVolumeClaim, tenant *gentianov1alpha1.Tenant, app string, profile *gentianov1alpha1.ComponentProfile) (own []string, vetoed map[string]string) {
-	vetoed = map[string]string{}
-	chart := chartName(profile)
-	for _, pvc := range claims {
-		if !pvcBelongsToApp(pvc, app, chart) {
-			continue
-		}
-		if release := claimRelease(pvc); release != "" && !ownsRelease(tenant, app, profile, release) {
-			vetoed[pvc.Name] = release
-			continue
-		}
-		own = append(own, pvc.Name)
-	}
-	return own, vetoed
+	return backup.AppVolumes(claims, tenant, app, profile)
 }
 
-// claimRelease is the Helm release a claim is on record as belonging to: the
-// one Helm annotated it with, for a claim the chart templated; the one its
-// instance label names, for a claim a StatefulSet of the chart made.
-func claimRelease(pvc corev1.PersistentVolumeClaim) string {
-	if release := pvc.Annotations["meta.helm.sh/release-name"]; release != "" {
-		return release
-	}
-	return pvc.Labels["app.kubernetes.io/instance"]
-}
-
-// ownsRelease reports whether a Helm release in the tenant's namespace is
-// this app's and nobody else's.
 func ownsRelease(tenant *gentianov1alpha1.Tenant, app string, profile *gentianov1alpha1.ComponentProfile, release string) bool {
-	// The release of an app or add-on the tenant has is that app's, whatever
-	// else its name resembles.
-	if key, ok := strings.CutSuffix(release, "-release"); ok && key != app && tenantApps(tenant)[key] {
-		return false
-	}
-	extensions := make([]string, 0)
-	for _, key := range ownedKeys(tenant, app, backup.SidecarNames(profile))[1:] {
-		extensions = append(extensions, strings.TrimPrefix(key, app+"-"))
-	}
-	return backup.IsAppRelease(release, tenant.Name, app, extensions, profile != nil)
-}
-
-func chartName(profile *gentianov1alpha1.ComponentProfile) string {
-	if chart := profile.Chart(); chart != nil {
-		return chart.Name
-	}
-	return ""
+	return backup.OwnsRelease(tenant, app, profile, release)
 }
 
 func (s *Service) purgePVCs(ctx context.Context, tenant *gentianov1alpha1.Tenant, appName string, profile *gentianov1alpha1.ComponentProfile) error {
-	ns := tenantNamespace(tenant.Name)
+	ns := tenantNamespace(tenant)
 	pvcs, err := s.clientset.CoreV1().PersistentVolumeClaims(ns).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return fmt.Errorf("list the volume claims in %s: %w", ns, err)

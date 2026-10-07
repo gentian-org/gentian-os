@@ -11,6 +11,7 @@ SPDX-License-Identifier: MPL-2.0
 package backup
 
 import (
+	"slices"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -170,7 +171,7 @@ func TestAnAppsReleasesAreNamedAfterIt(t *testing.T) {
 	if got := ExtensionRelease("odoo-base-ce", "mcp"); got != "odoo-base-ce-mcp-release" {
 		t.Errorf("ExtensionRelease = %q", got)
 	}
-	if got := DirectRelease("demo", "desktop"); got != "tenant-demo-desktop" {
+	if got := DirectRelease("tenant-demo", "desktop"); got != "tenant-demo-desktop" {
 		t.Errorf("DirectRelease = %q", got)
 	}
 	cases := []struct {
@@ -192,11 +193,64 @@ func TestAnAppsReleasesAreNamedAfterIt(t *testing.T) {
 		{"tenant-other-wiki", nil, false, false},
 	}
 	for _, c := range cases {
-		if got := IsAppRelease(c.release, "demo", "wiki", c.extensions, c.known); got != c.want {
+		if got := IsAppRelease(c.release, "tenant-demo", "wiki", c.extensions, c.known); got != c.want {
 			t.Errorf("IsAppRelease(%q, extensions %v known=%v) = %v, want %v", c.release, c.extensions, c.known, got, c.want)
 		}
 	}
 	if !IsPlatformStore(DesktopStore) || IsPlatformStore("wiki") {
 		t.Error("the desktop's store is the platform's, and an app's is not")
+	}
+}
+
+// One rule says where a tenant's workloads are, and it is the Tenant's own.
+// Export, restore, purge and the retained-data read used to spell
+// "tenant-<name>" for themselves while provisioning honoured the override.
+func TestTheTenantNamespaceIsTheTenantsOwnRule(t *testing.T) {
+	plain := &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "demo"}}
+	if got := TenantNamespace(plain); got != "tenant-demo" || got != plain.NamespaceName() {
+		t.Errorf("TenantNamespace = %q, want tenant-demo", got)
+	}
+	placed := &gentianov1alpha1.Tenant{
+		ObjectMeta: metav1.ObjectMeta{Name: "demo"},
+		Spec:       gentianov1alpha1.TenantSpec{Isolation: &gentianov1alpha1.TenantIsolation{Namespace: "elsewhere"}},
+	}
+	if got := TenantNamespace(placed); got != "elsewhere" || got != placed.NamespaceName() {
+		t.Errorf("TenantNamespace = %q, want the namespace the tenant names", got)
+	}
+	// The directly delivered release carries the namespace, so it follows.
+	inv := InventoryOf(placed, "desktop", nil)
+	if !slices.Contains(inv.Releases, "elsewhere-desktop") {
+		t.Errorf("releases = %v, want the direct release named after the tenant's namespace", inv.Releases)
+	}
+}
+
+// An export copies by the rule a purge deletes by: a claim on record as
+// another release's is not this app's, however much its name resembles it.
+func TestAppVolumesLeavesASiblingsVolume(t *testing.T) {
+	tenant := &gentianov1alpha1.Tenant{
+		ObjectMeta: metav1.ObjectMeta{Name: "demo"},
+		Spec: gentianov1alpha1.TenantSpec{Apps: []gentianov1alpha1.TenantApp{
+			{Profile: "wiki"}, {Profile: "wiki-pro"},
+		}},
+	}
+	claim := func(name, release string) corev1.PersistentVolumeClaim {
+		return corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{
+			Name: name, Annotations: map[string]string{"meta.helm.sh/release-name": release},
+		}}
+	}
+	claims := []corev1.PersistentVolumeClaim{
+		claim("wiki-data", "wiki-release"),
+		claim("wiki-pro-data", "wiki-pro-release"),
+		claim("wiki-direct", "tenant-demo-wiki"),
+		{ObjectMeta: metav1.ObjectMeta{Name: "wiki-unrecorded"}},
+	}
+	profile := &gentianov1alpha1.ComponentProfile{ObjectMeta: metav1.ObjectMeta{Name: "wiki"}}
+	own, vetoed := AppVolumes(claims, tenant, "wiki", profile)
+	slices.Sort(own)
+	if want := []string{"wiki-data", "wiki-direct", "wiki-unrecorded"}; !slices.Equal(own, want) {
+		t.Errorf("own = %v, want %v", own, want)
+	}
+	if vetoed["wiki-pro-data"] != "wiki-pro-release" || len(vetoed) != 1 {
+		t.Errorf("vetoed = %v, want only the sibling's claim", vetoed)
 	}
 }

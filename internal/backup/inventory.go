@@ -29,8 +29,15 @@ import (
 )
 
 // TenantNamespace returns the namespace a tenant's workloads run in.
-func TenantNamespace(tenantName string) string {
-	return "tenant-" + tenantName
+//
+// There is one rule and it is the Tenant's own (NamespaceName), which honours
+// spec.isolation.namespace. Provisioning has always read it; export, restore,
+// purge and the read of what uninstalled apps hold used to spell
+// "tenant-<name>" for themselves, and would have looked in an empty namespace
+// for a tenant placed anywhere else. They read this now, so the acts cannot
+// disagree about where a tenant's workloads and volumes are.
+func TenantNamespace(tenant *gentianov1alpha1.Tenant) string {
+	return tenant.NamespaceName()
 }
 
 // DatabaseName returns the relational database provisioned for a tenant + app.
@@ -133,20 +140,20 @@ func ExtensionRelease(app, extension string) string {
 // delivers itself, without the app Composition. The Release object is
 // cluster-scoped and carries the namespace in its name; the Helm release
 // takes the same name.
-func DirectRelease(tenantName, app string) string {
-	return TenantNamespace(tenantName) + "-" + app
+func DirectRelease(namespace, app string) string {
+	return namespace + "-" + app
 }
 
 // IsAppRelease reports whether a Helm release in the tenant's namespace is
-// one of this app's.
+// one of this app's. namespace is that namespace (TenantNamespace).
 //
 // extensions are the app's declared extensions. known says whether they are:
 // when the app's profile is gone they are not, and any release shaped like an
 // extension's ("<app>-…-release") is taken to be one. Callers that destroy on
 // the strength of that wider reading must first rule out that the release is
 // another installed app's.
-func IsAppRelease(release, tenantName, app string, extensions []string, known bool) bool {
-	if release == AppRelease(app) || release == DirectRelease(tenantName, app) {
+func IsAppRelease(release, namespace, app string, extensions []string, known bool) bool {
+	if release == AppRelease(app) || release == DirectRelease(namespace, app) {
 		return true
 	}
 	if !known {
@@ -246,4 +253,110 @@ func PVCBelongsToApp(pvc corev1.PersistentVolumeClaim, appName, family string) b
 		}
 	}
 	return strings.Contains(pvc.Name, appName) || (family != "" && strings.Contains(pvc.Name, family))
+}
+
+// --- whose a volume claim is ------------------------------------------------
+
+// TenantApps are the apps and add-ons the tenant has.
+func TenantApps(tenant *gentianov1alpha1.Tenant) map[string]bool {
+	out := map[string]bool{}
+	for _, a := range tenant.Spec.Apps {
+		out[a.Profile] = true
+		for _, addon := range a.Addons {
+			out[addon] = true
+		}
+	}
+	return out
+}
+
+// OwnedKeys are the names an app's stores are kept under: its own, and one
+// per extension, which the app Composition keys "{app}-{extension}". An
+// extension's vault path, its access group and its Helm release are all named
+// from its key, exactly as the app's own are from the app's name.
+//
+// A key that is itself an app or add-on of the tenant is left out. Nothing
+// stops an app being called what another app's extension key spells, and what
+// an installed app holds is not another app's to destroy or to copy.
+func OwnedKeys(tenant *gentianov1alpha1.Tenant, app string, extensions []string) []string {
+	inUse := TenantApps(tenant)
+	keys := []string{app}
+	for _, ext := range extensions {
+		if key := app + "-" + ext; !inUse[key] {
+			keys = append(keys, key)
+		}
+	}
+	return keys
+}
+
+// ClaimRelease is the Helm release a claim is on record as belonging to: the
+// one Helm annotated it with, for a claim the chart templated; the one its
+// instance label names, for a claim a StatefulSet of the chart made.
+func ClaimRelease(pvc corev1.PersistentVolumeClaim) string {
+	if release := pvc.Annotations["meta.helm.sh/release-name"]; release != "" {
+		return release
+	}
+	return pvc.Labels["app.kubernetes.io/instance"]
+}
+
+// OwnsRelease reports whether a Helm release in the tenant's namespace is
+// this app's and nobody else's.
+func OwnsRelease(tenant *gentianov1alpha1.Tenant, app string, profile *gentianov1alpha1.ComponentProfile, release string) bool {
+	// The release of an app or add-on the tenant has is that app's, whatever
+	// else its name resembles.
+	if key, ok := strings.CutSuffix(release, "-release"); ok && key != app && TenantApps(tenant)[key] {
+		return false
+	}
+	extensions := make([]string, 0)
+	for _, key := range OwnedKeys(tenant, app, SidecarNames(profile))[1:] {
+		extensions = append(extensions, strings.TrimPrefix(key, app+"-"))
+	}
+	return IsAppRelease(release, TenantNamespace(tenant), app, extensions, profile != nil)
+}
+
+// AppVolumes are the claims in the tenant's namespace that are this app's:
+// what an export copies, what a purge deletes, and what the read of retained
+// data reports. One rule for the three, so that what is reported as kept is
+// what a purge would destroy and what a bundle carries is the app's and
+// nobody else's.
+//
+// A claim is the app's when it matches by label or by name (PVCBelongsToApp)
+// and is not on record as another release's. The second half is a veto over
+// the first. The match falls back to a name substring, which reaches a
+// sibling's volume when two profiles share a chart (nextcloud-base-ce matches
+// anything containing "nextcloud") or when one app's name begins another's.
+// For a purge that would delete a running app's volume out from under it,
+// which nothing puts back; for an export it would put one app's files into
+// another app's part of a bundle, and a restore would then write them over
+// the sibling's.
+//
+// So a claim that names a release is the app's only if the release is: the
+// app's own, one of its declared extensions', or the one a chart delivered
+// without the app Composition is installed as. Those names are exact
+// (AppRelease and its neighbours), which is also how a claim an uninstall
+// kept is known to be this app's: it still carries its release. When the
+// profile is gone the extensions are not known, and any release shaped like
+// one of the app's counts -- unless it is the release of an app the tenant
+// has. A claim that names no release is matched by label and name alone.
+//
+// The chart's name is what a claim's app.kubernetes.io/name is likely to be
+// when it is not the install's own name. Without a profile it is empty, which
+// only narrows the match. vetoed says, per claim left out, whose release it
+// records.
+func AppVolumes(claims []corev1.PersistentVolumeClaim, tenant *gentianov1alpha1.Tenant, app string, profile *gentianov1alpha1.ComponentProfile) (own []string, vetoed map[string]string) {
+	vetoed = map[string]string{}
+	chart := ""
+	if c := profile.Chart(); c != nil {
+		chart = c.Name
+	}
+	for _, pvc := range claims {
+		if !PVCBelongsToApp(pvc, app, chart) {
+			continue
+		}
+		if release := ClaimRelease(pvc); release != "" && !OwnsRelease(tenant, app, profile, release) {
+			vetoed[pvc.Name] = release
+			continue
+		}
+		own = append(own, pvc.Name)
+	}
+	return own, vetoed
 }
