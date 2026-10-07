@@ -53,7 +53,7 @@ const (
 	// the stages behind it never run. Both tenants on this cluster were stuck there.
 	//
 	// quay.io is where MinIO publishes now, so it is the registry to track.
-	mcImage = "quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z"
+	mcImage = MinIOClientImage
 
 	// workDir is the scratch mount a dump is staged in before upload.
 	//
@@ -64,6 +64,11 @@ const (
 	// to bound it, and streaming is the obvious Phase 6 follow-up.
 	workDir = "/work"
 )
+
+// MinIOClientImage is the image every Job that talks to object storage
+// runs: provisioning a bucket, capturing one, restoring one, destroying one.
+// See mcImage for why it is this registry and this tag.
+const MinIOClientImage = "quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z"
 
 // JobParams is the shared shape of every capture Job.
 type JobParams struct {
@@ -151,13 +156,31 @@ func (p JobParams) uploadSecretName() string {
 	return MinIOAdminSecret
 }
 
+// Where each artefact is in a bundle, below the bundle's prefix and before
+// the suffix encryption adds. An export writes to these and records them in
+// the manifest; a restore reads the manifest. Nothing else spells a path.
+func PostgresArtefact(database string) string { return "postgres/" + database + ".pgc" }
+
+// PostgresOwnedArtefact is the archive of the databases an app's role owns
+// besides the provisioned one, filed under the provisioned one's name.
+func PostgresOwnedArtefact(database string) string {
+	return "postgres/" + database + ".owned.tar.gz"
+}
+
+func MariaDBArtefact(database string) string { return "mariadb/" + database + ".sql.gz" }
+func S3Artefact(bucket string) string        { return "s3/" + bucket + ".tar.gz" }
+func VolumeArtefact(claim string) string     { return "volumes/" + claim + ".tar.gz" }
+
+// IdentityArtefact is the realm export; there is one per bundle.
+const IdentityArtefact = "identity/realm.tar.gz"
+
 // PostgresDumpJob captures one PostgreSQL database as a custom-format dump.
 //
 // Custom format (-Fc) rather than plain SQL: it is compressed, it is what
 // pg_restore consumes, and it allows a selective restore of individual tables
 // later without re-running the whole export.
 func PostgresDumpJob(p JobParams, database string) *batchv1.Job {
-	artefact := "postgres/" + database + ".pgc"
+	artefact := PostgresArtefact(database)
 	dump := corev1.Container{
 		Name:    "pg-dump",
 		Image:   kernel.PostgresProvisionerImage(),
@@ -167,15 +190,71 @@ func PostgresDumpJob(p JobParams, database string) *batchv1.Job {
 # owner would only pin the dump to this cluster's role names.
 pg_dump --format=custom --no-owner --no-acl --dbname=%s --file=%s/dump.pgc
 echo "dumped %s"`, shellSingleQuote(database), workDir, database)},
-		Env:          postgresAdminEnv(),
+		Env:          PostgresAdminEnv(),
 		VolumeMounts: []corev1.VolumeMount{{Name: "work", MountPath: workDir}},
 	}
 	return uploadJob(p, "dump.pgc", artefact, []corev1.Container{dump}, nil)
 }
 
+// PostgresOwnedDumpJob captures every database an app's role owns besides
+// the provisioned one, into one archive.
+//
+// An app allowed to create databases of its own owns each one it made, and a
+// purge drops them all with the role. An export used to dump the provisioned
+// database alone: what a purge destroyed was more than a bundle held, and for
+// an app whose whole purpose is letting people make databases, that was most
+// of its data. Which databases are the app's is the inventory's one rule
+// (postgresOwnedSQL), the one the purge drops by.
+//
+// The names are the tenant's own choice and are not known before the Job
+// runs, so they are not in the manifest: INDEX inside the archive lists them,
+// one per line, and <line number>.pgc is each one's dump. The archive is
+// written when the role owns nothing else too -- an empty INDEX is the
+// record that it was looked at.
+func PostgresOwnedDumpJob(p JobParams, role, database string) *batchv1.Job {
+	artefact := PostgresOwnedArtefact(database)
+	dump := corev1.Container{
+		Name:    "pg-dump-owned",
+		Image:   kernel.PostgresProvisionerImage(),
+		Command: []string{"/bin/sh", "-c"},
+		Args: []string{fmt.Sprintf(`set -eu
+ROLE=%[1]s
+DB=%[2]s
+mkdir -p %[3]s/owned
+psql -v ON_ERROR_STOP=1 -tA -v app_role="${ROLE}" -v app_db="${DB}" -d postgres > %[3]s/owned/INDEX <<'PSQL'
+%[4]s
+PSQL
+n=0
+while IFS= read -r name; do
+  [ -n "${name}" ] || continue
+  # By PGDATABASE, not --dbname: a --dbname holding "=" is read as a
+  # connection string, and these names are whatever the tenant typed.
+  PGDATABASE="${name}" pg_dump --format=custom --no-owner --no-acl --file="%[3]s/owned/${n}.pgc"
+  echo "dumped ${name}"
+  n=$((n + 1))
+done < %[3]s/owned/INDEX
+echo "dumped ${n} database(s) ${ROLE} owns besides ${DB}"`,
+			shellSingleQuote(role), shellSingleQuote(database), workDir, postgresOwnedSQL)},
+		Env:          PostgresAdminEnv(),
+		VolumeMounts: []corev1.VolumeMount{{Name: "work", MountPath: workDir}},
+	}
+	// A separate container because the dump image is not relied on for tar.
+	pack := corev1.Container{
+		Name:    "pack-owned",
+		Image:   kernel.KeycloakProvisionerImage(),
+		Command: []string{"/bin/sh", "-c"},
+		Args: []string{fmt.Sprintf(`set -eu
+tar czf %[1]s/owned.tar.gz -C %[1]s/owned .
+rm -rf %[1]s/owned
+echo "archived the databases owned besides %[2]s"`, workDir, database)},
+		VolumeMounts: []corev1.VolumeMount{{Name: "work", MountPath: workDir}},
+	}
+	return uploadJob(p, "owned.tar.gz", artefact, []corev1.Container{dump, pack}, nil)
+}
+
 // MariaDBDumpJob captures one MariaDB database as compressed SQL.
 func MariaDBDumpJob(p JobParams, database string) *batchv1.Job {
-	artefact := "mariadb/" + database + ".sql.gz"
+	artefact := MariaDBArtefact(database)
 	dump := corev1.Container{
 		Name:    "mariadb-dump",
 		Image:   kernel.MariaDBProvisionerImage(),
@@ -187,7 +266,7 @@ mariadb-dump --single-transaction --routines --triggers --events \
   --host="${MYSQL_HOST}" --port="${MYSQL_TCP_PORT}" --user="${MYSQL_ADMIN_USER}" \
   %s | gzip -c > %s/dump.sql.gz
 echo "dumped %s"`, shellSingleQuote(database), workDir, database)},
-		Env:          mariadbAdminEnv(),
+		Env:          MariaDBAdminEnv(),
 		VolumeMounts: []corev1.VolumeMount{{Name: "work", MountPath: workDir}},
 	}
 	return uploadJob(p, "dump.sql.gz", artefact, []corev1.Container{dump}, nil)
@@ -202,7 +281,7 @@ echo "dumped %s"`, shellSingleQuote(database), workDir, database)},
 // encrypted with — which is why the catalogue rejects such patterns rather
 // than trusting this layer to notice.
 func VolumeArchiveJob(p JobParams, claim string, excludePaths []string) *batchv1.Job {
-	artefact := "volumes/" + claim + ".tar.gz"
+	artefact := VolumeArtefact(claim)
 	var excludes strings.Builder
 	for _, pattern := range sortedUnique(excludePaths) {
 		fmt.Fprintf(&excludes, " --exclude=%s", shellSingleQuote(pattern))
@@ -247,7 +326,7 @@ echo "archived %s"`, workDir, excludes.String(), claim)},
 // Object keys are preserved inside the archive, which is what lets a restore
 // put each object back under the name the app's database refers to.
 func S3ArchiveJob(p JobParams, sourceBucket string) *batchv1.Job {
-	artefact := "s3/" + sourceBucket + ".tar.gz"
+	artefact := S3Artefact(sourceBucket)
 	// The app's bucket is in the platform's own MinIO, always — it is where the
 	// app writes. The bundle may be somewhere else entirely, and the two are the
 	// same system only when bundles go to platform storage.
@@ -353,7 +432,7 @@ echo "exported realm ${REALM} ($(wc -l < %[2]s/users.ndjson) users)"`, quoted, w
 		Env:          keycloakAdminEnv(),
 		VolumeMounts: []corev1.VolumeMount{{Name: "work", MountPath: workDir}},
 	}
-	return uploadJob(p, "realm.tar.gz", "identity/realm.tar.gz", []corev1.Container{export}, nil)
+	return uploadJob(p, "realm.tar.gz", IdentityArtefact, []corev1.Container{export}, nil)
 }
 
 // uploadJob wires a producing container to an uploader that puts the artefact
@@ -622,7 +701,11 @@ func PlatformStorageEnv() []corev1.EnvVar {
 	}
 }
 
-func postgresAdminEnv() []corev1.EnvVar {
+// PostgresAdminEnv, MariaDBAdminEnv and CacheAdminEnv are how a Job reaches
+// a shared store as its administrator: the store's admin Secret, in the
+// store's own namespace. Provisioning, capture, restore and destruction all
+// connect this way, and each used to spell the block out for itself.
+func PostgresAdminEnv() []corev1.EnvVar {
 	return []corev1.EnvVar{
 		meta.SecretEnv("PGHOST", PostgresAdminSecret, "host"),
 		meta.SecretEnv("PGPORT", PostgresAdminSecret, "port"),
@@ -639,12 +722,21 @@ func keycloakAdminEnv() []corev1.EnvVar {
 	}
 }
 
-func mariadbAdminEnv() []corev1.EnvVar {
+func MariaDBAdminEnv() []corev1.EnvVar {
 	return []corev1.EnvVar{
 		meta.SecretEnv("MYSQL_HOST", MariaDBAdminSecret, "host"),
 		meta.SecretEnv("MYSQL_TCP_PORT", MariaDBAdminSecret, "port"),
 		meta.SecretEnv("MYSQL_PWD", MariaDBAdminSecret, "password"),
 		meta.SecretEnv("MYSQL_ADMIN_USER", MariaDBAdminSecret, "username"),
+	}
+}
+
+// CacheAdminEnv addresses the shared cache as its administrator.
+func CacheAdminEnv() []corev1.EnvVar {
+	return []corev1.EnvVar{
+		meta.SecretEnv("REDIS_HOST", RedisAdminSecret, "host"),
+		meta.SecretEnv("REDIS_PORT", RedisAdminSecret, "port"),
+		meta.SecretEnv("REDIS_PASSWORD", RedisAdminSecret, "password"),
 	}
 }
 

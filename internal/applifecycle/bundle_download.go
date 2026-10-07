@@ -17,17 +17,14 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"strings"
 
 	"github.com/minio/minio-go/v7"
-	"github.com/minio/minio-go/v7/pkg/credentials"
-	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
-	"github.com/gentian-org/gentian-os/internal/backup"
+	"github.com/gentian-org/gentian-os/internal/bundlestore"
 	"github.com/gentian-org/gentian-os/internal/layout"
 )
 
@@ -44,33 +41,12 @@ import (
 // manifest is written last, and a tar without it is not a bundle.
 var errBundleNotReady = errors.New("the export has not finished; its bundle is not complete")
 
-// bundleClient reaches the store a bundle sits in, with the credentials the
-// capture Jobs used. The platform's own MinIO records its address beside its
-// keys; a configured destination has its address on the bundle and only the
-// keys in the Secret -- the same asymmetry backup.bundleEnv explains.
+// bundleClient reaches the store a bundle sits in (bundlestore.Store).
 func (s *Service) bundleClient(ctx context.Context, bundle *gentianov1alpha1.BundleRef) (*minio.Client, error) {
-	secretName := bundle.CredentialSecret
-	if secretName == "" {
-		secretName = backup.MinIOAdminSecret
-	}
-	secret := &corev1.Secret{}
-	if err := s.client.Get(ctx, types.NamespacedName{Name: secretName, Namespace: layout.System("s3")}, secret); err != nil {
-		return nil, fmt.Errorf("bundle credentials %q: %w", secretName, err)
-	}
-	endpoint := bundle.Endpoint
-	if endpoint == "" {
-		endpoint = string(secret.Data["endpoint"])
-	}
-	u, err := url.Parse(endpoint)
-	if err != nil || u.Host == "" {
-		return nil, fmt.Errorf("bundle endpoint %q is not a URL", endpoint)
-	}
-	return minio.New(u.Host, &minio.Options{
-		Creds:  credentials.NewStaticV4(string(secret.Data[backup.DestinationAccessKeyField]), string(secret.Data[backup.DestinationSecretKeyField]), ""),
-		Secure: u.Scheme == "https",
-		Region: bundle.Region,
-	})
+	return s.bundles().Minio(ctx, bundle)
 }
+
+func (s *Service) bundles() *bundlestore.Store { return &bundlestore.Store{Client: s.client} }
 
 // StreamBundle writes one export's bundle to w as a tar whose entries are the
 // artefact names under the bundle's prefix.

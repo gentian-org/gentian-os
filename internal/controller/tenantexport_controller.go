@@ -31,6 +31,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
+	"github.com/gentian-org/gentian-os/api/bundle"
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/backup"
 	"github.com/gentian-org/gentian-os/internal/meta"
@@ -353,7 +354,11 @@ func (r *TenantExportReconciler) captureApp(
 	entry.Phase = gentianov1alpha1.TenantExportPhaseReady
 	entry.Message = ""
 	entry.ChartVersion = profileChartVersion(profile)
+	entry.Digest = tenantAppDigest(tenant, appName)
 	entry.Stores = unitKinds(units)
+	// What was captured, artefact by artefact: this is what the manifest
+	// says the bundle holds, and what a restore goes by.
+	entry.Artefacts = unitArtefacts(units)
 	unmarkQuiesced(&export.Status.Quiesced, appName)
 	logger.Info("captured app", "app", appName, "stores", entry.Stores)
 	if err := r.persist(ctx, export); err != nil {
@@ -364,9 +369,11 @@ func (r *TenantExportReconciler) captureApp(
 
 // captureUnit is one artefact to produce.
 type captureUnit struct {
-	Kind    string
-	Name    string
-	Path    string
+	Kind string
+	Name string
+	Path string
+	// Release is the Helm release a volume claim records, when it does.
+	Release string
 	JobName string
 	Job     *batchv1.Job
 }
@@ -392,15 +399,29 @@ func (r *TenantExportReconciler) captureUnits(
 		p := params
 		p.Name = exportJobName(export.Name, appName, "pg")
 		units = append(units, captureUnit{
-			Kind: "postgres", Name: db, Path: "postgres/" + db + ".pgc",
+			Kind: bundle.ArtefactPostgres, Name: db, Path: backup.PostgresArtefact(db),
 			JobName: p.Name, Job: backup.PostgresDumpJob(p, db),
 		})
+		// And every other database the app's role owns: what a purge of the
+		// app drops with the role, and so what a bundle has to hold. Always
+		// asked for, not only when the profile lets the app create databases
+		// now -- a purge goes by what the role owns, not by what the profile
+		// says today.
+		role := backup.PostgresRole(tenant.Name, appName)
+		p = params
+		p.Name = exportJobName(export.Name, appName, "pgo")
+		units = append(units, captureUnit{
+			Kind: bundle.ArtefactPostgresOwned, Name: role, Path: backup.PostgresOwnedArtefact(db),
+			JobName: p.Name, Job: backup.PostgresOwnedDumpJob(p, role, db),
+		})
 	case gentianov1alpha1.DatabaseEngineMariaDB:
+		// The provisioned database only: nothing says which other
+		// databases a MariaDB app made (backup.MariaDBOwnsBeyondProvisioned).
 		db := backup.DatabaseName(tenant, appName)
 		p := params
 		p.Name = exportJobName(export.Name, appName, "maria")
 		units = append(units, captureUnit{
-			Kind: "mariadb", Name: db, Path: "mariadb/" + db + ".sql.gz",
+			Kind: bundle.ArtefactMariaDB, Name: db, Path: backup.MariaDBArtefact(db),
 			JobName: p.Name, Job: backup.MariaDBDumpJob(p, db),
 		})
 	}
@@ -410,7 +431,7 @@ func (r *TenantExportReconciler) captureUnits(
 		p := params
 		p.Name = exportJobName(export.Name, appName, "s3")
 		units = append(units, captureUnit{
-			Kind: "s3", Name: bucket, Path: "s3/" + bucket + ".tar.gz",
+			Kind: bundle.ArtefactS3, Name: bucket, Path: backup.S3Artefact(bucket),
 			JobName: p.Name, Job: backup.S3ArchiveJob(p, bucket),
 		})
 	}
@@ -426,7 +447,7 @@ func (r *TenantExportReconciler) captureUnits(
 	if volParams.Encryption.Mode == gentianov1alpha1.ExportEncryptionPassphrase {
 		volParams.Encryption.PassphraseSecret = volumeUploadSecretName(export.Name)
 	}
-	claims, err := r.appVolumes(ctx, tenant, appName, profile, spec)
+	claims, releases, err := r.appVolumesAndReleases(ctx, tenant, appName, profile, spec)
 	if err != nil {
 		return nil, err
 	}
@@ -438,7 +459,7 @@ func (r *TenantExportReconciler) captureUnits(
 		// may place this anywhere.
 		p.Node = r.nodeHoldingClaim(ctx, p.Namespace, claim)
 		units = append(units, captureUnit{
-			Kind: "volume", Name: claim, Path: "volumes/" + claim + ".tar.gz",
+			Kind: bundle.ArtefactVolume, Name: claim, Path: backup.VolumeArtefact(claim), Release: releases[claim],
 			JobName: p.Name, Job: backup.VolumeArchiveJob(p, claim, spec.ExcludedPaths()),
 		})
 	}
@@ -476,8 +497,22 @@ func (r *TenantExportReconciler) appVolumes(
 	profile *gentianov1alpha1.ComponentProfile,
 	spec *gentianov1alpha1.BackupSpec,
 ) ([]string, error) {
+	claims, _, err := r.appVolumesAndReleases(ctx, tenant, appName, profile, spec)
+	return claims, err
+}
+
+// appVolumesAndReleases is appVolumes with, per claim, the Helm release the
+// claim records -- which the manifest carries, so that a bundle says whose
+// each captured volume was.
+func (r *TenantExportReconciler) appVolumesAndReleases(
+	ctx context.Context,
+	tenant *gentianov1alpha1.Tenant,
+	appName string,
+	profile *gentianov1alpha1.ComponentProfile,
+	spec *gentianov1alpha1.BackupSpec,
+) ([]string, map[string]string, error) {
 	if included := spec.IncludedVolumes(); len(included) > 0 {
-		return included, nil
+		return included, nil, nil
 	}
 
 	namespace := backup.TenantNamespace(tenant)
@@ -487,7 +522,7 @@ func (r *TenantExportReconciler) appVolumes(
 	}
 	pvcs := &corev1.PersistentVolumeClaimList{}
 	if err := reader.List(ctx, pvcs, client.InNamespace(namespace)); err != nil {
-		return nil, fmt.Errorf("list claims in %s: %w", namespace, err)
+		return nil, nil, fmt.Errorf("list claims in %s: %w", namespace, err)
 	}
 	// Whose a claim is, is the shared inventory's one rule: the one a purge
 	// deletes by and the retained-data read reports by. An export used to
@@ -502,7 +537,13 @@ func (r *TenantExportReconciler) appVolumes(
 			"app", appName, "pvc", name, "release", release)
 	}
 	sort.Strings(claims)
-	return claims, nil
+	releases := map[string]string{}
+	for i := range pvcs.Items {
+		if release := backup.ClaimRelease(pvcs.Items[i]); release != "" {
+			releases[pvcs.Items[i].Name] = release
+		}
+	}
+	return claims, releases, nil
 }
 
 // ensureCaptureJob creates a Job if absent and reports whether it has finished.
@@ -598,7 +639,7 @@ func (r *TenantExportReconciler) captureTenantWide(
 	realmParams.Name = exportJobName(export.Name, backupTenantComponent, "realm")
 	realm := keycloakRealmName(tenant)
 	units := []captureUnit{{
-		Kind: "identity", Name: realm, Path: "identity/realm.tar.gz",
+		Kind: bundle.ArtefactIdentity, Name: realm, Path: backup.IdentityArtefact,
 		JobName: realmParams.Name, Job: backup.RealmExportJob(realmParams, realm),
 	}}
 
@@ -606,7 +647,7 @@ func (r *TenantExportReconciler) captureTenantWide(
 	shellParams.Name = exportJobName(export.Name, backupTenantComponent, "shell")
 	shellDB := databaseName(tenant, portalShellAppName)
 	units = append(units, captureUnit{
-		Kind: "postgres", Name: shellDB, Path: "postgres/" + shellDB + ".pgc",
+		Kind: bundle.ArtefactPostgres, Name: shellDB, Path: backup.PostgresArtefact(shellDB),
 		JobName: shellParams.Name, Job: backup.PostgresDumpJob(shellParams, shellDB),
 	})
 
@@ -633,6 +674,7 @@ func (r *TenantExportReconciler) captureTenantWide(
 		entry := appStatus(&export.Status.Apps, backupTenantComponent)
 		entry.Phase = gentianov1alpha1.TenantExportPhaseReady
 		entry.Stores = unitKinds(units)
+		entry.Artefacts = unitArtefacts(units)
 		entry.Message = ""
 	}
 	return allDone, nil
@@ -730,9 +772,33 @@ func (r *TenantExportReconciler) complete(
 	export.Status.Phase = gentianov1alpha1.TenantExportPhaseReady
 	export.Status.CompletedAt = ptrNow()
 	tenantExportTotal.WithLabelValues(tenant.Name, string(gentianov1alpha1.TenantExportPhaseReady)).Inc()
-	setExportCondition(export, conditionExportComplete, metav1.ConditionTrue, "Captured",
-		fmt.Sprintf("%d app(s) captured", len(export.Status.Apps)))
+	captured := fmt.Sprintf("%d app(s) captured", len(export.Status.Apps))
+	// A profile may declare secrets its data is welded to
+	// (spec.backup.boundSecrets). A bundle carries no stored credential, so
+	// they are not in it, and an export that said only "captured" would be
+	// claiming more than it did.
+	if unbound := r.appsWithBoundSecrets(ctx, export); len(unbound) > 0 {
+		captured += "; the secrets " + strings.Join(unbound, ", ") +
+			" declare in spec.backup.boundSecrets are NOT in the bundle (a bundle holds no stored credential): their data restores readable only where those secrets are the same"
+	}
+	setExportCondition(export, conditionExportComplete, metav1.ConditionTrue, "Captured", captured)
 	return ctrl.Result{}, r.persist(ctx, export)
+}
+
+// appsWithBoundSecrets names the captured apps whose profile declares bound
+// secrets.
+func (r *TenantExportReconciler) appsWithBoundSecrets(ctx context.Context, export *gentianov1alpha1.TenantExport) []string {
+	profiles, err := loadAppProfileIndex(ctx, r.Client)
+	if err != nil {
+		return nil
+	}
+	var names []string
+	for _, app := range export.Status.Apps {
+		if profile, ok := appProfileFromIndex(profiles, app.Name); ok && profile.Spec.Backup != nil && len(profile.Spec.Backup.BoundSecrets) > 0 {
+			names = append(names, app.Name)
+		}
+	}
+	return names
 }
 
 func (r *TenantExportReconciler) buildManifest(
@@ -748,26 +814,46 @@ func (r *TenantExportReconciler) buildManifest(
 		CreatedAt:     timeOrNow(export.Status.StartedAt),
 		Identity: &backup.ManifestIdentity{
 			Realm: keycloakRealmName(tenant),
-			Path:  "identity/realm.tar.gz",
+			Path:  backup.IdentityArtefact,
 			// Keycloak's partial-export carries no credentials, so a restore
 			// must re-invite rather than pretend the old passwords survived.
 			PasswordsIncluded: false,
 		},
 		Shell: &backup.ManifestStore{
-			Kind: "postgres",
+			Kind: bundle.ArtefactPostgres,
 			Name: databaseName(tenant, portalShellAppName),
-			Path: "postgres/" + databaseName(tenant, portalShellAppName) + ".pgc",
+			Path: backup.PostgresArtefact(databaseName(tenant, portalShellAppName)),
 		},
 	}
 	for _, app := range export.Status.Apps {
-		m.Apps = append(m.Apps, backup.ManifestApp{
+		// The tenant-wide captures have their own places in the manifest
+		// (identity, shell) and are not an app. Format 1 listed them among
+		// the apps.
+		if app.Name == backupTenantComponent {
+			continue
+		}
+		entry := backup.ManifestApp{
 			Name:         app.Name,
+			Profile:      app.Name,
 			ChartVersion: app.ChartVersion,
+			Digest:       app.Digest,
 			QuiesceStart: timeOrEmpty(app.QuiesceStart),
 			QuiesceEnd:   timeOrEmpty(app.QuiesceEnd),
-			QuiesceMode:  strings.TrimPrefix(app.Message, "paused "),
+			QuiesceMode:  app.QuiesceMode,
 			Stores:       manifestStores(app),
-		})
+		}
+		// What the app was, by the inventory: the engine and the releases a
+		// restore checks the installed app against.
+		for _, a := range app.Artefacts {
+			switch a.Kind {
+			case bundle.ArtefactPostgres:
+				entry.DatabaseEngine = string(gentianov1alpha1.DatabaseEnginePostgreSQL)
+			case bundle.ArtefactMariaDB:
+				entry.DatabaseEngine = string(gentianov1alpha1.DatabaseEngineMariaDB)
+			}
+		}
+		entry.Releases = []string{backup.AppRelease(app.Name), backup.DirectRelease(backup.TenantNamespace(tenant), app.Name)}
+		m.Apps = append(m.Apps, entry)
 	}
 	return m
 }

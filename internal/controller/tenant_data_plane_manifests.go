@@ -90,17 +90,9 @@ func (r *TenantReconciler) buildDataPlaneJobs(ctx context.Context, tenant *genti
 		return nil, err
 	}
 	for _, appName := range s3Apps {
-		accessKey, secretKey := "", ""
-		if r.Seeder != nil {
-			creds, seedErr := r.Seeder.SeedS3(ctx, tenant.Name, appName, secrets.S3Creds{
-				Endpoint: r.minioEndpoint(ctx),
-				Bucket:   s3BucketName(tenant, appName),
-				Region:   "us-east-1",
-			})
-			if seedErr != nil {
-				return nil, fmt.Errorf("seed s3 for %s: %w", appName, seedErr)
-			}
-			accessKey, secretKey = creds.AccessKey, creds.SecretKey
+		accessKey, secretKey, seedErr := r.seedObjectStorage(ctx, tenant, appName)
+		if seedErr != nil {
+			return nil, seedErr
 		}
 		jobs = append(jobs, *makeS3BucketJob(tenant, appName, accessKey, secretKey))
 	}

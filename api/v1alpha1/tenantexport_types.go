@@ -406,6 +406,27 @@ type BundleRef struct {
 	CredentialSecret string `json:"credentialSecret,omitempty"`
 }
 
+// BundleArtefact is one artefact of a bundle: a database dump, a bucket's
+// archive, a volume's archive.
+type BundleArtefact struct {
+	// Kind is postgres, postgresOwned, mariadb, s3 or volume.
+	Kind string `json:"kind"`
+	// Name is what the artefact was captured from: the database, bucket or
+	// volume claim, by its name in the tenant the bundle was taken of.
+	Name string `json:"name"`
+	// Path is the artefact's place in the bundle.
+	// +optional
+	Path string `json:"path,omitempty"`
+	// Release is the Helm release a captured volume claim recorded.
+	// +optional
+	Release string `json:"release,omitempty"`
+	// Target is where a restore puts the artefact: the database, bucket or
+	// claim of that kind in the tenant being restored into, which is named
+	// differently when the tenant is. Set by a restore only.
+	// +optional
+	Target string `json:"target,omitempty"`
+}
+
 // AppExportStatus reports the capture of one app.
 type AppExportStatus struct {
 	// Name is the installed profile name.
@@ -422,6 +443,17 @@ type AppExportStatus struct {
 	// volumes), derived from the profile's kernelRequirements.
 	// +optional
 	Stores []string `json:"stores,omitempty"`
+
+	// Artefacts lists each artefact captured for this app, or planned to be
+	// restored for it: what the bundle's manifest says the bundle holds. An
+	// export writes them into the manifest; a restore reads them from it.
+	// +optional
+	// +listType=atomic
+	Artefacts []BundleArtefact `json:"artefacts,omitempty"`
+
+	// Digest is the pinned digest of the app's build, when the tenant pins one.
+	// +optional
+	Digest string `json:"digest,omitempty"`
 
 	// Phase is this app's own phase, using the same vocabulary as the export.
 	// +optional

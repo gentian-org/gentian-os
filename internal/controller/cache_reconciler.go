@@ -34,7 +34,7 @@ import (
 
 const (
 	conditionCacheReady     = "CacheReady"
-	redisAdminSecret        = "redis-admin"
+	redisAdminSecret        = backup.RedisAdminSecret
 	cacheRequeueAfter       = 2 * time.Second
 	memcachedServiceName    = "memcached"
 	memcachedDeploymentName = "memcached"
@@ -311,38 +311,12 @@ func redisContainer(name, username, keyPrefix, script string) corev1.Container {
 		Image:           kernel.RedisProvisionerImage(),
 		Command:         []string{"/bin/sh", "-c", script},
 		SecurityContext: provisioningSecurityContext(),
-		Env: []corev1.EnvVar{
-			{
-				Name: "REDIS_HOST",
-				ValueFrom: &corev1.EnvVarSource{
-					SecretKeyRef: &corev1.SecretKeySelector{
-						LocalObjectReference: corev1.LocalObjectReference{Name: redisAdminSecret},
-						Key:                  "host",
-					},
-				},
-			},
-			{
-				Name: "REDIS_PORT",
-				ValueFrom: &corev1.EnvVarSource{
-					SecretKeyRef: &corev1.SecretKeySelector{
-						LocalObjectReference: corev1.LocalObjectReference{Name: redisAdminSecret},
-						Key:                  "port",
-					},
-				},
-			},
-			{
-				Name: "REDIS_PASSWORD",
-				ValueFrom: &corev1.EnvVarSource{
-					SecretKeyRef: &corev1.SecretKeySelector{
-						LocalObjectReference: corev1.LocalObjectReference{Name: redisAdminSecret},
-						Key:                  "password",
-					},
-				},
-			},
-			// Per-user values as safe literals.
-			{Name: "REDIS_USERNAME", Value: username},
-			{Name: "REDIS_KEY_PREFIX", Value: keyPrefix},
-		},
+		// The admin connection by the inventory's one block, then the
+		// per-user values as safe literals.
+		Env: append(backup.CacheAdminEnv(),
+			corev1.EnvVar{Name: "REDIS_USERNAME", Value: username},
+			corev1.EnvVar{Name: "REDIS_KEY_PREFIX", Value: keyPrefix},
+		),
 	}
 }
 

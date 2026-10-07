@@ -36,7 +36,6 @@ const (
 	cnpgGroup              = "postgresql.cnpg.io"
 	cnpgVersion            = "v1"
 	cnpgDatabaseKind       = "Database"
-	postgresAdminSecret    = "postgres-admin"
 	databaseRequeueAfter   = 2 * time.Second
 	// portalShellAppName names the desktop's database as exports and restores
 	// address it. The tenant reconciler no longer provisions it: the desktop
@@ -285,44 +284,9 @@ func psqlContainer(name, script, tenantNamespace string) corev1.Container {
 		Image:           kernel.PostgresProvisionerImage(),
 		Command:         []string{"/bin/bash", "-c", script},
 		SecurityContext: provisioningSecurityContext(),
-		Env: []corev1.EnvVar{
-			{
-				Name: "PGHOST",
-				ValueFrom: &corev1.EnvVarSource{
-					SecretKeyRef: &corev1.SecretKeySelector{
-						LocalObjectReference: corev1.LocalObjectReference{Name: postgresAdminSecret},
-						Key:                  "host",
-					},
-				},
-			},
-			{
-				Name: "PGPORT",
-				ValueFrom: &corev1.EnvVarSource{
-					SecretKeyRef: &corev1.SecretKeySelector{
-						LocalObjectReference: corev1.LocalObjectReference{Name: postgresAdminSecret},
-						Key:                  "port",
-					},
-				},
-			},
-			{
-				Name: "PGUSER",
-				ValueFrom: &corev1.EnvVarSource{
-					SecretKeyRef: &corev1.SecretKeySelector{
-						LocalObjectReference: corev1.LocalObjectReference{Name: postgresAdminSecret},
-						Key:                  "username",
-					},
-				},
-			},
-			{
-				Name: "PGPASSWORD",
-				ValueFrom: &corev1.EnvVarSource{
-					SecretKeyRef: &corev1.SecretKeySelector{
-						LocalObjectReference: corev1.LocalObjectReference{Name: postgresAdminSecret},
-						Key:                  "password",
-					},
-				},
-			},
-		},
+		// The admin connection is the inventory's, as every Job's that
+		// reaches the shared server is.
+		Env: backup.PostgresAdminEnv(),
 	}
 }
 

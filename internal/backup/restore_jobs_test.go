@@ -67,11 +67,11 @@ func TestRestoreRefusesWithoutKeyMaterial(t *testing.T) {
 // truncated dump over a live database is the worst outcome this system has.
 func TestRestoreVerifiesChecksumBeforeLoading(t *testing.T) {
 	jobs := map[string]*batchv1.Job{
-		"postgres": PostgresRestoreJob(params(), recipientDecryption(), "demo_app"),
-		"mariadb":  MariaDBRestoreJob(params(), recipientDecryption(), "demo_app"),
-		"s3":       S3RestoreJob(params(), recipientDecryption(), "demo-app"),
-		"volume":   VolumeRestoreJob(params(), recipientDecryption(), "data"),
-		"realm":    RealmImportJob(params(), recipientDecryption(), "demo"),
+		"postgres": PostgresRestoreJob(params(), recipientDecryption(), PostgresArtefact("demo_app"), "demo_app"),
+		"mariadb":  MariaDBRestoreJob(params(), recipientDecryption(), MariaDBArtefact("demo_app"), "demo_app"),
+		"s3":       S3RestoreJob(params(), recipientDecryption(), S3Artefact("demo-app"), "demo-app", ObjectStorageProvisionContainer("provision-bucket", "demo-app", "AK", "SK")),
+		"volume":   VolumeRestoreJob(params(), recipientDecryption(), VolumeArtefact("data"), "data"),
+		"realm":    RealmImportJob(params(), recipientDecryption(), IdentityArtefact, "demo"),
 	}
 	for name, job := range jobs {
 		fetch := containerByName(job, "fetch")
@@ -99,7 +99,7 @@ func TestRestoreVerifiesChecksumBeforeLoading(t *testing.T) {
 
 func TestRestoreDecryptionUsesTheRightMechanism(t *testing.T) {
 	byIdentity := strings.Join(
-		containerByName(PostgresRestoreJob(params(), recipientDecryption(), "demo_app"), "fetch").Args, "\n")
+		containerByName(PostgresRestoreJob(params(), recipientDecryption(), PostgresArtefact("demo_app"), "demo_app"), "fetch").Args, "\n")
 	if !strings.Contains(byIdentity, "age -d -i /tmp/identity") {
 		t.Errorf("recipient restore does not decrypt with an identity:\n%s", byIdentity)
 	}
@@ -108,7 +108,7 @@ func TestRestoreDecryptionUsesTheRightMechanism(t *testing.T) {
 	}
 
 	byPassphrase := strings.Join(
-		containerByName(PostgresRestoreJob(params(), passphraseDecryption(), "demo_app"), "fetch").Args, "\n")
+		containerByName(PostgresRestoreJob(params(), passphraseDecryption(), PostgresArtefact("demo_app"), "demo_app"), "fetch").Args, "\n")
 	if !strings.Contains(byPassphrase, "script -qec") {
 		t.Errorf("passphrase restore has no pty; age cannot read a piped passphrase:\n%s", byPassphrase)
 	}
@@ -118,7 +118,7 @@ func TestRestoreDecryptionUsesTheRightMechanism(t *testing.T) {
 // no business surviving a restore that claims to return the app to that point.
 func TestDatabaseRestoresReplaceRatherThanMerge(t *testing.T) {
 	pg := strings.Join(containerByName(
-		PostgresRestoreJob(params(), recipientDecryption(), "demo_app"), "pg-restore").Args, "\n")
+		PostgresRestoreJob(params(), recipientDecryption(), PostgresArtefact("demo_app"), "demo_app"), "pg-restore").Args, "\n")
 	for _, want := range []string{"--clean", "--if-exists", "--single-transaction"} {
 		if !strings.Contains(pg, want) {
 			t.Errorf("pg_restore missing %s:\n%s", want, pg)
@@ -126,7 +126,7 @@ func TestDatabaseRestoresReplaceRatherThanMerge(t *testing.T) {
 	}
 
 	maria := strings.Join(containerByName(
-		MariaDBRestoreJob(params(), recipientDecryption(), "demo_app"), "mariadb-restore").Args, "\n")
+		MariaDBRestoreJob(params(), recipientDecryption(), MariaDBArtefact("demo_app"), "demo_app"), "mariadb-restore").Args, "\n")
 	if !strings.Contains(maria, "DROP DATABASE IF EXISTS") || !strings.Contains(maria, "CREATE DATABASE") {
 		t.Errorf("mariadb restore does not recreate the database:\n%s", maria)
 	}
@@ -137,7 +137,7 @@ func TestDatabaseRestoresReplaceRatherThanMerge(t *testing.T) {
 	}
 
 	s3 := strings.Join(containerByName(
-		S3RestoreJob(params(), recipientDecryption(), "demo-app"), "s3-restore").Args, "\n")
+		S3RestoreJob(params(), recipientDecryption(), S3Artefact("demo-app"), "demo-app", ObjectStorageProvisionContainer("provision-bucket", "demo-app", "AK", "SK")), "s3-restore").Args, "\n")
 	if !strings.Contains(s3, "--remove") {
 		t.Errorf("bucket restore merges instead of matching the archive:\n%s", s3)
 	}
@@ -147,7 +147,7 @@ func TestDatabaseRestoresReplaceRatherThanMerge(t *testing.T) {
 // complete picture, so wiping the target would turn a documented omission into
 // data loss.
 func TestVolumeRestoreDoesNotWipeTheTarget(t *testing.T) {
-	job := VolumeRestoreJob(params(), recipientDecryption(), "nextcloud-data")
+	job := VolumeRestoreJob(params(), recipientDecryption(), VolumeArtefact("nextcloud-data"), "nextcloud-data")
 	script := strings.Join(containerByName(job, "volume-restore").Args, "\n")
 
 	if strings.Contains(script, "rm -rf /target") {
@@ -174,7 +174,7 @@ func TestVolumeRestoreDoesNotWipeTheTarget(t *testing.T) {
 // leaving an operator to learn it from users who cannot sign in.
 func TestRealmImportRestoresPeopleAndWarnsAboutPasswords(t *testing.T) {
 	script := strings.Join(containerByName(
-		RealmImportJob(params(), recipientDecryption(), "demo"), "realm-import").Args, "\n")
+		RealmImportJob(params(), recipientDecryption(), IdentityArtefact, "demo"), "realm-import").Args, "\n")
 
 	for _, want := range []string{"partialImport", "users.ndjson", "memberships.ndjson", "OVERWRITE"} {
 		if !strings.Contains(script, want) {
@@ -191,7 +191,7 @@ func TestRealmImportRestoresPeopleAndWarnsAboutPasswords(t *testing.T) {
 // and the failure surfaces as an unrecognisable error on the first alias call.
 func TestRestoreDoesNotConfuseMinioClientWithMidnightCommander(t *testing.T) {
 	script := strings.Join(
-		containerByName(PostgresRestoreJob(params(), recipientDecryption(), "demo_app"), "fetch").Args, "\n")
+		containerByName(PostgresRestoreJob(params(), recipientDecryption(), PostgresArtefact("demo_app"), "demo_app"), "fetch").Args, "\n")
 
 	if strings.Contains(script, "apk add --no-cache --quiet mc") ||
 		strings.Contains(script, "apk add mc") {
@@ -214,7 +214,7 @@ func TestRestoreDoesNotConfuseMinioClientWithMidnightCommander(t *testing.T) {
 // The database wedges precisely when someone is recovering it, and only
 // hand-written psql gets it back. So the restore normalises ownership first.
 func TestPostgresRestoreNormalisesOwnershipBeforeLoading(t *testing.T) {
-	job := PostgresRestoreJob(params(), recipientDecryption(), "demo_nextcloud_base_ce")
+	job := PostgresRestoreJob(params(), recipientDecryption(), PostgresArtefact("demo_nextcloud_base_ce"), "demo_nextcloud_base_ce")
 	script := job.Spec.Template.Spec.Containers[0].Args[0]
 
 	// Go's fmt leaves %!verb(...) markers behind when a format string escapes
@@ -270,7 +270,7 @@ func TestS3RestoreWritesToPlatformStorageNotTheBundleDestination(t *testing.T) {
 	p.Region = "ch-dk-2"
 	p.UploadCredentialsSecret = "backup-destination-corp"
 
-	job := S3RestoreJob(p, recipientDecryption(), "corp-nextcloud")
+	job := S3RestoreJob(p, recipientDecryption(), S3Artefact("corp-nextcloud"), "corp-nextcloud", ObjectStorageProvisionContainer("provision-bucket", "corp-nextcloud", "AK", "SK"))
 
 	var restore *corev1.Container
 	for i := range job.Spec.Template.Spec.Containers {
@@ -324,7 +324,7 @@ func TestPostgresRestoreUsesTheRoleThatExists(t *testing.T) {
 		Role:      PostgresRole("corp", "shell"),
 	}
 	script := PostgresRestoreJob(shell, Decryption{Mode: "recipient", SecretName: "k", SecretKey: "identity"},
-		"corp_shell").Spec.Template.Spec.Containers[0].Args[0]
+		PostgresArtefact("corp_shell"), "corp_shell").Spec.Template.Spec.Containers[0].Args[0]
 
 	if !strings.Contains(script, "'corp_shell'") {
 		t.Errorf("restore does not name the shell role:\n%s", script)
@@ -336,7 +336,7 @@ func TestPostgresRestoreUsesTheRoleThatExists(t *testing.T) {
 	// An app names one thing, so leaving Role empty must keep working.
 	app := JobParams{Namespace: "platform-kernel", Name: "tx-r-pgr", Tenant: "corp", App: "docmost-ce"}
 	appScript := PostgresRestoreJob(app, Decryption{Mode: "recipient", SecretName: "k", SecretKey: "identity"},
-		"corp_docmost_ce").Spec.Template.Spec.Containers[0].Args[0]
+		PostgresArtefact("corp_docmost_ce"), "corp_docmost_ce").Spec.Template.Spec.Containers[0].Args[0]
 	if !strings.Contains(appScript, "'corp_docmost-ce'") {
 		t.Errorf("an app's role is no longer derived from its name:\n%s", appScript)
 	}

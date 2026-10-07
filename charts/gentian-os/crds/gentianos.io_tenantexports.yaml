@@ -226,6 +226,44 @@ spec:
                 items:
                   description: AppExportStatus reports the capture of one app.
                   properties:
+                    artefacts:
+                      description: |-
+                        Artefacts lists each artefact captured for this app, or planned to be
+                        restored for it: what the bundle's manifest says the bundle holds. An
+                        export writes them into the manifest; a restore reads them from it.
+                      items:
+                        description: |-
+                          BundleArtefact is one artefact of a bundle: a database dump, a bucket's
+                          archive, a volume's archive.
+                        properties:
+                          kind:
+                            description: Kind is postgres, postgresOwned, mariadb,
+                              s3 or volume.
+                            type: string
+                          name:
+                            description: |-
+                              Name is what the artefact was captured from: the database, bucket or
+                              volume claim, by its name in the tenant the bundle was taken of.
+                            type: string
+                          path:
+                            description: Path is the artefact's place in the bundle.
+                            type: string
+                          release:
+                            description: Release is the Helm release a captured volume
+                              claim recorded.
+                            type: string
+                          target:
+                            description: |-
+                              Target is where a restore puts the artefact: the database, bucket or
+                              claim of that kind in the tenant being restored into, which is named
+                              differently when the tenant is. Set by a restore only.
+                            type: string
+                        required:
+                        - kind
+                        - name
+                        type: object
+                      type: array
+                      x-kubernetes-list-type: atomic
                     attempts:
                       description: |-
                         Attempts counts capture Jobs run for this app. Bounded, because the
@@ -251,6 +289,10 @@ spec:
                         type: string
                       type: array
                       x-kubernetes-list-type: atomic
+                    digest:
+                      description: Digest is the pinned digest of the app's build,
+                        when the tenant pins one.
+                      type: string
                     lastFailure:
                       description: |-
                         LastFailure is what the capture container actually said, from the last

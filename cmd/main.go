@@ -38,6 +38,7 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/applifecycle"
+	"github.com/gentian-org/gentian-os/internal/bundlestore"
 	"github.com/gentian-org/gentian-os/internal/controller"
 	"github.com/gentian-org/gentian-os/internal/director/authz"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
@@ -438,6 +439,10 @@ func main() {
 		Scheme:      mgr.GetScheme(),
 		Reconciler:  tenantExportReconciler,
 		Tenant:      tenantReconciler,
+		// The bundle's manifest is what a restore goes by; this is how the
+		// operator reads it, with the credentials it holds for the store
+		// the bundle sits in.
+		Bundles: &bundlestore.Store{Client: mgr.GetClient()},
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "TenantRestore")
 		os.Exit(1)

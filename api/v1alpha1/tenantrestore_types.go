@@ -40,8 +40,15 @@ type TenantRestoreSpec struct {
 	// +optional
 	Bundle *BundleRef `json:"bundle,omitempty"`
 
-	// Apps limits the restore to these profiles. Empty restores every app the
-	// bundle contains that is also installed.
+	// Apps limits the restore to these profiles.
+	//
+	// Empty restores every app the bundle's manifest lists that can be
+	// restored here, and names the rest, with the reason, in
+	// status.notRestored. An app the bundle does not list is never touched.
+	//
+	// An app named here has to be restorable: if the bundle does not hold it,
+	// the tenant does not have it installed, or its build cannot take the
+	// data, the whole restore is refused before anything is changed.
 	// +optional
 	Apps []string `json:"apps,omitempty"`
 
@@ -59,12 +66,16 @@ type TenantRestoreSpec struct {
 	// +optional
 	Decryption *RestoreDecryption `json:"decryption,omitempty"`
 
-	// SkipVersionCheck permits restoring a bundle produced by newer app
-	// versions than are installed.
+	// SkipVersionCheck permits restoring an app's data into a build of the
+	// app older than the one that wrote it, or one whose version cannot be
+	// compared with it.
 	//
-	// Off by default because the failure is silent: an older app reading data
-	// written by a newer schema usually starts, serves, and corrupts. Set it
-	// only when you know the specific migration is reversible.
+	// The bundle's manifest records the chart version each app was running.
+	// The same version is restored; a newer installed version is restored
+	// too, because an app upgrades older data when it starts. An older one is
+	// not, unless this is set: the failure is silent -- an older app reading
+	// data written by a newer schema usually starts, serves, and corrupts.
+	// Set it only when you know the specific migration is reversible.
 	// +optional
 	SkipVersionCheck bool `json:"skipVersionCheck,omitempty"`
 }
@@ -113,6 +124,44 @@ type TenantRestoreStatus struct {
 	// +optional
 	Bundle *BundleRef `json:"bundle,omitempty"`
 
+	// BundleSchemaVersion is the format version of the manifest this restore
+	// read.
+	// +optional
+	BundleSchemaVersion int `json:"bundleSchemaVersion,omitempty"`
+
+	// NameDerivation says where the restore took the names of what it
+	// restores from. "manifest": the bundle's manifest names each artefact
+	// and what it was captured from (format 2 and later). "derived": the
+	// manifest is of format 1, which names apps and kinds only, so the
+	// database, bucket and claim names were derived from the tenant the
+	// manifest records and from the claims the tenant has now.
+	// +optional
+	NameDerivation string `json:"nameDerivation,omitempty"`
+
+	// Complete says whether everything the bundle holds -- or, with
+	// spec.apps, everything asked for -- was put back. It is set when the
+	// restore ends. False is always explained by notRestored.
+	// +optional
+	Complete *bool `json:"complete,omitempty"`
+
+	// NotRestored names every app the bundle holds that this restore did not
+	// put back, and why. Decided before anything is changed.
+	// +optional
+	// +listType=atomic
+	NotRestored []RestoreOmission `json:"notRestored,omitempty"`
+
+	// Notes are what a restore does not bring back by design, which whoever
+	// ran it has to act on.
+	// +optional
+	// +listType=atomic
+	Notes []string `json:"notes,omitempty"`
+
+	// ImportRemoved records that the uploaded bundle this restore read was
+	// removed from the import bucket, which happens once the restore has run
+	// to its end. Never set for a restore of a tenant's own backup.
+	// +optional
+	ImportRemoved bool `json:"importRemoved,omitempty"`
+
 	// PasswordResetRequired flags that members came back without credentials.
 	//
 	// Keycloak's partial-export carries no password hashes, so a restored realm
@@ -129,6 +178,20 @@ type TenantRestoreStatus struct {
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 }
+
+// RestoreOmission is one app a bundle holds that a restore did not put back.
+type RestoreOmission struct {
+	// App is the app's name in the bundle's manifest.
+	App string `json:"app"`
+	// Reason says why, in a sentence a person can act on.
+	Reason string `json:"reason"`
+}
+
+// The values of TenantRestoreStatus.NameDerivation.
+const (
+	RestoreNamesFromManifest = "manifest"
+	RestoreNamesDerived      = "derived"
+)
 
 // TenantRestore restores a tenant's data from a bundle.
 //

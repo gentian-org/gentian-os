@@ -12,7 +12,10 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -27,8 +30,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
+	"github.com/gentian-org/gentian-os/api/bundle"
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/backup"
+	"github.com/gentian-org/gentian-os/internal/bundlestore"
 	"github.com/gentian-org/gentian-os/internal/meta"
 	"github.com/gentian-org/gentian-os/internal/schemacheck/crdcheck"
 )
@@ -50,6 +55,19 @@ type TenantRestoreReconciler struct {
 
 	Reconciler *TenantExportReconciler
 	Tenant     *TenantReconciler
+
+	// Bundles reads a bundle's manifest, which is what says what a restore
+	// puts back, and removes an uploaded bundle once a restore of it has run.
+	// Required: a restore that cannot read the manifest is refused, never
+	// run on a guess.
+	Bundles BundleReader
+}
+
+// BundleReader is the object store as a restore uses it. *bundlestore.Store
+// is one.
+type BundleReader interface {
+	Manifest(ctx context.Context, ref gentianov1alpha1.BundleRef, key bundlestore.Key) (*backup.Manifest, error)
+	RemoveImported(ctx context.Context, ref gentianov1alpha1.BundleRef) error
 }
 
 // +kubebuilder:rbac:groups=gentianos.io,resources=tenantrestores,verbs=get;list;watch;create;update;patch;delete
@@ -74,7 +92,10 @@ func (r *TenantRestoreReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	// Resume before anything else, exactly as export does: an app left paused
 	// after a crash is an outage nothing else records.
 	if restore.IsTerminal() {
-		return ctrl.Result{}, r.resumeAll(ctx, restore, tenantName)
+		if err := r.resumeAll(ctx, restore, tenantName); err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{}, r.removeImportedBundle(ctx, restore)
 	}
 
 	tenant := &gentianov1alpha1.Tenant{}
@@ -108,35 +129,44 @@ func (r *TenantRestoreReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{RequeueAfter: exportRequeueAfter}, r.persist(ctx, restore)
 	}
 
-	bundle, encMode, err := r.resolveBundle(ctx, restore)
+	ref, encMode, err := r.resolveBundle(ctx, restore)
 	if err != nil {
 		return r.fail(ctx, restore, "BundleUnusable", err.Error())
 	}
-	restore.Status.Bundle = bundle
+	restore.Status.Bundle = ref
 
 	decryption, err := r.resolveDecryption(ctx, restore, encMode)
 	if err != nil {
 		return r.fail(ctx, restore, "DecryptionUnavailable", err.Error())
 	}
 
-	apps, err := r.restoreAppSet(ctx, tenant, restore)
-	if err != nil {
-		return r.fail(ctx, restore, "NothingToRestore", err.Error())
-	}
-	if len(apps) == 0 {
-		return r.fail(ctx, restore, "NothingToRestore",
-			"no installed app matches this bundle; install the apps first, then restore")
-	}
-
+	// The plan, made once and before anything is changed: what the bundle's
+	// manifest says it holds, checked against the tenant as it stands. From
+	// here on the restore works from what it recorded, so the manifest is
+	// read once and a tenant that changes under a running restore does not
+	// change what the restore does.
 	if restore.Status.StartedAt == nil {
+		plan, err := r.plan(ctx, tenant, restore, ref)
+		if err != nil {
+			var refused *errRestoreRefused
+			if errors.As(err, &refused) {
+				return r.fail(ctx, restore, refused.reason, refused.message)
+			}
+			return ctrl.Result{}, err
+		}
+		recordPlan(restore, plan)
 		restore.Status.StartedAt = ptrNow()
 		restore.Status.Phase = gentianov1alpha1.TenantExportPhaseRunning
-		setRestoreCondition(restore, conditionExportAccepted, metav1.ConditionTrue, "Accepted",
-			fmt.Sprintf("restoring %d app(s) from %s", len(apps), bundle.Prefix))
+		accepted := fmt.Sprintf("restoring %d app(s) from %s", len(plan.apps), ref.Prefix)
+		if len(plan.notRestored) > 0 {
+			accepted += "; not restoring " + omissionsText(plan.notRestored)
+		}
+		setRestoreCondition(restore, conditionExportAccepted, metav1.ConditionTrue, "Accepted", accepted)
 		if err := r.persist(ctx, restore); err != nil {
 			return ctrl.Result{}, err
 		}
 	}
+	apps := plannedApps(restore)
 
 	current := nextPendingApp(restore.Status.Apps, apps)
 	if err := r.resumeStale(ctx, restore, tenantName, current); err != nil {
@@ -161,8 +191,20 @@ func (r *TenantRestoreReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	restore.Status.Phase = gentianov1alpha1.TenantExportPhaseReady
 	restore.Status.CompletedAt = ptrNow()
 	restore.Status.PasswordResetRequired = true
-	setRestoreCondition(restore, conditionExportComplete, metav1.ConditionTrue, "Restored",
-		fmt.Sprintf("%d app(s) restored; members have no credentials until they are sent a password reset", len(apps)))
+	// Complete only when nothing the bundle holds was left out. What was
+	// left out was decided, and written down, before the first thing was
+	// changed; the result repeats it so that nobody reads "Ready" as "all of
+	// it".
+	complete := len(restore.Status.NotRestored) == 0
+	restore.Status.Complete = &complete
+	reason := "Restored"
+	message := fmt.Sprintf("%d app(s) restored; members have no credentials until they are sent a password reset", len(apps))
+	if !complete {
+		reason = "PartiallyRestored"
+		message = fmt.Sprintf("%d app(s) restored and %d not: %s. Members have no credentials until they are sent a password reset",
+			len(apps), len(restore.Status.NotRestored), omissionsText(restore.Status.NotRestored))
+	}
+	setRestoreCondition(restore, conditionExportComplete, metav1.ConditionTrue, reason, message)
 	return ctrl.Result{}, r.persist(ctx, restore)
 }
 
@@ -198,7 +240,7 @@ func (r *TenantRestoreReconciler) restoreApp(
 		}
 	}
 
-	units, err := r.restoreUnits(ctx, tenant, appName, profile, restore, decryption)
+	units, err := r.restoreUnits(ctx, tenant, appName, restore, decryption)
 	if err != nil {
 		// Worse here than on the export side: silently resolving no claims put
 		// the database back without the files it references and resumed the app
@@ -207,7 +249,7 @@ func (r *TenantRestoreReconciler) restoreApp(
 			fmt.Sprintf("enumerate what to restore: %v", err))
 	}
 	for _, unit := range units {
-		if unit.Kind == "volume" {
+		if unit.Kind == bundle.ArtefactVolume {
 			if err := r.ensureRestoreVolumeSecret(ctx, restore); err != nil {
 				return ctrl.Result{}, fmt.Errorf("stage volume credentials: %w", err)
 			}
@@ -359,49 +401,18 @@ func (r *TenantRestoreReconciler) runRestoreHooks(
 	return nil
 }
 
-// restoreUnits enumerates what to put back for one app, from the same profile
-// declarations the capture was driven by.
+// restoreUnits builds the Jobs that put one app back, from the plan the
+// restore recorded for it: each artefact the manifest names, into the store
+// of that kind the installed app has.
 func (r *TenantRestoreReconciler) restoreUnits(
 	ctx context.Context,
 	tenant *gentianov1alpha1.Tenant,
 	appName string,
-	profile *gentianov1alpha1.ComponentProfile,
 	restore *gentianov1alpha1.TenantRestore,
 	d backup.Decryption,
 ) ([]captureUnit, error) {
-	stores := backup.ProfileStores(profile)
-	spec := profileBackupSpec(profile)
+	entry := appStatus(&restore.Status.Apps, appName)
 	params := r.jobParams(tenant, appName, restore)
-
-	var units []captureUnit
-	switch stores.Database {
-	case gentianov1alpha1.DatabaseEnginePostgreSQL:
-		db := backup.DatabaseName(tenant, appName)
-		p := params
-		p.Name = exportJobName(restore.Name, appName, "pgr")
-		units = append(units, captureUnit{
-			Kind: "postgres", Name: db, JobName: p.Name,
-			Job: backup.PostgresRestoreJob(p, d, db),
-		})
-	case gentianov1alpha1.DatabaseEngineMariaDB:
-		db := backup.DatabaseName(tenant, appName)
-		p := params
-		p.Name = exportJobName(restore.Name, appName, "myr")
-		units = append(units, captureUnit{
-			Kind: "mariadb", Name: db, JobName: p.Name,
-			Job: backup.MariaDBRestoreJob(p, d, db),
-		})
-	}
-
-	if stores.S3 {
-		bucket := backup.S3Bucket(tenant, appName)
-		p := params
-		p.Name = exportJobName(restore.Name, appName, "s3r")
-		units = append(units, captureUnit{
-			Kind: "s3", Name: bucket, JobName: p.Name,
-			Job: backup.S3RestoreJob(p, d, bucket),
-		})
-	}
 
 	// Volume Jobs run in the tenant namespace — the PVC is only mountable
 	// there. MinIO credentials come from the staged copy; the decryption key
@@ -418,21 +429,49 @@ func (r *TenantRestoreReconciler) restoreUnits(
 			volD.SecretName = dec.IdentitySecretRef.Name
 		}
 	}
-	claims, err := r.Reconciler.appVolumes(ctx, tenant, appName, profile, spec)
-	if err != nil {
-		return nil, err
-	}
-	for i, claim := range claims {
-		p := volParams
-		p.Name = exportJobName(restore.Name, appName, fmt.Sprintf("vr%d", i))
-		// Same constraint as capture, and worse here: this mounts the claim
-		// read-write. An app paused by maintenance mode keeps its volume, so
-		// without this the restore waits on a Multi-Attach that never resolves.
-		p.Node = r.Reconciler.nodeHoldingClaim(ctx, p.Namespace, claim)
-		units = append(units, captureUnit{
-			Kind: "volume", Name: claim, JobName: p.Name,
-			Job: backup.VolumeRestoreJob(p, volD, claim),
-		})
+
+	var units []captureUnit
+	volumes := 0
+	for _, a := range entry.Artefacts {
+		p := params
+		switch a.Kind {
+		case bundle.ArtefactPostgres:
+			p.Name = exportJobName(restore.Name, appName, "pgr")
+			units = append(units, captureUnit{Kind: a.Kind, Name: a.Target, JobName: p.Name,
+				Job: backup.PostgresRestoreJob(p, d, a.Path, a.Target)})
+		case bundle.ArtefactPostgresOwned:
+			p.Name = exportJobName(restore.Name, appName, "pgor")
+			units = append(units, captureUnit{Kind: a.Kind, Name: a.Target, JobName: p.Name,
+				Job: backup.PostgresOwnedRestoreJob(p, d, a.Path, a.Target)})
+		case bundle.ArtefactMariaDB:
+			p.Name = exportJobName(restore.Name, appName, "myr")
+			units = append(units, captureUnit{Kind: a.Kind, Name: a.Target, JobName: p.Name,
+				Job: backup.MariaDBRestoreJob(p, d, a.Path, a.Target)})
+		case bundle.ArtefactS3:
+			// The bucket's user and policy, by the code install provisions
+			// them with and the key pair the vault holds for the app.
+			provision, err := r.Tenant.objectStorageProvisioner(ctx, tenant, appName, "provision-bucket")
+			if err != nil {
+				return nil, err
+			}
+			p.Name = exportJobName(restore.Name, appName, "s3r")
+			units = append(units, captureUnit{Kind: a.Kind, Name: a.Target, JobName: p.Name,
+				Job: backup.S3RestoreJob(p, d, a.Path, a.Target, provision)})
+		case bundle.ArtefactVolume:
+			p = volParams
+			p.Name = exportJobName(restore.Name, appName, fmt.Sprintf("vr%d", volumes))
+			volumes++
+			// Same constraint as capture, and worse here: this mounts the claim
+			// read-write. An app paused by maintenance mode keeps its volume, so
+			// without this the restore waits on a Multi-Attach that never resolves.
+			p.Node = r.Reconciler.nodeHoldingClaim(ctx, p.Namespace, a.Target)
+			units = append(units, captureUnit{Kind: a.Kind, Name: a.Target, JobName: p.Name,
+				Job: backup.VolumeRestoreJob(p, volD, a.Path, a.Target)})
+		default:
+			// The plan refuses a kind it does not know; reaching this is a
+			// plan written by something else.
+			return nil, fmt.Errorf("the plan for %s names an artefact of kind %q, which cannot be restored", appName, a.Kind)
+		}
 	}
 	return units, nil
 }
@@ -444,22 +483,26 @@ func (r *TenantRestoreReconciler) restoreTenantWide(
 	d backup.Decryption,
 ) (bool, error) {
 	params := r.jobParams(tenant, backupTenantComponent, restore)
+	entry := appStatus(&restore.Status.Apps, backupTenantComponent)
 
-	realmParams := params
-	realmParams.Name = exportJobName(restore.Name, backupTenantComponent, "realmr")
-	realm := keycloakRealmName(tenant)
-
-	shellParams := params
-	shellParams.Name = exportJobName(restore.Name, backupTenantComponent, "shellr")
-	// Named for the shell, not for the tenant-wide component the Job is
-	// labelled with -- that is the role the provisioner created alongside the
-	// database.
-	shellParams.Role = backup.PostgresRole(tenant.Name, portalShellAppName)
-	shellDB := databaseName(tenant, portalShellAppName)
-
-	units := []captureUnit{
-		{Kind: "identity", Name: realm, JobName: realmParams.Name, Job: backup.RealmImportJob(realmParams, d, realm)},
-		{Kind: "postgres", Name: shellDB, JobName: shellParams.Name, Job: backup.PostgresRestoreJob(shellParams, d, shellDB)},
+	var units []captureUnit
+	for _, a := range entry.Artefacts {
+		switch a.Kind {
+		case bundle.ArtefactIdentity:
+			p := params
+			p.Name = exportJobName(restore.Name, backupTenantComponent, "realmr")
+			units = append(units, captureUnit{Kind: a.Kind, Name: a.Target, JobName: p.Name,
+				Job: backup.RealmImportJob(p, d, a.Path, a.Target)})
+		case bundle.ArtefactPostgres:
+			p := params
+			p.Name = exportJobName(restore.Name, backupTenantComponent, "shellr")
+			// Named for the shell, not for the tenant-wide component the Job is
+			// labelled with -- that is the role the provisioner created alongside the
+			// database.
+			p.Role = backup.PostgresRole(tenant.Name, portalShellAppName)
+			units = append(units, captureUnit{Kind: a.Kind, Name: a.Target, JobName: p.Name,
+				Job: backup.PostgresRestoreJob(p, d, a.Path, a.Target)})
+		}
 	}
 
 	allDone := true
@@ -471,6 +514,10 @@ func (r *TenantRestoreReconciler) restoreTenantWide(
 		if !done {
 			allDone = false
 		}
+	}
+	if allDone {
+		entry.Phase = gentianov1alpha1.TenantExportPhaseReady
+		entry.Message = ""
 	}
 	return allDone, nil
 }
@@ -565,6 +612,12 @@ func (r *TenantRestoreReconciler) resolveBundle(
 	if restore.Spec.Bundle == nil || restore.Spec.Bundle.Prefix == "" {
 		return nil, "", fmt.Errorf("set either spec.exportRef or spec.bundle")
 	}
+	// A bundle named directly is named by whoever wrote the restore, and
+	// its bucket and prefix are spliced into the scripts the restore Jobs
+	// run with the object store's admin credential.
+	if err := validBundleRef(restore.Spec.Bundle); err != nil {
+		return nil, "", err
+	}
 	// A bundle named directly carries no status to read, so the mode is taken
 	// from whichever decryption key was supplied.
 	mode := gentianov1alpha1.ExportEncryptionRecipient
@@ -574,32 +627,165 @@ func (r *TenantRestoreReconciler) resolveBundle(
 	return restore.Spec.Bundle, mode, nil
 }
 
-// restoreAppSet returns the installed apps this restore covers.
-func (r *TenantRestoreReconciler) restoreAppSet(
-	_ context.Context,
+var (
+	bundleBucketPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$`)
+	bundlePrefixPattern = regexp.MustCompile(`^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*/?$`)
+)
+
+// validBundleRef refuses a bucket or prefix that is not a plain name. Both
+// reach a shell.
+func validBundleRef(ref *gentianov1alpha1.BundleRef) error {
+	if !bundleBucketPattern.MatchString(ref.Bucket) {
+		return fmt.Errorf("spec.bundle.bucket %q is not a bucket name", ref.Bucket)
+	}
+	if !bundlePrefixPattern.MatchString(ref.Prefix) || strings.Contains(ref.Prefix, "..") {
+		return fmt.Errorf("spec.bundle.prefix %q is not a plain path of letters, digits, dots, dashes and underscores", ref.Prefix)
+	}
+	return nil
+}
+
+// plan reads the bundle's manifest and decides, against the tenant as it
+// stands, what this restore puts back and what it does not.
+func (r *TenantRestoreReconciler) plan(
+	ctx context.Context,
 	tenant *gentianov1alpha1.Tenant,
 	restore *gentianov1alpha1.TenantRestore,
-) ([]string, error) {
-	installed := make([]string, 0, len(tenant.Spec.Apps))
-	for _, app := range tenant.Spec.Apps {
-		if app.Profile != "" {
-			installed = append(installed, app.Profile)
+	ref *gentianov1alpha1.BundleRef,
+) (*restorePlan, error) {
+	if r.Bundles == nil {
+		return nil, refuseRestore("BundleUnusable", "this operator cannot read bundles, so it cannot tell what this one holds; nothing was changed")
+	}
+	key, err := r.bundleKey(ctx, restore)
+	if err != nil {
+		return nil, refuseRestore("DecryptionUnavailable", "%v", err)
+	}
+	manifest, err := r.Bundles.Manifest(ctx, *ref, key)
+	if err != nil {
+		return nil, refuseRestore("BundleUnusable", "the bundle's manifest could not be read, so what the bundle holds is not known: %v. Nothing was changed", err)
+	}
+
+	profiles, err := loadAppProfileIndex(ctx, r.Client)
+	if err != nil {
+		return nil, err
+	}
+	live := func(app string) (liveApp, error) {
+		now := liveApp{}
+		for _, a := range tenant.Spec.Apps {
+			if a.Profile == app {
+				now.installed = true
+			}
+		}
+		profile, ok := appProfileFromIndex(profiles, app)
+		if !now.installed || !ok {
+			return now, nil
+		}
+		now.profile = profile
+		claims, err := r.Reconciler.appVolumes(ctx, tenant, app, profile, profileBackupSpec(profile))
+		if err != nil {
+			return now, fmt.Errorf("list the volume claims of %s: %w", app, err)
+		}
+		now.claims = claims
+		return now, nil
+	}
+	return planRestore(manifest, tenant, restore.Spec.Apps, restore.Spec.SkipVersionCheck, live)
+}
+
+// bundleKey reads the key material the restore names, to open the manifest
+// with. The same Secret the restore Jobs are handed a staged copy of.
+func (r *TenantRestoreReconciler) bundleKey(ctx context.Context, restore *gentianov1alpha1.TenantRestore) (bundlestore.Key, error) {
+	spec := restore.Spec.Decryption
+	if spec == nil {
+		return bundlestore.Key{}, fmt.Errorf("spec.decryption names no key")
+	}
+	read := func(ref *gentianov1alpha1.SecretKeyRef, key string) (string, error) {
+		if ref.Key != "" {
+			key = ref.Key
+		}
+		secret := &corev1.Secret{}
+		if err := r.Get(ctx, types.NamespacedName{Name: ref.Name, Namespace: restore.Namespace}, secret); err != nil {
+			return "", fmt.Errorf("decryption Secret %q in %s: %w", ref.Name, restore.Namespace, err)
+		}
+		value := string(secret.Data[key])
+		if value == "" {
+			return "", fmt.Errorf("decryption Secret %q has no non-empty key %q", ref.Name, key)
+		}
+		return value, nil
+	}
+	switch {
+	case spec.PassphraseSecretRef != nil:
+		value, err := read(spec.PassphraseSecretRef, "passphrase")
+		return bundlestore.Key{Passphrase: value}, err
+	case spec.IdentitySecretRef != nil:
+		value, err := read(spec.IdentitySecretRef, "identity")
+		return bundlestore.Key{Identity: value}, err
+	}
+	return bundlestore.Key{}, fmt.Errorf("spec.decryption names no key")
+}
+
+// recordPlan writes the plan into the restore's status: one entry per app
+// with the artefacts it will restore, the tenant's own, what is not restored
+// and why, and what no restore brings back.
+func recordPlan(restore *gentianov1alpha1.TenantRestore, plan *restorePlan) {
+	restore.Status.BundleSchemaVersion = plan.schemaVersion
+	restore.Status.NameDerivation = plan.derivation
+	restore.Status.NotRestored = plan.notRestored
+	restore.Status.Notes = restoreLimits(plan.derivation)
+	restore.Status.Apps = nil
+	for _, app := range plan.apps {
+		entry := appStatus(&restore.Status.Apps, app.name)
+		entry.Artefacts = app.artefacts
+		entry.Stores = artefactKinds(app.artefacts)
+		// Among the result's notes, not on the app's entry: the entry's
+		// message is progress and is cleared when the app is done.
+		if app.note != "" {
+			restore.Status.Notes = append(restore.Status.Notes, app.name+": "+app.note)
 		}
 	}
-	if len(restore.Spec.Apps) == 0 {
-		return installed, nil
-	}
-	wanted := make(map[string]struct{}, len(restore.Spec.Apps))
-	for _, name := range restore.Spec.Apps {
-		wanted[name] = struct{}{}
-	}
-	var selected []string
-	for _, name := range installed {
-		if _, ok := wanted[name]; ok {
-			selected = append(selected, name)
+	wide := appStatus(&restore.Status.Apps, backupTenantComponent)
+	wide.Artefacts = plan.tenantWide
+	wide.Stores = artefactKinds(plan.tenantWide)
+}
+
+// plannedApps are the apps the recorded plan restores, in its order.
+func plannedApps(restore *gentianov1alpha1.TenantRestore) []string {
+	var apps []string
+	for _, entry := range restore.Status.Apps {
+		if entry.Name != backupTenantComponent {
+			apps = append(apps, entry.Name)
 		}
 	}
-	return selected, nil
+	return apps
+}
+
+func artefactKinds(artefacts []gentianov1alpha1.BundleArtefact) []string {
+	var kinds []string
+	for _, a := range artefacts {
+		if !slices.Contains(kinds, a.Kind) {
+			kinds = append(kinds, a.Kind)
+		}
+	}
+	return kinds
+}
+
+// removeImportedBundle deletes an uploaded bundle once a restore of it has
+// run to its end, restored or failed. A restore that was refused before it
+// started -- the wrong key, no confirmation, nothing restorable -- changed
+// nothing and leaves the upload, so the request can be made again without
+// uploading the bundle a second time. A bundle that is not an upload is a
+// tenant's own backup and is never removed here.
+func (r *TenantRestoreReconciler) removeImportedBundle(ctx context.Context, restore *gentianov1alpha1.TenantRestore) error {
+	ref := restore.Status.Bundle
+	if restore.Status.ImportRemoved || restore.Status.StartedAt == nil || !bundlestore.IsImported(ref) {
+		return nil
+	}
+	if r.Bundles == nil {
+		return nil
+	}
+	if err := r.Bundles.RemoveImported(ctx, *ref); err != nil {
+		return fmt.Errorf("remove the uploaded bundle %s/%s: %w", ref.Bucket, ref.Prefix, err)
+	}
+	restore.Status.ImportRemoved = true
+	return r.persist(ctx, restore)
 }
 
 // tenantBusy reports whether an export or another restore holds this tenant.

@@ -203,12 +203,37 @@ func unitKinds(units []captureUnit) []string {
 	return kinds
 }
 
+// unitArtefacts is what a set of capture units produced, as the status and
+// the manifest record it.
+func unitArtefacts(units []captureUnit) []gentianov1alpha1.BundleArtefact {
+	out := make([]gentianov1alpha1.BundleArtefact, 0, len(units))
+	for _, unit := range units {
+		out = append(out, gentianov1alpha1.BundleArtefact{
+			Kind: unit.Kind, Name: unit.Name, Path: unit.Path, Release: unit.Release,
+		})
+	}
+	return out
+}
+
+// manifestStores is one entry per artefact captured for the app: its kind,
+// what it was captured from and where in the bundle it is.
 func manifestStores(app gentianov1alpha1.AppExportStatus) []backup.ManifestStore {
-	stores := make([]backup.ManifestStore, 0, len(app.Stores))
-	for _, kind := range app.Stores {
-		stores = append(stores, backup.ManifestStore{Kind: kind, Name: app.Name})
+	stores := make([]backup.ManifestStore, 0, len(app.Artefacts))
+	for _, a := range app.Artefacts {
+		stores = append(stores, backup.ManifestStore{Kind: a.Kind, Name: a.Name, Path: a.Path, Release: a.Release})
 	}
 	return stores
+}
+
+// tenantAppDigest is the digest the tenant pins the app's build to, "" when
+// it pins none.
+func tenantAppDigest(tenant *gentianov1alpha1.Tenant, appName string) string {
+	for _, app := range tenant.Spec.Apps {
+		if app.Profile == appName {
+			return app.Digest
+		}
+	}
+	return ""
 }
 
 func ptrNow() *metav1.Time {

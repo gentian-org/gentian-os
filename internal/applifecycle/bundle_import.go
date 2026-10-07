@@ -12,7 +12,6 @@ package applifecycle
 
 import (
 	"archive/tar"
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -33,6 +32,7 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/backup"
+	"github.com/gentian-org/gentian-os/internal/bundlestore"
 	"github.com/gentian-org/gentian-os/internal/layout"
 )
 
@@ -44,11 +44,9 @@ import (
 // TenantRestore against it. Declaring the tenant from the manifest is the
 // director's, because that is a commit.
 
-// importBucket holds uploaded bundles until a restore has read them. Not a
-// tenant's backup bucket: the tenant does not exist yet when the upload
-// arrives, and a bundle that turns out to be somebody else's must not land
-// in a bucket a tenant can list.
-const importBucket = "gentian-imports"
+// importBucket holds uploaded bundles until a restore of one has run to its
+// end (bundlestore.ImportBucket, which says when an upload is removed).
+const importBucket = bundlestore.ImportBucket
 
 // Decryption is what a person supplies to open a bundle: one of the two.
 type Decryption struct {
@@ -58,25 +56,11 @@ type Decryption struct {
 	Identity string `json:"identity,omitempty"`
 }
 
-func (d Decryption) identities() ([]age.Identity, error) {
-	switch {
-	case d.Passphrase != "" && d.Identity != "":
-		return nil, errors.New("give a passphrase or an identity, not both")
-	case d.Passphrase != "":
-		id, err := age.NewScryptIdentity(d.Passphrase)
-		if err != nil {
-			return nil, err
-		}
-		return []age.Identity{id}, nil
-	case d.Identity != "":
-		ids, err := age.ParseIdentities(strings.NewReader(d.Identity))
-		if err != nil {
-			return nil, fmt.Errorf("the identity does not parse: %w", err)
-		}
-		return ids, nil
-	}
-	return nil, errors.New("a passphrase or an age identity is required to open the bundle")
+func (d Decryption) key() bundlestore.Key {
+	return bundlestore.Key{Passphrase: d.Passphrase, Identity: d.Identity}
 }
+
+func (d Decryption) identities() ([]age.Identity, error) { return d.key().Identities() }
 
 // Inspection is what inspect answers: the manifest and the cleartext header.
 type Inspection struct {
@@ -128,49 +112,28 @@ func (s *Service) InspectBundle(ctx context.Context, bundle gentianov1alpha1.Bun
 	if bundle.Bucket == "" || bundle.Prefix == "" {
 		return nil, errors.New("bundle.bucket and bundle.prefix are required")
 	}
-	ids, err := d.identities()
-	if err != nil {
+	if _, err := d.identities(); err != nil {
 		return nil, err
 	}
 	mc, err := s.bundleClient(ctx, &bundle)
 	if err != nil {
 		return nil, err
 	}
-	prefix := strings.TrimSuffix(bundle.Prefix, "/") + "/"
 	out := &Inspection{Bundle: bundle}
-	if raw, err := readObject(ctx, mc, bundle.Bucket, prefix+"bundle-info.json", 1<<20); err == nil {
+	if raw, err := bundlestore.ReadObject(ctx, mc, bundle.Bucket, bundlestore.ObjectPrefix(bundle)+"bundle-info.json", 1<<20); err == nil {
 		var info backup.BundleInfo
 		if json.Unmarshal(raw, &info) == nil {
 			out.Info = &info
 		}
 	}
-	cipher, err := readObject(ctx, mc, bundle.Bucket, prefix+"manifest.json.age", 16<<20)
+	// The manifest by the one reader there is: the one a restore decides
+	// by, so that what a person is shown is what would be restored.
+	m, err := s.bundles().Manifest(ctx, bundle, d.key())
 	if err != nil {
-		return nil, fmt.Errorf("the bundle has no manifest; an export that did not finish has none: %w", err)
+		return nil, err
 	}
-	plain, err := age.Decrypt(bytes.NewReader(cipher), ids...)
-	if err != nil {
-		return nil, fmt.Errorf("the manifest could not be opened with that key: %w", err)
-	}
-	var m backup.Manifest
-	if err := json.NewDecoder(plain).Decode(&m); err != nil {
-		return nil, fmt.Errorf("the manifest does not parse: %w", err)
-	}
-	out.Manifest = &m
+	out.Manifest = m
 	return out, nil
-}
-
-func readObject(ctx context.Context, mc *minio.Client, bucket, key string, limit int64) ([]byte, error) {
-	obj, err := mc.GetObject(ctx, bucket, key, minio.GetObjectOptions{})
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = obj.Close() }()
-	data, err := io.ReadAll(io.LimitReader(obj, limit))
-	if err != nil {
-		return nil, err
-	}
-	return data, nil
 }
 
 // RestoreRequest starts a restore of a bundle into an existing tenant.
@@ -189,12 +152,25 @@ type RestoreStatus struct {
 	PasswordResetRequired bool   `json:"passwordResetRequired"`
 	StartedAt             string `json:"startedAt,omitempty"`
 	CompletedAt           string `json:"completedAt,omitempty"`
+	// Complete is whether everything the bundle holds was put back. Set
+	// when the restore has ended; false is explained by NotRestored.
+	Complete *bool `json:"complete,omitempty"`
+	// NotRestored names each app the bundle holds that was not put back,
+	// and why.
+	NotRestored []gentianov1alpha1.RestoreOmission `json:"notRestored,omitempty"`
+	// Notes are what a restore does not bring back by design: stored
+	// credentials a person entered, passwords, and what is said of this
+	// restore in particular.
+	Notes []string `json:"notes,omitempty"`
+	// NameDerivation is "manifest", or "derived" for a bundle of format 1.
+	NameDerivation string `json:"nameDerivation,omitempty"`
 }
 
 // StartRestore writes the key into a Secret the TenantRestore names, owned
 // by it so the key goes when the restore does, and creates the restore.
 func (s *Service) StartRestore(ctx context.Context, tenantName string, req RestoreRequest, actor string) (*RestoreStatus, error) {
-	if _, err := s.getTenant(ctx, tenantName); err != nil {
+	tenant, err := s.getTenant(ctx, tenantName)
+	if err != nil {
 		return nil, err
 	}
 	if req.Bundle.Bucket == "" || req.Bundle.Prefix == "" {
@@ -203,7 +179,7 @@ func (s *Service) StartRestore(ctx context.Context, tenantName string, req Resto
 	if _, err := req.Decryption.identities(); err != nil {
 		return nil, err
 	}
-	ns := layout.Tenant(tenantName)
+	ns := tenantNamespace(tenant)
 	name := "restore-" + time.Now().UTC().Format("20060102-150405")
 	restore := &gentianov1alpha1.TenantRestore{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns,
@@ -260,7 +236,9 @@ func (s *Service) Restore(ctx context.Context, tenantName, name string) (*Restor
 
 func restoreStatus(r *gentianov1alpha1.TenantRestore, tenant string) *RestoreStatus {
 	out := &RestoreStatus{Name: r.Name, Tenant: tenant, Phase: string(r.Status.Phase),
-		PasswordResetRequired: r.Status.PasswordResetRequired}
+		PasswordResetRequired: r.Status.PasswordResetRequired,
+		Complete:              r.Status.Complete, NotRestored: r.Status.NotRestored,
+		Notes: r.Status.Notes, NameDerivation: r.Status.NameDerivation}
 	for _, c := range r.Status.Conditions {
 		if c.Message != "" {
 			out.Message = c.Message

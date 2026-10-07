@@ -136,7 +136,7 @@ var AppKinds = []KindRule{
 	},
 	{
 		Kind: KindCredentials, MadeBy: "the tenant reconciler's seeder, and the app Composition for generated secrets",
-		Export: Omits, ExportNote: "derived from the cluster's master password or generated per cluster; a restore re-seeds them and resets each store's password to match",
+		Export: Omits, ExportNote: "a bundle holds no stored credential; the tenant restored into has its own, seeded when it was provisioned, and a restore changes none; what a person entered has to be entered again",
 		Uninstall: Keeps, AppPurge: Destroys, TenantDelete: Destroys,
 		TenantDeleteNote: "with the tenant's whole vault subtree",
 		FoundBy:          "the names below the tenant's apps path in the vault",
@@ -150,13 +150,13 @@ var AppKinds = []KindRule{
 	},
 	{
 		Kind: KindDatabase, MadeBy: "the tenant reconciler: a role Job and a CloudNativePG Database, or a MariaDB setup Job",
-		Export: Carries, ExportNote: "pg_dump or mysqldump of the provisioned database",
+		Export: Carries, ExportNote: "a dump of the provisioned database; on PostgreSQL also of every other database the app's role owns, which is what a purge drops",
 		Uninstall: Keeps, AppPurge: Destroys, TenantDelete: Destroys,
 		FoundBy: "the tenant's record of what was provisioned; for PostgreSQL also the CloudNativePG Database object",
 	},
 	{
 		Kind: KindObjectStorage, MadeBy: "the tenant reconciler's bucket Job",
-		Export: Carries, ExportNote: "the bucket's objects; the user and policy are re-made by provisioning",
+		Export: Carries, ExportNote: "the bucket's objects; a restore makes the bucket, its user and its policy with the code install uses, then writes the objects",
 		Uninstall: Keeps, AppPurge: Destroys, TenantDelete: Destroys,
 		FoundBy: "the tenant's record of what was provisioned",
 	},
@@ -174,12 +174,12 @@ var AppKinds = []KindRule{
 	},
 	{
 		Kind: KindWorkloads, MadeBy: "the Helm release the app Composition or the component reconciler writes",
-		Export: Omits, ExportNote: "re-made from the app's profile; the bundle records the chart version",
+		Export: Omits, ExportNote: "re-made from the app's profile; the manifest records the chart version, the digest and the releases, and a restore checks the installed build against them",
 		Uninstall: Removes, AppPurge: Gone, TenantDelete: Removes,
 	},
 	{
 		Kind: KindFiles, MadeBy: "the app's chart, as volume claims of its release",
-		Export: Carries, ExportNote: "an archive of each volume claim that is the app's",
+		Export: Carries, ExportNote: "an archive of each volume claim that is the app's, by the rule a purge deletes by (AppVolumes)",
 		Uninstall: Keeps, AppPurge: Destroys, TenantDelete: Destroys,
 		TenantDeleteNote: "with the tenant's namespace",
 		FoundBy:          "the volume claims in the tenant's namespace, by the release each records (AppVolumes)",
@@ -290,6 +290,56 @@ func InventoryOf(tenant *gentianov1alpha1.Tenant, app string, profile *gentianov
 	return inv
 }
 
+// --- making a store ---------------------------------------------------------
+
+// ObjectStorageProvisionContainer makes an app's bucket and, when it is
+// given the key pair the vault holds for the app, the user and the policy
+// the app reads the bucket with. It is the one piece of code that does:
+// install runs it as the bucket Job, and a restore runs it before it writes
+// a bucket's objects back.
+//
+// The key pair is passed in because the operator seeds it and a Job cannot
+// read the vault. Without one only the bucket is made, which is what install
+// does on a cluster with no vault.
+func ObjectStorageProvisionContainer(name, bucket, accessKey, secretKey string) corev1.Container {
+	no := false
+	c := corev1.Container{
+		Name:    name,
+		Image:   MinIOClientImage,
+		Command: []string{"/bin/sh", "-c", objectStorageProvisionScript(bucket)},
+		SecurityContext: &corev1.SecurityContext{
+			AllowPrivilegeEscalation: &no,
+			Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+			SeccompProfile:           &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
+		},
+		Env: append(PlatformStorageEnv(), corev1.EnvVar{Name: "BUCKET_NAME", Value: bucket}),
+	}
+	if accessKey != "" && secretKey != "" {
+		c.Env = append(c.Env,
+			corev1.EnvVar{Name: "APP_ACCESS_KEY", Value: accessKey},
+			corev1.EnvVar{Name: "APP_SECRET_KEY", Value: secretKey},
+		)
+	}
+	return c
+}
+
+func objectStorageProvisionScript(bucket string) string {
+	return fmt.Sprintf(`set -eu
+mc alias set gentian "${MINIO_ENDPOINT}" "${MINIO_ACCESS_KEY}" "${MINIO_SECRET_KEY}"
+mc mb --ignore-existing "gentian/%[1]s"
+mc anonymous set none "gentian/%[1]s"
+if [ -n "${APP_ACCESS_KEY:-}" ] && [ -n "${APP_SECRET_KEY:-}" ]; then
+  mc admin user remove gentian "${APP_ACCESS_KEY}" >/dev/null 2>&1 || true
+  mc admin user add gentian "${APP_ACCESS_KEY}" "${APP_SECRET_KEY}"
+  printf '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:*"],"Resource":["arn:aws:s3:::%[1]s","arn:aws:s3:::%[1]s/*"]}]}' > /tmp/policy.json
+  mc admin policy rm gentian "${APP_ACCESS_KEY}-policy" >/dev/null 2>&1 || true
+  mc admin policy create gentian "${APP_ACCESS_KEY}-policy" /tmp/policy.json
+  mc admin policy attach gentian "${APP_ACCESS_KEY}-policy" --user "${APP_ACCESS_KEY}"
+  echo "minio user for bucket %[1]s ready"
+fi
+echo "bucket %[1]s ready"`, bucket)
+}
+
 // --- destroying a store -----------------------------------------------------
 
 // The scripts below run in the store's own namespace with its admin
@@ -317,22 +367,60 @@ func CacheDestroyJobName(tenantName, app string) string {
 	return fmt.Sprintf("redis-acl-delete-%s-%s", tenantName, app)
 }
 
+// Which databases are an app's.
+//
+// One rule, for the three acts that need it: an export copies them, a
+// restore puts them back and a purge drops them.
+//
+// The provisioned database is the app's (DatabaseName). On PostgreSQL so is
+// every other database the app's role owns: a role may create databases only
+// when its profile asks (allowDynamicDatabaseCreation grants CREATEDB), what
+// it creates it owns, and the server records the owner -- so ownership is
+// both exact and something the server can be asked. postgresOwnedSQL is that
+// question; it leaves out the provisioned database, which every act handles
+// by name.
+//
+// On MariaDB only the provisioned database is the app's. The same profile
+// field is granted there as ALL PRIVILEGES ON *.* -- on the whole shared
+// server -- and MariaDB keeps no owner of a database, so nothing says which
+// of the server's databases such an app made: not a grant, which covers all
+// of them, and not a name, which provisioning does not constrain. No act
+// guesses. MariaDBOwnsBeyondProvisioned says so in code, and the inventory's
+// test fails if an act is given a rule for it without the others.
+const postgresOwnedSQL = `SELECT d.datname FROM pg_database d JOIN pg_roles r ON r.oid = d.datdba
+ WHERE r.rolname = :'app_role' AND d.datname <> :'app_db' AND NOT d.datistemplate
+ ORDER BY d.datname;`
+
+// MariaDBOwnsBeyondProvisioned is whether anything can say which databases
+// besides the provisioned one a MariaDB app made. Nothing can; see above.
+const MariaDBOwnsBeyondProvisioned = false
+
 // postgresDestroyScript drops an app's database, every database its role
-// still owns (an app allowed to create its own owns each one it made, which
-// is how they are found), and the role.
+// still owns (postgresOwnedSQL), and the role.
 //
 // It connects through the admin Secret's host, which is the cluster's
 // read-write Service: the primary, whichever instance that is. The owned
-// databases are read into a variable first, because a command substitution
-// in a `for` list does not stop the script when it fails.
+// databases are read into a file first and read back line by line: a
+// command substitution in a for list does not stop the script when it fails,
+// and it splits a name with a space in it into two names that are not there.
+// Every name is passed to psql as a variable and quoted by the server.
 func postgresDestroyScript(database, role string) string {
 	return fmt.Sprintf(`set -euo pipefail
-owned="$(psql -v ON_ERROR_STOP=1 -tAc "SELECT d.datname FROM pg_database d JOIN pg_roles r ON r.oid = d.datdba WHERE r.rolname = '%[2]s' AND NOT d.datistemplate" postgres)"
-for db in ${owned} "%[1]s"; do
-  psql -v ON_ERROR_STOP=1 -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '${db}';" postgres >/dev/null
-  psql -v ON_ERROR_STOP=1 -c "DROP DATABASE IF EXISTS \"${db}\";" postgres
+ROLE=%[4]s
+DB=%[5]s
+psql -v ON_ERROR_STOP=1 -tA -v app_role="${ROLE}" -v app_db="${DB}" -d postgres > /tmp/owned <<'PSQL'
+%[3]s
+PSQL
+printf '%%s\n' "${DB}" >> /tmp/owned
+while IFS= read -r db; do
+  [ -n "${db}" ] || continue
+  psql -v ON_ERROR_STOP=1 -v db="${db}" -d postgres >/dev/null <<'PSQL'
+SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = :'db';
+SELECT format('DROP DATABASE IF EXISTS %%I', :'db')
+\gexec
+PSQL
   echo "database ${db} dropped"
-done
+done < /tmp/owned
 psql -v ON_ERROR_STOP=1 -c "DO \$\$ BEGIN IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '%[2]s') THEN EXECUTE 'DROP OWNED BY \"%[2]s\"'; END IF; END \$\$;" postgres
 psql -v ON_ERROR_STOP=1 -c "DROP ROLE IF EXISTS \"%[2]s\";" postgres
 left="$(psql -v ON_ERROR_STOP=1 -tAc "SELECT count(*) FROM pg_database WHERE datname = '%[1]s'" postgres)"
@@ -340,7 +428,7 @@ if [ "${left}" != "0" ]; then
   echo "ERROR: database %[1]s is still there" >&2; exit 1
 fi
 echo "role %[2]s dropped"
-`, database, role)
+`, database, role, postgresOwnedSQL, shellSingleQuote(role), shellSingleQuote(database))
 }
 
 // mariadbDestroyScript drops the database and its user.
@@ -444,7 +532,7 @@ func PostgresDestroyJob(tenant *gentianov1alpha1.Tenant, app string, deadline De
 			Name:    "delete-db",
 			Image:   kernel.PostgresProvisionerImage(),
 			Command: []string{"/bin/bash", "-c", postgresDestroyScript(DatabaseName(tenant, app), PostgresRole(tenant.Name, app))},
-			Env:     postgresAdminEnv(),
+			Env:     PostgresAdminEnv(),
 		})
 }
 
@@ -455,7 +543,7 @@ func MariaDBDestroyJob(tenant *gentianov1alpha1.Tenant, app string, deadline Des
 			Name:    "delete-db",
 			Image:   kernel.MariaDBProvisionerImage(),
 			Command: []string{"/bin/bash", "-c", mariadbDestroyScript},
-			Env: append(mariadbAdminEnv(),
+			Env: append(MariaDBAdminEnv(),
 				corev1.EnvVar{Name: "DB_NAME", Value: DatabaseName(tenant, app)},
 				corev1.EnvVar{Name: "DB_USER", Value: MariaDBUser(tenant.Name, app)},
 			),
@@ -483,11 +571,7 @@ func CacheDestroyJob(tenant *gentianov1alpha1.Tenant, app string, deadline Destr
 			Name:    "del-acl-user",
 			Image:   kernel.RedisProvisionerImage(),
 			Command: []string{"/bin/sh", "-c", cacheDestroyScript(RedisACLUser(tenant.Name, app))},
-			Env: []corev1.EnvVar{
-				meta.SecretEnv("REDIS_HOST", RedisAdminSecret, "host"),
-				meta.SecretEnv("REDIS_PORT", RedisAdminSecret, "port"),
-				meta.SecretEnv("REDIS_PASSWORD", RedisAdminSecret, "password"),
-			},
+			Env:     CacheAdminEnv(),
 		})
 }
 

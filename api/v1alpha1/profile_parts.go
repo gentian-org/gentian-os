@@ -305,10 +305,16 @@ type DatabaseRequirement struct {
 	// CREATEDB. Ask for it only when creating databases is what the app is for
 	// (a data explorer, say); an app that merely stores its own state must not.
 	//
-	// Databases created this way are still purged with the app: they are owned
-	// by the app role, and uninstall --purge drops everything that role owns.
-	// They are not otherwise governed — the tenant chooses the names, and they
-	// do not appear in the catalogue's provisioning model.
+	// On postgresql, databases created this way are the app's by ownership:
+	// the app role owns each one it made, so an export copies them, a restore
+	// puts them back and a purge drops them with the role. They are not
+	// otherwise governed — the tenant chooses the names, and they do not
+	// appear in the catalogue's provisioning model.
+	//
+	// On mariadb nothing records which databases an app made: the grant is on
+	// the whole shared server and a database has no owner. Only the
+	// provisioned database is exported, restored and purged; any other the
+	// app creates is in no bundle and outlives the app.
 	//
 	// Omitted is equivalent to false, which is also Go's zero value for bool —
 	// left undefaulted at the schema level so profiles that omit it don't

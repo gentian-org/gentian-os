@@ -30,7 +30,49 @@ import (
 // SchemaVersion is bumped whenever the manifest's shape changes in a
 // way a reader must notice. A restore refuses a version it does not know
 // rather than guessing at fields that moved.
-const SchemaVersion = 1
+//
+// Version 1 named each app and the kinds of store captured for it, and
+// nothing else: not the database, bucket or claim an artefact was taken
+// from, nor where in the bundle it is. A restore could therefore only derive
+// both from the tenant it was restoring into, and went by what that tenant
+// had installed rather than by what the bundle held.
+//
+// Version 2 says, per app, every artefact: its kind, the name of what it was
+// captured from, and its path in the bundle; and the build of the app that
+// wrote the data -- its profile, chart version, pinned digest, Helm releases
+// and database engine. It adds fields and renames none, so a version 1
+// manifest still reads: its apps name no artefact, which is how a reader
+// tells (Manifest.NamesArtefacts), and a restore of one falls back to
+// deriving the names and says so in its result.
+const SchemaVersion = 2
+
+// OldestReadableSchemaVersion is the oldest manifest a restore still reads.
+const OldestReadableSchemaVersion = 1
+
+// TenantComponent is the name the tenant-wide captures -- the realm and the
+// desktop's database -- are filed under in a manifest's app list. It is not
+// an app: a version 1 manifest lists it among them, and a reader leaves it
+// out.
+const TenantComponent = "gentian-tenant"
+
+// The kinds of artefact a bundle holds.
+const (
+	// ArtefactPostgres is a custom-format pg_dump of one database.
+	ArtefactPostgres = "postgres"
+	// ArtefactPostgresOwned is an archive of the databases the app's role
+	// owns besides the provisioned one: the ones an app allowed to create
+	// its own has made. Inside it, INDEX names them one per line and
+	// <line number, from 0>.pgc is each one's custom-format dump.
+	ArtefactPostgresOwned = "postgresOwned"
+	// ArtefactMariaDB is a gzipped mariadb-dump of one database.
+	ArtefactMariaDB = "mariadb"
+	// ArtefactS3 is a tar.gz of one bucket's objects, keys preserved.
+	ArtefactS3 = "s3"
+	// ArtefactVolume is a tar.gz of one volume claim's contents.
+	ArtefactVolume = "volume"
+	// ArtefactIdentity is the realm export.
+	ArtefactIdentity = "identity"
+)
 
 // Manifest is the index of a bundle, and the only part of it a restore reads
 // before deciding whether it can proceed.
@@ -77,7 +119,19 @@ type ManifestApp struct {
 	Profile      string `json:"profile,omitempty"`
 	ChartVersion string `json:"chartVersion,omitempty"`
 
-	// Stores lists what was captured, by kind.
+	// Digest is the pinned digest of the build that was installed, when the
+	// tenant pinned one. Since version 2.
+	Digest string `json:"digest,omitempty"`
+	// DatabaseEngine is the engine of the app's database, "" without one.
+	// Since version 2.
+	DatabaseEngine string `json:"databaseEngine,omitempty"`
+	// Releases are the Helm releases the app was installed as. Since
+	// version 2.
+	Releases []string `json:"releases,omitempty"`
+
+	// Stores lists what was captured. In version 1 each entry is a kind and
+	// the app's name; since version 2 it is one entry per artefact, with the
+	// name of what was captured and the artefact's path.
 	Stores []ManifestStore `json:"stores,omitempty"`
 
 	// QuiesceStart and QuiesceEnd bound the window this app's writes were
@@ -90,20 +144,33 @@ type ManifestApp struct {
 	// what the profile asked for — see the controller's fallback.
 	QuiesceMode string `json:"quiesceMode,omitempty"`
 
-	// BoundSecretKeys names the secrets carried for this app. Names only: the
-	// values are in the bundle, and repeating them in an index that tooling
-	// prints would defeat the point of encrypting it.
+	// BoundSecretKeys is reserved and never written. A bundle carries no
+	// stored credential: what the platform seeds is derived again where the
+	// bundle is restored, and nothing else from the vault is copied.
 	BoundSecretKeys []string `json:"boundSecretKeys,omitempty"`
+}
+
+// NamesArtefacts reports whether the manifest says where each artefact is
+// and what it was captured from. A version 1 manifest does not.
+func (m *Manifest) NamesArtefacts() bool {
+	return m != nil && m.SchemaVersion >= 2
 }
 
 // ManifestStore is one captured artefact.
 type ManifestStore struct {
-	// Kind is postgres, mariadb, s3, volume or identity.
+	// Kind is one of the Artefact kinds: postgres, postgresOwned, mariadb,
+	// s3, volume or identity.
 	Kind string `json:"kind"`
-	// Name is the database, bucket or claim captured.
+	// Name is the database, bucket or claim captured; for postgresOwned,
+	// the role whose databases the archive holds.
 	Name string `json:"name"`
-	// Path is the artefact's location within the bundle prefix.
+	// Path is the artefact's location within the bundle prefix, without the
+	// suffix encryption adds.
 	Path string `json:"path"`
+	// Release is the Helm release a volume claim recorded when it was
+	// captured. Volumes only, and only when the claim recorded one. Since
+	// version 2.
+	Release string `json:"release,omitempty"`
 }
 
 // ManifestIdentity records the realm capture.

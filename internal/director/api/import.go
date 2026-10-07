@@ -44,8 +44,14 @@ type ImportStatus struct {
 	// Bundle names what was imported, for the record.
 	Bundle gentianov1alpha1.BundleRef `json:"bundle"`
 	// PasswordResetRequired is the restore's word: members come back without
-	// credentials until schema 2 carries them.
+	// credentials, which no bundle carries.
 	PasswordResetRequired bool `json:"passwordResetRequired,omitempty"`
+	// Complete, NotRestored and Notes are the restore's too: whether
+	// everything the bundle holds was put back, what was not and why, and
+	// what a restore never brings back.
+	Complete    *bool             `json:"complete,omitempty"`
+	NotRestored []json.RawMessage `json:"notRestored,omitempty"`
+	Notes       []string          `json:"notes,omitempty"`
 }
 
 var (
@@ -219,9 +225,12 @@ func (s *Server) finishImport(name string, req importRequest, actor string) {
 		code, body, err := s.cfg.Lifecycle.Get(ctx, "/v1/tenants/"+url.PathEscape(name)+"/restores/"+url.PathEscape(started.Name), nil)
 		if err == nil && code == http.StatusOK {
 			var rs struct {
-				Phase                 string `json:"phase"`
-				Message               string `json:"message"`
-				PasswordResetRequired bool   `json:"passwordResetRequired"`
+				Phase                 string            `json:"phase"`
+				Message               string            `json:"message"`
+				PasswordResetRequired bool              `json:"passwordResetRequired"`
+				Complete              *bool             `json:"complete"`
+				NotRestored           []json.RawMessage `json:"notRestored"`
+				Notes                 []string          `json:"notes"`
 			}
 			if json.Unmarshal(body, &rs) == nil {
 				switch rs.Phase {
@@ -230,6 +239,7 @@ func (s *Server) finishImport(name string, req importRequest, actor string) {
 						st.Phase = "ready"
 						st.Message = rs.Message
 						st.PasswordResetRequired = rs.PasswordResetRequired
+						st.Complete, st.NotRestored, st.Notes = rs.Complete, rs.NotRestored, rs.Notes
 					})
 					s.cfg.Log.Info("tenant imported", "tenant", name, "restore", started.Name)
 					return

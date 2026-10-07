@@ -24,6 +24,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/backup"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"github.com/gentian-org/gentian-os/internal/usage"
 )
@@ -234,7 +235,7 @@ func TestProvisioningContainersAreAdmittedInTheSystemNamespaces(t *testing.T) {
 		"psql":    psqlContainer("x", "true", ""),
 		"mariadb": mariadbContainer("x", "true", "db", "user"),
 		"redis":   redisContainer("x", "user", "prefix", "true"),
-		"minio":   minioContainer("x", "bucket", "true"),
+		"minio":   backup.ObjectStorageProvisionContainer("x", "bucket", "", ""),
 	} {
 		sc := c.SecurityContext
 		if sc == nil || sc.AllowPrivilegeEscalation == nil || *sc.AllowPrivilegeEscalation {

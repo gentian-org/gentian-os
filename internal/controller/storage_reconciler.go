@@ -23,24 +23,13 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/backup"
+	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"github.com/gentian-org/gentian-os/internal/meta"
 )
 
 const (
 	conditionStorageReady = "StorageReady"
-	// quay.io, not Docker Hub, and a tag that still exists.
-	//
-	// MinIO retired the older mc tags from Docker Hub: pulling
-	// minio/mc:RELEASE.2025-04-03T17-07-56Z now fails with
-	//   pull access denied, repository does not exist or may require authorization
-	// which reads as a credentials problem and is not one — the tag is simply gone.
-	// The Job then sits in ImagePullBackOff, and because tenant provisioning waits
-	// on that Job, the whole tenant stops short of Ready: storage never finishes, so
-	// the stages behind it never run. Both tenants on this cluster were stuck there.
-	//
-	// quay.io is where MinIO publishes now, so it is the registry to track.
-	minioProvisionerImage = "quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z"
-	minioAdminSecret      = "minio-admin"
+	minioAdminSecret      = backup.MinIOAdminSecret
 	storageRequeueAfter   = 2 * time.Second
 )
 
@@ -125,14 +114,10 @@ const backupBucketUnit = "gentian-backup"
 func makeS3BucketJob(tenant *gentianov1alpha1.Tenant, appName, accessKey, secretKey string) *batchv1.Job {
 	ttl := meta.ProvisioningJobTTLSeconds
 	deadline := meta.ProvisioningJobActiveDeadlineSeconds
-	bucket := s3BucketName(tenant, appName)
-	container := minioContainer("create-bucket", bucket, minioSetupScript(bucket))
-	if accessKey != "" && secretKey != "" {
-		container.Env = append(container.Env,
-			corev1.EnvVar{Name: "APP_ACCESS_KEY", Value: accessKey},
-			corev1.EnvVar{Name: "APP_SECRET_KEY", Value: secretKey},
-		)
-	}
+	// The container that makes a bucket, its user and its policy is the
+	// inventory's: a restore runs the same one before it writes a bucket's
+	// objects back.
+	container := backup.ObjectStorageProvisionContainer("create-bucket", s3BucketName(tenant, appName), accessKey, secretKey)
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      s3BucketJobName(tenant.Name, appName),
@@ -173,62 +158,6 @@ func makeS3BucketDeleteJob(tenant *gentianov1alpha1.Tenant, appName string) *bat
 	return backup.ObjectStorageDestroyJob(tenant, appName, backup.DestroyInTheBackground)
 }
 
-func minioContainer(name, bucket, script string) corev1.Container {
-	return corev1.Container{
-		Name:            name,
-		Image:           minioProvisionerImage,
-		Command:         []string{"/bin/sh", "-c", script},
-		SecurityContext: provisioningSecurityContext(),
-		Env: []corev1.EnvVar{
-			{
-				Name: "MINIO_ENDPOINT",
-				ValueFrom: &corev1.EnvVarSource{
-					SecretKeyRef: &corev1.SecretKeySelector{
-						LocalObjectReference: corev1.LocalObjectReference{Name: minioAdminSecret},
-						Key:                  "endpoint",
-					},
-				},
-			},
-			{
-				Name: "MINIO_ACCESS_KEY",
-				ValueFrom: &corev1.EnvVarSource{
-					SecretKeyRef: &corev1.SecretKeySelector{
-						LocalObjectReference: corev1.LocalObjectReference{Name: minioAdminSecret},
-						Key:                  "accessKey",
-					},
-				},
-			},
-			{
-				Name: "MINIO_SECRET_KEY",
-				ValueFrom: &corev1.EnvVarSource{
-					SecretKeyRef: &corev1.SecretKeySelector{
-						LocalObjectReference: corev1.LocalObjectReference{Name: minioAdminSecret},
-						Key:                  "secretKey",
-					},
-				},
-			},
-			{Name: "BUCKET_NAME", Value: bucket},
-		},
-	}
-}
-
-func minioSetupScript(bucket string) string {
-	return fmt.Sprintf(`set -eu
-mc alias set gentian "${MINIO_ENDPOINT}" "${MINIO_ACCESS_KEY}" "${MINIO_SECRET_KEY}"
-mc mb --ignore-existing "gentian/%[1]s"
-mc anonymous set none "gentian/%[1]s"
-if [ -n "${APP_ACCESS_KEY:-}" ] && [ -n "${APP_SECRET_KEY:-}" ]; then
-  mc admin user remove gentian "${APP_ACCESS_KEY}" >/dev/null 2>&1 || true
-  mc admin user add gentian "${APP_ACCESS_KEY}" "${APP_SECRET_KEY}"
-  printf '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:*"],"Resource":["arn:aws:s3:::%[1]s","arn:aws:s3:::%[1]s/*"]}]}' > /tmp/policy.json
-  mc admin policy rm gentian "${APP_ACCESS_KEY}-policy" >/dev/null 2>&1 || true
-  mc admin policy create gentian "${APP_ACCESS_KEY}-policy" /tmp/policy.json
-  mc admin policy attach gentian "${APP_ACCESS_KEY}-policy" --user "${APP_ACCESS_KEY}"
-  echo "minio user for bucket %[1]s ready"
-fi
-echo "bucket %[1]s ready"`, bucket)
-}
-
 func s3BucketName(tenant *gentianov1alpha1.Tenant, appName string) string {
 	return backup.S3Bucket(tenant, appName)
 }
@@ -239,4 +168,33 @@ func s3BucketJobName(tenantName, appName string) string {
 
 func s3BucketDeleteJobName(tenantName, appName string) string {
 	return backup.ObjectStorageDestroyJobName(tenantName, appName)
+}
+
+// seedObjectStorage seeds the key pair an app reads its bucket with, and
+// returns it. Empty when the operator has no vault: the bucket is then made
+// without a user, as it always was there.
+func (r *TenantReconciler) seedObjectStorage(ctx context.Context, tenant *gentianov1alpha1.Tenant, appName string) (accessKey, secretKey string, err error) {
+	if r.Seeder == nil {
+		return "", "", nil
+	}
+	creds, err := r.Seeder.SeedS3(ctx, tenant.Name, appName, secrets.S3Creds{
+		Endpoint: r.minioEndpoint(ctx),
+		Bucket:   s3BucketName(tenant, appName),
+		Region:   "us-east-1",
+	})
+	if err != nil {
+		return "", "", fmt.Errorf("seed s3 for %s: %w", appName, err)
+	}
+	return creds.AccessKey, creds.SecretKey, nil
+}
+
+// objectStorageProvisioner is the container that makes an app's bucket, its
+// user and its policy, holding the key pair the vault holds for the app:
+// what install's bucket Job runs, for a restore to run first.
+func (r *TenantReconciler) objectStorageProvisioner(ctx context.Context, tenant *gentianov1alpha1.Tenant, appName, name string) (corev1.Container, error) {
+	accessKey, secretKey, err := r.seedObjectStorage(ctx, tenant, appName)
+	if err != nil {
+		return corev1.Container{}, err
+	}
+	return backup.ObjectStorageProvisionContainer(name, s3BucketName(tenant, appName), accessKey, secretKey), nil
 }

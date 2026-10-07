@@ -204,8 +204,10 @@ func TestTheDestroyScriptsDiscardNoFailure(t *testing.T) {
 	}
 	scripts := destroyScripts()
 	for _, want := range []string{
-		`DROP DATABASE IF EXISTS \"${db}\";`, `DROP OWNED BY \"demo_wiki\"`, `DROP ROLE IF EXISTS \"demo_wiki\";`,
-		`rolname = 'demo_wiki' AND NOT d.datistemplate`, "ON_ERROR_STOP=1", "is still there",
+		`format('DROP DATABASE IF EXISTS %I', :'db')`, `DROP OWNED BY \"demo_wiki\"`, `DROP ROLE IF EXISTS \"demo_wiki\";`,
+		// Which databases are the app's is the inventory's one question.
+		postgresOwnedSQL, `-v app_role="${ROLE}"`, "ROLE='demo_wiki'", "DB='demo_wiki'",
+		"ON_ERROR_STOP=1", "is still there",
 	} {
 		if !strings.Contains(scripts["postgres"], want) {
 			t.Errorf("the PostgreSQL script is missing %q", want)
@@ -288,5 +290,124 @@ func allStoresProfile() *gentianov1alpha1.ComponentProfile {
 				Cache:    &gentianov1alpha1.CacheRequirement{Engine: gentianov1alpha1.CacheEngineRedis},
 			}},
 		},
+	}
+}
+
+// Which databases are an app's is one rule, and the three acts that need it
+// ask the same question: an export copies the databases the app's role owns,
+// a restore puts them back and a purge drops them. An export used to copy
+// the provisioned database alone, so a purge destroyed more than a bundle
+// held.
+func TestExportRestoreAndPurgeAgreeOnWhichDatabasesAreAnApps(t *testing.T) {
+	tenant := &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "demo"}}
+	role, db := PostgresRole("demo", "wiki"), DatabaseName(tenant, "wiki")
+	p := JobParams{Namespace: "system-s3", Name: "j", Tenant: "demo", App: "wiki", Bucket: "b", Prefix: "p",
+		Encryption: Encryption{Mode: gentianov1alpha1.ExportEncryptionRecipient, Recipients: []string{"age1qqqsyqcyq5rqwzqfpg9scrgwpugpzysnzs23v9ccrydpk8qarc0sxpzkh"}}}
+	d := Decryption{Mode: gentianov1alpha1.ExportEncryptionRecipient, SecretName: "k", SecretKey: "identity"}
+
+	scripts := map[string]string{
+		"purge":   PostgresDestroyJob(tenant, "wiki", DestroyWithinARequest).Spec.Template.Spec.Containers[0].Command[2],
+		"export":  containerByName(PostgresOwnedDumpJob(p, role, db), "pg-dump-owned").Args[0],
+		"restore": containerByName(PostgresOwnedRestoreJob(p, d, PostgresOwnedArtefact(db), db), "pg-restore-owned").Args[0],
+	}
+	for act, script := range scripts {
+		if !strings.Contains(script, postgresOwnedSQL) {
+			t.Errorf("%s does not ask the inventory's question about which databases the role owns", act)
+		}
+		if !strings.Contains(script, "ROLE='demo_wiki'") || !strings.Contains(script, "DB='demo_wiki'") {
+			t.Errorf("%s does not ask it of the app's role and database:\n%s", act, script)
+		}
+		shell := "sh"
+		if strings.Contains(script, "pipefail") {
+			shell = "bash"
+		}
+		if out, err := exec.Command(shell, "-n", "-c", script).CombinedOutput(); err != nil {
+			t.Errorf("%s: %s -n: %v\n%s", act, shell, err, out)
+		}
+		// A name is the tenant's own choice: it reaches the server as a
+		// variable the server quotes, never spliced into SQL or split on
+		// spaces.
+		if strings.Contains(script, "for db in") {
+			t.Errorf("%s splits database names on white space", act)
+		}
+	}
+	// The question leaves out the provisioned database, which each act
+	// handles by name, and templates, which are nobody's.
+	for _, want := range []string{"d.datname <> :'app_db'", "r.rolname = :'app_role'", "NOT d.datistemplate"} {
+		if !strings.Contains(postgresOwnedSQL, want) {
+			t.Errorf("the ownership question lacks %q", want)
+		}
+	}
+	// The export files the archive under the provisioned database's name,
+	// where the restore's manifest entry points.
+	if got := PostgresOwnedArtefact(db); got != "postgres/demo_wiki.owned.tar.gz" {
+		t.Errorf("artefact = %q", got)
+	}
+	// A restore puts back what the archive holds and leaves what it does
+	// not: it creates and loads, and drops no database.
+	if strings.Contains(scripts["restore"], "DROP DATABASE") {
+		t.Error("a restore drops a database the bundle does not hold")
+	}
+	if !strings.Contains(scripts["restore"], "CREATE DATABASE %I OWNER %I") {
+		t.Error("a restore does not create a database the archive holds and the server lacks")
+	}
+
+	// MariaDB keeps no owner of a database and its dynamic grant is on the
+	// whole server, so nothing says which other databases an app made. No
+	// act has a rule for them; if one is ever written, it is written for all
+	// three, and this constant is what turns.
+	if MariaDBOwnsBeyondProvisioned {
+		t.Fatal("MariaDB has an ownership rule beyond the provisioned database: export, restore and purge must each apply it")
+	}
+	maria := map[string]string{
+		"purge":   mariadbDestroyScript,
+		"export":  containerByName(MariaDBDumpJob(p, db), "mariadb-dump").Args[0],
+		"restore": containerByName(MariaDBRestoreJob(p, d, MariaDBArtefact(db), db), "mariadb-restore").Args[0],
+	}
+	for act, script := range maria {
+		for _, wider := range []string{"--all-databases", "SHOW DATABASES", "information_schema.schemata", "LIKE '"} {
+			if strings.Contains(script, wider) {
+				t.Errorf("MariaDB %s reaches beyond the provisioned database (%s) while the other acts do not", act, wider)
+			}
+		}
+	}
+}
+
+// A restore of a bucket makes the bucket's user and policy first, with the
+// container install makes them with, and only then writes the objects.
+func TestABucketIsProvisionedBeforeItsObjectsAreRestored(t *testing.T) {
+	p := JobParams{Namespace: "system-s3", Name: "j", Tenant: "demo", App: "wiki", Bucket: "b", Prefix: "p"}
+	d := Decryption{Mode: gentianov1alpha1.ExportEncryptionRecipient, SecretName: "k", SecretKey: "identity"}
+	install := ObjectStorageProvisionContainer("create-bucket", "demo-wiki", "AK", "SK")
+	provision := ObjectStorageProvisionContainer("provision-bucket", "demo-wiki", "AK", "SK")
+	job := S3RestoreJob(p, d, S3Artefact("old-wiki"), "demo-wiki", provision)
+
+	inits := job.Spec.Template.Spec.InitContainers
+	last := inits[len(inits)-1]
+	if last.Name != "provision-bucket" {
+		t.Fatalf("the last step before the objects are written is %q, want the bucket's provisioning", last.Name)
+	}
+	// The same code, not a copy: the script and the environment are
+	// install's.
+	if last.Command[2] != install.Command[2] || !reflect.DeepEqual(last.Env, install.Env) {
+		t.Error("a restore provisions the bucket with something other than what install runs")
+	}
+	for _, want := range []string{"mc admin user add", "mc admin policy create", "mc admin policy attach", `arn:aws:s3:::demo-wiki`} {
+		if !strings.Contains(last.Command[2], want) {
+			t.Errorf("provisioning lacks %q", want)
+		}
+	}
+	// The artefact is the bundle's name for it and the bucket is the
+	// tenant's: two names.
+	fetch := containerByName(job, "fetch").Args[0]
+	if !strings.Contains(fetch, "s3/old-wiki.tar.gz") {
+		t.Errorf("the artefact fetched is not the one the manifest names:\n%s", fetch)
+	}
+	write := containerByName(job, "s3-restore").Args[0]
+	if !strings.Contains(write, `"platform/demo-wiki"`) || strings.Contains(write, "old-wiki") {
+		t.Errorf("the objects are not written to the tenant's bucket:\n%s", write)
+	}
+	if strings.Contains(write, "mc mb") {
+		t.Error("the restore makes the bucket a second time, by itself")
 	}
 }

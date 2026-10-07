@@ -27,7 +27,6 @@ import (
 
 const (
 	conditionMariaDBReady = "MariaDBReady"
-	mariadbAdminSecret    = "mariadb-admin"
 	mariadbRequeueAfter   = 2 * time.Second
 )
 
@@ -105,49 +104,14 @@ func mariadbContainer(name, script, dbName, dbUser string) corev1.Container {
 		Image:           kernel.MariaDBProvisionerImage(),
 		Command:         []string{"/bin/bash", "-c", script},
 		SecurityContext: provisioningSecurityContext(),
-		Env: []corev1.EnvVar{
-			// Credentials from the kernel mariadb-admin Secret
-			{
-				Name: "MYSQL_HOST",
-				ValueFrom: &corev1.EnvVarSource{
-					SecretKeyRef: &corev1.SecretKeySelector{
-						LocalObjectReference: corev1.LocalObjectReference{Name: mariadbAdminSecret},
-						Key:                  "host",
-					},
-				},
-			},
-			{
-				Name: "MYSQL_TCP_PORT",
-				ValueFrom: &corev1.EnvVarSource{
-					SecretKeyRef: &corev1.SecretKeySelector{
-						LocalObjectReference: corev1.LocalObjectReference{Name: mariadbAdminSecret},
-						Key:                  "port",
-					},
-				},
-			},
-			{
-				Name: "MYSQL_PWD",
-				ValueFrom: &corev1.EnvVarSource{
-					SecretKeyRef: &corev1.SecretKeySelector{
-						LocalObjectReference: corev1.LocalObjectReference{Name: mariadbAdminSecret},
-						Key:                  "password",
-					},
-				},
-			},
-			{
-				Name: "MYSQL_ADMIN_USER",
-				ValueFrom: &corev1.EnvVarSource{
-					SecretKeyRef: &corev1.SecretKeySelector{
-						LocalObjectReference: corev1.LocalObjectReference{Name: mariadbAdminSecret},
-						Key:                  "username",
-					},
-				},
-			},
-			// Per-tenant computed values — passed as plain literals, never injected
-			// into raw SQL strings (the script uses parameterised quoting).
-			{Name: "DB_NAME", Value: dbName},
-			{Name: "DB_USER", Value: dbUser},
-		},
+		// Credentials from the kernel mariadb-admin Secret, by the
+		// inventory's one block; then the per-tenant computed values, passed
+		// as plain literals and never injected into raw SQL strings (the
+		// script validates them).
+		Env: append(backup.MariaDBAdminEnv(),
+			corev1.EnvVar{Name: "DB_NAME", Value: dbName},
+			corev1.EnvVar{Name: "DB_USER", Value: dbUser},
+		),
 	}
 }
 

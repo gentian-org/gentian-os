@@ -63,8 +63,15 @@ spec:
             properties:
               apps:
                 description: |-
-                  Apps limits the restore to these profiles. Empty restores every app the
-                  bundle contains that is also installed.
+                  Apps limits the restore to these profiles.
+
+                  Empty restores every app the bundle's manifest lists that can be
+                  restored here, and names the rest, with the reason, in
+                  status.notRestored. An app the bundle does not list is never touched.
+
+                  An app named here has to be restorable: if the bundle does not hold it,
+                  the tenant does not have it installed, or its build cannot take the
+                  data, the whole restore is refused before anything is changed.
                 items:
                   type: string
                 type: array
@@ -159,12 +166,16 @@ spec:
                 type: string
               skipVersionCheck:
                 description: |-
-                  SkipVersionCheck permits restoring a bundle produced by newer app
-                  versions than are installed.
+                  SkipVersionCheck permits restoring an app's data into a build of the
+                  app older than the one that wrote it, or one whose version cannot be
+                  compared with it.
 
-                  Off by default because the failure is silent: an older app reading data
-                  written by a newer schema usually starts, serves, and corrupts. Set it
-                  only when you know the specific migration is reversible.
+                  The bundle's manifest records the chart version each app was running.
+                  The same version is restored; a newer installed version is restored
+                  too, because an app upgrades older data when it starts. An older one is
+                  not, unless this is set: the failure is silent -- an older app reading
+                  data written by a newer schema usually starts, serves, and corrupts.
+                  Set it only when you know the specific migration is reversible.
                 type: boolean
             required:
             - confirmTenant
@@ -178,6 +189,44 @@ spec:
                 items:
                   description: AppExportStatus reports the capture of one app.
                   properties:
+                    artefacts:
+                      description: |-
+                        Artefacts lists each artefact captured for this app, or planned to be
+                        restored for it: what the bundle's manifest says the bundle holds. An
+                        export writes them into the manifest; a restore reads them from it.
+                      items:
+                        description: |-
+                          BundleArtefact is one artefact of a bundle: a database dump, a bucket's
+                          archive, a volume's archive.
+                        properties:
+                          kind:
+                            description: Kind is postgres, postgresOwned, mariadb,
+                              s3 or volume.
+                            type: string
+                          name:
+                            description: |-
+                              Name is what the artefact was captured from: the database, bucket or
+                              volume claim, by its name in the tenant the bundle was taken of.
+                            type: string
+                          path:
+                            description: Path is the artefact's place in the bundle.
+                            type: string
+                          release:
+                            description: Release is the Helm release a captured volume
+                              claim recorded.
+                            type: string
+                          target:
+                            description: |-
+                              Target is where a restore puts the artefact: the database, bucket or
+                              claim of that kind in the tenant being restored into, which is named
+                              differently when the tenant is. Set by a restore only.
+                            type: string
+                        required:
+                        - kind
+                        - name
+                        type: object
+                      type: array
+                      x-kubernetes-list-type: atomic
                     attempts:
                       description: |-
                         Attempts counts capture Jobs run for this app. Bounded, because the
@@ -203,6 +252,10 @@ spec:
                         type: string
                       type: array
                       x-kubernetes-list-type: atomic
+                    digest:
+                      description: Digest is the pinned digest of the app's build,
+                        when the tenant pins one.
+                      type: string
                     lastFailure:
                       description: |-
                         LastFailure is what the capture container actually said, from the last
@@ -297,6 +350,17 @@ spec:
                       it.
                     type: string
                 type: object
+              bundleSchemaVersion:
+                description: |-
+                  BundleSchemaVersion is the format version of the manifest this restore
+                  read.
+                type: integer
+              complete:
+                description: |-
+                  Complete says whether everything the bundle holds -- or, with
+                  spec.apps, everything asked for -- was put back. It is set when the
+                  restore ends. False is always explained by notRestored.
+                type: boolean
               completedAt:
                 format: date-time
                 type: string
@@ -361,6 +425,50 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              importRemoved:
+                description: |-
+                  ImportRemoved records that the uploaded bundle this restore read was
+                  removed from the import bucket, which happens once the restore has run
+                  to its end. Never set for a restore of a tenant's own backup.
+                type: boolean
+              nameDerivation:
+                description: |-
+                  NameDerivation says where the restore took the names of what it
+                  restores from. "manifest": the bundle's manifest names each artefact
+                  and what it was captured from (format 2 and later). "derived": the
+                  manifest is of format 1, which names apps and kinds only, so the
+                  database, bucket and claim names were derived from the tenant the
+                  manifest records and from the claims the tenant has now.
+                type: string
+              notRestored:
+                description: |-
+                  NotRestored names every app the bundle holds that this restore did not
+                  put back, and why. Decided before anything is changed.
+                items:
+                  description: RestoreOmission is one app a bundle holds that a restore
+                    did not put back.
+                  properties:
+                    app:
+                      description: App is the app's name in the bundle's manifest.
+                      type: string
+                    reason:
+                      description: Reason says why, in a sentence a person can act
+                        on.
+                      type: string
+                  required:
+                  - app
+                  - reason
+                  type: object
+                type: array
+                x-kubernetes-list-type: atomic
+              notes:
+                description: |-
+                  Notes are what a restore does not bring back by design, which whoever
+                  ran it has to act on.
+                items:
+                  type: string
+                type: array
+                x-kubernetes-list-type: atomic
               observedGeneration:
                 format: int64
                 type: integer

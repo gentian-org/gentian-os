@@ -126,9 +126,15 @@ echo "fetched and decrypted %[4]s"`,
 	return container
 }
 
+// Every restore Job below takes two names: artefact, the path in the bundle
+// the manifest gives for what was captured, and the database, bucket or
+// claim of the tenant being restored into. They are the same thing under two
+// names only when the tenant is called what the one the bundle was taken of
+// was; a restore used to take one name for both, and so could not find the
+// artefacts of a bundle brought in under another name.
+
 // PostgresRestoreJob loads one database back from its dump.
-func PostgresRestoreJob(p JobParams, d Decryption, database string) *batchv1.Job {
-	artefact := "postgres/" + database + ".pgc"
+func PostgresRestoreJob(p JobParams, d Decryption, artefact, database string) *batchv1.Job {
 	restore := corev1.Container{
 		Name:    "pg-restore",
 		Image:   kernel.PostgresProvisionerImage(),
@@ -192,7 +198,7 @@ echo "ownership normalised to ${ROLE}"
 pg_restore --role="${ROLE}" --clean --if-exists --no-owner --no-acl --single-transaction \
   --dbname="${DB}" %[3]s/dump.pgc
 echo "restored %[4]s"`, shellSingleQuote(p.restoreRole()), shellSingleQuote(database), workDir, database)},
-		Env:          postgresAdminEnv(),
+		Env:          PostgresAdminEnv(),
 		VolumeMounts: []corev1.VolumeMount{{Name: "work", MountPath: workDir}},
 	}
 	return restoreJob(p, []corev1.Container{
@@ -200,9 +206,74 @@ echo "restored %[4]s"`, shellSingleQuote(p.restoreRole()), shellSingleQuote(data
 	}, restore, nil)
 }
 
+// PostgresOwnedRestoreJob puts back the databases an app's role owned
+// besides the provisioned one, from the archive PostgresOwnedDumpJob wrote.
+//
+// Each database in the archive is created if it is not there, owned by the
+// app's role, and loaded the way the provisioned one is: its contents are
+// replaced by the dump's. A database the role owns now that the archive does
+// not hold is left as it is -- the bundle says nothing about it, and a
+// restore does not destroy what its bundle does not cover -- and is named in
+// the Job's output.
+func PostgresOwnedRestoreJob(p JobParams, d Decryption, artefact, database string) *batchv1.Job {
+	unpack := corev1.Container{
+		Name:    "unpack-owned",
+		Image:   kernel.KeycloakProvisionerImage(),
+		Command: []string{"/bin/sh", "-c"},
+		Args: []string{fmt.Sprintf(`set -eu
+mkdir -p %[1]s/owned
+tar xzf %[1]s/owned.tar.gz -C %[1]s/owned
+[ -f %[1]s/owned/INDEX ] || { echo "ERROR: the archive has no INDEX" >&2; exit 1; }
+echo "unpacked the archive of owned databases"`, workDir)},
+		VolumeMounts: []corev1.VolumeMount{{Name: "work", MountPath: workDir}},
+	}
+	restore := corev1.Container{
+		Name:    "pg-restore-owned",
+		Image:   kernel.PostgresProvisionerImage(),
+		Command: []string{"/bin/sh", "-c"},
+		Args: []string{fmt.Sprintf(`set -eu
+ROLE=%[1]s
+DB=%[2]s
+n=0
+while IFS= read -r name; do
+  [ -n "${name}" ] || continue
+  [ -s "%[3]s/owned/${n}.pgc" ] || { echo "ERROR: the archive lists ${name} and holds no dump of it" >&2; exit 1; }
+  psql -v ON_ERROR_STOP=1 -v db="${name}" -v app_role="${ROLE}" -d postgres <<'PSQL'
+SELECT format('CREATE DATABASE %%I OWNER %%I', :'db', :'app_role')
+ WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = :'db')
+\gexec
+PSQL
+  # By PGDATABASE for the same reason the dump is: the name is the tenant's.
+  # pg_restore connects only when it is given a database, so it writes the
+  # script and psql applies it -- to a file first, not through a pipe, so
+  # that a pg_restore that fails stops this script rather than handing psql
+  # half a dump.
+  pg_restore --role="${ROLE}" --clean --if-exists --no-owner --no-acl -f "%[3]s/owned/${n}.sql" "%[3]s/owned/${n}.pgc"
+  PGDATABASE="${name}" psql -v ON_ERROR_STOP=1 --single-transaction -q -f "%[3]s/owned/${n}.sql" >/dev/null
+  rm -f "%[3]s/owned/${n}.sql"
+  echo "restored ${name}"
+  n=$((n + 1))
+done < %[3]s/owned/INDEX
+echo "restored ${n} database(s) ${ROLE} owned besides ${DB}"
+
+psql -v ON_ERROR_STOP=1 -tA -v app_role="${ROLE}" -v app_db="${DB}" -d postgres > /tmp/now <<'PSQL'
+%[4]s
+PSQL
+while IFS= read -r name; do
+  [ -n "${name}" ] || continue
+  grep -qxF -- "${name}" %[3]s/owned/INDEX     || echo "NOTE: ${ROLE} owns ${name}, which the bundle does not hold; it was left as it is"
+done < /tmp/now`, shellSingleQuote(p.restoreRole()), shellSingleQuote(database), workDir, postgresOwnedSQL)},
+		Env:          PostgresAdminEnv(),
+		VolumeMounts: []corev1.VolumeMount{{Name: "work", MountPath: workDir}},
+	}
+	return restoreJob(p, []corev1.Container{
+		fetchAndDecrypt(d, p, artefact, "owned.tar.gz"),
+		unpack,
+	}, restore, nil)
+}
+
 // MariaDBRestoreJob loads one MariaDB database back.
-func MariaDBRestoreJob(p JobParams, d Decryption, database string) *batchv1.Job {
-	artefact := "mariadb/" + database + ".sql.gz"
+func MariaDBRestoreJob(p JobParams, d Decryption, artefact, database string) *batchv1.Job {
 	restore := corev1.Container{
 		Name:    "mariadb-restore",
 		Image:   kernel.MariaDBProvisionerImage(),
@@ -224,7 +295,7 @@ MYSQL="mariadb --host=${MYSQL_HOST} --port=${MYSQL_TCP_PORT} --user=${MYSQL_ADMI
 $MYSQL -e "DROP DATABASE IF EXISTS ${DB}; CREATE DATABASE ${DB};"
 gunzip -c %s/dump.sql.gz | $MYSQL "${DB}"
 echo "restored ${DB}"`, shellSingleQuote(database), workDir)},
-		Env:          mariadbAdminEnv(),
+		Env:          MariaDBAdminEnv(),
 		VolumeMounts: []corev1.VolumeMount{{Name: "work", MountPath: workDir}},
 	}
 	return restoreJob(p, []corev1.Container{
@@ -240,9 +311,17 @@ func (p JobParams) restoreRole() string {
 	return PostgresRole(p.Tenant, p.App)
 }
 
-// S3RestoreJob puts one app bucket's objects back.
-func S3RestoreJob(p JobParams, d Decryption, bucket string) *batchv1.Job {
-	artefact := "s3/" + bucket + ".tar.gz"
+// S3RestoreJob puts one app bucket back: the bucket, the user and the policy
+// the app reads it with, and its objects.
+//
+// provision is the container install provisions the bucket with
+// (ObjectStorageProvisionContainer), holding the key pair the vault holds
+// for the app. A restore used to make the bucket and fill it and leave it at
+// that: into a cluster where the bucket's user had not been made, the app
+// came back to a bucket it was not allowed to read. It runs before the
+// objects are written, so a restore that cannot provision does not replace
+// the bucket's contents either.
+func S3RestoreJob(p JobParams, d Decryption, artefact, bucket string, provision corev1.Container) *batchv1.Job {
 	// A separate container because the mc image has no tar.
 	unpack := corev1.Container{
 		Name:    "unpack-bucket",
@@ -270,10 +349,8 @@ echo "unpacked bucket archive"`, workDir)},
 		Command: []string{"/bin/sh", "-c"},
 		Args: []string{fmt.Sprintf(`set -eu
 mc alias set platform "${MINIO_ENDPOINT}" "${MINIO_ACCESS_KEY}" "${MINIO_SECRET_KEY}"
-# The operator administers the platform's own MinIO, so creating the app's
-# bucket here is both permitted and right: a restore into a cluster that never
-# had this app must not depend on the bucket already existing.
-mc mb --ignore-existing "platform/%[2]s"
+# The bucket, its user and its policy were made by the step before this one,
+# with the code install uses.
 # --remove makes the bucket match the archive rather than merging into it: an
 # object deleted before the backup must not reappear, and one created since must
 # not survive a restore that claims to return the tenant to that point.
@@ -285,6 +362,7 @@ echo "restored bucket %[2]s"`, workDir, bucket)},
 	return restoreJob(p, []corev1.Container{
 		fetchAndDecrypt(d, p, artefact, "bucket.tar.gz"),
 		unpack,
+		provision,
 	}, restore, nil)
 }
 
@@ -294,8 +372,7 @@ echo "restored bucket %[2]s"`, workDir, bucket)},
 // the most destructive Job the platform runs, which is why the controller only
 // creates it with the app already paused: unpacking over a running app's volume
 // would race its own writes.
-func VolumeRestoreJob(p JobParams, d Decryption, claim string) *batchv1.Job {
-	artefact := "volumes/" + claim + ".tar.gz"
+func VolumeRestoreJob(p JobParams, d Decryption, artefact, claim string) *batchv1.Job {
 	// Alpine, not the mc image: this container only untars, and the mc image
 	// has no tar.
 	restore := corev1.Container{
@@ -330,7 +407,7 @@ echo "restored volume %s"`, workDir, claim)},
 // restored members are created without credentials and have to be sent through
 // a reset. The import is written to say so rather than leave an operator to
 // discover it from members who cannot sign in.
-func RealmImportJob(p JobParams, d Decryption, realm string) *batchv1.Job {
+func RealmImportJob(p JobParams, d Decryption, artefact, realm string) *batchv1.Job {
 	restore := corev1.Container{
 		Name:    "realm-import",
 		Image:   kernel.KeycloakProvisionerImage(),
@@ -396,7 +473,7 @@ echo "restored ${restored} user(s) WITHOUT credentials - they must be sent a pas
 		VolumeMounts: []corev1.VolumeMount{{Name: "work", MountPath: workDir}},
 	}
 	return restoreJob(p, []corev1.Container{
-		fetchAndDecrypt(d, p, "identity/realm.tar.gz", "realm.tar.gz"),
+		fetchAndDecrypt(d, p, artefact, "realm.tar.gz"),
 	}, restore, nil)
 }
 

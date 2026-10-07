@@ -387,10 +387,10 @@ func TestNoScriptWrapsAQuotedValueInDoubleQuotes(t *testing.T) {
 		"volume":        VolumeArchiveJob(p, "data", []string{"**/cache"}),
 		"s3":            S3ArchiveJob(p, "demo-bucket"),
 		"realm-export":  RealmExportJob(p, "demo"),
-		"pg-restore":    PostgresRestoreJob(p, recipientDecryption(), "demo_app"),
-		"maria-restore": MariaDBRestoreJob(p, recipientDecryption(), "demo_app"),
-		"s3-restore":    S3RestoreJob(p, recipientDecryption(), "demo-bucket"),
-		"realm-import":  RealmImportJob(p, recipientDecryption(), "demo"),
+		"pg-restore":    PostgresRestoreJob(p, recipientDecryption(), PostgresArtefact("demo_app"), "demo_app"),
+		"maria-restore": MariaDBRestoreJob(p, recipientDecryption(), MariaDBArtefact("demo_app"), "demo_app"),
+		"s3-restore":    S3RestoreJob(p, recipientDecryption(), S3Artefact("demo-bucket"), "demo-bucket", ObjectStorageProvisionContainer("provision-bucket", "demo-bucket", "AK", "SK")),
+		"realm-import":  RealmImportJob(p, recipientDecryption(), IdentityArtefact, "demo"),
 		"bundle-delete": BundleDeleteJob(p),
 	}
 	for name, job := range jobs {
@@ -485,10 +485,10 @@ func TestAllJobsSatisfyTheTenantSecurityBaseline(t *testing.T) {
 		"volume":        VolumeArchiveJob(p, "data", nil),
 		"s3":            S3ArchiveJob(p, "demo-bucket"),
 		"realm-export":  RealmExportJob(p, "demo"),
-		"pg-restore":    PostgresRestoreJob(p, recipientDecryption(), "demo_app"),
-		"maria-restore": MariaDBRestoreJob(p, recipientDecryption(), "demo_app"),
-		"s3-restore":    S3RestoreJob(p, recipientDecryption(), "demo-bucket"),
-		"realm-import":  RealmImportJob(p, recipientDecryption(), "demo"),
+		"pg-restore":    PostgresRestoreJob(p, recipientDecryption(), PostgresArtefact("demo_app"), "demo_app"),
+		"maria-restore": MariaDBRestoreJob(p, recipientDecryption(), MariaDBArtefact("demo_app"), "demo_app"),
+		"s3-restore":    S3RestoreJob(p, recipientDecryption(), S3Artefact("demo-bucket"), "demo-bucket", ObjectStorageProvisionContainer("provision-bucket", "demo-bucket", "AK", "SK")),
+		"realm-import":  RealmImportJob(p, recipientDecryption(), IdentityArtefact, "demo"),
 		"bundle-delete": BundleDeleteJob(p),
 	}
 	for name, job := range jobs {
@@ -521,8 +521,8 @@ func TestNoMcImageContainerInvokesTar(t *testing.T) {
 	jobs := map[string]*batchv1.Job{
 		"volume":         VolumeArchiveJob(p, "data", nil),
 		"s3":             S3ArchiveJob(p, "demo-bucket"),
-		"s3-restore":     S3RestoreJob(p, recipientDecryption(), "demo-bucket"),
-		"volume-restore": VolumeRestoreJob(p, recipientDecryption(), "data"),
+		"s3-restore":     S3RestoreJob(p, recipientDecryption(), S3Artefact("demo-bucket"), "demo-bucket", ObjectStorageProvisionContainer("provision-bucket", "demo-bucket", "AK", "SK")),
+		"volume-restore": VolumeRestoreJob(p, recipientDecryption(), VolumeArtefact("data"), "data"),
 		"bundle-delete":  BundleDeleteJob(p),
 	}
 	for name, job := range jobs {
