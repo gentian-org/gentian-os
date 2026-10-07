@@ -871,7 +871,9 @@ Limits that remain:
 - **Contracts.** A credential shared through an integration contract belongs
   to neither side and is not removed with either.
 - **Databases an app made for itself.** On PostgreSQL every database the
-  app's role owns goes with it. On MariaDB only the provisioned database does.
+  app's role owns goes with it. On MariaDB every database named with the
+  provisioned one's name and an underscore as its prefix does, unless another
+  account holds rights on it (operations.md §9.3).
 
 Uninstalling tells the store nothing. The acquisition stays the tenant's;
 ending it is between the tenant and the store.

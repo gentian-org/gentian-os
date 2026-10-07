@@ -402,7 +402,7 @@ carried, for the apps the bundle's manifest lists (§9.4).
 | Stored credentials (vault `…/apps/<app>`, `…/apps/<app>-<extension>`) | seeded before each store; generated secrets by the app Composition | nothing: a bundle holds no stored credential | nothing: the tenant restored into has its own, seeded when it was provisioned; what a person entered has to be entered again | kept | destroyed | destroyed, with the tenant's whole vault subtree |
 | Access group and memberships | the tenant's identity Job | carried, in the realm export | put back, with the realm | kept | destroyed, in the tenant's realm | destroyed, with the realm |
 | Sign-in scope (the client scope the app's OIDC pack describes, with its mappers) | the tenant's identity Job | nothing: configuration, made again at install | nothing | kept | destroyed, unless an installed app names the same scope or it is one of Keycloak's own | destroyed, with the realm |
-| Database and role | role Job and CloudNativePG Database, or MariaDB setup Job | a dump of the provisioned database; on PostgreSQL also every other database the app's role owns | the provisioned database replaced; on PostgreSQL each owned database created if missing and replaced; a database the role owns that the bundle does not hold is left | kept | destroyed; on PostgreSQL with every database the role owns | destroyed, likewise |
+| Database and role | role Job and CloudNativePG Database, or MariaDB setup Job | a dump of the provisioned database, and of every other database that is the app's: on PostgreSQL the ones its role owns, on MariaDB the ones named `<database>_…` | the provisioned database replaced; each other database of the app's created if missing and replaced — on MariaDB under the provisioned name of the tenant restored into; one that is the app's now and that the bundle does not hold is left, and named | kept | destroyed, with every other database that is the app's, and the role or user | destroyed, likewise |
 | Object storage (bucket, user, policy) | bucket Job | the bucket's objects | the bucket, its user and its policy made by the code install uses, then the objects | kept | destroyed | destroyed, and the tenant's backup bucket unless bundles are kept |
 | Cache user | ACL Job | nothing: a restored cache is stale | nothing | kept | removed; keys are not | removed; keys are not |
 | Model key (at the model gateway, where the cluster serves models) | the tenant reconciler | nothing: a credential, registered again at install | nothing | kept | removed | removed, then the tenant's team |
@@ -461,9 +461,44 @@ Which databases are an app's is one rule that export, restore and purge
 share. The provisioned database is. On PostgreSQL so is every other database
 the app's role owns — a role creates databases only when its profile asks
 (`allowDynamicDatabaseCreation`), owns what it creates, and the server records
-the owner. On MariaDB only the provisioned database is: the same profile field
-is granted there as privileges on the whole shared server and a database has
-no owner, so nothing says which others an app made. No act guesses.
+the owner.
+
+On MariaDB a database has no owner and one server holds every tenant's, so the
+rule is by name, and the same names are all the app's user may touch. An app's
+databases are its provisioned database `<database>` and every database named
+`<database>_…` — the provisioned name, an underscore, anything. `demo_crm_reports`
+is `demo_crm`'s; `demo_crm2` and `demoXcrm` are not: the grant and the query
+escape the underscores, which MariaDB otherwise reads as "any one character",
+and compare byte for byte. The user of an app whose profile sets
+`allowDynamicDatabaseCreation` is granted all privileges on those names; every
+other app's user on its provisioned database alone; none is granted anything
+on the server (`*.*`). The rule and the grants are stated once, in
+`internal/backup/mariadb.go`.
+
+Hyphens in a tenant's or an app's name become underscores in a database's, so
+one app's provisioned database can be named under another's prefix:
+`demo_crm_extra` is app `crm-extra` of tenant `demo`, and app `extra` of a
+tenant `demo-crm`. Two things keep the rule exact there. A database under an
+app's prefix that another account holds rights on is that account's: export,
+restore and purge leave it alone and say so. And provisioning refuses, under a
+lock on the server, to make the overlap where a grant would span it — an app
+whose database another account's rights already reach, and an app that asks to
+create databases while another account's database lies under its prefix. The
+setup Job fails with the reason and the app is not provisioned.
+
+**Clusters provisioned before this rule.** The setup Job is run again when its
+script changes, and a run leaves the user with the grants above and nothing
+else: a user that held `ALL PRIVILEGES ON *.* … WITH GRANT OPTION` (every app
+with `allowDynamicDatabaseCreation` on MariaDB did), or a grant on its
+unescaped database name, has everything revoked and is granted again. Two
+things it cannot put right. A database such an app created under a name
+outside its prefix is no longer reachable by the app, and is in no export and
+no purge: rename it under the prefix or drop it by hand. And an account the
+app created for itself while it could (`CREATE USER`, `GRANT`) is not the
+platform's to find: compare `mysql.global_priv` with the tenants' apps. Until
+every app's Job has run again, an old unescaped grant of one app can make the
+Job of another fail with "within the rights of another account"; it passes
+once the first has run.
 
 ### 9.4 Restore
 
@@ -495,7 +530,7 @@ bundle is imported under another name.
 artefact) carries `schemaVersion`. Format 1 named each app and the kinds
 captured, nothing else. **Format 2**, written since the restore went by the
 manifest, adds per app one `stores` entry per artefact — `kind` (`postgres`,
-`postgresOwned`, `mariadb`, `s3`, `volume`), `name` (what it was captured
+`postgresOwned`, `mariadb`, `mariadbOwned`, `s3`, `volume`), `name` (what it was captured
 from), `path` (where in the bundle), and for a volume the Helm `release` it
 recorded — and the app's `digest`, `databaseEngine` and `releases`; the
 tenant-wide captures are no longer listed among the apps. Fields were added
@@ -555,8 +590,18 @@ a store it could not destroy. The Tenant is gone only when its namespace is.
   the same way, and the director never sets the field. A tenant placed in a
   namespace of another name is not supported end to end; an export or restore
   created for one is refused.
-- **MariaDB databases an app creates for itself** are in no bundle and are not
-  purged; see §9.3.
+- **MariaDB databases an app creates for itself** are the app's by their name
+  (§9.3). `mariadbOwned` was added to format 2 without a new format number: a
+  platform from before it refuses an app whose bundle holds one ("an artefact
+  of kind … which this platform does not know how to restore") and restores
+  nothing of that app. Each database is dumped at one instant of its own; an
+  export is consistent across an app's databases only because the app is
+  paused. A database whose name has a control character in it fails the
+  export. The read of what uninstalled apps hold reports the database kind as
+  one — present or absent, from the record — and does not list the databases.
+- **The MariaDB client is the server's image.** The Jobs that provision, dump
+  and load run the image the MariaDB chart pins. A newer `mariadb-dump` writes
+  dumps that server refuses to load; the two are bumped together.
 - **Files at a tenant's deletion** go with the namespace, after the stores,
   not before them.
 

@@ -142,6 +142,15 @@ cluster-scoped: one name is one profile for every tenant of a cluster. A profile
 catalogue is refused when its name is already taken by a profile from anywhere else (§7), so a name
 like `notes` will collide sooner or later and `acme-notes` will not.
 
+**An app that creates databases of its own** (`spec.requires.services.database.allowDynamicDatabaseCreation`)
+has to name them the platform's way on MariaDB, where every tenant's databases are on one server:
+the name of the database it was given, an underscore, then anything — `<database>_reports`. It can
+create no database of another name, and holds no privilege on the server as a whole. If the app
+chooses the names itself, the profile must configure it to prefix them with `<database>_`; an app
+that cannot be configured so cannot use the field on MariaDB. Databases so named are exported,
+restored and purged with the app. On PostgreSQL the app's role owns what it creates and the names
+are free.
+
 ### 4.2 Generate the index
 
 Take the build script from gentian-apps and run it:

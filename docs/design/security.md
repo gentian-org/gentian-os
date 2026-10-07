@@ -84,6 +84,21 @@ The agent reads a document **only if** it is the user's agent (`acting_for`), th
 
 **Compromised app/workload** — namespace isolation (the UID sandbox); SPIFFE/mTLS identity so it reaches only what mesh policy permits (Binder checks); default-deny egress; per-workload short-lived secrets (no shared God credential); admission control blocking privilege escalation at deploy time (SELinux confining even privileged domains).
 
+### 2.5 The shared MariaDB server — what an app's account can do
+
+One MariaDB server (`system-mariadb`) holds the databases of every tenant's MariaDB apps. An app gets one account on it, `<tenant>_<app>`@`%`, with a password of its own from the vault. As implemented (`internal/backup/mariadb.go`, verified against the pinned server image by `TestMariaDBAgainstAServer`):
+
+- **It can** do anything inside its provisioned database. If its profile sets `allowDynamicDatabaseCreation`, it can also create, use and drop databases named `<database>_…`, and do anything inside them.
+- **It cannot** read, write, create or drop a database of any other name — including one that differs only where its own name has an underscore, or only in case. It holds no privilege on the server: no `GRANT OPTION`, `CREATE USER`, `SUPER`, `PROCESS`, `FILE`, `RELOAD`, `SHUTDOWN`, `SHOW DATABASES` or replication privilege, so it cannot make or change accounts, pass its rights on, read other sessions, read or write the server's files, or see databases it has no rights on. Before this rule an app with `allowDynamicDatabaseCreation` held `ALL PRIVILEGES ON *.* WITH GRANT OPTION` — all of the above, on every tenant's data.
+- **Two apps cannot be given overlapping rights.** A provisioned database's name can fall under another app's `<database>_` prefix, because hyphens in tenant and app names become underscores. Provisioning refuses the app that would create the overlap (operations.md §9.3).
+
+What it does not cover:
+
+- **No transport encryption is required** of an app's connection (no `REQUIRE SSL`, and the server does not set `require_secure_transport`); the account's host is `%`. Neither is new, and neither was changed.
+- **No resource limits** are set on the account (`MAX_USER_CONNECTIONS` and the like): one app can exhaust the server's connections.
+- **The network is not a second boundary for MariaDB today.** A tenant's namespace denies egress by default, and an app's `kernel-access` policy opens the database namespace only for a profile that declares a database — but it opens `system-postgresql` whatever the engine, and never `system-mariadb`. So a MariaDB app reaches its server only if its profile names the namespace in `gentianos.io/kernel-egress-namespaces`, and gets a path to PostgreSQL it has no use for. `system-mariadb` has no ingress policy of its own: what keeps a pod away is the egress policy of the namespace it runs in, and namespaces outside the tenant tier have none. Within the server, the account's rights above are the only boundary between tenants.
+- **The admin credential** (`mariadb-admin`, root) is held by the operator's Jobs in `system-mariadb` and is not an app's.
+
 ---
 
 ## 3. Architecture
