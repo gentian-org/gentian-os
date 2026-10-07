@@ -122,8 +122,12 @@ const (
 	// bouncerDenyPathsAnnotation carries the exposure's denyPaths to the
 	// bouncer's table. Comma-separated because an annotation is a string and a
 	// path cannot contain a comma without being escaped, which none are.
-	bouncerDenyPathsAnnotation    = "gentianos.io/bouncer-deny-paths"
-	componentDatabaseSecretSuffix = "-database"
+	bouncerDenyPathsAnnotation = "gentianos.io/bouncer-deny-paths"
+	// bouncerSessionCookiesAnnotation names the zone's two token cookies on
+	// a route behind a session, comma-separated, for the bouncer's table:
+	// the bouncer takes them out of the request before the backend sees it.
+	bouncerSessionCookiesAnnotation = "gentianos.io/bouncer-session-cookies"
+	componentDatabaseSecretSuffix   = "-database"
 )
 
 func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -1301,6 +1305,11 @@ func buildExposureRoute(comp *gentianov1alpha1.Component, name, host string, zon
 	// place that sees every request to this host.
 	if len(e.DenyPaths) > 0 {
 		annotations[bouncerDenyPathsAnnotation] = strings.Join(e.DenyPaths, ",")
+	}
+	// The session's cookies are the zone's, and only this reconciler knows
+	// the zone. A bearer route has no session and names none.
+	if cookies := zone.sessionCookies(); mode == "oidc" && len(cookies) > 0 {
+		annotations[bouncerSessionCookiesAnnotation] = strings.Join(cookies, ",")
 	}
 	return &gatewayv1.HTTPRoute{
 		ObjectMeta: metav1.ObjectMeta{

@@ -359,7 +359,39 @@ Identity headers (`x-gentian-subject`, `-realm`, `-session`, `-email`,
 `-name`) are set by the bouncer on every request it allows, replacing
 client-sent ones, and no request reaches a backend on a session route any
 other way. The edge's access token goes on to a backend only where its
-exposure says `forwardToken`.
+exposure says `forwardToken`, and then in the `Authorization` header.
+
+**What a backend receives of the session** is those headers, and that bearer
+where it is forwarded. It does not receive the session's cookies. The OAuth2
+filter decrypts the token cookies into the request it passes on, so without
+more the backend would find the person's access token and ID token in its
+`Cookie` header. On every request it allows on a session route the bouncer
+therefore rewrites that header to the same cookies without the edge's, or
+removes it when no other cookie is left:
+
+- the two the zone's policy names, `gentian-<zone>-access` and
+  `gentian-<zone>-id`, by exact name;
+- the ones the filter names itself, by the fixed word each begins with:
+  `RefreshToken-`, `OauthHMAC-`, `OauthExpires-`, `OauthNonce-`,
+  `CodeVerifier-`, and `AccessToken-` and `IdToken-`, which the filter would
+  use for the two token cookies if a policy did not name them. What follows
+  the word is a hash of the policy's UID and, for the two that carry a sign-in
+  in progress, an id of that sign-in; it changes when a policy is made again,
+  so it is not stated.
+
+The names reach the bouncer in the route table the operator writes
+(`sessionCookies`, `sessionCookiePrefixes`); it guesses at none. An `ext_authz`
+answer can replace a request header or remove it, not edit it, which is why
+the whole header is rewritten. The app's own cookies are passed on as the
+bouncer was shown them, in the same order. Two things follow from where the
+bouncer stands. The OAuth2 filter has already rebuilt the header by then, one
+`name=value` per cookie name, in no particular order. And the bouncer is shown
+header values as UTF-8, so a cookie value that is not valid UTF-8 goes on with
+the offending bytes replaced. The rewrite touches only the request to the
+backend: the filter has read its cookies before the bouncer is asked, and
+`Set-Cookie` on the way back is the filter's.
+
+A bearer route has no session and its `Cookie` header is not touched.
 
 Routes without a session policy are unchanged and never ask the bouncer:
 perimeter surfaces (a tenant's DMZ, the concierge), the identity provider's
@@ -371,7 +403,8 @@ realm endpoints on `id.<kernelDomain>`, and the redirects. What
 - **Cookies.** Per host, not per zone (no `cookieDomain`): `HttpOnly`,
   `Secure`, `SameSite=Lax`, token cookies encrypted by the filter. One sign-in
   at the realm covers every host of the zone; each host gets its own cookies
-  on a silent round trip.
+  on a silent round trip. They are the edge's alone: the bouncer takes them
+  out of the request before the backend (§4.1).
 - **Sign-out** is `GET /oauth2/logout` on any host of the zone. The filter
   deletes that host's cookies and redirects to the realm's end-session
   endpoint (read from the issuer's discovery document) with `id_token_hint`,

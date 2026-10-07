@@ -41,9 +41,11 @@ type Store interface {
 
 // Request is what the Gateway tells the bouncer about a request.
 //
-// No cookies. The session's cookies are the OAuth2 filter's: it encrypts
-// them, and it alone decides whether they are a session. What this service
-// is given is what that filter made of them.
+// The session's cookies are the OAuth2 filter's: it encrypts them, and it
+// alone decides whether they are a session. Who is asking is never taken
+// from Cookie; what this service is given to decide on is what that filter
+// made of them. The header is here for one purpose, which is to pass it on
+// without the session's cookies in it (Route.SessionCookies).
 type Request struct {
 	ID            string
 	Host          string
@@ -51,6 +53,8 @@ type Request struct {
 	Authorization string
 	// IDToken is the value of HeaderIDToken.
 	IDToken string
+	// Cookie is the Cookie header as it arrived, never read for identity.
+	Cookie string
 }
 
 // Decision is the bouncer's answer.
@@ -205,7 +209,7 @@ func (d *Decider) Decide(ctx context.Context, req Request) Decision {
 	}
 	who := identity{subject: id.Subject, realm: id.Realm, session: id.SessionID, email: id.Email, name: id.Name}
 	if cached, ok := d.cache.get(id.Subject, id.SessionID, route.Host); ok {
-		return allow(route, cached)
+		return allow(route, req, cached)
 	}
 	user, err := authz.User(id.Subject)
 	if err != nil {
@@ -224,7 +228,7 @@ func (d *Decider) Decide(ctx context.Context, req Request) Decision {
 		return browserRefusal(route, deny(http.StatusForbidden, "not "+route.Relation+" on "+route.Object))
 	}
 	d.cache.put(id.Subject, id.SessionID, route.Host, who)
-	return allow(route, who)
+	return allow(route, req, who)
 }
 
 // session verifies the one token the route's mode says proves who is asking.
@@ -297,7 +301,12 @@ func browserRefusal(route *Route, dec Decision) Decision {
 // allow is the only way a request reaches a backend, and it is only reached
 // with a verified identity: the identity headers are set on every allowed
 // request, replacing whatever the client sent under those names.
-func allow(route *Route, who identity) Decision {
+//
+// What the backend is left with of the session is those headers. The token
+// goes out of the Authorization header unless the route forwards it, and the
+// session's cookies go out of the Cookie header on every route that has a
+// session, forwarded token or not.
+func allow(route *Route, req Request, who identity) Decision {
 	dec := Decision{
 		Allow: true,
 		Headers: map[string]string{
@@ -318,6 +327,22 @@ func allow(route *Route, who identity) Decision {
 	// authenticates the bearer the page already holds.
 	if !route.ForwardToken && !route.KeepClientToken {
 		dec.RemoveHeaders = append(dec.RemoveHeaders, "authorization")
+	}
+	// The Gateway's filter decrypted the session's token cookies into this
+	// request, and the backend has no use for them: it is told who is asking
+	// in the headers above. The only way to take one cookie out of a request
+	// from here is to say what the whole header is to be, so the header is
+	// rewritten to the cookies that are not the edge's, as they were, or
+	// removed when none is left. A header with none of the edge's cookies in
+	// it is not mentioned at all.
+	if route.AuthMode == AuthModeOIDC {
+		if rest, changed := route.withoutSessionCookies(req.Cookie); changed {
+			if strings.Trim(rest, "; \t") == "" {
+				dec.RemoveHeaders = append(dec.RemoveHeaders, HeaderCookie)
+			} else {
+				dec.Headers[HeaderCookie] = rest
+			}
+		}
 	}
 	return dec
 }

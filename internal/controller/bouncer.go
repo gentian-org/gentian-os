@@ -66,6 +66,39 @@ const (
 	edgeIDTokenHeader = "x-gentian-id-token"
 )
 
+// edgeFilterCookiePrefixes are the cookies Envoy Gateway's OAuth2 filter
+// names itself, each a fixed word, a hyphen and a suffix.
+//
+// The suffix is Envoy Gateway's: a hash of the SecurityPolicy's UID, which
+// exists only once the policy does and changes when the policy is made
+// again, while a browser still holds the cookies of the one before. The two
+// that carry a sign-in in progress get a further suffix per sign-in. So the
+// words are stated here and the bouncer takes out whatever begins with one,
+// rather than the operator reading the UID back and stating names that would
+// miss the cookies an earlier policy left behind.
+//
+// AccessToken- and IdToken- are what the filter would call the two token
+// cookies if a policy did not name them. Every zone policy does name them
+// (cookieNames); they are listed so that a policy which lost its names would
+// not start handing tokens to backends.
+var edgeFilterCookiePrefixes = []string{
+	"AccessToken-", "IdToken-", "RefreshToken-",
+	"OauthHMAC-", "OauthExpires-", "OauthNonce-", "CodeVerifier-",
+}
+
+// sessionCookies are the two cookies a zone's policy names: the session's
+// access token and its ID token. The same names go into the policy
+// (zoneSecurityPolicySpec) and into the bouncer's table.
+func (z edgeZone) sessionCookies() []string {
+	var out []string
+	for _, n := range []string{z.cookie, z.idCookie} {
+		if n != "" {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
 // routeAuthz is what a route's exposure says must hold at L2.
 type routeAuthz struct {
 	relation string
@@ -297,6 +330,13 @@ type bouncerRoute struct {
 	// DenyPaths are refused at L2 before identity is looked at. Unioned
 	// across every exposure that shares the host.
 	DenyPaths []string `json:"denyPaths,omitempty"`
+	// SessionCookies and SessionCookiePrefixes are the cookies the edge
+	// keeps the session in on this host. The Gateway's filter decrypts the
+	// token cookies into the request it passes on; the bouncer takes these
+	// out again, so that no backend is handed a token in its Cookie header.
+	// On every route with a session, and on no other.
+	SessionCookies        []string `json:"sessionCookies,omitempty"`
+	SessionCookiePrefixes []string `json:"sessionCookiePrefixes,omitempty"`
 }
 
 // bouncerRouteTable renders the bouncer's table from the routes that carry an
@@ -316,6 +356,9 @@ func bouncerRouteTable(specs []kernelHTTPRouteSpec, extra []bouncerRoute) (strin
 			ForwardToken:    s.authz.forwardToken,
 			KeepClientToken: s.authz.keepClientToken,
 			AuthMode:        "oidc",
+			// A kernel route's session is the kernel zone's.
+			SessionCookies:        []string{edgeKernelAccessTokenCookie, edgeKernelIDTokenCookie},
+			SessionCookiePrefixes: edgeFilterCookiePrefixes,
 		}
 		if s.authz.keepClientToken {
 			route.IDTokenAudience = edgeKernelClientID
@@ -406,6 +449,14 @@ func componentRouteTableEntries(ctx context.Context, c client.Reader) ([]bouncer
 			mode = "oidc"
 		}
 		denied := splitDenyPaths(ann[bouncerDenyPathsAnnotation])
+		// Only a route with a session has session cookies. The names are
+		// the zone's, which the component reconciler wrote on the route;
+		// the filter's own are the same everywhere.
+		var cookies, prefixes []string
+		if mode == "oidc" {
+			cookies = splitDenyPaths(ann[bouncerSessionCookiesAnnotation])
+			prefixes = edgeFilterCookiePrefixes
+		}
 		for _, h := range route.Spec.Hostnames {
 			host := string(h)
 			// A component's routes share its host and its question; the
@@ -415,12 +466,17 @@ func componentRouteTableEntries(ctx context.Context, c client.Reader) ([]bouncer
 			if cur, ok := byHost[host]; ok {
 				cur.ForwardToken = cur.ForwardToken || ann[bouncerForwardAnnotation] == "true"
 				cur.DenyPaths = mergeDenyPaths(cur.DenyPaths, denied)
+				cur.SessionCookies = mergeDenyPaths(cur.SessionCookies, cookies)
+				if cur.SessionCookiePrefixes == nil {
+					cur.SessionCookiePrefixes = prefixes
+				}
 				continue
 			}
 			byHost[host] = &bouncerRoute{
 				Host: host, Relation: ann[bouncerRelationAnnotation], Object: ann[bouncerObjectAnnotation],
 				ForwardToken: ann[bouncerForwardAnnotation] == "true",
 				AuthMode:     mode, DenyPaths: denied,
+				SessionCookies: cookies, SessionCookiePrefixes: prefixes,
 			}
 			order = append(order, host)
 		}

@@ -11,9 +11,17 @@ SPDX-License-Identifier: MPL-2.0
 package controller
 
 import (
-	"github.com/gentian-org/gentian-os/internal/bouncer"
+	"context"
+	"reflect"
 	"strings"
 	"testing"
+
+	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
+
+	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/bouncer"
 )
 
 // The SecurityPolicy is the whole of L1 and L2 for a kernel-zone route: the
@@ -130,9 +138,9 @@ func TestTheRouteTableListsEveryRouteWithAQuestionSortedByHost(t *testing.T) {
 	if !strings.Contains(table, "authMode: oidc") {
 		t.Fatalf("the route's L1 mode is what tells the bouncer whose question a missing session is:\n%s", table)
 	}
-	// Nothing about cookies: the bouncer does not read them, and nothing
-	// about where a session ends: the gateway's logout does that.
-	for _, gone := range []string{"Cookie", "endSessionURL"} {
+	// Nothing about where a session ends: the gateway's logout does that.
+	// Cookies are named for one purpose only, which is taking them out.
+	for _, gone := range []string{"accessTokenCookie", "idTokenCookie", "endSessionURL"} {
 		if strings.Contains(table, gone) {
 			t.Fatalf("the table still carries %s:\n%s", gone, table)
 		}
@@ -144,5 +152,80 @@ func TestTheRouteTableListsEveryRouteWithAQuestionSortedByHost(t *testing.T) {
 	}
 	if r := parsed.Match("console.k.example"); r == nil || !r.ForwardToken || r.AuthMode != bouncer.AuthModeOIDC {
 		t.Fatalf("the bouncer's reading of the desktop route: %+v", r)
+	}
+}
+
+// The table names the session's cookies, so the bouncer can take them out of
+// a request before a backend sees it: the two the zone's policy names, read
+// from the policy itself so the two cannot drift, and the words Envoy
+// Gateway's filter begins its own with.
+func TestTheRouteTableNamesTheSessionsCookiesOfEveryRouteWithASession(t *testing.T) {
+	namedBy := func(spec map[string]interface{}) []string {
+		names := spec["oidc"].(map[string]interface{})["cookieNames"].(map[string]interface{})
+		return []string{names["accessToken"].(string), names["idToken"].(string)}
+	}
+	// What the filter calls its cookies when left to itself, in Envoy
+	// Gateway's translation of a policy: "<word>-<suffix>".
+	filterWords := []string{"AccessToken-", "IdToken-", "RefreshToken-", "OauthHMAC-", "OauthExpires-", "OauthNonce-", "CodeVerifier-"}
+
+	// A tenant's component: one route behind the tenant zone's session, and
+	// one that takes a bearer and so has no session.
+	acme := edgeZone{
+		zoneNames: zoneNames{domain: "acme.k.example"}, realm: "acme", clientID: "gentian-edge-acme",
+		secretName: "edge-acme-oidc", cookie: "gentian-acme-access", idCookie: "gentian-acme-id",
+		sectionName: tenantGatewayListenerName("acme"),
+	}
+	comp := &gentianov1alpha1.Component{}
+	comp.Name, comp.Namespace = "wiki", "tenant-acme"
+	expose := func(name, sub string, mode gentianov1alpha1.AuthMode) *gatewayv1.HTTPRoute {
+		e := &gentianov1alpha1.ExposureSpec{
+			Name: name, Surface: gentianov1alpha1.SurfaceGateway, AuthMode: mode, SubDomain: sub,
+			Backend: gentianov1alpha1.BackendRef{Service: "wiki", Port: 8080},
+		}
+		return buildExposureRoute(comp, "wiki-"+name, sub+".acme.k.example", acme, e,
+			routeAuthz{relation: "can_use", object: "app:acme/wiki"}, "k.example", nil)
+	}
+	web, api := expose("web", "wiki", gentianov1alpha1.AuthModeOIDC), expose("api", "wiki-api", gentianov1alpha1.AuthModeBearer)
+	if _, named := api.Annotations[bouncerSessionCookiesAnnotation]; named {
+		t.Fatalf("a bearer route has no session and names no cookie: %v", api.Annotations)
+	}
+	scheme := runtime.NewScheme()
+	_ = gatewayv1.Install(scheme)
+	extra, err := componentRouteTableEntries(context.Background(), fake.NewClientBuilder().WithScheme(scheme).WithObjects(web, api).Build())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	table, err := bouncerRouteTable([]kernelHTTPRouteSpec{
+		{name: "a", host: "argocd.k.example", authz: &routeAuthz{relation: "can_configure", object: "cluster:c1"}},
+		{name: kernelRouteKeycloakAdmin, host: "id.k.example", authz: &routeAuthz{relation: "can_configure", object: "cluster:c1", keepClientToken: true}},
+	}, extra)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := bouncer.ParseTable([]byte(table))
+	if err != nil {
+		t.Fatal(err)
+	}
+	kernelNames := namedBy(kernelSecurityPolicySpec("k.example", "kernel", "a", routeAuthz{}, "b"))
+	acmeNames := namedBy(zoneSecurityPolicySpec("k.example", acme, "wiki-web", routeAuthz{}, servicesNamespace, "b"))
+	for host, want := range map[string][]string{
+		"argocd.k.example":    kernelNames,
+		"id.k.example":        kernelNames,
+		"wiki.acme.k.example": acmeNames,
+	} {
+		r := parsed.Match(host)
+		if r == nil || !reflect.DeepEqual(r.SessionCookies, want) {
+			t.Fatalf("%s: the table names %+v, the policy names %v\n%s", host, r, want, table)
+		}
+		if !reflect.DeepEqual(r.SessionCookiePrefixes, filterWords) {
+			t.Fatalf("%s: the filter's own cookies = %v, want %v", host, r.SessionCookiePrefixes, filterWords)
+		}
+	}
+	if reflect.DeepEqual(kernelNames, acmeNames) {
+		t.Fatal("two zones must not share cookie names")
+	}
+	if r := parsed.Match("wiki-api.acme.k.example"); r == nil || len(r.SessionCookies) != 0 || len(r.SessionCookiePrefixes) != 0 {
+		t.Fatalf("a bearer route names no session cookie: %+v", r)
 	}
 }

@@ -767,6 +767,12 @@ request.
 - On "yes", sets the headers that tell the app who the person is, and removes
   the token unless the route is declared to receive it (the desktops and the
   admin consoles are, because their backends pass it on).
+- On "yes", also takes the session's cookies out of the request, on every
+  route with a sign-in session, declared to receive the token or not. The
+  Gateway has decrypted the tokens into them; the app gets its own cookies
+  back as they were and none of the Gateway's. Which cookies those are is in
+  the operator's table: the two the route's session policy names, and the
+  words the Gateway begins its own with.
 - On "no", refuses, with a page that offers to sign out.
 - Refuses a request that carries no token it can verify. On a route with a
   sign-in session the Gateway does not let such a request reach it; if one
@@ -786,7 +792,8 @@ request.
 - Let a request through when OpenFGA cannot be reached. It answers 503,
   except for answers it already remembers.
 - Let a request through without a token it has verified itself.
-- Read a cookie.
+- Take who is asking from a cookie. It looks at cookies by name only, to
+  remove the session's from what goes on to the app.
 
 **What it holds**
 
@@ -954,13 +961,15 @@ gives.
    annotations on the route itself, so a route written by anything other than
    the operator could name a weaker question.
 
-9. **An app receives the session's tokens.** The Gateway encrypts the
-   session's tokens in the browser's cookies, and decrypts them again in the
-   request before it passes it on. So the app behind a route receives the
-   person's access token and ID token in the `Cookie` header, in the clear.
-   The cookies belong to one address, so an app sees only the tokens of its
-   own address; but the access token in them is accepted at every service
-   (weakness 2). Nothing removes them before the app.
+9. **Closed: an app no longer receives the session's tokens.** The Gateway
+   encrypts the session's tokens in the browser's cookies, and decrypts them
+   again in the request before it passes it on, so an app used to find the
+   person's access token and ID token in its `Cookie` header, in the clear.
+   The bouncer now removes the session's cookies from every request it lets
+   through on a route with a sign-in session (section 4.6). What an app
+   receives is its own cookies, the headers that say who the person is, and
+   the person's token in the `Authorization` header only where its route is
+   declared to receive it.
 
 10. **The order at the front door is a setting of the Gateway's proxies, not
     of the route.** The session policy on a route and the bouncer both assume
@@ -1068,8 +1077,6 @@ Detail: [iam.md](../design/iam.md) §1.1a for the modes,
 - **Token exchange**: a token issued for one service only, so that a token
   seen by one program is not valid at the others (weakness 2), and so that an
   unattended act can carry who it is for.
-- **Removing the session's tokens from the request before the app**
-  (weakness 9).
 - **The operator keeping the order at the front door**, instead of the
   installer setting it once (weakness 10).
 - **Default-deny network policies in the kernel namespaces** (weakness 6).

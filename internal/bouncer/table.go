@@ -80,6 +80,24 @@ type Route struct {
 	// Unioned across a host's exposures: an entry that denies a path denies
 	// it for the host, because deny wins.
 	DenyPaths []string `json:"denyPaths,omitempty"`
+	// SessionCookies and SessionCookiePrefixes name the cookies the Gateway's
+	// OAuth2 filter keeps the session in on this route, so they can be taken
+	// out of the request before it goes on to the backend.
+	//
+	// The filter decrypts the token cookies into the request it passes on,
+	// so without this the backend would be handed the person's access token
+	// and ID token in the Cookie header, whatever ForwardToken says about
+	// the Authorization header. SessionCookies are exact names: the two the
+	// route's policy gives the token cookies. SessionCookiePrefixes are the
+	// cookies the filter names itself, a fixed word followed by a suffix it
+	// derives from the policy and, for the two that carry a sign-in in
+	// progress, from that sign-in.
+	//
+	// The operator states both; this service guesses at neither. A route
+	// that names none keeps its Cookie header as it came, which is every
+	// bearer route: there is no session there.
+	SessionCookies        []string `json:"sessionCookies,omitempty"`
+	SessionCookiePrefixes []string `json:"sessionCookiePrefixes,omitempty"`
 }
 
 // Denies reports whether a path is one the route refuses outright.
@@ -153,6 +171,13 @@ func ParseTable(b []byte) (*Table, error) {
 		seen[host] = true
 		t.Routes[i].Host = host
 		t.Routes[i].DenyPaths = normalisePaths(r.DenyPaths)
+		// An empty name would own nothing and an empty prefix everything;
+		// neither is a name the operator wrote on purpose.
+		for _, n := range append(append([]string{}, r.SessionCookies...), r.SessionCookiePrefixes...) {
+			if strings.TrimSpace(n) == "" {
+				return nil, fmt.Errorf("route table: entry %d (%q) names an empty session cookie", i, r.Host)
+			}
+		}
 	}
 	return &t, nil
 }

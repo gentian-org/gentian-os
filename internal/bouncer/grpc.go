@@ -83,6 +83,7 @@ func (s *Server) Check(ctx context.Context, req *authv3.CheckRequest) (*authv3.C
 		Path:          httpReq.GetPath(),
 		Authorization: headers["authorization"],
 		IDToken:       headers[HeaderIDToken],
+		Cookie:        headers[HeaderCookie],
 	}
 	if r.Host == "" {
 		r.Host = httpReq.GetHost()
