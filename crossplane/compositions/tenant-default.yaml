@@ -469,11 +469,11 @@ spec:
                 name: kubernetes
 
             {{- /* The Secret both sides read, in the edge namespace, under the
-                 key Envoy Gateway's SecurityPolicy names. Envoy Gateway 1.2
-                 reads an OIDC client secret only from the policy's own
-                 namespace, ReferenceGrant or not, which is why this one is
-                 written where the edge is and copied beside a policy that
-                 sits elsewhere (ensureZoneSecret in the operator).
+                 key Envoy Gateway's SecurityPolicy names. A policy names its
+                 client secret without a namespace and so reads it from its
+                 own, which is why this one is written where the edge is and
+                 copied beside a policy that sits elsewhere (ensureZoneSecret
+                 in the operator).
 
                  Generated once and never again. A generator answers with a new
                  value every time it is asked, so an ExternalSecret that
@@ -571,6 +571,15 @@ spec:
                  been told about, which puts them on an error page instead of
                  back on the portal.
 
+                 That URI is the host's front page and nothing else. The
+                 Gateway's logout path (/oauth2/logout) sends the browser to
+                 the realm's end-session endpoint with exactly
+                 https://<host>/ as the way back, so exactly that is what is
+                 registered: one URL per host, for the reason given at
+                 validRedirectUris below. The front page is behind the
+                 session, so arriving there signed out is arriving at the
+                 realm's sign-in.
+
                  No back-channel logout URL. It used to point at the director,
                  which recorded the ended session so the edge would refuse it at
                  once. Nothing records it now: the realm issues five-minute
@@ -618,7 +627,7 @@ spec:
                   {{- end }}
                 validPostLogoutRedirectUris:
                   {{- range $host := $zoneHostNames }}
-                  - https://{{ $host }}/*
+                  - https://{{ $host }}/
                   {{- end }}
                 clientSecretSecretRef:
                   name: {{ $zoneSecret }}

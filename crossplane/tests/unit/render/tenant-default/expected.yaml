@@ -301,8 +301,8 @@ spec:
     serviceAccountsEnabled: false
     standardFlowEnabled: true
     validPostLogoutRedirectUris:
-    - https://console.render-fixture.platform.example.test/*
-    - https://admin.render-fixture.platform.example.test/*
+    - https://console.render-fixture.platform.example.test/
+    - https://admin.render-fixture.platform.example.test/
     validRedirectUris:
     - https://console.render-fixture.platform.example.test/oauth2/callback
     - https://console.render-fixture.platform.example.test/

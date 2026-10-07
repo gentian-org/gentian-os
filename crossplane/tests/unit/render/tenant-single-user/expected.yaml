@@ -301,9 +301,9 @@ spec:
     serviceAccountsEnabled: false
     standardFlowEnabled: true
     validPostLogoutRedirectUris:
-    - https://console.platform.example.test/*
-    - https://admin.platform.example.test/*
-    - https://cloud.platform.example.test/*
+    - https://console.platform.example.test/
+    - https://admin.platform.example.test/
+    - https://cloud.platform.example.test/
     validRedirectUris:
     - https://console.platform.example.test/oauth2/callback
     - https://console.platform.example.test/

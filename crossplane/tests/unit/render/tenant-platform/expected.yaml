@@ -167,12 +167,12 @@ spec:
     serviceAccountsEnabled: false
     standardFlowEnabled: true
     validPostLogoutRedirectUris:
-    - https://platform.platform.example.test/*
-    - https://admin.platform.platform.example.test/*
-    - https://wiki.platform.platform.example.test/*
-    - https://argocd.platform.example.test/*
-    - https://headlamp.platform.example.test/*
-    - https://id.platform.example.test/*
+    - https://platform.platform.example.test/
+    - https://admin.platform.platform.example.test/
+    - https://wiki.platform.platform.example.test/
+    - https://argocd.platform.example.test/
+    - https://headlamp.platform.example.test/
+    - https://id.platform.example.test/
     validRedirectUris:
     - https://platform.platform.example.test/oauth2/callback
     - https://platform.platform.example.test/
