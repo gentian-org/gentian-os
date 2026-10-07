@@ -23,6 +23,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
 	"github.com/gentian-org/gentian-os/internal/director/lifecycle"
 	"github.com/gentian-org/gentian-os/internal/locales"
+	"github.com/gentian-org/gentian-os/internal/schemacheck"
 )
 
 // A tenant's resource plan.
@@ -305,9 +306,11 @@ func (s *Server) setTenantLocales(w http.ResponseWriter, r *http.Request, c call
 		return
 	}
 	res, err := s.cfg.Repo.SetTenantLocales(r.Context(), r.PathValue("t"), body.Locales, c.meta)
-	if err != nil && !errors.Is(err, gitops.ErrInvalidName) {
+	var refusal *schemacheck.Refusal
+	if err != nil && !errors.Is(err, gitops.ErrInvalidName) && !errors.As(err, &refusal) {
 		// A language that is not a language code is the caller's mistake, and
-		// the message names the value.
+		// the message names the value. A write refused over the cluster's
+		// definitions is not the caller's, and is answered as one below.
 		s.fail(w, r, http.StatusBadRequest, err.Error())
 		return
 	}

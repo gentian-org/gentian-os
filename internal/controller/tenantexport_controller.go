@@ -34,6 +34,7 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/backup"
 	"github.com/gentian-org/gentian-os/internal/meta"
+	"github.com/gentian-org/gentian-os/internal/schemacheck/crdcheck"
 )
 
 const (
@@ -74,6 +75,10 @@ const (
 // export and lengthen every individual app's outage, and the thing a tenant
 // notices is their app being down — not how long the export took.
 type TenantExportReconciler struct {
+	// Definitions holds this reconciler while the cluster's resource
+	// definitions would drop fields it writes (internal/schemacheck). Nil
+	// holds nothing.
+	Definitions *crdcheck.Holder
 	client.Client
 	Scheme *runtime.Scheme
 
@@ -1177,5 +1182,5 @@ func (r *TenantExportReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&gentianov1alpha1.TenantExport{}).
 		Named("tenantexport").
-		Complete(r)
+		Complete(r.Definitions.Guard(r.Client, &gentianov1alpha1.TenantExport{}, r))
 }

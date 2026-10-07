@@ -19,6 +19,8 @@ import (
 	"time"
 
 	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
+
+	"github.com/gentian-org/gentian-os/internal/schemacheck"
 )
 
 // router is what the route registrars take, so the guard cannot be forgotten
@@ -78,6 +80,10 @@ type HTTPServer struct {
 	// than serving any: a deployment that lost its configuration must not
 	// become an open API.
 	Auth *CallerAuth
+	// Definitions is what the operator found the cluster serves of the
+	// resource definitions it was built with (internal/schemacheck). Nil on
+	// an operator that runs no check, which the route then says.
+	Definitions *schemacheck.Gate
 }
 
 // bearer returns the token a request presents, or "".
@@ -155,6 +161,7 @@ func (h *HTTPServer) routes() *http.ServeMux {
 	h.registerNotificationRoutes(guarded)
 	h.registerTenantRoutes(guarded)
 	h.registerImportRoutes(guarded)
+	h.registerDefinitionRoutes(guarded)
 	return mux
 }
 

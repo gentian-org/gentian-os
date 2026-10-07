@@ -34,6 +34,7 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/backup"
 	"github.com/gentian-org/gentian-os/internal/meta"
+	"github.com/gentian-org/gentian-os/internal/schemacheck/crdcheck"
 )
 
 const (
@@ -69,6 +70,10 @@ var externalSecretGVK = schema.GroupVersionKind{
 // time an export runs, the question "where does this go, and can we
 // authenticate to it" has already been answered and published.
 type BackupPolicyReconciler struct {
+	// Definitions holds this reconciler while the cluster's resource
+	// definitions would drop fields it writes (internal/schemacheck). Nil
+	// holds nothing.
+	Definitions *crdcheck.Holder
 	client.Client
 	Scheme *runtime.Scheme
 }
@@ -617,5 +622,5 @@ func (r *BackupPolicyReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			builder.WithPredicates(predicate.NewPredicateFuncs(isCredentialProbe)),
 		).
 		Named("backuppolicy").
-		Complete(r)
+		Complete(r.Definitions.Guard(r.Client, &gentianov1alpha1.BackupPolicy{}, r))
 }

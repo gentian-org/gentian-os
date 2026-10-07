@@ -72,23 +72,32 @@ def group_key(group: str) -> tuple[int, str]:
 
 
 def canonicalise(rules: list[dict]) -> list[dict]:
-    """Merge rules sharing an apiGroup+verb set, then sort deterministically."""
-    merged: dict[tuple[str, tuple[str, ...]], set[str]] = defaultdict(set)
+    """Merge rules sharing an apiGroup+verb set, then sort deterministically.
+
+    A rule restricted to named objects (resourceNames) is merged only with
+    rules naming the same objects, and keeps the restriction. Dropping it
+    would turn "may read these twenty definitions" into "may read every
+    definition in the cluster" on the way from the marker to the chart, with
+    nothing in either file to show it.
+    """
+    merged: dict[tuple[str, tuple[str, ...], tuple[str, ...]], set[str]] = defaultdict(set)
     for rule in rules:
         verbs = tuple(sort_verbs(set(rule.get("verbs", []))))
+        names = tuple(sorted(set(rule.get("resourceNames") or [])))
         for group in rule.get("apiGroups", []):
-            merged[(group, verbs)].update(rule.get("resources", []))
+            merged[(group, verbs, names)].update(rule.get("resources", []))
 
     out = []
-    for (group, verbs), resources in merged.items():
-        out.append(
-            {
-                "apiGroups": [group],
-                "resources": sorted(resources),
-                "verbs": list(verbs),
-            }
-        )
-    out.sort(key=lambda r: (group_key(r["apiGroups"][0]), r["resources"]))
+    for (group, verbs, names), resources in merged.items():
+        entry = {
+            "apiGroups": [group],
+            "resources": sorted(resources),
+        }
+        if names:
+            entry["resourceNames"] = list(names)
+        entry["verbs"] = list(verbs)
+        out.append(entry)
+    out.sort(key=lambda r: (group_key(r["apiGroups"][0]), r["resources"], r.get("resourceNames", [])))
     return out
 
 

@@ -26,6 +26,7 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/backup"
+	"github.com/gentian-org/gentian-os/internal/schemacheck/crdcheck"
 )
 
 const (
@@ -45,6 +46,10 @@ var cronParser = cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month 
 // TenantExportScheduleReconciler takes exports on a schedule and expires the
 // bundles that age out.
 type TenantExportScheduleReconciler struct {
+	// Definitions holds this reconciler while the cluster's resource
+	// definitions would drop fields it writes (internal/schemacheck). Nil
+	// holds nothing.
+	Definitions *crdcheck.Holder
 	client.Client
 	Scheme *runtime.Scheme
 
@@ -374,5 +379,5 @@ func (r *TenantExportScheduleReconciler) SetupWithManager(mgr ctrl.Manager) erro
 		For(&gentianov1alpha1.TenantExportSchedule{}).
 		Owns(&gentianov1alpha1.TenantExport{}).
 		Named("tenantexportschedule").
-		Complete(r)
+		Complete(r.Definitions.Guard(r.Client, &gentianov1alpha1.TenantExportSchedule{}, r))
 }

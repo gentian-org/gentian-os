@@ -58,6 +58,9 @@ type GitOps struct {
 	// keyFile and keyHome are where the key is read from and imported to,
 	// set by SignFrom. A named keyFile means every commit is signed.
 	keyFile, keyHome string
+	// definitions refuses a commit the cluster would drop part of, set by
+	// GuardDefinitions. Nil checks nothing.
+	definitions *definitionsGuard
 }
 
 // Result is the outcome of a write.
@@ -633,6 +636,11 @@ func (g *GitOps) commitPaths(ctx context.Context, rels []string, message string,
 	defer diffCancel()
 	if err := diff.Run(); err == nil {
 		return nil
+	}
+
+	// Before anything is committed: what is staged is what would be pruned.
+	if err := g.checkDefinitions(ctx); err != nil {
+		return err
 	}
 
 	if err := g.loadSigningKey(ctx); err != nil {

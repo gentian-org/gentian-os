@@ -27,6 +27,7 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/branding"
+	"github.com/gentian-org/gentian-os/internal/schemacheck/crdcheck"
 )
 
 // brandingConfigMap is where the brand is published, twice. In the platform
@@ -61,6 +62,10 @@ func brandName(ctx context.Context, c client.Reader) string {
 // were and says why on its status: a typo in a colour must not take every
 // page's styling away.
 type BrandingReconciler struct {
+	// Definitions holds this reconciler while the cluster's resource
+	// definitions would drop fields it writes (internal/schemacheck). Nil
+	// holds nothing.
+	Definitions *crdcheck.Holder
 	client.Client
 	// KernelRealm is the realm the platform tenant adopts, which is how that
 	// tenant, and so the concierge's namespace, is found.
@@ -182,5 +187,5 @@ func (r *BrandingReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		// are what publish the default brand on a cluster that never sets
 		// one; a Branding watch alone would wait for one forever.
 		Watches(&gentianov1alpha1.Tenant{}, toBranding).
-		Complete(r)
+		Complete(r.Definitions.Guard(r.Client, &gentianov1alpha1.Branding{}, r))
 }

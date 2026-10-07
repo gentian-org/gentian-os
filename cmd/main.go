@@ -15,6 +15,7 @@ import (
 	"flag"
 	"log/slog"
 	"os"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -22,6 +23,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
 	networkingv1 "k8s.io/api/networking/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/kubernetes"
@@ -41,6 +43,8 @@ import (
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"github.com/gentian-org/gentian-os/internal/layout"
 	"github.com/gentian-org/gentian-os/internal/licencereport"
+	"github.com/gentian-org/gentian-os/internal/schemacheck"
+	"github.com/gentian-org/gentian-os/internal/schemacheck/crdcheck"
 	"github.com/gentian-org/gentian-os/internal/usage"
 	"github.com/gentian-org/gentian-os/internal/webhook"
 )
@@ -57,6 +61,9 @@ func init() {
 	utilruntime.Must(networkingv1.AddToScheme(scheme))
 	utilruntime.Must(gentianov1alpha1.AddToScheme(scheme))
 	utilruntime.Must(gatewayv1.Install(scheme))
+	// Read, never watched or written: the definitions check reads the
+	// cluster's CustomResourceDefinitions by name (internal/schemacheck).
+	utilruntime.Must(apiextensionsv1.AddToScheme(scheme))
 }
 
 // buildLogTailer gives the export loop a way to read a failed capture
@@ -205,8 +212,40 @@ func main() {
 		appExecer = podExecer
 	}
 
+	// The definitions check: whether this cluster serves every field of the
+	// resource definitions this operator was built with.
+	//
+	// A cluster whose CRDs or Crossplane-generated CRDs are older drops what
+	// it does not know on every write, and says nothing. So the cluster's
+	// definitions are compared with the embedded ones at start and on a timer,
+	// the result is logged, recorded as an Event and served to the director
+	// and to an operations screen from this operator's listener, and every
+	// reconciler that writes one of these kinds is held until the comparison
+	// has been made and comes out clean. Held, not stopped: the operator
+	// keeps running, says what is wrong on each object it would have
+	// reconciled, and resumes by itself once the definitions are updated.
+	definitions := schemacheck.NewGate(schemacheck.Embedded())
+	held := &crdcheck.Holder{
+		Gate:     definitions,
+		Recorder: mgr.GetEventRecorderFor("definitions"), //nolint:staticcheck
+	}
+	if err := mgr.Add(&crdcheck.Checker{
+		// The API reader: one get per definition, by name. The cached client
+		// would list and watch every CustomResourceDefinition in the cluster,
+		// which the operator is deliberately not permitted to do.
+		Reader:   mgr.GetAPIReader(),
+		Gate:     definitions,
+		Version:  buildVersion(),
+		Recorder: mgr.GetEventRecorderFor("definitions"), //nolint:staticcheck
+		EventOn:  ownPod(),
+	}); err != nil {
+		setupLog.Error(err, "unable to add the definitions check to manager")
+		os.Exit(1)
+	}
+
 	tenantReconciler := &controller.TenantReconciler{
-		Client: mgr.GetClient(),
+		Definitions: held,
+		Client:      mgr.GetClient(),
 		// Needed by the deletion path, which has to tell "gone" apart from "not
 		// in the cache yet" before it acts on a Tenant being deleted.
 		APIReader:                mgr.GetAPIReader(),
@@ -306,6 +345,7 @@ func main() {
 	}
 
 	if err := (&controller.ComponentReconciler{
+		Definitions:    held,
 		Client:         mgr.GetClient(),
 		Scheme:         mgr.GetScheme(),
 		KernelDomain:   os.Getenv("KERNEL_DOMAIN"),
@@ -323,14 +363,16 @@ func main() {
 	}
 
 	if err := (&controller.CustomizationReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Definitions: held,
+		Client:      mgr.GetClient(),
+		Scheme:      mgr.GetScheme(),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Customization")
 		os.Exit(1)
 	}
 
 	if err := (&controller.PlatformSecurityPolicyReconciler{
+		Definitions:       held,
 		Client:            mgr.GetClient(),
 		OperatorNamespace: layout.Namespace(layout.Control),
 	}).SetupWithManager(mgr); err != nil {
@@ -339,13 +381,14 @@ func main() {
 	}
 
 	if err := (&controller.AppGrantReconciler{
-		Client: mgr.GetClient(),
+		Definitions: held,
+		Client:      mgr.GetClient(),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "AppGrant")
 		os.Exit(1)
 	}
 
-	if err := (&controller.BrandingReconciler{Client: mgr.GetClient(), KernelRealm: kernelRealmOrDefault(os.Getenv("KERNEL_REALM"))}).SetupWithManager(mgr); err != nil {
+	if err := (&controller.BrandingReconciler{Definitions: held, Client: mgr.GetClient(), KernelRealm: kernelRealmOrDefault(os.Getenv("KERNEL_REALM"))}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Branding")
 		os.Exit(1)
 	}
@@ -361,18 +404,20 @@ func main() {
 	}
 
 	if err := (&controller.IntegrationBindingReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
-		Seeder: buildSeeder(),
+		Definitions: held,
+		Client:      mgr.GetClient(),
+		Scheme:      mgr.GetScheme(),
+		Seeder:      buildSeeder(),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "IntegrationBinding")
 		os.Exit(1)
 	}
 
 	tenantExportReconciler := &controller.TenantExportReconciler{
-		Client:     mgr.GetClient(),
-		Scheme:     mgr.GetScheme(),
-		Reconciler: tenantReconciler,
+		Definitions: held,
+		Client:      mgr.GetClient(),
+		Scheme:      mgr.GetScheme(),
+		Reconciler:  tenantReconciler,
 		// The API reader, not the cached client: appVolumes explains why a
 		// cached PVC read is how an export comes to hold an app offline
 		// indefinitely with nothing in the log.
@@ -388,26 +433,29 @@ func main() {
 	}
 
 	if err := (&controller.TenantRestoreReconciler{
-		Client:     mgr.GetClient(),
-		Scheme:     mgr.GetScheme(),
-		Reconciler: tenantExportReconciler,
-		Tenant:     tenantReconciler,
+		Definitions: held,
+		Client:      mgr.GetClient(),
+		Scheme:      mgr.GetScheme(),
+		Reconciler:  tenantExportReconciler,
+		Tenant:      tenantReconciler,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "TenantRestore")
 		os.Exit(1)
 	}
 
 	if err := (&controller.TenantExportScheduleReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Definitions: held,
+		Client:      mgr.GetClient(),
+		Scheme:      mgr.GetScheme(),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "TenantExportSchedule")
 		os.Exit(1)
 	}
 
 	if err := (&controller.BackupPolicyReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Definitions: held,
+		Client:      mgr.GetClient(),
+		Scheme:      mgr.GetScheme(),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "BackupPolicy")
 		os.Exit(1)
@@ -498,6 +546,9 @@ func main() {
 		// with what this service already holds: the same function behind
 		// provision-app, and the same Keycloak credential.
 		tenantReconciler.DefaultGrant = lifecycle.Server.Service.GrantAppByDefault
+		// What the check found, for the director to ask before it commits
+		// and for an operations screen to show.
+		lifecycle.Server.Definitions = definitions
 		setupLog.Info("app lifecycle API enabled", "addr", lifecycle.Server.Addr)
 	}
 
@@ -543,6 +594,36 @@ func main() {
 		setupLog.Error(err, "problem running manager")
 		os.Exit(1)
 	}
+}
+
+// buildVersion is the commit this binary was built from, when the build
+// recorded one. An image built from a copy of the sources without their git
+// history records none, and the report then identifies the build by the
+// digest of its definitions alone.
+func buildVersion() string {
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return ""
+	}
+	for _, setting := range info.Settings {
+		if setting.Key == "vcs.revision" {
+			return setting.Value
+		}
+	}
+	return ""
+}
+
+// ownPod names this pod, for the definitions check to record its findings
+// against: an Event needs an object, and the operator's own pod is the one
+// that is always there and where somebody asking "why is nothing being
+// reconciled" looks. Nil outside a pod, which records no Event.
+func ownPod() runtime.Object {
+	namespace := os.Getenv("POD_NAMESPACE")
+	name, err := os.Hostname()
+	if namespace == "" || err != nil || name == "" {
+		return nil
+	}
+	return &corev1.ObjectReference{APIVersion: "v1", Kind: "Pod", Namespace: namespace, Name: name}
 }
 
 // kernelRealmOrDefault returns realm if non-empty, otherwise "kernel".

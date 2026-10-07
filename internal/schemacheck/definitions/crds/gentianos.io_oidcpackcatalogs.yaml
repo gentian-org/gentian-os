@@ -1,0 +1,187 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.17.3
+  name: oidcpackcatalogs.gentianos.io
+spec:
+  group: gentianos.io
+  names:
+    kind: OIDCPackCatalog
+    listKind: OIDCPackCatalogList
+    plural: oidcpackcatalogs
+    shortNames:
+    - oidcpack
+    - oidcpacks
+    singular: oidcpackcatalog
+  scope: Cluster
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.packCount
+      name: Packs
+      type: integer
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          OIDCPackCatalog is a cluster-scoped catalogue of OIDC packs for tenant apps.
+          Shipped from gentian-apps (profiles/<app>/oidc-catalog.yaml) and consumed
+          by the operator and app-default composition for pack Jobs and ClientDefaultScopes.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: OIDCPackCatalogSpec holds mapper templates and per-clientId
+              pack definitions.
+            properties:
+              extraManagedByAttributeGroups:
+                description: |-
+                  ExtraManagedByAttributeGroups lists additional cn=managed-by-attribute-* groups
+                  provisioned per tenant that are not tied to an OIDC pack entitlementGroup (e.g.
+                  portal admin groups).
+                items:
+                  type: string
+                type: array
+              mapperTemplates:
+                additionalProperties:
+                  description: OIDCMapperTemplate describes one Keycloak protocol
+                    mapper on a client scope.
+                  properties:
+                    config:
+                      additionalProperties:
+                        type: string
+                      description: Config holds Keycloak mapper configuration key/value
+                        pairs.
+                      type: object
+                    keycloakName:
+                      description: |-
+                        KeycloakName overrides the mapper name in Keycloak when it differs from
+                        the catalog template key.
+                      type: string
+                    protocolMapper:
+                      description: ProtocolMapper is the Keycloak protocol mapper
+                        type.
+                      type: string
+                  required:
+                  - protocolMapper
+                  type: object
+                description: MapperTemplates are reusable Keycloak protocol mapper
+                  definitions.
+                type: object
+              packs:
+                additionalProperties:
+                  description: |-
+                    OIDCPackSpec is the OIDC configuration for one clientId.
+                    Making scopeName, clientRole and entitlementGroup optional in the schema is
+                    what lets a service pack omit them; these keep an APP pack from omitting them
+                    by accident, which previously the Required markers guaranteed.
+                    The presence checks are deliberately cheap — CEL costs are estimated against
+                    worst-case string lengths, and comparing these three to the empty string as well pushed the
+                    rule over the API server's budget. MinLength on each field rejects an empty
+                    string when the key IS present, so presence is all this needs to test.
+                  properties:
+                    clientRole:
+                      description: |-
+                        ClientRole is the Keycloak client role mapped from the entitlement group.
+                        Required unless serviceClient is true.
+                      maxLength: 255
+                      minLength: 1
+                      type: string
+                    defaultScopes:
+                      description: DefaultScopes are realm default scopes attached
+                        before the pack scope.
+                      items:
+                        type: string
+                      type: array
+                    entitlementGroup:
+                      description: |-
+                        EntitlementGroup is the Keycloak group name mapped to the pack client role.
+                        Required unless serviceClient is true.
+                      maxLength: 255
+                      minLength: 1
+                      type: string
+                    fullScopeAllowed:
+                      description: FullScopeAllowed controls Keycloak fullScopeAllowed
+                        on the client.
+                      type: boolean
+                    mappers:
+                      description: Mappers lists mapper template keys from spec.mapperTemplates.
+                      items:
+                        type: string
+                      type: array
+                    publicClient:
+                      description: PublicClient marks the OIDC client as PUBLIC (PKCE,
+                        no secret).
+                      type: boolean
+                    scopeDescription:
+                      description: ScopeDescription is shown in the Keycloak admin
+                        UI.
+                      type: string
+                    scopeName:
+                      description: |-
+                        ScopeName is the Keycloak client scope created for this pack.
+                        Required unless serviceClient is true.
+                      maxLength: 255
+                      minLength: 1
+                      type: string
+                    serviceClient:
+                      description: |-
+                        ServiceClient provisions a confidential client for a backend service
+                        rather than an application users log in to.
+
+                        The default pack shape assumes a user-facing app: a client scope, protocol
+                        mappers, a client role, and an entitlement group that grants it. A service
+                        that only validates other clients' tokens — kernel Dovecot introspecting
+                        XOAUTH2 access tokens is the case this exists for — needs none of that. It
+                        needs client credentials and nothing else, and giving it a scope and an
+                        entitlement group would put an empty role in every realm and imply users
+                        can be granted access to it.
+
+                        When true, scopeName, clientRole and entitlementGroup are ignored (and may
+                        be empty), the browser flow is disabled on the client, and no scope, mapper,
+                        role or group mapping is created. publicClient must stay false: a service
+                        client with no secret cannot authenticate to the introspection endpoint.
+                      type: boolean
+                  type: object
+                  x-kubernetes-validations:
+                  - message: scopeName, clientRole and entitlementGroup are required
+                      unless serviceClient is true
+                    rule: (has(self.serviceClient) && self.serviceClient) || (has(self.scopeName)
+                      && has(self.clientRole) && has(self.entitlementGroup))
+                  - message: 'a serviceClient pack cannot be a publicClient: it authenticates
+                      to the introspection endpoint with a secret'
+                    rule: '!(has(self.serviceClient) && self.serviceClient) || !(has(self.publicClient)
+                      && self.publicClient)'
+                description: Packs maps OIDC clientId to pack configuration.
+                type: object
+            type: object
+          status:
+            description: OIDCPackCatalogStatus is optional observed state.
+            properties:
+              packCount:
+                description: PackCount is the number of entries in spec.packs.
+                type: integer
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources: {}

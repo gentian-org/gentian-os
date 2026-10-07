@@ -1,0 +1,880 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.17.3
+  name: tenants.gentianos.io
+spec:
+  group: gentianos.io
+  names:
+    kind: Tenant
+    listKind: TenantList
+    plural: tenants
+    shortNames:
+    - tenant
+    - tenants
+    singular: tenant
+  scope: Cluster
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.phase
+      name: STATUS
+      type: string
+    - jsonPath: .status.appCount
+      name: APPS
+      type: integer
+    - jsonPath: .status.readyApps
+      name: READY
+      type: integer
+    - jsonPath: .status.adminEmail
+      name: ADMIN
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: AGE
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          Tenant is the Schema for the tenants API.
+
+          Tenant is cluster-scoped and represents a customer organisation. Creating a
+          Tenant CR triggers the orchestrator's full provisioning pipeline: namespace
+          creation, Keycloak realm, per-app databases/buckets/cache, and
+          ArgoCD Application (or Crossplane App claim) CRs for each requested app.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            properties:
+              admin:
+                description: |-
+                  Admin is how the tenant's administrator account is handed over. The
+                  account is created with no password: its holder sets one through a
+                  single-use, expiring link, mailed to a recovery address when the person
+                  activating it gives one and otherwise shown, once, to them. The address
+                  is not here: a person's address committed to git outlives the account.
+                properties:
+                  requireMFA:
+                    default: true
+                    description: |-
+                      RequireMFA makes enrolling a second factor part of activating the
+                      account. Defaults to true.
+                    type: boolean
+                type: object
+              apps:
+                description: Apps lists the applications to install for this tenant.
+                items:
+                  description: TenantApp specifies a desired application installation
+                    for a tenant.
+                  properties:
+                    addonPins:
+                      description: |-
+                        AddonPins pins addons of this app to the build each was installed
+                        from, like digest and catalogue do for the app itself. It is keyed by
+                        the addon's name and stands beside addons rather than inside it: addons
+                        stays the list of names every reader walks, and an addon with no entry
+                        here is activated unpinned, as before.
+
+                        A pinned addon is rolled out only from a profile shown to be that
+                        build. Until it is, the base it activates inside is held as it runs.
+                        An entry naming an addon that is not in addons pins nothing.
+                      items:
+                        description: AddonPin is the build one addon was installed
+                          from.
+                        properties:
+                          catalogue:
+                            description: |-
+                              Catalogue is the catalogue the pinned build was fetched from: the first
+                              half of its coordinate, <catalogue>/<name>.
+                            maxLength: 63
+                            pattern: ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$
+                            type: string
+                          digest:
+                            description: |-
+                              Digest pins the addon's profile bundle: the build the install asked
+                              for.
+                            pattern: ^sha256:[a-f0-9]{64}$
+                            type: string
+                          name:
+                            description: Name is the addon's profile name, as addons
+                              lists it.
+                            maxLength: 63
+                            minLength: 1
+                            type: string
+                        required:
+                        - digest
+                        - name
+                        type: object
+                      maxItems: 128
+                      type: array
+                      x-kubernetes-list-map-keys:
+                      - name
+                      x-kubernetes-list-type: map
+                    addons:
+                      description: |-
+                        Addons lists the addon profiles activated inside this app for this tenant —
+                        customization-ladder rung L3. Each entry names an AppProfile carrying
+                        gentianos.io/deployment-role: addon in the same family as this app.
+
+                        Addons are activation state *inside* the installed app, not separate
+                        installs: they never appear as their own entries in spec.apps, get no App
+                        claim of their own, and are applied through the app's native mechanism
+                        (Odoo `-i`, Nextcloud `occ app:enable`).
+
+                        The App Store writes this list — pre-filled from an AppPackage preset when
+                        one is chosen, then editable afterwards. Every entry that resolves is
+                        activated, whatever its edition: the platform gates none, and a paid
+                        addon arrives only where the tenant holds a credential for the
+                        repository it is pulled from. See gentian-os/docs/app-customization.md §4.2.
+                      items:
+                        type: string
+                      type: array
+                      x-kubernetes-list-type: set
+                    catalogue:
+                      description: |-
+                        Catalogue is the catalogue the pinned build was fetched from: the first
+                        half of its coordinate, <catalogue>/<profile>. It is written with the
+                        digest by an install that fetched the bundle from that catalogue's
+                        source, and is absent on every other entry.
+                      maxLength: 63
+                      pattern: ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$
+                      type: string
+                    config:
+                      description: |-
+                        Config provides per-tenant overrides for this app installation.
+                        Values here are merged over the AppProfile's extraValues.
+                      properties:
+                        dropIns:
+                          description: |-
+                            DropIns supply tenant-authored files into drop-in directories the target
+                            AppProfile declares as tenantEditable. This is rung L1 at tenant scope —
+                            the highest rung a tenant admin may reach unaided, and the only one where
+                            self-service makes sense: content, never code.
+
+                            Each entry must name a declared, tenantEditable drop-in; filenames are
+                            restricted to the 90-99 range so platform and profile files keep priority.
+                            Content lands in a ConfigMap and is therefore not secret material.
+                            See docs/app-customization.md §2.2.1.
+                          items:
+                            description: TenantAppDropIn is tenant-authored content
+                              for one declared drop-in directory.
+                            properties:
+                              files:
+                                additionalProperties:
+                                  type: string
+                                description: |-
+                                  Files maps filename to content. Filenames are validated against the
+                                  tenant-reserved 90-99 numeric prefix range, and total content is capped by
+                                  the drop-in's maxBytes.
+                                minProperties: 1
+                                type: object
+                              name:
+                                description: |-
+                                  Name must match an AppProfile.spec.customization.dropIns[].name entry that
+                                  sets tenantEditable: true. Tenants cannot invent mount paths — that would be
+                                  repackaging (L4) at tenant scope.
+                                maxLength: 63
+                                pattern: ^[a-z][a-z0-9-]*$
+                                type: string
+                            required:
+                            - files
+                            - name
+                            type: object
+                          type: array
+                          x-kubernetes-list-map-keys:
+                          - name
+                          x-kubernetes-list-type: map
+                        extraValues:
+                          description: |-
+                            ExtraValues deep-merges Helm values over the AppProfile defaults.
+                            Must not contain secrets — use valueMapping for credentials.
+                          type: object
+                          x-kubernetes-preserve-unknown-fields: true
+                        replicas:
+                          description: Replicas overrides the default replica count.
+                          format: int32
+                          minimum: 0
+                          type: integer
+                      type: object
+                      x-kubernetes-preserve-unknown-fields: true
+                    defaultGrant:
+                      description: |-
+                        DefaultGrant says every member of the tenant has access to this app by
+                        default. The people who are members when the app's group first exists
+                        are added to it, once, and the group is marked so that somebody invited
+                        later has the app pre-selected. It is applied once per install
+                        (status.defaultGrantedApps): a person an administrator removes from the
+                        group afterwards stays removed.
+
+                        Absent or false, access is given per person.
+                      type: boolean
+                    digest:
+                      description: |-
+                        Digest pins the profile bundle this app was installed from: the build
+                        the install asked for. It is a field of the install and not part of the
+                        profile's name, so the same app keeps one name across builds.
+                      pattern: ^sha256:[a-f0-9]{64}$
+                      type: string
+                    profile:
+                      description: |-
+                        Profile is the name of the AppProfile CR to install.
+                        When profileRef is set, the operator resolves it to a concrete profile name
+                        and may populate this field for observability.
+                      type: string
+                    profileRef:
+                      description: |-
+                        ProfileRef selects an AppProfile by catalogue identity (family, version, edition,
+                        offering tier). Takes precedence over profile when resolving installs.
+                      properties:
+                        identity:
+                          description: Identity selects a profile by catalogue tuple
+                            when Name is empty.
+                          properties:
+                            catalogueVersion:
+                              description: CatalogueVersion is the semver of this
+                                catalogue entry.
+                              pattern: ^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[\w.-]+)?(?:\+[\w.-]+)?$
+                              type: string
+                            edition:
+                              default: ce
+                              description: Edition selects the edition (ce, pe, me,
+                                ee).
+                              enum:
+                              - ce
+                              - pe
+                              - me
+                              - ee
+                              type: string
+                            family:
+                              description: Family is the stable logical application
+                                id (e.g. "demo-app").
+                              maxLength: 63
+                              minLength: 1
+                              pattern: ^[a-z0-9]([a-z0-9\-]*[a-z0-9])?$
+                              type: string
+                          required:
+                          - catalogueVersion
+                          - family
+                          type: object
+                        name:
+                          description: Name is the AppProfile metadata.name. When
+                            set, this is the exact profile CR to use.
+                          type: string
+                      type: object
+                  type: object
+                  x-kubernetes-validations:
+                  - message: either profile or profileRef is required
+                    rule: has(self.profile) || has(self.profileRef)
+                type: array
+              deletion:
+                description: Deletion refines what a Delete leaves behind.
+                properties:
+                  keepBundles:
+                    description: |-
+                      KeepBundles keeps the tenant's backup bucket and the bundles in it
+                      when everything else is deleted: the offboarding case, where the
+                      tenant was handed a copy and a provider keeps one under contract.
+                      Off by default -- a purge that leaves the backups behind has not
+                      purged.
+                    type: boolean
+                type: object
+              deletionPolicy:
+                default: Retain
+                description: |-
+                  DeletionPolicy controls behaviour when the Tenant CR is deleted.
+                  Defaults to Retain.
+                enum:
+                - Retain
+                - Delete
+                type: string
+              displayName:
+                description: DisplayName is a human-readable name for this tenant/organisation.
+                maxLength: 256
+                minLength: 1
+                type: string
+              exposures:
+                description: |-
+                  Exposures are the perimeter surfaces a perimeter approver published
+                  (AD-6): what this tenant has on the internet, from when, until when,
+                  and who said so.
+
+                  Here for the same reason the grants are: the decision has to outlive
+                  the thing it applies to, and it has to be a commit rather than an edit
+                  somebody made to a live object. The operator copies each entry onto the
+                  Component it names, and the Component's reconcile is what stands the
+                  proxy up in the tenant's DMZ.
+
+                  It is also the registry. Every URL this tenant publishes is one of
+                  these, which is what lets "what of ours is on the internet" be answered
+                  by the thing that put it there.
+                items:
+                  description: |-
+                    TenantExposure is one published surface, against one of the tenant's
+                    components.
+
+                    The fields are spelled out rather than embedded so the two list map keys can
+                    be the component and the entry: together they are what makes a published
+                    surface unique, and letting the API server enforce that is better than a
+                    controller finding two answers to how long something is on the internet.
+                  properties:
+                    expiresAt:
+                      description: |-
+                        ExpiresAt is when it stops answering, for a surface published for a
+                        while. Optional: one meant to stay has none.
+                      format: date-time
+                      type: string
+                    exposureName:
+                      description: |-
+                        ExposureName names an entry of that component's profile whose surface
+                        is perimeter. An entry that is not is never published here: the
+                        operator checks, because enabling a gateway entry by name would
+                        otherwise put the component's authenticated surface on the internet.
+                      maxLength: 40
+                      pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                      type: string
+                    install:
+                      description: Install names the Component this publishes from.
+                      maxLength: 253
+                      pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                      type: string
+                    lastReviewedAt:
+                      format: date-time
+                      type: string
+                    lastReviewedBy:
+                      description: |-
+                        LastReviewedBy is the subject that last confirmed this should stay
+                        public, and LastReviewedAt when. Publishing is the first review, and
+                        the owner may well be the reviewer every time: what is asked for is a
+                        regular look, not a second person.
+                      maxLength: 256
+                      type: string
+                    owner:
+                      description: |-
+                        Owner is the subject that published it, set by the director from the
+                        caller's token.
+                      maxLength: 256
+                      minLength: 1
+                      type: string
+                    publishedAt:
+                      description: |-
+                        PublishedAt is when it was first published. It does not change when
+                        the entry is reviewed.
+                      format: date-time
+                      type: string
+                    reason:
+                      description: Reason is why this is public, in the approver's
+                        words.
+                      maxLength: 2000
+                      type: string
+                    reviewAt:
+                      description: |-
+                        ReviewAt is when the owner and the approver look at it again. Always
+                        set; overdue is reported and takes nothing down.
+                      format: date-time
+                      type: string
+                  required:
+                  - exposureName
+                  - install
+                  - owner
+                  - reviewAt
+                  type: object
+                maxItems: 256
+                type: array
+                x-kubernetes-list-map-keys:
+                - install
+                - exposureName
+                x-kubernetes-list-type: map
+              isolation:
+                description: Isolation describes the workload isolation boundaries
+                  for this tenant.
+                properties:
+                  databasePrefix:
+                    description: |-
+                      DatabasePrefix is the prefix for all database names belonging to this tenant.
+                      Defaults to "{tenant-name}_".
+                    pattern: ^[a-z0-9_]*$
+                    type: string
+                  keycloakRealm:
+                    description: |-
+                      KeycloakRealm is the Keycloak realm name for this tenant.
+                      Defaults to the tenant name.
+                    type: string
+                  mode:
+                    default: namespace
+                    description: Mode selects the isolation strategy. Defaults to
+                      namespace.
+                    enum:
+                    - namespace
+                    - vcluster
+                    type: string
+                  namespace:
+                    description: |-
+                      Namespace overrides the target namespace name.
+                      Defaults to "tenant-{tenant-name}" when not set.
+                    pattern: ^[a-z0-9][a-z0-9\-]*[a-z0-9]$
+                    type: string
+                  s3Prefix:
+                    description: |-
+                      S3Prefix is the prefix for all S3 bucket names belonging to this tenant.
+                      Defaults to "{tenant-name}-".
+                    pattern: ^[a-z0-9\-]*$
+                    type: string
+                type: object
+              locales:
+                description: |-
+                  Locales are the languages this tenant's realm renders its login and
+                  account pages in, as ISO 639-1 codes (AD-15). Empty means the
+                  platform's own set.
+
+                  Languages rather than locales: Keycloak serves de-CH from its German
+                  catalogue, and a realm listing regional codes offers a picker full of
+                  entries that render identically.
+                items:
+                  pattern: ^[a-z]{2}(-[A-Za-z0-9]{2,8})?$
+                  type: string
+                maxItems: 32
+                type: array
+                x-kubernetes-list-type: set
+              mail:
+                description: Mail configures the mail mode and settings for this tenant.
+                properties:
+                  mode:
+                    default: selfhosted
+                    description: Mode selects the mail delivery strategy. Defaults
+                      to selfhosted.
+                    enum:
+                    - selfhosted
+                    - external
+                    - transport-only
+                    - disabled
+                    type: string
+                  smtpCredentialsSecret:
+                    description: |-
+                      SmtpCredentialsSecret is the name of an existing Kubernetes Secret in the
+                      kernel namespace that contains SMTP relay credentials for external mail
+                      delivery. Required when mode=external.
+                      The Secret must provide keys: host, port, username, password.
+                    type: string
+                type: object
+              privileges:
+                description: |-
+                  Privileges are the privilege requests a person granted for this
+                  tenant's components (AD-5). They live here because a grant has to
+                  survive the thing it applies to: a Component is rebuilt from its
+                  profile and can be deleted and recreated, while the record that a named
+                  person said yes on a named date must not be. The Tenant comes from git,
+                  so this is also what makes an approval a commit rather than an edit
+                  somebody made to a live object.
+
+                  The operator copies each entry onto the Component named by Install. A
+                  grant for a component that does not exist is kept and ignored, because
+                  an app can be uninstalled and reinstalled and re-asking for an approval
+                  that was already given is how approvals become a formality.
+                items:
+                  description: |-
+                    TenantPrivilegeGrant is one grant, against one of the tenant's components.
+
+                    The fields of PrivilegeGrant are spelled out rather than embedded so that
+                    this is one flat object in the CRD and the two list map keys can be the
+                    component and the privilege -- together they are what makes a grant unique,
+                    and letting the API server enforce that is better than a controller
+                    discovering two answers to the same question.
+                  properties:
+                    approvedAt:
+                      format: date-time
+                      type: string
+                    approver:
+                      description: |-
+                        Approver is the Keycloak subject who said yes, set by the director from
+                        the caller's token. Never supplied by a caller: a grant that could name
+                        its own approver would record nothing.
+                      maxLength: 256
+                      minLength: 1
+                      type: string
+                    expiresAt:
+                      description: |-
+                        ExpiresAt bounds the grant. A waiver with no expiry is a waiver nobody
+                        reviews.
+                      format: date-time
+                      type: string
+                    install:
+                      description: |-
+                        Install names the Component this grant is for, which is the component's
+                        object name in the tenant's namespace.
+                      maxLength: 253
+                      pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                      type: string
+                    privilege:
+                      description: Privilege names one entry of the profile's request,
+                        as <kind>/<name>.
+                      maxLength: 80
+                      pattern: ^(podSecurity|egress|clusterRoles)/[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                      type: string
+                    reason:
+                      description: |-
+                        Reason in the approver's words, not the profile's. The profile already
+                        said why it wants the privilege; this is why somebody agreed.
+                      maxLength: 2000
+                      minLength: 10
+                      type: string
+                  required:
+                  - approvedAt
+                  - approver
+                  - install
+                  - privilege
+                  - reason
+                  type: object
+                maxItems: 256
+                type: array
+                x-kubernetes-list-map-keys:
+                - install
+                - privilege
+                x-kubernetes-list-type: map
+              quotas:
+                description: Quotas sets resource limits for this tenant.
+                properties:
+                  cpu:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    description: |-
+                      CPU caps the sum of container CPU **limits** in the namespace.
+
+                      A limit is a burst ceiling, not a reservation: it is what a container may
+                      spike to, and the scheduler does not set anything aside for it. Chart
+                      defaults are generous with limits — one tenant running Nextcloud, an
+                      office suite and the App Store sums to roughly six cores of limits while
+                      reserving one — so this number does not correspond to hardware and must
+                      not be the one a plan is sold on. It exists to bound the blast radius of
+                      a runaway container. Sell RequestsCPU.
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                    x-kubernetes-int-or-string: true
+                  maxApps:
+                    description: MaxApps is the maximum number of apps this tenant
+                      may install.
+                    format: int32
+                    minimum: 1
+                    type: integer
+                  maxPods:
+                    description: MaxPods caps the number of pods in the tenant namespace
+                      (init Jobs + app workloads).
+                    format: int32
+                    minimum: 1
+                    type: integer
+                  memory:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    description: |-
+                      Memory caps the sum of container memory **limits** in the namespace.
+                      The burst ceiling, for the same reason as CPU. Sell RequestsMemory.
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                    x-kubernetes-int-or-string: true
+                  requestsCpu:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    description: |-
+                      RequestsCPU caps the sum of container CPU **requests** in the namespace.
+
+                      Requests are what the scheduler actually reserves, so this is the number
+                      that maps one-to-one onto purchased capacity: two cores of requests is
+                      two cores of a node that nothing else can schedule into. It is therefore
+                      the quantity a ResourcePlan is priced on.
+
+                      Safe to impose on a namespace that already has pods: the tenant
+                      LimitRange sets defaultRequest (100m / 128Mi), so a container that
+                      declares no request still has one and the quota cannot reject it.
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                    x-kubernetes-int-or-string: true
+                  requestsMemory:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    description: |-
+                      RequestsMemory caps the sum of container memory **requests** in the
+                      namespace — reserved capacity, priced, as RequestsCPU is.
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                    x-kubernetes-int-or-string: true
+                  storage:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    description: Storage is the total storage quota (PVCs + S3 buckets).
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                    x-kubernetes-int-or-string: true
+                type: object
+              security:
+                description: |-
+                  Security is the realm policy this tenant runs under: how strong a
+                  password has to be, how long a session lasts, what happens after
+                  repeated failures. Unset leaves Keycloak's own defaults.
+
+                  Declared here rather than set through Keycloak's admin API, which is
+                  what the console used to do. The composition turns this into the
+                  realm's fields, so the policy is reviewable in git, survives a realm
+                  being rebuilt, and needs no credential anywhere: the thing that changes
+                  it is a commit, and the thing that applies it is the reconciler that
+                  owns the realm.
+                properties:
+                  bruteForce:
+                    description: BruteForce is what happens after repeated failures.
+                    properties:
+                      enabled:
+                        description: |-
+                          Enabled turns detection on. Off is Keycloak's default and is worth
+                          stating deliberately: without it, a password can be guessed at the
+                          speed of the network.
+                        type: boolean
+                      lockoutDurationSeconds:
+                        description: LockoutDurationSeconds is how long a lockout
+                          lasts.
+                        format: int32
+                        maximum: 604800
+                        minimum: 0
+                        type: integer
+                      maxLoginFailures:
+                        description: MaxLoginFailures before the account is locked
+                          out.
+                        format: int32
+                        maximum: 1000
+                        minimum: 0
+                        type: integer
+                    type: object
+                  password:
+                    description: Password is how strong a password must be.
+                    properties:
+                      historyCount:
+                        description: HistoryCount refuses a password the person has
+                          used in their last N.
+                        format: int32
+                        maximum: 64
+                        minimum: 0
+                        type: integer
+                      maxAgeDays:
+                        description: |-
+                          MaxAgeDays forces a change after that many days. Zero means never,
+                          which is what current guidance actually recommends: rotation on a
+                          timer makes people choose worse passwords, and it is here because
+                          some compliance regimes still demand it.
+                        format: int32
+                        maximum: 3650
+                        minimum: 0
+                        type: integer
+                      minLength:
+                        description: MinLength is the shortest password accepted.
+                          Zero leaves it unstated.
+                        format: int32
+                        maximum: 128
+                        minimum: 0
+                        type: integer
+                      requireDigits:
+                        description: |-
+                          RequireDigits, RequireLowercase, RequireUppercase and
+                          RequireSpecialChars each demand at least one of that kind.
+                        type: boolean
+                      requireLowercase:
+                        type: boolean
+                      requireSpecialChars:
+                        type: boolean
+                      requireUppercase:
+                        type: boolean
+                    type: object
+                  session:
+                    description: Session is how long one lasts.
+                    properties:
+                      idleMinutes:
+                        description: IdleMinutes ends a session that has done nothing
+                          for this long.
+                        format: int32
+                        maximum: 43200
+                        minimum: 0
+                        type: integer
+                      maxHours:
+                        description: MaxHours ends it regardless of activity.
+                        format: int32
+                        maximum: 8760
+                        minimum: 0
+                        type: integer
+                      rememberMe:
+                        description: RememberMe offers the longer session the realm
+                          is configured for.
+                        type: boolean
+                    type: object
+                type: object
+            required:
+            - displayName
+            type: object
+          status:
+            description: TenantStatus holds the observed state of a Tenant.
+            properties:
+              adminEmail:
+                description: |-
+                  AdminEmail is the resolved contact address for this tenant, and the
+                  administrator's login: admin@<effectiveDomain>.
+
+                  Reported here because it is derived — there is no spec field to read it
+                  back from — so a consumer that needs the address reads status, and a
+                  tenant whose domain changes shows the new one here once reconciled.
+                type: string
+              appCount:
+                description: AppCount is the total number of apps requested in spec.
+                type: integer
+              conditions:
+                description: |-
+                  Conditions provides detailed status conditions using the standard
+                  metav1.Condition type.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              defaultGrantedApps:
+                description: |-
+                  DefaultGrantedApps lists the apps whose default grant
+                  (spec.apps[].defaultGrant) has been applied: the tenant's members at
+                  that moment were added to the app's group. An app listed here is not
+                  granted again, which is what keeps a person removed from the group
+                  since then removed. An entry leaves the list when the app is
+                  uninstalled or no longer declares the grant, so declaring it again
+                  applies it again.
+                items:
+                  type: string
+                type: array
+                x-kubernetes-list-type: set
+              domain:
+                description: |-
+                  Domain is the custom domain a TenantDomain binds this tenant to, copied
+                  here by the operator so every consumer of EffectiveDomain reads it from
+                  the tenant itself. Empty when no TenantDomain names this tenant.
+                type: string
+              mail:
+                description: |-
+                  Mail holds the observed DNS record data produced by the mail reconciler.
+                  Operators must publish these values in the tenant's DNS zone.
+                properties:
+                  dkimPublicKey:
+                    description: |-
+                      DKIMPublicKey is the RSA public key for DKIM signing, base64-encoded (PKIX DER).
+                      Publish as a TXT record: v=DKIM1; k=rsa; p=<DKIMPublicKey>
+                      under mail._domainkey.<mail domain>.
+                    type: string
+                  dmarcRecord:
+                    description: DMARCRecord is the suggested DMARC TXT record value
+                      for _dmarc.<mail domain>.
+                    type: string
+                  spfRecord:
+                    description: SPFRecord is the suggested SPF TXT record value for
+                      the mail domain.
+                    type: string
+                type: object
+              namespace:
+                description: Namespace is the resolved tenant namespace name.
+                type: string
+              observedGeneration:
+                description: ObservedGeneration is the last processed generation of
+                  the spec.
+                format: int64
+                type: integer
+              phase:
+                description: Phase summarises the overall lifecycle state.
+                enum:
+                - Provisioning
+                - Ready
+                - Degraded
+                - Deleting
+                type: string
+              provisionedApps:
+                description: ProvisionedApps lists apps that have been successfully
+                  provisioned.
+                items:
+                  type: string
+                type: array
+              readyApps:
+                description: ReadyApps is the number of apps that have been successfully
+                  provisioned.
+                type: integer
+              resourcePlan:
+                description: |-
+                  ResourcePlan is the plan whose selection was last recorded in the
+                  tenant's usage history: the value of the resource-plan annotation at
+                  the time the plan event was written. It differing from the annotation
+                  is what tells the reconciler a change has landed that the billing
+                  record does not know about yet.
+                type: string
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

@@ -20,10 +20,15 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
+	"github.com/gentian-org/gentian-os/internal/schemacheck/crdcheck"
 )
 
 // IntegrationBindingReconciler reconciles a IntegrationBinding object
 type IntegrationBindingReconciler struct {
+	// Definitions holds this reconciler while the cluster's resource
+	// definitions would drop fields it writes (internal/schemacheck). Nil
+	// holds nothing.
+	Definitions *crdcheck.Holder
 	client.Client
 	Scheme *runtime.Scheme
 	Seeder *secrets.Seeder
@@ -123,5 +128,5 @@ func (r *IntegrationBindingReconciler) Reconcile(ctx context.Context, req ctrl.R
 func (r *IntegrationBindingReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&gentianov1alpha1.IntegrationBinding{}).
-		Complete(r)
+		Complete(r.Definitions.Guard(r.Client, &gentianov1alpha1.IntegrationBinding{}, r))
 }

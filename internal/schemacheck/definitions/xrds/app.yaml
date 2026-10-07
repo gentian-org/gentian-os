@@ -1,0 +1,176 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: CompositeResourceDefinition
+metadata:
+  name: xapps.gentianos.io
+spec:
+  group: gentianos.io
+  names:
+    kind: XApp
+    plural: xapps
+  claimNames:
+    kind: App
+    plural: apps
+  defaultCompositionRef:
+    name: app-default
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              required:
+                - profileRef
+                - tenantNamespace
+              properties:
+                profileRef:
+                  type: object
+                  description: >
+                    Reference to the AppProfile that describes the app to install.
+                    The AppProfile must be cluster-scoped and already exist.
+                  required:
+                    - name
+                  properties:
+                    name:
+                      type: string
+                      description: Name of the AppProfile (e.g. "demo-app").
+                tenantNamespace:
+                  type: string
+                  description: >
+                    Target namespace for this app's Helm release and ExternalSecret.
+                    Set by the operator from the owning Tenant's namespace
+                    (convention: "tenant-{tenant-name}").
+                domain:
+                  type: string
+                  description: >
+                    Effective tenant domain (custom, or derived from kernelDomain).
+                    Used for template substitution of ${TENANT_DOMAIN} in
+                    AppProfile.spec.extraValues. Set by the operator.
+                config:
+                  type: object
+                  description: Per-tenant overrides applied on top of the AppProfile defaults.
+                  properties:
+                    replicas:
+                      type: integer
+                      format: int32
+                      description: >
+                        Override the chart's replica count. When omitted the
+                        chart default or profile-level extraValues applies.
+                      minimum: 0
+                    extraValues:
+                      type: object
+                      description: >
+                        Arbitrary Helm values deep-merged over the profile's
+                        extraValues. Must not contain secrets.
+                      x-kubernetes-preserve-unknown-fields: true
+                pullSecrets:
+                  type: object
+                  description: >
+                    Which of the tenant's repository pull Secrets this app is
+                    pulled with. Set by the operator from the repositories the
+                    owning tenant declared; names only, and every one of them
+                    is looked for in tenantNamespace and nowhere else.
+                  properties:
+                    images:
+                      type: array
+                      description: >
+                        Secrets added to the chart's imagePullSecrets, after
+                        the cluster's own.
+                      items:
+                        type: string
+                    charts:
+                      type: array
+                      description: >
+                        The Secret a chart repository of the profile is pulled
+                        with. A repository not listed is pulled without one.
+                      items:
+                        type: object
+                        required:
+                          - repository
+                          - secretName
+                        properties:
+                          repository:
+                            type: string
+                            description: The chart repository, exactly as the profile states it.
+                          secretName:
+                            type: string
+                addons:
+                  type: array
+                  description: |
+                    Addon identifiers to activate inside this app, resolved by the
+                    operator to whatever the hosting app's own addon system calls them.
+
+                    Deliberately a sibling of config rather than a field inside it:
+                    config carries Helm value overrides, while addons are activation
+                    state applied through the app's own mechanism (Odoo `-i`,
+                    Nextcloud `occ app:enable`) after the release is up.
+                  items:
+                    type: string
+            status:
+              type: object
+              properties:
+                releaseReady:
+                  type: boolean
+                  description: True when the provider-helm Release is Synced+Ready.
+                secretSynced:
+                  type: boolean
+                  description: True when the ExternalSecret has synced all sensitive values.
+---
+# Grant the Crossplane SA read access to ComponentProfiles so that the
+# function-extra-resources composition step can fetch the profile referenced
+# by an XApp's spec.profileRef.name.  The crossplane ClusterRole is an
+# aggregated role; adding the aggregate-to-crossplane label here injects the
+# rule without patching the auto-generated role directly.
+#
+# This names componentprofiles because AD-4 left one catalogue kind and
+# app-default fetches it. The grant HAS to move in the same commit as the
+# fetch: the failure below is what a missing half looks like, and it does not
+# mention RBAC anywhere.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: crossplane:extra-resources:componentprofiles.gentianos.io
+  labels:
+    rbac.crossplane.io/aggregate-to-crossplane: "true"
+rules:
+  - apiGroups:
+      - gentianos.io
+    resources:
+      - componentprofiles
+    verbs:
+      - get
+      - list
+      - watch
+---
+# Same grant for OIDCPackCatalog: the app-default composition fetches BOTH
+# the profile and OIDCPackCatalog in its fetch-extra-resources step, but only
+# the former was ever granted.
+#
+# The missing half does not fail as a permission error. function-extra-resources
+# lists through an informer, the informer cannot sync because the list is
+# forbidden, and the step times out with
+#
+#   fetching resources for oidcPackCatalog: cannot list required resources:
+#   Timeout: failed waiting for *unstructured.Unstructured Informer to sync
+#
+# so every XApp stays Synced=False and its claim never goes Ready — which
+# surfaces as a tenant stuck in Provisioning on "Unready resources:
+# app-<profile>" with nothing in the logs naming RBAC.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: crossplane:extra-resources:oidcpackcatalogs.gentianos.io
+  labels:
+    rbac.crossplane.io/aggregate-to-crossplane: "true"
+rules:
+  - apiGroups:
+      - gentianos.io
+    resources:
+      - oidcpackcatalogs
+    verbs:
+      - get
+      - list
+      - watch

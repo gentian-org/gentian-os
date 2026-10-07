@@ -33,6 +33,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/gentian-org/gentian-os/internal/schemacheck"
 )
 
 // Client talks to one operator.
@@ -267,6 +269,36 @@ func (c *Client) Plans(ctx context.Context, tenant string, selfService bool) ([]
 		return nil, fmt.Errorf("app-lifecycle API: plans: %w", err)
 	}
 	return answer.Plans, nil
+}
+
+// DefinitionsPath is the operator's read of what the cluster serves of the
+// resource definitions the software was built with.
+const DefinitionsPath = "/v1/definitions"
+
+// definitionsTimeout bounds the one question a write waits on. Well under
+// this client's ordinary timeout: an operator that does not answer in this
+// time is treated as one that cannot be asked, and the write is refused
+// rather than kept hanging.
+const definitionsTimeout = 5 * time.Second
+
+// Definitions asks the operator what the cluster serves of the definitions
+// it was built with. Any answer that is not a report is an error, and the
+// caller treats an error as "not confirmed".
+func (c *Client) Definitions(ctx context.Context) (schemacheck.Report, error) {
+	ctx, cancel := context.WithTimeout(ctx, definitionsTimeout)
+	defer cancel()
+	status, body, err := c.Get(ctx, DefinitionsPath, nil)
+	if err != nil {
+		return schemacheck.Report{}, err
+	}
+	if status != http.StatusOK {
+		return schemacheck.Report{}, &UpstreamError{Status: status, Message: ErrorMessage(body)}
+	}
+	var report schemacheck.Report
+	if err := json.Unmarshal(body, &report); err != nil {
+		return schemacheck.Report{}, fmt.Errorf("app-lifecycle API: definitions: %w", err)
+	}
+	return report, nil
 }
 
 // ErrorMessage reads the operator's {"detail": "..."} body, or returns the

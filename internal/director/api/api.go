@@ -41,6 +41,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/director/catalogue"
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
 	"github.com/gentian-org/gentian-os/internal/director/lifecycle"
+	"github.com/gentian-org/gentian-os/internal/schemacheck"
 )
 
 // Authenticator establishes the caller's identity from a request.
@@ -1294,7 +1295,21 @@ func (s *Server) started(w http.ResponseWriter, r *http.Request, status int, bod
 }
 
 func (s *Server) repoError(w http.ResponseWriter, r *http.Request, err error) {
+	var refusal *schemacheck.Refusal
 	switch {
+	case errors.As(err, &refusal):
+		// 503: the request was fine and nothing was written. The cluster's
+		// resource definitions are older than this software and would drop
+		// part of the change when Argo CD applied it -- or that could not be
+		// ruled out. The message names the definition, the fields and what
+		// to do; it holds nothing of git's, so it goes to the caller whole.
+		s.cfg.Log.WarnContext(r.Context(), "write refused: the cluster's definitions would drop part of it",
+			"request_id", reqID(r.Context()), "unconfirmed", refusal.Unconfirmed,
+			"kind", refusal.Kind, "fields", refusal.Fields)
+		if refusal.Unconfirmed {
+			w.Header().Set("Retry-After", "15")
+		}
+		s.fail(w, r, http.StatusServiceUnavailable, refusal.Message)
 	case errors.Is(err, gitops.ErrTenantNotFound):
 		s.fail(w, r, http.StatusNotFound, "tenant not found")
 	case errors.Is(err, gitops.ErrPlatformTenant):

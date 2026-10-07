@@ -23,6 +23,7 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/catalogue"
+	"github.com/gentian-org/gentian-os/internal/schemacheck/crdcheck"
 )
 
 const (
@@ -42,6 +43,10 @@ const (
 // (WP-2). What remains is the object's lifecycle: a finalizer so a grant is
 // observed leaving, and a status that says it was taken in.
 type AppGrantReconciler struct {
+	// Definitions holds this reconciler while the cluster's resource
+	// definitions would drop fields it writes (internal/schemacheck). Nil
+	// holds nothing.
+	Definitions *crdcheck.Holder
 	client.Client
 }
 
@@ -77,7 +82,7 @@ func (r *AppGrantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 func (r *AppGrantReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&gentianov1alpha1.AppGrant{}).
-		Complete(r)
+		Complete(r.Definitions.Guard(r.Client, &gentianov1alpha1.AppGrant{}, r))
 }
 
 func setAppGrantCondition(grant *gentianov1alpha1.AppGrant, typ string, status metav1.ConditionStatus, reason, message string) {

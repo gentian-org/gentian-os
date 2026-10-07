@@ -28,6 +28,7 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/customization"
+	"github.com/gentian-org/gentian-os/internal/schemacheck/crdcheck"
 )
 
 const (
@@ -56,6 +57,10 @@ const (
 // tested against, does the target still exist — are properties of the live cluster,
 // not of the file.
 type CustomizationReconciler struct {
+	// Definitions holds this reconciler while the cluster's resource
+	// definitions would drop fields it writes (internal/schemacheck). Nil
+	// holds nothing.
+	Definitions *crdcheck.Holder
 	client.Client
 	Scheme *runtime.Scheme
 
@@ -95,7 +100,7 @@ func (r *CustomizationReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			&gentianov1alpha1.ComponentProfile{},
 			handler.EnqueueRequestsFromMapFunc(mapProfileToRecords),
 		).
-		Complete(r)
+		Complete(r.Definitions.Guard(r.Client, &gentianov1alpha1.Customization{}, r))
 }
 
 // Reconcile evaluates one Customization record and writes its derived status.

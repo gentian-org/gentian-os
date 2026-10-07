@@ -51,6 +51,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/kernel/trustanchor"
 	"github.com/gentian-org/gentian-os/internal/layout"
 	"github.com/gentian-org/gentian-os/internal/meta"
+	"github.com/gentian-org/gentian-os/internal/schemacheck/crdcheck"
 )
 
 const (
@@ -223,6 +224,10 @@ var xTenantGVK = schema.GroupVersionKind{
 
 // TenantReconciler reconciles Tenant objects.
 type TenantReconciler struct {
+	// Definitions holds this reconciler while the cluster's resource
+	// definitions would drop fields it writes (internal/schemacheck). Nil
+	// holds nothing.
+	Definitions *crdcheck.Holder
 	// Exec runs commands inside app pods (see AppExecer), so a profile's maintenance-mode and
 	// restore hooks can run. Optional: without it those fall back to scaling.
 	Exec AppExecer
@@ -540,7 +545,7 @@ func (r *TenantReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		)
 	}
 
-	return ctrlBuilder.Complete(r)
+	return ctrlBuilder.Complete(r.guarded())
 }
 
 // tenantEffectiveDomain returns the ingress/mail domain for tenant app hostnames.

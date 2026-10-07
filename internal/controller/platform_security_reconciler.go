@@ -24,6 +24,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/schemacheck/crdcheck"
 	"github.com/gentian-org/gentian-os/internal/security"
 )
 
@@ -38,6 +39,10 @@ const (
 
 // PlatformSecurityPolicyReconciler syncs cluster MAC waiver allowlist to a ConfigMap.
 type PlatformSecurityPolicyReconciler struct {
+	// Definitions holds this reconciler while the cluster's resource
+	// definitions would drop fields it writes (internal/schemacheck). Nil
+	// holds nothing.
+	Definitions *crdcheck.Holder
 	client.Client
 	OperatorNamespace string
 }
@@ -90,7 +95,7 @@ func (r *PlatformSecurityPolicyReconciler) SetupWithManager(mgr ctrl.Manager) er
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&gentianov1alpha1.PlatformSecurityPolicy{}).
 		Owns(&corev1.ConfigMap{}).
-		Complete(r)
+		Complete(r.Definitions.Guard(r.Client, &gentianov1alpha1.PlatformSecurityPolicy{}, r))
 }
 
 func setPSPCondition(psp *gentianov1alpha1.PlatformSecurityPolicy, typ string, status metav1.ConditionStatus, reason, message string) {

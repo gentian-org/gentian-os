@@ -33,6 +33,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/director/catalogue"
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
 	"github.com/gentian-org/gentian-os/internal/director/lifecycle"
+	"github.com/gentian-org/gentian-os/internal/schemacheck"
 )
 
 func main() {
@@ -190,6 +191,7 @@ func run(log *slog.Logger) error {
 	// through this process; they are the usher's. Without the URL the routes
 	// that need the operator do not exist.
 	var lc api.Lifecycle
+	var definitions schemacheck.Source
 	if u := os.Getenv("DIRECTOR_APP_LIFECYCLE_URL"); u == "" {
 		log.Warn("no app-lifecycle URL: no plan can be chosen and no command issued from here", "setting", "DIRECTOR_APP_LIFECYCLE_URL")
 	} else {
@@ -203,8 +205,24 @@ func run(log *slog.Logger) error {
 			log.Warn("no ServiceAccount token for the operator's listener: it will refuse every request from here",
 				"setting", "DIRECTOR_LIFECYCLE_TOKEN_FILE", "file", tokenFile)
 		}
-		lc = lifecycle.New(u, lifecycle.TokenFile(tokenFile))
+		client := lifecycle.New(u, lifecycle.TokenFile(tokenFile))
+		lc = client
+		definitions = schemacheck.Cached(func() (schemacheck.Report, error) {
+			return client.Definitions(context.Background())
+		}, schemacheck.DefaultSourceTTL, nil)
 	}
+	// Every commit is put to what the cluster serves before it is made.
+	//
+	// What this process writes is applied by Argo CD, and a cluster whose
+	// resource definitions are older than this software drops, on apply,
+	// every field it does not know -- silently, with the commit made. This
+	// process holds no cluster credential and is not given one for this: the
+	// operator reads the definitions and says what it found, on the listener
+	// this process already calls. A commit that sets a field the cluster
+	// would drop is refused, and so is one made while the answer cannot be
+	// had; with no operator to ask at all, that is every commit that sets a
+	// field. Reads, and writes that only remove, are served regardless.
+	repo.GuardDefinitions(definitions)
 	// No Keycloak credential, and no record of identity actions.
 	//
 	// This process spoke for Keycloak once: it held a client credential for
