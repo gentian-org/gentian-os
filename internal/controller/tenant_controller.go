@@ -231,6 +231,14 @@ type TenantReconciler struct {
 	// exactly as they did before Inc 21a. This keeps existing envtest suites
 	// passing without requiring an OpenBao test double.
 	Seeder *secrets.Seeder
+
+	// WithoutVault says, explicitly, that this operator runs without a
+	// vault: a development or test set-up. Only then is a missing Seeder
+	// passed over where a tenant's stored credentials are to be destroyed.
+	// Without it a missing vault there is an error -- an operator that was
+	// meant to have one and silently had none would otherwise report a tenant
+	// deleted with every credential still stored.
+	WithoutVault bool
 	// KernelDomain is the cluster-wide platform domain (e.g. `platform.example.com`)
 	// on which kernel UIs (Keycloak, Argo CD, portal) are served.
 	// Tenant app domains derive from it by tenancy mode unless a

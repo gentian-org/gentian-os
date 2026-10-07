@@ -484,7 +484,10 @@ openbao:
   # Inc 21a seeding subsystem. Must exist in OpenBao with the operator-write
   # policy (gentian-os-operator role, managed via Crossplane provider-vault).
   # When BAO_ADDR is unset at runtime the operator skips seeding entirely
-  # (useful for envtest / local dev).
+  # (useful for envtest / local dev). An operator run that way must also be
+  # told so with GENTIAN_WITHOUT_VAULT=true: without that statement a missing
+  # vault is treated as a fault, and deleting a tenant stops at the step that
+  # destroys its stored credentials instead of skipping it.
   role: "gentian-os-operator"
 
 # Shared CloudNativePG cluster in platform-kernel (Database CR spec.cluster.name).

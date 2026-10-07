@@ -318,6 +318,10 @@ func TestMain(m *testing.M) {
 		// is what kernel mode provisions. With this unset the suite would run as
 		// external, where Dovecot is deliberately not configured at all.
 		MailServiceMode: "system",
+		// This suite has no vault, and says so: without the statement a
+		// tenant's deletion stops at the step that destroys its stored
+		// credentials, which is what a deployment missing its vault must do.
+		WithoutVault: true,
 	}).SetupWithManager(mgr); err != nil {
 		panic(err)
 	}

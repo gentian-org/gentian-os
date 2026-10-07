@@ -15,6 +15,7 @@ import (
 	"flag"
 	"log/slog"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -212,6 +213,7 @@ func main() {
 		Exec:                     appExecer,
 		Scheme:                   mgr.GetScheme(),
 		Seeder:                   buildSeeder(),
+		WithoutVault:             withoutVault(),
 		KernelDomain:             os.Getenv("KERNEL_DOMAIN"),
 		TenancyMode:              tenancyMode,
 		MailServiceMode:          os.Getenv("MAIL_SERVICE_MODE"),
@@ -567,10 +569,17 @@ func kernelRealmOrDefault(realm string) string {
 // reconcilers skip the seeding step and behave as they did pre-Inc 21a.
 // This keeps envtest suites running without an OpenBao double and lets
 // early cluster bring-up proceed in stages.
+//
+// What a missing vault means where credentials are to be destroyed is not
+// decided here: see withoutVault.
 func buildSeeder() *secrets.Seeder {
 	baoAddr := os.Getenv("BAO_ADDR")
 	if baoAddr == "" {
-		setupLog.Info("secret seeder disabled: set BAO_ADDR to enable")
+		if withoutVault() {
+			setupLog.Info("running without a vault, as declared (GENTIAN_WITHOUT_VAULT=true): development and test only; nothing is seeded and nothing stored is destroyed")
+		} else {
+			setupLog.Error(nil, "BAO_ADDR is not set and GENTIAN_WITHOUT_VAULT is not true: nothing is seeded, and deleting a tenant will stop at the step that destroys its stored credentials until the operator can reach its vault")
+		}
 		return nil
 	}
 	role := os.Getenv("BAO_ROLE")
@@ -601,6 +610,16 @@ func buildSeeder() *secrets.Seeder {
 	setupLog.Info("secret seeder enabled",
 		"bao_addr", baoAddr, "bao_role", role, "deterministic", deriver != nil)
 	return secrets.NewSeeder(kv, deriver)
+}
+
+// withoutVault is the operator's statement that it runs without a vault:
+// GENTIAN_WITHOUT_VAULT=true, for a development or test set-up. Without the
+// statement, having no vault is not a mode but a fault, and the acts that
+// destroy stored credentials report it instead of passing over the step. A
+// vault that is configured always wins: the statement only says what its
+// absence means.
+func withoutVault() bool {
+	return strings.EqualFold(strings.TrimSpace(os.Getenv("GENTIAN_WITHOUT_VAULT")), "true")
 }
 
 // buildEdgeIngress constructs how traffic reaches this cluster, by NAME.

@@ -12,6 +12,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -25,6 +26,11 @@ import (
 	"github.com/gentian-org/gentian-os/internal/backup"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 )
+
+// ErrNoVault is a deletion that cannot destroy a tenant's stored credentials
+// because the operator has no connection to the vault and was not told to
+// run without one.
+var ErrNoVault = errors.New("the operator has no connection to the vault (BAO_ADDR is not set) and was not told to run without one (GENTIAN_WITHOUT_VAULT=true, for development and test only); the tenant's stored credentials were not destroyed")
 
 func tenantKernelLabelSelector(tenantName string) client.MatchingLabels {
 	return client.MatchingLabels{
@@ -114,6 +120,22 @@ func (r *TenantReconciler) deleteTenantLabeledDatabaseCRs(ctx context.Context, t
 	return nil
 }
 
+// purgeTenantVault destroys the tenant's whole vault subtree, or says why it
+// could not. See purgeTenantKernelResources for why nothing here is skipped.
+func (r *TenantReconciler) purgeTenantVault(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
+	switch {
+	case r.Seeder != nil && r.Seeder.KV() != nil:
+		if err := r.Seeder.KV().DeleteTree(ctx, secrets.TenantPath(tenant.Name)); err != nil {
+			return fmt.Errorf("purge the vault paths of tenant %s: %w", tenant.Name, err)
+		}
+	case r.WithoutVault:
+		// Declared: there is no vault, so there is nothing stored in one.
+	default:
+		return fmt.Errorf("purge the vault paths of tenant %s: %w", tenant.Name, ErrNoVault)
+	}
+	return nil
+}
+
 // purgeTenantKernelResources removes orchestrator-owned kernel artifacts that
 // may survive app uninstalls or partial deletes. It runs after awaited cleanup
 // Jobs have finished; still-active fire-and-forget cleanup Jobs are left to
@@ -138,11 +160,16 @@ func (r *TenantReconciler) purgeTenantKernelResources(ctx context.Context, tenan
 	// the vault answers -- which is the true state. Retain skips this with
 	// everything else, which is the policy's meaning: the data stays.
 	//
-	// An operator with no vault configured has none to purge.
-	if r.Seeder != nil && r.Seeder.KV() != nil {
-		if err := r.Seeder.KV().DeleteTree(ctx, secrets.TenantPath(tenant.Name)); err != nil {
-			return fmt.Errorf("purge the vault paths of tenant %s: %w", tenant.Name, err)
-		}
+	// An operator that has no vault and was not told so does not get to
+	// skip this. "No vault" used to be inferred from the missing connection,
+	// which is also what a deployment with a mistyped or dropped setting
+	// looks like: the step did nothing and the deletion reported success.
+	// Running without one is a statement the operator's configuration makes
+	// (WithoutVault: development and test); otherwise it is an error here,
+	// and the Tenant stays Terminating until the operator can reach its
+	// vault.
+	if err := r.purgeTenantVault(ctx, tenant); err != nil {
+		return err
 	}
 
 	if err := r.deleteTenantLabeledDatabaseCRs(ctx, tenant.Name); err != nil {
