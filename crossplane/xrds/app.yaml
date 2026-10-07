@@ -43,6 +43,14 @@ spec:
                     Target namespace for this app's Helm release and ExternalSecret.
                     Set by the operator from the owning Tenant's namespace
                     (convention: "tenant-{tenant-name}").
+                realm:
+                  type: string
+                  description: >
+                    The Keycloak realm of the owning tenant: where the app's
+                    sign-in client, its client role and its entitlement group
+                    are made. Set by the operator from the Tenant
+                    (spec.isolation.keycloakRealm, else the tenant's name).
+                    When omitted, the realm is the one named after the tenant.
                 domain:
                   type: string
                   description: >

@@ -137,6 +137,15 @@ spec:
             {{- $ns     := $spec.tenantNamespace }}
             {{- /* Derive tenant name from namespace convention "tenant-{name}". */}}
             {{- $tenant := trimPrefix "tenant-" $ns }}
+            {{- /* The Keycloak realm the tenant's people, groups and clients are
+                 in. The operator passes it (keycloak.RealmName): a tenant may
+                 name a realm that is not called what the tenant is, as the
+                 platform tenant names the kernel realm. A claim that carries
+                 none is a tenant with a realm of its own name. This is the
+                 one place the Composition decides it; every realmId below
+                 reads it, so the group the operator purges and the client
+                 this composes are in the same realm. */}}
+            {{- $realm := default $tenant $spec.realm }}
             {{- /* Tenant domain — used for substitution in extraValues AND in
                  Keycloak client redirect URIs. Computed once at top level so
                  both blocks share the same value. */}}
@@ -898,7 +907,7 @@ spec:
             spec:
               deletionPolicy: Orphan
               forProvider:
-                realmId: {{ $tenant }}
+                realmId: {{ $realm }}
                 name: {{ printf "gentian:tenant:%s:app:%s" $tenant $app | quote }}
                 {{- if $gAttrs }}
                 attributes:
@@ -981,7 +990,7 @@ spec:
               forProvider:
                 clientId: {{ $oidcCl.clientId | quote }}
                 name: {{ default $oidcCl.clientId $oidcCl.name | quote }}
-                realmId: {{ $tenant }}
+                realmId: {{ $realm }}
                 accessType: {{ default "PUBLIC" $oidcCl.accessType | quote }}
                 standardFlowEnabled: true
                 directAccessGrantsEnabled: {{ default false $oidcCl.directAccessGrantsEnabled }}
@@ -1022,7 +1031,7 @@ spec:
             spec:
               deletionPolicy: Orphan
               forProvider:
-                realmId: {{ $tenant }}
+                realmId: {{ $realm }}
                 clientIdRef:
                   name: {{ $tenant }}-{{ $app }}-keycloak-client
                   policy:
@@ -1061,7 +1070,7 @@ spec:
               deletionPolicy: Orphan
               managementPolicies: ["Observe"]
               forProvider:
-                realmId: {{ $tenant }}
+                realmId: {{ $realm }}
                 name: {{ $pack.scopeName | quote }}
                 description: {{ default "" $pack.scopeDescription | quote }}
               providerConfigRef:
@@ -1105,7 +1114,7 @@ spec:
             spec:
               deletionPolicy: Orphan
               forProvider:
-                realmId: {{ $tenant }}
+                realmId: {{ $realm }}
                 name: {{ $kcName | quote }}
                 protocol: openid-connect
                 protocolMapper: {{ $tmpl.protocolMapper | quote }}
@@ -1180,7 +1189,7 @@ spec:
             spec:
               deletionPolicy: Orphan
               forProvider:
-                realmId: {{ $tenant }}
+                realmId: {{ $realm }}
                 clientIdRef:
                   name: {{ $tenant }}-{{ $app }}-keycloak-client
                   policy:
@@ -1212,7 +1221,7 @@ spec:
             spec:
               deletionPolicy: Orphan
               forProvider:
-                realmId: {{ $tenant }}
+                realmId: {{ $realm }}
                 exhaustive: false
                 groupIdRef:
                   name: {{ $entGroup }}

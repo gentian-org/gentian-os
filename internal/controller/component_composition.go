@@ -95,6 +95,10 @@ func (r *ComponentReconciler) ensureAppClaim(
 		"profileRef":              map[string]interface{}{"name": comp.Spec.ProfileRef.Name},
 		"tenantNamespace":         comp.Namespace,
 		"domain":                  zone.domain,
+		// The tenant's realm, by the one rule (keycloak.RealmName). The
+		// Composition used to take the tenant's name for it, which is the
+		// same realm only for a tenant that names none of its own.
+		"realm": keycloakRealmName(tenant),
 	}
 	// Which of the tenant's pull Secrets the Composition names on the release
 	// and in its values. Names, and the Composition looks for them in
@@ -167,7 +171,7 @@ func (r *ComponentReconciler) ensureAppClaim(
 	// the whole of it would find a difference on every pass.
 	patch := client.MergeFrom(existing.DeepCopy())
 	changed := false
-	for _, field := range []string{"profileRef", "tenantNamespace", "domain", "addons", "config", "pullSecrets", "compositionUpdatePolicy"} {
+	for _, field := range []string{"profileRef", "tenantNamespace", "domain", "realm", "addons", "config", "pullSecrets", "compositionUpdatePolicy"} {
 		want, wanted := spec[field]
 		have, has, _ := unstructured.NestedFieldNoCopy(existing.Object, "spec", field)
 		switch {

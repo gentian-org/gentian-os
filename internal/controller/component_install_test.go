@@ -24,6 +24,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/keycloak"
 )
 
 func componentNames(t *testing.T, c client.Client, namespace string) string {
@@ -206,6 +207,26 @@ func TestAComposedComponentWritesItsClaim(t *testing.T) {
 	}
 	if spec["tenantNamespace"] != "tenant-acme" || spec["domain"] != "acme.k.example" {
 		t.Errorf("namespace and domain = %v %v", spec["tenantNamespace"], spec["domain"])
+	}
+	// The realm is the tenant's by the one rule, not the tenant's name
+	// re-derived by the Composition.
+	if spec["realm"] != keycloak.RealmName(tenant) {
+		t.Errorf("realm = %v, want %q", spec["realm"], keycloak.RealmName(tenant))
+	}
+	named := tenant.DeepCopy()
+	named.Spec.Isolation = &gentianov1alpha1.TenantIsolation{KeycloakRealm: "acme-people"}
+	other := comp.DeepCopy()
+	other.Name, other.UID = "wiki", "uid-wiki"
+	if _, _, err := r.ensureAppClaim(ctx, other, named, zone, pullSecrets{}); err != nil {
+		t.Fatal(err)
+	}
+	otherClaim := &unstructured.Unstructured{}
+	otherClaim.SetGroupVersionKind(appClaimGVK)
+	if err := c.Get(ctx, types.NamespacedName{Name: other.Name, Namespace: other.Namespace}, otherClaim); err != nil {
+		t.Fatal(err)
+	}
+	if got, _, _ := unstructured.NestedString(otherClaim.Object, "spec", "realm"); got != "acme-people" {
+		t.Errorf("realm of a tenant that names one = %q", got)
 	}
 	if addons, _, _ := unstructured.NestedStringSlice(spec, "addons"); strings.Join(addons, " ") != "crm-ce" {
 		t.Errorf("addons = %v", addons)
