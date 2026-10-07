@@ -87,6 +87,10 @@ type ComponentReconciler struct {
 // +kubebuilder:rbac:groups=gentianos.io,resources=components/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=gentianos.io,resources=components/finalizers,verbs=update
 // +kubebuilder:rbac:groups=gentianos.io,resources=componentprofiles,verbs=get;list;watch
+// What a profile's bundle may bring beside it, read one at a time by name to
+// compare with the bundle before a pinned install is rolled out
+// (internal/profilebundle). The other three kinds are read elsewhere already.
+// +kubebuilder:rbac:groups=apiextensions.crossplane.io,resources=compositions,verbs=get
 // +kubebuilder:rbac:groups=helm.crossplane.io,resources=releases,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=referencegrants,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=postgresql.cnpg.io,resources=clusters,verbs=get;list;watch
@@ -188,15 +192,26 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// at that state, until the profile is the pinned build again or the pin
 	// is moved.
 	if digest := comp.Spec.ProfileRef.Digest; digest != "" {
-		if refusal := profilebundle.Verify(profile, digest); refusal != nil {
+		//
+		// The pin is to the whole bundle: the profile, and every object the
+		// bundle brings beside it. Each of those is read from the cluster
+		// and compared with the bundle too, and one that is missing or is
+		// not what the bundle says holds the rollout the same way.
+		refusal, err := profilebundle.VerifyOnCluster(ctx, r.Client, catalogueNamespace(), profile, digest)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		if refusal != nil {
 			message := refusal.Message + "; nothing is rolled out from it, and what is running is left as it is"
 			if r.Recorder != nil && !componentReports(comp, refusal.Reason, message) {
 				r.Recorder.Event(comp, corev1.EventTypeWarning, refusal.Reason, message)
 			}
 			logger.Info("component held: its profile is not the build the install is pinned to",
 				"component", comp.Name, "namespace", comp.Namespace, "reason", refusal.Reason, "detail", refusal.Message)
-			// No requeue: a change to the profile or to the pin re-runs this.
-			return r.status(ctx, comp, metav1.ConditionFalse, refusal.Reason, message, 0)
+			// No requeue for the profile: a change to it or to the pin
+			// re-runs this. A companion is not watched, and one Argo CD
+			// has yet to apply arrives without either changing.
+			return r.status(ctx, comp, metav1.ConditionFalse, refusal.Reason, message, heldRequeue(refusal))
 		}
 	}
 	// The same for every addon this instance activates at a pinned build.
@@ -223,8 +238,9 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		}
 		logger.Info("component held: an addon's profile is not the build it is pinned to",
 			"component", comp.Name, "namespace", comp.Namespace, "reason", refusal.Reason, "detail", refusal.Message)
-		// No requeue: a change to the addon's profile or to the pin re-runs this.
-		return r.status(ctx, comp, metav1.ConditionFalse, refusal.Reason, message, 0)
+		// No requeue for the profile: a change to the addon's profile or to
+		// the pin re-runs this. A companion is looked for again.
+		return r.status(ctx, comp, metav1.ConditionFalse, refusal.Reason, message, heldRequeue(refusal))
 	}
 	tenant, err := r.tenantOf(ctx, comp.Namespace)
 	if err != nil {
@@ -343,7 +359,7 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	switch {
 	case composed:
 		var err error
-		releaseReady, releaseMessage, err = r.ensureAppClaim(ctx, comp, tenant, zone, pull)
+		releaseReady, releaseMessage, err = r.ensureAppClaim(ctx, comp, tenant, zone, pull, appComposition(comp, profile))
 		if err != nil {
 			return ctrl.Result{}, err
 		}
@@ -538,11 +554,33 @@ func (r *ComponentReconciler) unverifiedAddon(ctx context.Context, comp *gentian
 			return &profilebundle.Refusal{Reason: profilebundle.ReasonUnverifiable, Message: fmt.Sprintf(
 				"addon %s is pinned to %s and its ComponentProfile is not installed", pin.Name, profilebundle.Short(pin.Digest))}, nil
 		}
-		if refusal := profilebundle.Verify(addon, pin.Digest); refusal != nil {
-			return &profilebundle.Refusal{Reason: refusal.Reason, Message: "addon " + pin.Name + ": " + refusal.Message}, nil
+		refusal, err := profilebundle.VerifyOnCluster(ctx, r.Client, catalogueNamespace(), addon, pin.Digest)
+		if err != nil {
+			return nil, err
+		}
+		if refusal != nil {
+			return &profilebundle.Refusal{
+				Reason: refusal.Reason, Message: "addon " + pin.Name + ": " + refusal.Message, Retry: refusal.Retry,
+			}, nil
 		}
 	}
 	return nil, nil
+}
+
+// catalogueNamespace is where the cluster's catalogue is applied, and so
+// where the companions of a bundle that have a namespace are: the destination
+// of the Application that syncs the catalogue directory
+// (kernel/appsets/raw/11b-catalogue.yaml).
+func catalogueNamespace() string { return layout.Namespace(layout.Provisioning) }
+
+// heldRequeue is when a held component is looked at again: not at all for a
+// refusal only a change to the profile or the pin can end, and soon for one
+// that ends when Argo CD has applied what the bundle brings.
+func heldRequeue(refusal *profilebundle.Refusal) time.Duration {
+	if refusal.Retry {
+		return componentRequeue
+	}
+	return 0
 }
 
 // reasonAddonProfileMissing is the condition reason of a Component that

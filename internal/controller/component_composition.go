@@ -23,6 +23,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/profilebundle"
 )
 
 // How a chart package is delivered.
@@ -82,6 +83,31 @@ func composedDelivery(profile *gentianov1alpha1.ComponentProfile) bool {
 	return false
 }
 
+// defaultAppComposition renders every app whose bundle brings no Composition
+// of its own (crossplane/compositions/app-default.yaml).
+const defaultAppComposition = "app-default"
+
+// appComposition answers which Composition renders a component: the one its
+// profile's bundle brings, or "" for the platform's.
+//
+// A profile's own Composition is used on one condition, and it is the
+// condition under which it is known to be the profile's own: the install is
+// pinned to a digest, and the bundle that digest names -- verified against
+// the cluster just before this -- carries it. That bundle can only have come
+// from a catalogue of the whole cluster, and its Composition can only be
+// app-<profile> (profilebundle.Check). spec.package.composition alone selects
+// nothing: a name in a profile is not a Composition anybody vouched for, and
+// a profile could otherwise have itself rendered by another app's.
+func appComposition(comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile) string {
+	if comp.Spec.ProfileRef.Digest == "" || profile.Spec.Package.Composition == "" {
+		return ""
+	}
+	if own := profilebundle.OwnComposition(profile); own == profile.Spec.Package.Composition {
+		return own
+	}
+	return ""
+}
+
 // ensureAppClaim keeps the App claim the app Composition renders this
 // component from, and reports whether what it rendered is ready.
 //
@@ -89,12 +115,21 @@ func composedDelivery(profile *gentianov1alpha1.ComponentProfile) bool {
 // Component removes the claim, and with it everything the Composition made.
 func (r *ComponentReconciler) ensureAppClaim(
 	ctx context.Context, comp *gentianov1alpha1.Component, tenant *gentianov1alpha1.Tenant, zone edgeZone, pull pullSecrets,
+	composition string,
 ) (bool, string, error) {
+	if composition == "" {
+		composition = defaultAppComposition
+	}
 	spec := map[string]interface{}{
 		"compositionUpdatePolicy": "Automatic",
-		"profileRef":              map[string]interface{}{"name": comp.Spec.ProfileRef.Name},
-		"tenantNamespace":         comp.Namespace,
-		"domain":                  zone.domain,
+		// Which Composition renders the app, said rather than left to the
+		// definition's default: a claim that names none keeps whichever it
+		// was given last, and that has to stop being the profile's own when
+		// the profile no longer brings one.
+		"compositionRef":  map[string]interface{}{"name": composition},
+		"profileRef":      map[string]interface{}{"name": comp.Spec.ProfileRef.Name},
+		"tenantNamespace": comp.Namespace,
+		"domain":          zone.domain,
 		// The tenant's realm, by the one rule (keycloak.RealmName). The
 		// Composition used to take the tenant's name for it, which is the
 		// same realm only for a tenant that names none of its own.
@@ -171,7 +206,7 @@ func (r *ComponentReconciler) ensureAppClaim(
 	// the whole of it would find a difference on every pass.
 	patch := client.MergeFrom(existing.DeepCopy())
 	changed := false
-	for _, field := range []string{"profileRef", "tenantNamespace", "domain", "realm", "addons", "config", "pullSecrets", "compositionUpdatePolicy"} {
+	for _, field := range []string{"profileRef", "tenantNamespace", "domain", "realm", "addons", "config", "pullSecrets", "compositionUpdatePolicy", "compositionRef"} {
 		want, wanted := spec[field]
 		have, has, _ := unstructured.NestedFieldNoCopy(existing.Object, "spec", field)
 		switch {
