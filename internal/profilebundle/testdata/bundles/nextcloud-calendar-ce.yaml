@@ -1,0 +1,40 @@
+# ComponentProfile — Nextcloud Calendar (addon)
+#
+# Activated inside a Nextcloud base rather than deployed: the app ships disabled in
+# the base image's custom_apps, and selecting this addon runs `occ app:enable calendar`.
+# It therefore carries no chart of its own.
+apiVersion: gentianos.io/v1alpha1
+kind: ComponentProfile
+metadata:
+  name: nextcloud-calendar-ce
+  labels:
+    gentianos.io/profile-name: nextcloud-calendar-ce
+  annotations:
+    gentianos.io/deployment-role: addon
+spec:
+  classes:
+    - app
+  trustTier: certified
+  version: "1.0.0"
+  package:
+    addon:
+      id: calendar
+      of: nextcloud-base-ce
+  expose:
+    - name: calendar
+      surface: gateway
+      authMode: oidc
+      subDomain: cloud
+      backend:
+        component: nextcloud-base-ce
+        service: nextcloud
+        port: 8080
+      tile:
+        displayName: "Calendar"
+        displayNames:
+          de_DE: "Kalender"
+        logo: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI1MiIgaGVpZ2h0PSI1MiIgdmlld0JveD0iMCAwIDUyIDUyIiByb2xlPSJpbWciPgogIDxyZWN0IHdpZHRoPSI1MiIgaGVpZ2h0PSI1MiIgcng9IjEwIiBmaWxsPSIjRUNFOERGIi8+CiAgPHJlY3Qgd2lkdGg9IjUyIiBoZWlnaHQ9IjUyIiByeD0iMTAiIGZpbGw9Im5vbmUiIHN0cm9rZT0icmdiYSgyMCwgMjEsIDQ2LCAwLjA4KSIgc3Ryb2tlLXdpZHRoPSIxIi8+CiAgPHN2ZyB4PSIxNCIgeT0iMTQiIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDMyIDMyIiBzdHlsZT0iZmlsbC1ydWxlOmV2ZW5vZGQ7Y2xpcC1ydWxlOmV2ZW5vZGQ7c3Ryb2tlLWxpbmVqb2luOnJvdW5kO3N0cm9rZS1taXRlcmxpbWl0OjIiPjxwYXRoIGQ9Ik01IDIyYy0uNTUgMC0xLjAyMS0uMTk2LTEuNDEyLS41ODdBMS45MjcgMS45MjcgMCAwIDEgMyAyMFY2YzAtLjU1LjE5Ni0xLjAyMS41ODgtMS40MTNBMS45MjYgMS45MjYgMCAwIDEgNSA0aDFWMmgydjJoOFYyaDJ2MmgxYy41NSAwIDEuMDIxLjE5NiAxLjQxMy41ODcuMzkxLjM5Mi41ODcuODYzLjU4NyAxLjQxM3YxNGExLjkzIDEuOTMgMCAwIDEtLjU4NyAxLjQxM0ExLjkzIDEuOTMgMCAwIDEgMTkgMjJINVptMC0yaDE0VjEwSDV2MTBaIiBzdHlsZT0iZmlsbDojMDA4MkM5O2ZpbGwtcnVsZTpub256ZXJvIiB0cmFuc2Zvcm09Im1hdHJpeCgxLjQgMCAwIDEuNCAtLjggLS44KSIgLz48L3N2Zz4KPC9zdmc+Cg==
+        image: assets/tile-calendar.svg
+        path: /?app=calendar
+        relation: can_launch
+  launch: tile

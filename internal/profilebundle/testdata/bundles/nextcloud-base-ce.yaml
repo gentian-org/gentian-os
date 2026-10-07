@@ -1,0 +1,738 @@
+apiVersion: gentianos.io/v1alpha1
+kind: ComponentProfile
+metadata:
+  name: nextcloud-base-ce
+  labels:
+    gentianos.io/profile-name: nextcloud-base-ce
+  annotations:
+    # For COLLABORA, not for Nextcloud -- this is the half of the pair added by
+    # 0e5a107 with the CoreDNS hairpin in gentian-os (4c3db842), same day.
+    #
+    # Every call the Nextcloud pod itself makes does stay in the cluster, and
+    # dropping this on that basis is why office documents stopped opening: the
+    # pod that needs it is the Collabora one. Opening a document, coolwsd
+    # fetches the settings assets richdocuments hands it, and those are absolute
+    # public URLs (WopiController::generateSettings and the file list it
+    # returns) -- https://cloud.${TENANT_DOMAIN}/apps/richdocuments/settings/...
+    #
+    # The gateway access-log evidence for removing it ("none of them from a
+    # Nextcloud pod") is true and does not cover Collabora, which is a separate
+    # pod and the only one that makes this call.
+    #
+    # With the hairpin, cloud.* resolves to the gateway ClusterIP (10.x), which
+    # the tenant-isolation baseline already permits on 443; this grant is what
+    # says so explicitly. Without the hairpin it resolves to the load balancer's
+    # public address and no namespaceSelector rule can match it.
+    gentianos.io/kernel-egress-namespaces: envoy-gateway-system
+    gentianos.io/portal-auth-mode: portal-bridge
+spec:
+  classes:
+    - app
+  trustTier: certified
+  version: 1.0.0
+  package:
+    chart:
+      repository: https://nextcloud.github.io/helm/
+      name: nextcloud
+      version: 9.0.4
+  # Collabora chroots its document jails, so it needs these three. The
+  # cluster-side allowlist in gentian-deployments already grants them to this
+  # profile.
+  #
+  # gentian-require-seccomp specifically: coolmount bind-mounts Collabora's
+  # systemplate into each new document jail, and RuntimeDefault's seccomp
+  # filter blocks the mount() syscall outright — independent of the
+  # capabilities below, seccomp is checked first. Without it Collabora falls
+  # back to copying that folder on every single document open, which is the
+  # slow path its own chart explicitly warns about. Confirmed live:
+  # `coolmount: Operation not permitted` on every jail, and the WOPI token
+  # fetch retried four times over 47s waiting for one to finish.
+    valueMapping:
+      oidc:
+        clientSecretKey: nextcloud.oidcBootstrap.clientSecret
+      database:
+        hostKey: externalDatabase.host
+        nameKey: externalDatabase.database
+        userKey: externalDatabase.user
+        passwordKey: externalDatabase.password
+      cache:
+        hostKey: externalRedis.host
+        portKey: externalRedis.port
+        passwordKey: externalRedis.password
+      smtp:
+        hostKey: nextcloud.mail.smtp.host
+        portKey: nextcloud.mail.smtp.port
+        userKey: nextcloud.mail.smtp.name
+        passwordKey: nextcloud.mail.smtp.password
+    extraValues:
+    # Collabora Online -- the document editor behind the richdocuments addon.
+    #
+    # Off by default; spec.customization.addonValues switches it on when that addon
+    # is selected. It requests 1Gi/250m, which every tenant would otherwise pay
+    # whether or not anyone ever opens a document.
+    #
+    # Carried over verbatim from the retired nextcloud-suite profile. None of it is
+    # obvious and none of it was cheap to arrive at:
+    #   mount_jail_tree=false      forces copying systemplate into each jail
+    #                              instead of bind-mounting it -- see below,
+    #                              this predates and is independent of the
+    #                              seccomp waiver
+    #   net.post_allow.host[0..1]  permit the WOPI callback from cluster addresses
+    #   ssl.enable/termination     TLS ends at the gateway, not here
+    #   aliasgroups                the WOPI host allowlist, all three forms
+    #   SYS_CHROOT + waivers       Collabora chroots its document jails
+    # Change these only with a working editor in front of you.
+    #
+    # mount_jail_tree=false was very likely how the original nextcloud-suite
+    # profile worked around the exact seccomp gap fixed below -- forcing the
+    # slow-but-permitted copy path rather than requesting the mount permission.
+    # It is left in place here rather than removed: even with mount() now
+    # permitted, coolmount still runs per-jail for files that cannot be shared
+    # read-only across jails (Collabora's own log: "Will have to clone dynamic
+    # elements of systemplate to the jails"), so this flag is a second,
+    # independent lever on the same problem and should be revisited with its
+    # own before/after timing rather than changed alongside the seccomp fix.
+      collabora:
+        enabled: false
+        fullnameOverride: nextcloud-collabora
+        podLabels:
+          gentianos.io/app: nextcloud-base-ce
+          gentianos.io/tenant: ${TENANT_ID}
+          mac-waiver.gentianos.io/gentian-disallow-privilege-escalation: approved
+          mac-waiver.gentianos.io/gentian-restrict-capabilities: approved
+          mac-waiver.gentianos.io/gentian-require-seccomp: approved
+        securityContext:
+          allowPrivilegeEscalation: true
+          runAsNonRoot: true
+          runAsUser: 1001
+          runAsGroup: 1001
+        # RuntimeDefault blocks the mount() syscall outright, independent of the
+        # capabilities below -- seccomp is checked first. coolmount needs it to
+        # bind-mount systemplate into each document jail; without it, every jail
+        # falls back to copying that folder instead. See the waiver above and
+        # the block comment at the top of extraValues.collabora.
+          seccompProfile:
+            type: Unconfined
+        # Necessary but not sufficient: coolmount also creates its own nested mount
+        # namespace per jail (unshare(CLONE_NEWUSER|CLONE_NEWNS)), which relies on the
+        # kernel's unprivileged-user-namespace-creation mechanism -- and nodes on
+        # Ubuntu 24.04 restrict that via AppArmor by default. appArmorProfile:
+        # Unconfined and capabilities.add: SYS_ADMIN were both tried and confirmed
+        # live not to help: the actual mount happens in a further-restricted forked
+        # child that deliberately drops all capabilities first (mirroring how the
+        # real per-document jail workers run, for their own sandboxing), so nothing
+        # granted to this container reaches it. The only real fix is a node-wide
+        # kernel/AppArmor allowance for unprivileged userns creation -- out of scope
+        # for a single profile. Until then this falls back to mount_jail_tree's copy
+        # path below, same as before this was investigated.
+          capabilities:
+            add:
+              - CHOWN
+              - FOWNER
+              - SYS_CHROOT
+            drop:
+              - ALL
+        collabora:
+          aliasgroups:
+            - host: http://nextcloud.${TENANT_NAMESPACE}.svc.cluster.local:8080
+            - host: http://cloud.${TENANT_DOMAIN}:8080
+            - host: https://cloud.${TENANT_DOMAIN}
+          extra_params: --o:ssl.enable=false --o:ssl.termination=true --o:net.proto=ipv4 --o:storage.ssl.as_scheme=true --o:storage.ssl.enable=false --o:mount_jail_tree=false --o:net.post_allow.host[0]=10\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3} --o:net.post_allow.host[1]=.*\.svc\.cluster\.local
+          server_name: collabora.${TENANT_DOMAIN}
+        ingress:
+          enabled: false
+        resources:
+          limits:
+            cpu: '2'
+            memory: 2Gi
+          requests:
+            cpu: 250m
+            memory: 1Gi
+      fullnameOverride: nextcloud
+      image:
+        registry: ghcr.io
+        repository: gentian-org/nextcloud
+        tag: 33.0.6-gentian6
+      extraEnv:
+        - name: REDIS_HOST_USER
+          value: ${TENANT_ID}-${APP_ID}
+      internalDatabase:
+        enabled: false
+      externalDatabase:
+        enabled: true
+        type: postgresql
+      mariadb:
+        enabled: false
+      postgresql:
+        enabled: false
+      externalRedis:
+        enabled: true
+      redis:
+        enabled: false
+      phpClientHttpsFix:
+        enabled: true
+        protocol: https
+      ingress:
+        enabled: false
+      persistence:
+        enabled: true
+        size: 10Gi
+      cronjob:
+        enabled: true
+        type: sidecar
+        sidecar:
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 33
+            runAsGroup: 33
+            seccompProfile:
+              type: RuntimeDefault
+        # The image's /cron.sh runs `busybox crond`, and busybox crond setgroups()s
+        # to the user its crontab is filed under before running a job. This sidecar
+        # runs non-root as 33:33, so that call returns EPERM and every tick is
+        # skipped -- "crond: can't set groups: Operation not permitted", every five
+        # minutes, forever. The upstream chart says as much: "Note: crond requires
+        # root". Nothing surfaces it: the container stays Running and the pod
+        # reports 2/2 Ready while no background job has ever executed.
+
+        # So skip crond and loop in the shell. No user switching, so nothing to be
+        # denied, and cron.php still runs in-pod with the data volume and config
+        # already mounted. Keeping the sidecar (rather than type: cronjob) avoids
+        # needing RWX on the data PVC for a second pod.
+
+        # This is also what makes the Collabora wiring self-healing: ObtainCapabilities
+        # is a background job, so with cron dead a failed discovery fetch was never
+        # retried -- its last run read 1970-01-01 on a 14h-old pod.
+          command:
+            - /bin/sh
+            - -c
+            - |
+              # Also converge mail accounts. A Nextcloud user exists only after their
+              # first OIDC login, so the post-installation hook cannot provision an
+              # inbox for someone who has not arrived yet. Running it here gives them
+              # one within a cron interval rather than at the next pod restart. The
+              # script is written by that hook and is a no-op for anyone who already
+              # has an account.
+              while true; do
+                php -f /var/www/html/cron.php || echo "gentian: cron.php exited non-zero"
+                [ -x /var/www/html/gentian-mail-provision.sh ] && sh /var/www/html/gentian-mail-provision.sh
+                [ -x /var/www/html/gentian-user-defaults.sh ] && sh /var/www/html/gentian-user-defaults.sh
+                sleep 300
+              done
+      podAnnotations:
+        secret.reloader.stakater.com/reload: nextcloud-base-ce-sensitive-values
+    # Defaults (failureThreshold: 3, periodSeconds: 10 => ~30s tolerance)
+    # kill the pod mid-install on a fresh deploy: Nextcloud's one-time,
+    # non-interactive install (schema creation) ties up Apache's single
+    # busy worker long enough that the liveness probe's own /status.php
+    # check can't get answered in time, so it gets killed and retried
+    # from scratch -- confirmed live, never once got far enough to finish.
+    # Widening tolerance to ~5 minutes covers a slow first install; a
+    # genuinely hung instance is still caught, just not as fast.
+    #
+    # That was written about the schema-install phase, where Apache is up
+    # and /status.php answers 200 the moment it is asked -- and for that
+    # phase it was right that a startupProbe adds nothing.
+    #
+    # There is an earlier phase it did not account for. Before Apache
+    # starts at all, the entrypoint syncs the release into the volume:
+    # tens of thousands of small files, and on beefy1's NFS that runs
+    # well past the liveness budget with nothing listening on 8080 yet.
+    # The probe does not time out there, it is refused -- "connect:
+    # connection refused" -- so liveness burns its 30 failures and kills
+    # the container mid-sync, and the next start begins the same sync
+    # again. Demo did that 114 times in eleven hours and never finished.
+    #
+    # A startupProbe is exactly the tool: while it is pending, liveness
+    # and readiness do not run at all, so the sync gets as long as it
+    # needs, and the widened liveness above still covers the install
+    # phase afterwards. 180 x 10s = 30 minutes, matched to the Helm
+    # waitTimeout in gentian-os app-default.yaml.
+      startupProbe:
+        enabled: true
+        initialDelaySeconds: 30
+        periodSeconds: 10
+        timeoutSeconds: 10
+        failureThreshold: 180
+      livenessProbe:
+        initialDelaySeconds: 30
+        periodSeconds: 10
+        timeoutSeconds: 10
+        failureThreshold: 30
+      readinessProbe:
+        initialDelaySeconds: 30
+        periodSeconds: 10
+        timeoutSeconds: 10
+        failureThreshold: 30
+      nextcloud:
+        containerPort: 8080
+        securityContext:
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+          runAsUser: 33
+          runAsGroup: 33
+          seccompProfile:
+            type: RuntimeDefault
+        podSecurityContext:
+          runAsNonRoot: true
+          runAsUser: 33
+          runAsGroup: 33
+        # Without fsGroup, a freshly-provisioned nfs-csi PVC isn't writable
+        # by uid 33 (www-data) -- crashes on startup with "Permission
+        # denied" creating nextcloud-init-sync.lock. See activepieces-me/
+        # xwiki-ce profiles for the same pattern on the same storage class.
+          fsGroup: 33
+          seccompProfile:
+            type: RuntimeDefault
+        host: cloud.${TENANT_DOMAIN}
+      # The chart only auto-trusts `host` (plus the internal FQDN when
+      # metrics.enabled, which this profile doesn't set) -- the nextcloud-mcp
+      # sidecar talks to Nextcloud over its in-namespace Service name, which
+      # needs to be explicitly trusted or WebDAV/OCS calls 400.
+        trustedDomains:
+          - nextcloud
+        username: admin
+        update: 0
+        mail:
+          enabled: true
+          fromAddress: noreply
+          domain: ${TENANT_DOMAIN}
+          smtp:
+          # host, port and name are supplied by the platform through
+          # valueMapping.smtp — this app does not name a mail server.
+            secure: tls
+            authtype: LOGIN
+            name: gentian-system@${TENANT_DOMAIN}
+        configs:
+          gentian-proxy.config.php: "<?php\n// Dynamically override session.save_path to support Redis ACL usernames\n$redis_host = getenv('REDIS_HOST') ?: 'redis-dev-master.gentian-infra-dev.svc.cluster.local';\n$redis_port = getenv('REDIS_HOST_PORT') ?: 6379;\n$redis_pass = getenv('REDIS_HOST_PASSWORD') ?: '';\n$redis_user = '${TENANT_ID}-${APP_ID}';\nif ($redis_host && $redis_pass) {\n    $save_path = \"tcp://$redis_host:$redis_port?auth[user]=$redis_user&auth[pass]=$redis_pass\";\n    ini_set('session.save_path', $save_path);\n}\n\n$CONFIG = array(\n  'overwritehost' => 'cloud.${TENANT_DOMAIN}',\n  'overwriteprotocol' => 'https',\n  'overwrite.cli.url' => 'https://cloud.${TENANT_DOMAIN}',\n  'trusted_proxies' => array('10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16'),\n  'allow_local_remote_servers' => true,\n  // NFS doesn't support chmod-by-non-owner even when the process has\n  // group access via fsGroup, and Kyverno's gentian-restrict-capabilities\n  // policy blocks the CAP_CHOWN a root init container would need to fix\n  // real ownership instead. This is Nextcloud's own documented escape\n  // hatch for filesystems that don't support standard Unix owner\n  // semantics (NFS chief among them) -- the actual access control is\n  // still enforced by the PVC (RWO, this pod only) and the tenant\n  // NetworkPolicy, not by this check.\n  'check_data_directory_permissions' => false,\n  'memcache_customprefix' => '${TENANT_ID}:nextcloud:',\n  'redis' => array(\n    'user' => '${TENANT_ID}-${APP_ID}',\n  ),\n);"
+        extraVolumes:
+          - name: gentian-sensitive
+            secret:
+              secretName: nextcloud-base-ce-sensitive-values
+      # The nextcloud-mcp sidecar's own appSecret (spec.sidecars[].appSecrets),
+      # synced to a SEPARATE, sidecar-scoped Secret (SidecarAppName convention:
+      # {parent}-{sidecar}-sensitive-values). Mounted here too so the
+      # post-installation hook below can provision the matching Nextcloud
+      # account with the exact same password the sidecar itself authenticates
+      # with -- both sides read the same OpenBao-seeded value, never generate
+      # their own.
+          - name: gentian-mcp-sensitive
+            secret:
+              secretName: nextcloud-base-ce-mcp-sensitive-values
+              optional: true
+      # The per-user IMAP credentials the operator mints for this tenant
+      # (mail_apppassword.go). One key per address, the address with @ as _,
+      # the value an HMAC-derived password Dovecot verifies against an
+      # Argon2id hash it keeps in the kernel namespace.
+      #
+      # optional, because a tenant whose mail mode provisions no mailboxes
+      # never gets the Secret, and the pod must still start.
+          - name: gentian-mail-passwords
+            secret:
+              secretName: mail-app-passwords
+              optional: true
+        extraVolumeMounts:
+          - name: gentian-sensitive
+            mountPath: /etc/gentian
+            readOnly: true
+          - name: gentian-mcp-sensitive
+            mountPath: /etc/gentian-mcp
+            readOnly: true
+          - name: gentian-mail-passwords
+            mountPath: /etc/gentian-mail
+            readOnly: true
+        hooks:
+          before-starting: "#!/bin/bash\nset -eu\nNC=\"php /var/www/html/occ\"\n\n# Nextcloud's own PHP-side install check requires this sentinel file to\n# exist before it will run the automatic, non-interactive install that\n# autoconfig.php sets up (DB/admin credentials are already correctly\n# wired -- this is the only missing piece). Only touched while genuinely\n# not yet installed, so the safety gate this file exists for (don't\n# silently reinstall over live data if config.php ever gets corrupted)\n# stays intact for the rest of the deployment's life.\nif ! $NC status 2>/dev/null | grep -q \"installed: true\"; then\n  touch /var/www/html/config/CAN_INSTALL\nfi\npatch_portal_bridge_htaccess() {\n  python3 - <<'PY'\nfrom pathlib import Path\nhtaccess = Path(\"/var/www/html/.htaccess\")\nif not htaccess.is_file():\n    raise SystemExit(0)\ntext = htaccess.read_text()\nif \"gentian-portal-bridge\" in text:\n    text = text.replace(\"gentian-portal-bridge\", \"portal-bridge\")\n    htaccess.write_text(text)\nelif \"portal-bridge\" not in text:\n    old = r\"RewriteCond %{REQUEST_FILENAME} !/(cron|public|remote|status)\\.php\"\n    new = r\"RewriteCond %{REQUEST_FILENAME} !/(cron|public|remote|status|portal-bridge)\\.php\"\n    if old in text:\n        htaccess.write_text(text.replace(old, new))\nPY\n}\ncurl --connect-timeout 5 --max-time 15 -sfLo /var/www/html/portal-sso.html \\\n  \"http://gentian-portal-gentian-portal-web.platform-kernel.svc.cluster.local:8080/portal-sso.html\" || true\ncurl --connect-timeout 5 --max-time 15 -sfLo /var/www/html/portal-bridge.php \\\n  \"http://gentian-portal-gentian-portal-web.platform-kernel.svc.cluster.local:8080/portal-bridge.php\" || true\nsed -i 's/:8080\\\\/api\\\\/v1/:8000\\\\/api\\\\/v1/' /var/www/html/portal-bridge.php 2>/dev/null || true\npatch_portal_bridge_htaccess\nif ! $NC status >/dev/null 2>&1; then\n  exit 0\nfi\nsync_bundled_apps() {\n  for app in user_oidc; do\n    if [ -d \"/usr/src/nextcloud/apps/${app}\" ]; then\n      rm -rf \"/var/www/html/custom_apps/${app}\"\n      cp -a \"/usr/src/nextcloud/apps/${app}\" \"/var/www/html/custom_apps/\"\n      chown -R www-data:www-data \"/var/www/html/custom_apps/${app}\"\n    fi\n    $NC app:enable \"${app}\" 2>/dev/null || true\n  done\n}\nsync_bundled_apps\n# Disable the password_policy breached-password check: it calls\n# api.pwnedpasswords.com (blocked by egress) and adds ~5s to every\n# password set — the portal bridge felt this on each Files open.\n$NC config:app:set password_policy enforceHaveIBeenPwned --value=false || true\npatch_portal_bridge_htaccess\npatch_nextcloud_layouts() {\n  python3 - <<'PY'\nfrom pathlib import Path\n\n# Portal windows already supply the chrome (title bar, app switching), so the\n# embedded app must not draw a second one. Nextcloud's shell is a rounded card\n# floating on the theming wallpaper: #content reserves --header-height above\n# itself for the (hidden) header, insets itself by --body-container-margin,\n# rounds by --body-container-radius, and <body> paints --image-background\n# behind it. Zeroing those four is what makes the app fill the window flush.\nBLOCK = \"\"\"\n\t\t<!-- gentian-embed -->\n\t\t<script nonce=\"<?php p($_['cspNonce']); ?>\">\n\t\t\tif (window.self !== window.top) {\n\t\t\t\tdocument.documentElement.classList.add('gentian-embedded');\n\t\t\t}\n\t\t</script>\n\t\t<style>\n\t\t\thtml.gentian-embedded body {\n\t\t\t\t--body-container-margin: 0px;\n\t\t\t\t--body-container-radius: 0px;\n\t\t\t\t--body-height: calc(100% - env(safe-area-inset-bottom));\n\t\t\t\tbackground-image: none;\n\t\t\t\tbackground-color: var(--color-main-background);\n\t\t\t}\n\t\t\thtml.gentian-embedded #header { display: none !important; }\n\t\t\thtml.gentian-embedded #content,\n\t\t\thtml.gentian-embedded #content-vue { margin-top: 0; }\n\t\t</style>\n\t\t<!-- /gentian-embed -->\"\"\"\n\n# In <head> and before the stylesheets, so the header never paints and the\n# content never starts 50px down and then jumps.\nANCHOR = '<meta charset=\"utf-8\">'\n\nfor name in [\"layout.user.php\", \"layout.public.php\"\
+            ]:\n    # Always rebuild from the image's pristine copy. /var/www/html is a\n    # persistent volume, so an in-place edit would pin whichever revision of\n    # this block landed first and no later change would ever take effect.\n    pristine = Path(f\"/usr/src/nextcloud/core/templates/{name}\")\n    live = Path(f\"/var/www/html/core/templates/{name}\")\n    if not pristine.is_file() or not live.is_file():\n        continue\n    text = pristine.read_text()\n    if ANCHOR not in text:\n        continue\n    text = text.replace(ANCHOR, ANCHOR + BLOCK, 1)\n    if text != live.read_text():\n        live.write_text(text)\nPY\n}\npatch_nextcloud_layouts\n\n# Mail accounts, from HERE rather than post-installation: that hook fires\n# only when Nextcloud is installed, and an installed cluster never runs it\n# again -- so a redeploy left every inbox unprovisioned.\n# Provision each user's mailbox into the Mail app.\n#\n# The operator mints one IMAP credential per user per client application\n# (mail_apppassword.go) and drops the plaintexts in this tenant's namespace.\n# Nothing consumed them: the credential existed and authenticated against\n# Dovecot, while every user was still asked to \"Connect your mail account\"\n# because no account row was ever written.\n#\n# Written to disk rather than only run here, because a Nextcloud user is\n# created on their FIRST OIDC LOGIN, which is almost never while this hook\n# runs. The cron sidecar re-runs the script every tick, so someone who logs\n# in later gets an inbox within one cron interval instead of at the next\n# pod restart.\n#\n# Idempotent: it skips any user who already has an account, so re-running\n# costs one lookup per user and changes nothing.\ncat > /var/www/html/gentian-mail-provision.sh <<'PROVISION'\n#!/bin/sh\n# Provision Nextcloud Mail accounts from the operator-minted IMAP passwords.\n# Safe to re-run; does nothing for a user who already has an account.\nset -u\nNC=\"php /var/www/html/occ\"\nDIR=/etc/gentian-mail\n[ -d \"$DIR\" ] || exit 0\nIMAP_HOST=\"${GENTIAN_IMAP_HOST:-dovecot-prod.platform-kernel.svc.cluster.local}\"\nIMAP_PORT=\"${GENTIAN_IMAP_PORT:-143}\"\n# none: Dovecot advertises no STARTTLS on 143 and 993 is not exposed. The hop\n# is pod to Service inside this cluster, the same boundary the database\n# connection already crosses. Roadmap 1.19 replaces all of this with XOAUTH2.\nIMAP_SSL=\"${GENTIAN_IMAP_SSL:-none}\"\nfor f in \"$DIR\"/*; do\n  [ -f \"$f\" ] || continue\n  key=$(basename \"$f\")\n  case \"$key\" in .*) continue ;; esac\n  # Secret keys cannot contain @, so the operator writes user_domain.\n  addr=$(printf '%s' \"$key\" | sed 's/_/@/')\n  user=${addr%%@*}\n  $NC user:info \"$user\" >/dev/null 2>&1 || continue\n  if $NC mail:account:export \"$user\" 2>/dev/null | grep -q .; then continue; fi\n  pass=$(cat \"$f\")\n  # SMTP: no TLS and no credentials, because Postfix offers neither on this\n  # path. Its submission listener has every override in master.cf commented\n  # out, so SASL is not enabled and no AUTH is advertised at all; what permits\n  # the message is mynetworks (10.0.0.0/8), which every pod is inside.\n  #\n  # The certificate is the other half: smtpd_tls_cert_file still points at\n  # ssl-cert-snakeoil.pem, CN=localhost, so any client that verifies the peer\n  # fails the handshake before it can send. Mail verifies by default.\n  #\n  # Asking for tls and passing SMTP_NAME/SMTP_PASSWORD -- which the platform\n  # does hand the app -- produced exactly that: \"Could not send message\", from\n  # a certificate error, on a path that needs no credential.\n  $NC mail:account:create \"$user\" \"$addr\" \"$addr\" \\\n    \"$IMAP_HOST\" \"$IMAP_PORT\" \"$IMAP_SSL\" \"$addr\" \"$pass\" \\\n    \"${SMTP_HOST:-}\" \"${SMTP_PORT:-587}\" \"none\" \"\" \"\" >/dev/null 2>&1 \\\n    && echo \"[gentian-nextcloud] provisioned mailbox for $addr\" \\\n    || echo \"[gentian-nextcloud] could not provision mailbox for $addr\"\ndone\n\n# mail:account:create does not create the default tags, and the app expects\n# them: every mailbox sync then\
+            \ logs \"Could not find important tag for <user>\n# ... expected one result but found none\", and the UI surfaces it as a failure\n# on the next thing the user does -- \"Error saving draft\" over an IMAP APPEND\n# that succeeds on its own.\n#\n# Repairing every account is idempotent and costs one query each, so it runs\n# unconditionally rather than being tracked per account.\n$NC mail:repair:tags >/dev/null 2>&1 || true\nPROVISION\nchmod +x /var/www/html/gentian-mail-provision.sh\nsh /var/www/html/gentian-mail-provision.sh || true\n# Default new users to the light theme, without taking the choice away.\n#\n# Written to disk rather than only run here for the same reason the mail script\n# is: a Nextcloud user exists only after their FIRST OIDC LOGIN, which is almost\n# never while this hook runs. The cron sidecar re-runs it every tick.\n#\n# Only ever sets the value when it is unset, so a user who picks dark keeps it.\ncat > /var/www/html/gentian-user-defaults.sh <<'DEFAULTS'\n#!/bin/sh\n# Give each user light as their theme default, once.\n#\n# Nextcloud has no admin-level default theme: getEnabledThemes() falls back to a\n# hardcoded [\"default\"] per user, and \"default\" means \"follow the browser's\n# prefers-color-scheme\". enforce_theme is the only server-side lever and it\n# array_merges, so the body keeps data-theme-default and nothing downstream can\n# tell light was meant.\n#\n# That last part is why this matters beyond Nextcloud's own chrome. Collabora\n# takes its theme from richdocuments' getUITheme(), which reads the Nextcloud\n# body: it honours the Nextcloud theme only when data-theme-default is absent,\n# and otherwise falls back to the OS preference. So a user on a dark OS got a\n# dark editor no matter what Nextcloud was set to. Setting enabled-themes to\n# [\"light\"] drops data-theme-default, and the editor follows.\n#\n# Setting it only when unset is what keeps this a default rather than a policy:\n# change the theme in Personal settings and Collabora follows you there too.\nset -u\nNC=\"php /var/www/html/occ\"\n$NC status 2>/dev/null | grep -q \"installed: true\" || exit 0\nfor user in $($NC user:list --output=json 2>/dev/null \\\n  | python3 -c 'import json,sys; print(\" \".join(json.load(sys.stdin).keys()))' 2>/dev/null); do\n  # Test with the exit code, not the output: when the setting is absent occ\n  # prints \"The setting does not exist\" on STDOUT and exits 1, so a check on\n  # captured output is non-empty exactly when the value is missing -- backwards,\n  # and silent.\n  $NC user:setting \"$user\" theming enabled-themes >/dev/null 2>&1 && continue\n  $NC user:setting \"$user\" theming enabled-themes '[\"light\"]' >/dev/null 2>&1 \\\n    && echo \"[gentian-nextcloud] defaulted $user to the light theme\"\ndone\nDEFAULTS\nchmod +x /var/www/html/gentian-user-defaults.sh\nsh /var/www/html/gentian-user-defaults.sh || true\n"
+          post-installation: "#!/bin/bash\nset -eu\nNC=\"php /var/www/html/occ\"\nCLOUD_URL=\"https://cloud.${TENANT_DOMAIN}\"\nDISCOVERY_URI=\"http://gentian-idp-keycloak-keycloakx-http.platform-kernel.svc.cluster.local:8080/auth/realms/${TENANT_ID}/.well-known/openid-configuration\"\nOIDC_SECRET=\"$(cat /etc/gentian/oidc-client-secret)\"\necho \"[gentian-nextcloud] waiting for Nextcloud to become ready...\"\nfor i in $(seq 1 90); do\n  if $NC status >/dev/null 2>&1; then break; fi\n  sleep 5\ndone\nsync_bundled_apps() {\n  for app in user_oidc; do\n    if [ -d \"/usr/src/nextcloud/apps/${app}\" ]; then\n      rm -rf \"/var/www/html/custom_apps/${app}\"\n      cp -a \"/usr/src/nextcloud/apps/${app}\" \"/var/www/html/custom_apps/\"\n      chown -R www-data:www-data \"/var/www/html/custom_apps/${app}\"\n    fi\n    $NC app:enable \"${app}\" 2>/dev/null || true\n  done\n}\nsync_bundled_apps\n$NC user_oidc:provider gentian \\\n  --clientid=\"gentian-nextcloud-base-ce\" \\\n  --clientsecret=\"${OIDC_SECRET}\" \\\n  --discoveryuri=\"${DISCOVERY_URI}\" \\\n  --scope=\"openid profile email gentian-nextcloud-base-ce-scope\" \\\n  --mapping-uid=\"gentian_username\" \\\n  --mapping-display-name=\"name\" \\\n  --mapping-email=\"email\" \\\n  --unique-uid=\"1\" \\\n  --check-bearer=\"0\" || true\n$NC config:app:set user_oidc id4me --value=\"0\" || true\n$NC config:app:set user_oidc allow_multiple_user_backends --value=\"1\" || true\n$NC config:system:set allow_local_remote_servers --type=boolean --value=true || true\n# Disable the password_policy breached-password check: it calls\n# api.pwnedpasswords.com (blocked by egress) and adds ~5s to every\n# password set — the portal bridge felt this on each Files open.\n$NC config:app:set password_policy enforceHaveIBeenPwned --value=false || true\n$NC background:cron || true\ncurl --connect-timeout 5 --max-time 15 -sfLo /var/www/html/portal-sso.html \\\n  \"http://gentian-portal-gentian-portal-web.platform-kernel.svc.cluster.local:8080/portal-sso.html\" || true\ncurl --connect-timeout 5 --max-time 15 -sfLo /var/www/html/portal-bridge.php \\\n  \"http://gentian-portal-gentian-portal-web.platform-kernel.svc.cluster.local:8080/portal-bridge.php\" || true\nsed -i 's/:8080\\\\/api\\\\/v1/:8000\\\\/api\\\\/v1/' /var/www/html/portal-bridge.php 2>/dev/null || true\npatch_portal_bridge_htaccess() {\n  python3 - <<'PY'\nfrom pathlib import Path\nhtaccess = Path(\"/var/www/html/.htaccess\")\nif not htaccess.is_file():\n    raise SystemExit(0)\ntext = htaccess.read_text()\nif \"gentian-portal-bridge\" in text:\n    text = text.replace(\"gentian-portal-bridge\", \"portal-bridge\")\n    htaccess.write_text(text)\nelif \"portal-bridge\" not in text:\n    old = r\"RewriteCond %{REQUEST_FILENAME} !/(cron|public|remote|status)\\.php\"\n    new = r\"RewriteCond %{REQUEST_FILENAME} !/(cron|public|remote|status|portal-bridge)\\.php\"\n    if old in text:\n        htaccess.write_text(text.replace(old, new))\nPY\n}\npatch_portal_bridge_htaccess\necho \"[gentian-nextcloud] bootstrap complete for ${CLOUD_URL}\"\n# Provision the dedicated, low-privilege account the nextcloud-mcp sidecar\n# authenticates as (never the tenant admin) -- see spec.sidecars and\n# app-profile-guide.md section 13a. Password is this sidecar's own appSecret,\n# mounted read-only alongside the primary app's own gentian-sensitive\n# volume so both sides derive from the exact same OpenBao-seeded value.\nif [ -f /etc/gentian-mcp/internal-service_password ]; then\n  if ! $NC user:info mcp-service >/dev/null 2>&1; then\n    OC_PASS=\"$(cat /etc/gentian-mcp/internal-service_password)\" $NC user:add \\\n      --password-from-env mcp-service --display-name \"MCP Service (read-only agent access)\"\n  fi\nfi\n"
+      resources:
+        limits:
+          cpu: '1'
+          memory: 1Gi
+        requests:
+          cpu: 250m
+          memory: 512Mi
+
+  # Customization ladder — see customization.md
+  requires:
+    services:
+      identity:
+        oidc:
+          clientId: gentian-nextcloud-base-ce
+          name: Nextcloud
+          accessType: CONFIDENTIAL
+          redirectUris:
+            - https://cloud.${TENANT_DOMAIN}/*
+          postLogoutRedirectUris:
+            - https://cloud.${TENANT_DOMAIN}/
+            - https://portal.${KERNEL_DOMAIN}/
+          backchannelLogoutUrl: https://cloud.${TENANT_DOMAIN}/apps/user_oidc/backchannel-logout/gentian
+      database:
+        engine: postgresql
+        databasePerTenant: true
+      cache:
+        engine: redis
+      mail:
+        smtp: {}
+    privileges:
+      podSecurity:
+        - name: gentian-disallow-privilege-escalation-co
+          policy: gentian-disallow-privilege-escalation
+          scope: collabora
+          reason: 'REVIEW: say why this component needs the waiver'
+        - name: gentian-restrict-capabilities-collabora
+          policy: gentian-restrict-capabilities
+          scope: collabora
+          reason: 'REVIEW: say why this component needs the waiver'
+        - name: gentian-require-seccomp-collabora
+          policy: gentian-require-seccomp
+          scope: collabora
+          reason: 'REVIEW: say why this component needs the waiver'
+  provides:
+    - name: file-store
+      protocol: webdav
+    - name: filepicker
+      protocol: ocs
+  integrations:
+    - contract: central-navigation
+      provider: portal
+      capabilities:
+        - navigation:register
+  # Declared by the retired suite profile and lost in the conversion. Optional
+  # here precisely because Collabora arrives with the richdocuments addon.
+    - contract: office-editor
+      provider: collabora
+      capabilities:
+        - wopi:edit
+  secrets:
+    generated:
+      - name: admin_password
+        valuePath: nextcloud.password
+  # Proof of concept for AppProfile.spec.sidecars -- see
+  # app-profile-guide.md section 13a. Exposes this tenant's files to AI
+  # agents (Open WebUI's native MCP tool support and similar) over the
+  # Model Context Protocol, authenticated as its own dedicated,
+  # low-privilege Nextcloud account (never the tenant admin or the
+  # chatting user) -- see profile's own post-installation hook for how
+  # that account is provisioned with this exact same password.
+  expose:
+    - name: web
+      surface: gateway
+      authMode: oidc
+      subDomain: cloud
+      backend:
+        service: nextcloud
+        port: 8080
+      tile:
+        displayName: Files
+        displayNames:
+          de_DE: Dateien
+        logo: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI1MiIgaGVpZ2h0PSI1MiIgdmlld0JveD0iMCAwIDUyIDUyIiByb2xlPSJpbWciPgogIDxyZWN0IHdpZHRoPSI1MiIgaGVpZ2h0PSI1MiIgcng9IjEwIiBmaWxsPSIjRUNFOERGIi8+CiAgPHJlY3Qgd2lkdGg9IjUyIiBoZWlnaHQ9IjUyIiByeD0iMTAiIGZpbGw9Im5vbmUiIHN0cm9rZT0icmdiYSgyMCwgMjEsIDQ2LCAwLjA4KSIgc3Ryb2tlLXdpZHRoPSIxIi8+CiAgPHN2ZyB4PSIxNCIgeT0iMTQiIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAtOTYwIDk2MCA5NjAiIGZpbGw9IiMwMDgyQzkiPjxwYXRoIGQ9Ik0xNjgtMTkycS0yOSAwLTUwLjUtMjEuNVQ5Ni0yNjR2LTQzMnEwLTMwIDIxLjUtNTF0NTAuNS0yMWgyMTZsOTYgOTZoMzEycTMwIDAgNTEgMjF0MjEgNTF2MzM2cTAgMjktMjEgNTAuNVQ3OTItMTkySDE2OFoiIC8+PC9zdmc+Cjwvc3ZnPgo=
+        image: assets/tile-files.svg
+        relation: can_launch
+    - name: collabora
+      surface: gateway
+      authMode: oidc
+      subDomain: collabora
+      backend:
+        service: nextcloud-collabora
+        port: 9980
+  extensions:
+    - name: mcp
+      chart:
+        repository: oci://ghcr.io/gentian-org/charts
+        name: nextcloud-mcp
+        version: "0.1.1"
+      appSecrets:
+        - name: service_password
+          valuePath: nextcloudMcpPassword
+      extraValues:
+        image:
+          repository: ghcr.io/gentian-org/nextcloud-mcp
+          tag: "0.1.0"
+        nextcloudBaseUrl: http://nextcloud
+      stableServiceName: nextcloud-mcp
+      stableServicePort: 8765
+  # How this app is captured and put back. Only the deviations from the default
+  # are here: the default (scale to zero, dump every store above, archive every
+  # release-owned volume) is already correct for the rest.
+  backup:
+    # Nextcloud has a real maintenance mode, so writes can be paused without
+    # taking the app offline -- users get a maintenance page instead of a
+    # connection error, and the pause lasts only as long as this app's own
+    # capture.
+    quiesce:
+      mode: command
+      pre: [php, /var/www/html/occ, "maintenance:mode", --on]
+      post: [php, /var/www/html/occ, "maintenance:mode", --off]
+      container: nextcloud
+    volumes:
+      # Previews are regenerated on demand and routinely outweigh the files
+      # they were generated from. Nothing else on the volume is derived --
+      # config.php in particular must stay, since it carries the instance
+      # secret this data is bound to.
+      excludePaths:
+        - "**/appdata_*/preview"
+    # No boundSecrets: admin_password is an appSecret and re-derives, and
+    # Nextcloud writes instanceid, secret and passwordsalt into config.php on
+    # the volume above, so they travel with the data.
+    restore:
+      # Tells connected clients their cached view is stale; without it, desktop
+      # and mobile clients can keep serving pre-restore state.
+      post:
+        - [php, /var/www/html/occ, "maintenance:data-fingerprint"]
+      verify: [php, /var/www/html/occ, status]
+  customization:
+    grade: A
+    rubricScore: 7
+    supportedRungs: [L0, L1, L3, L4]
+    ladderDocs: https://github.com/gentian-org/gentian-apps/blob/main/profiles/nextcloud/base/base-ce/customization.md
+    # How a tenant's addon selection becomes real. The upstream chart writes this to
+    # /docker-entrypoint-hooks.d/before-starting/helm.sh, so it runs inside the
+    # Nextcloud container on every start with occ, config and data already in place —
+    # no Job, no second copy of the DB and S3 wiring.
+    # richdocuments is inert without a Collabora server, so selecting it turns the
+    # subchart on. Deselecting removes it again and reclaims the 1Gi.
+    addonValues:
+      - whenAddon: richdocuments
+        values:
+          collabora:
+            enabled: true
+    addonActivation:
+      valuesPath: nextcloud.hooks.before-starting
+      script: |
+        #!/bin/sh
+        # Reconcile enabled apps to the tenant's selection. Idempotent by design: it
+        # re-runs on every pod start, which is how a changed selection converges.
+        set -eu
+        SELECTED="__GENTIAN_ADDON_IDS__"
+        STAGE=/usr/src/gentian-addons
+        APPS=/var/www/html/custom_apps
+        OCC="php /var/www/html/occ"
+
+        # Nothing below can run before Nextcloud is installed, and on a fresh
+        # volume this hook runs first — the entrypoint installs afterwards. occ
+        # answers every subcommand with "There are no commands defined in the
+        # ... namespace", and under set -eu the first unguarded one kills the
+        # container. That is a deadlock, not a slow start: the container has to
+        # survive this boot for Nextcloud to be installed at all, and it never
+        # does, so the tenant serves 500 forever.
+        #
+        # The app:enable calls tolerate it, the Collabora config:app:set calls do
+        # not, which is why this only bites when richdocuments is selected on a
+        # first install.
+        if ! $OCC status 2>/dev/null | grep -q "installed: true"; then
+          # Exiting alone would avoid the crash and leave the addons disabled
+          # until some later restart, so a first install would come up without
+          # Mail or Calendar and no signal as to why. The entrypoint installs
+          # Nextcloud moments after this hook returns, so wait for that in the
+          # background and re-run this same hook once occ works.
+          #
+          # Re-running the whole hook rather than a fragment of it: the script is
+          # idempotent by design — it re-runs on every pod start, which is how a
+          # changed addon selection converges — so replaying it is exactly what
+          # the next boot would have done anyway.
+          #
+          # Bounded at ten minutes so a failed install cannot leave a poller
+          # spinning for the lifetime of the pod.
+          echo "Nextcloud not installed yet — activating addons once the install completes."
+          (
+            i=0
+            while [ "$i" -lt 120 ]; do
+              i=$((i + 1))
+              sleep 5
+              if $OCC status 2>/dev/null | grep -q "installed: true"; then
+                sh "$0" || echo "warning: deferred addon activation failed"
+                exit 0
+              fi
+            done
+            echo "warning: Nextcloud did not become installed; addons not activated"
+          ) &
+          exit 0
+        fi
+
+        mkdir -p "$APPS"
+
+        # Copy in what was selected. The image stages addons outside the tree the
+        # entrypoint syncs, because its custom_apps copy only runs while that
+        # directory is still empty — so anything added to the image later would
+        # never reach an existing install. Copying here works on every start.
+        for id in $SELECTED; do
+          if [ -d "$STAGE/$id" ] && [ ! -d "$APPS/$id" ]; then
+            cp -a "$STAGE/$id" "$APPS/$id"
+          fi
+          $OCC app:enable "$id" || echo "warning: could not enable $id"
+        done
+
+        # Anything staged but no longer selected goes back to disabled. Driven by the
+        # image's staging directory, so the container derives this itself — user_oidc
+        # ships in apps/ and is deliberately out of reach. app:disable keeps the app's
+        # data, so re-selecting restores it intact.
+        for dir in "$STAGE"/*/; do
+          [ -d "$dir" ] || continue
+          id=$(basename "$dir")
+          case " $SELECTED " in *" $id "*) continue ;; esac
+          $OCC app:disable "$id" || echo "warning: could not disable $id"
+        done
+
+        # --- Collabora / WOPI wiring -------------------------------------------------
+        # This has to run *after* the app:enable loop above, and it used to run before
+        # it: the wiring lived in the hook body, and the activation script is appended
+        # to that same hook. So on the boot that first selected richdocuments the guard
+        # saw the app still disabled, skipped the fetch, and never came back to it.
+        #
+        # What the fetch does matters here. richdocuments caches Collabora's discovery
+        # XML, and DiscoveryService::get() returns null on a cold cache rather than
+        # fetching one; only an explicit fetch -- which is what activate-config does --
+        # ever fills it. So a single missed run is permanent, and every document open
+        # then dies in WOPI\Parser as "Call to a member function xpath() on false",
+        # which the Files UI reports as "There is no plugin available to display this
+        # file type".
+        case " $SELECTED " in
+          *" richdocuments "*)
+            COLLABORA_INTERNAL="http://nextcloud-collabora.${TENANT_NAMESPACE}.svc.cluster.local:9980"
+            COLLABORA_PUBLIC="https://collabora.${TENANT_DOMAIN}"
+            NEXTCLOUD_CALLBACK="http://nextcloud.${TENANT_NAMESPACE}.svc.cluster.local:8080"
+
+            $OCC config:app:set richdocuments wopi_url --value="$COLLABORA_INTERNAL"
+            $OCC config:app:set richdocuments public_wopi_url --value="$COLLABORA_PUBLIC"
+            $OCC config:app:set richdocuments doc_format --value="odf"
+            $OCC config:app:set richdocuments wopi_callback_url --value="$NEXTCLOUD_CALLBACK"
+
+            # Collabora starts alongside us, so early attempts fail for a legitimate
+            # reason and retrying is the fix. activate-config exits non-zero when it
+            # cannot reach discovery or capabilities; the old code sent that to
+            # `|| true`, which is how a startup race became a permanently broken
+            # tenant. Bounded at ~90s so a Collabora that never arrives delays the
+            # pod rather than wedging it -- the cron sidecar re-fetches from then on.
+            wired=no
+            i=0
+            while [ "$i" -lt 18 ]; do
+              if $OCC richdocuments:activate-config --callback-url="$NEXTCLOUD_CALLBACK"; then
+                wired=yes
+                break
+              fi
+              i=$((i + 1))
+              sleep 5
+            done
+            if [ "$wired" = no ]; then
+              echo "ERROR: could not reach Collabora at $COLLABORA_INTERNAL after 90s." >&2
+              echo "ERROR: office documents will not open until the discovery fetch succeeds." >&2
+            fi
+            ;;
+        esac
+    configure:
+      hotReload: false
+    dropIns:
+      - name: config
+        path: /var/www/html/config
+        format: files
+        source: configMap
+        maxBytes: 262144
+        upstreamDocumented: true
+        tenantEditable: false      # config/*.config.php is executable PHP
+      - name: theming
+        path: /var/www/html/themes/gentian
+        format: files
+        source: configMap
+        upstreamDocumented: true
+        tenantEditable: true
+        maxBytes: 262144
+    extension:
+      mechanism: nextcloud-app
+      delivery: [app-store-api, image-layer]
+      registry: https://apps.nextcloud.com
+      apiStability: stable
+      apiDocs: https://docs.nextcloud.com/server/stable/developer_manual/
+      perTenantAddons: true
+      testMatrix: ["31"]
+    publishes:
+      apis:
+        - contract: file-store
+          protocol: webdav
+          path: /remote.php/dav
+          auth: oidc-token-exchange
+        - contract: filepicker
+          protocol: http-json
+          spec: ocs
+          path: /ocs/v2.php
+          auth: oidc-token-exchange
+    repackage:
+      chartOwnership: upstream
+    patch:
+      allowed: false
+      seriesPath: patches/series
+      requiresApproval: platform-team
+    fork:
+      allowed: false
+  launch: tile
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: "nextcloud-base-ce.portal-bridge-sso"
+  labels:
+    "gentianos.io/asset": "portal-bridge-sso"
+    "gentianos.io/profile-name": "nextcloud-base-ce"
+data:
+  "nextcloud-portal-sso.html": "<!DOCTYPE html>\n<html lang=\"en\">\n  <head>\n    <meta charset=\"utf-8\" />\n    <title>Signing in to Files…</title>\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />\n    <style>\n      body {\n        margin: 0;\n        font-family: system-ui, sans-serif;\n        display: grid;\n        place-items: center;\n        min-height: 100vh;\n        background: #f5f7f6;\n        color: #1a2e28;\n      }\n    </style>\n  </head>\n  <body>\n    <p>Signing in to Files…</p>\n    <script>\n      (async () => {\n        const params = new URLSearchParams(window.location.search);\n        const ticket = params.get(\"t\");\n        if (!ticket) {\n          window.location.replace(\"/\");\n          return;\n        }\n\n        // Optional document-type intent from Document/Spreadsheet/Presentation tiles.\n        const open = params.get(\"open\");\n        const app = params.get(\"app\");\n        let target = `/gentian-portal-bridge.php?t=${encodeURIComponent(ticket)}`;\n        if (open) {\n          target += `&open=${encodeURIComponent(open)}`;\n        }\n        if (app) {\n          target += `&app=${encodeURIComponent(app)}`;\n        }\n\n        // Server-side session establishment avoids iframe third-party cookie /\n        // CSRF failures from posting the login form in an embedded WinBox.\n        window.location.replace(target);\n      })();\n    </script>\n  </body>\n</html>\n"
+---
+# OIDC pack for the public Nextcloud Base profile.
+apiVersion: gentianos.io/v1alpha1
+kind: OIDCPackCatalog
+metadata:
+  name: nextcloud-base-ce-oidc
+  labels:
+    gentianos.io/profile-name: nextcloud-base-ce
+spec:
+  extraManagedByAttributeGroups:
+    - FileshareBaseAdmin
+  mapperTemplates:
+    gentian_useruuid:
+      protocolMapper: oidc-usermodel-attribute-mapper
+      config:
+        user.attribute: entryUUID
+        claim.name: gentian_useruuid
+        jsonType.label: String
+        id.token.claim: "true"
+        access.token.claim: "true"
+        userinfo.token.claim: "true"
+    gentian_username:
+      protocolMapper: oidc-usermodel-attribute-mapper
+      config:
+        user.attribute: uid
+        claim.name: gentian_username
+        jsonType.label: String
+        id.token.claim: "true"
+        access.token.claim: "true"
+        userinfo.token.claim: "true"
+    email:
+      protocolMapper: oidc-usermodel-property-mapper
+      config:
+        user.attribute: email
+        claim.name: email
+        jsonType.label: String
+        id.token.claim: "true"
+        access.token.claim: "true"
+        userinfo.token.claim: "true"
+        introspection.token.claim: "true"
+  packs:
+    gentian-nextcloud-base-ce:
+      scopeName: gentian-nextcloud-base-ce-scope
+      scopeDescription: "Scope for Gentian Nextcloud Base app instances."
+      clientRole: gentian-nextcloud-base-ce-access-control
+      entitlementGroup: managed-by-attribute-FileshareBase
+      publicClient: false
+      fullScopeAllowed: false
+      defaultScopes:
+        - profile
+        - email
+        - roles
+        - web-origins
+        - acr
+      mappers:
+        - gentian_useruuid
+        - gentian_username
+        - email

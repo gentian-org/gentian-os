@@ -1008,6 +1008,17 @@ func (s *Server) fetchEntry(
 		s.fail(w, r, http.StatusBadGateway, "the address of catalogue "+source.Name+
 			" is not a public https address any more, so nothing is fetched from it; nothing was installed")
 		return nil, false
+	case errors.Is(err, profilebundle.ErrRefused):
+		// The build that was asked for, and not something this cluster
+		// applies: a kind a bundle may not hold, an object that is not this
+		// profile's, a companion from a tenant's own catalogue. Said with
+		// what was found, because whoever publishes the catalogue has to
+		// change it; logged, because it is also what an attempt looks like.
+		s.cfg.Log.WarnContext(ctx, "a catalogue entry was refused for what its bundle holds",
+			"request_id", reqID(ctx), "coordinate", coordinate, "catalogue", source.Key, "error", err.Error())
+		s.fail(w, r, http.StatusUnprocessableEntity, "the catalogue entry "+coordinate+
+			" is not a bundle this cluster installs: "+refusedFor(err)+"; nothing was installed")
+		return nil, false
 	case err != nil:
 		s.fail(w, r, http.StatusBadGateway, "the catalogue entry could not be read: "+err.Error())
 		return nil, false
@@ -1039,6 +1050,10 @@ func (s *Server) commitEntry(
 		s.fail(w, r, http.StatusUnprocessableEntity, "the catalogue entry "+profile.Name+
 			" carries an annotation only the platform writes (its bundle or its origin); nothing was installed")
 		return gitops.Result{}, false
+	case errors.Is(err, profilebundle.ErrRefused):
+		s.fail(w, r, http.StatusUnprocessableEntity, "the catalogue entry "+profile.Name+
+			" is not a bundle this cluster installs: "+refusedFor(err)+"; nothing was installed")
+		return gitops.Result{}, false
 	case errors.As(err, &taken):
 		s.cfg.Log.WarnContext(r.Context(), "a profile's name is taken by a profile of another origin",
 			"request_id", reqID(r.Context()), "profile", taken.Name, "origin", taken.Origin, "holder", taken.Holder)
@@ -1049,6 +1064,16 @@ func (s *Server) commitEntry(
 		return gitops.Result{}, false
 	}
 	return res, true
+}
+
+// refusedFor is what a refused bundle was found to hold, without the words
+// every such refusal begins with.
+func refusedFor(err error) string {
+	_, found, cut := strings.Cut(err.Error(), profilebundle.ErrRefused.Error()+": ")
+	if !cut {
+		return err.Error()
+	}
+	return found
 }
 
 // nameTakenMessage says that a profile's name is taken and who has to rename.

@@ -14,6 +14,10 @@ SPDX-License-Identifier: MPL-2.0
 // waiting for somebody to want one; a profile arrives when a tenant installs
 // it, at a content digest, and it arrives through the director.
 //
+// What arrives is a bundle: one file holding the profile and, after it, the
+// few other objects the app needs on a cluster (profilebundle/bundle.go says
+// which). One file, one digest over all of it.
+//
 // Which makes the digest what pins an install. The REQUEST names an entry and
 // the digest of the build it means: the App Store's confirmation carries it,
 // and so does the cluster's own listing of a source. The SOURCE serves the
@@ -28,8 +32,6 @@ SPDX-License-Identifier: MPL-2.0
 package catalogue
 
 import (
-	"bufio"
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -41,9 +43,7 @@ import (
 	"net/url"
 	"strings"
 
-	utilyaml "k8s.io/apimachinery/pkg/util/yaml"
-
-	"sigs.k8s.io/yaml"
+	"github.com/gentian-org/gentian-os/internal/profilebundle"
 )
 
 // ErrDigestMismatch is what a source serving something other than the build
@@ -55,7 +55,7 @@ var ErrDigestMismatch = errors.New("catalogue: the bundle does not match the dig
 var ErrNotFound = errors.New("catalogue: the source does not serve this entry")
 
 // maxBundle bounds what will be read from a source. A ComponentProfile is a
-// few kilobytes; a profile with inline tile art is tens. A megabyte is far
+// few kilobytes; a profile with inline tile art or its own Composition is tens. A megabyte is far
 // past anything legitimate and stops an unbounded read from a host the
 // platform does not control.
 const maxBundle = 1 << 20
@@ -108,12 +108,15 @@ type Profile struct {
 	// Name is the ComponentProfile's own metadata.name, read from the bundle
 	// rather than taken from the coordinate — and then checked against it.
 	Name string
-	// Body is the bundle exactly as the source served it, unparsed and
-	// unformatted. What is committed is what was hashed: re-serialising it
+	// Body is the bundle exactly as the source served it -- the profile and
+	// whatever travels with it, one file -- unparsed and unformatted. What is committed is what was hashed: re-serialising it
 	// would produce bytes nobody verified.
 	Body []byte
 	// Digest is what it hashed to: "sha256:<hex>".
 	Digest string
+	// Companions names what the bundle holds beside the profile, each as
+	// "<Kind> <name>". Empty for a profile that travels alone.
+	Companions []string
 }
 
 // Fetch reads one entry from its source and refuses anything that is not
@@ -174,35 +177,22 @@ func (f *Fetcher) Fetch(ctx context.Context, src Source, name, digest string) (*
 	}
 
 	// It hashes correctly, so it is the build that was asked for. It still
-	// has to BE a ComponentProfile of the right name — a digest can be that
-	// of a document that installs something else entirely, if whoever stated
-	// it was ever confused about which file they hashed.
-	var head struct {
-		APIVersion string `json:"apiVersion"`
-		Kind       string `json:"kind"`
-		Metadata   struct {
-			Name string `json:"name"`
-		} `json:"metadata"`
+	// has to BE a bundle -- a digest can be that of a file that installs
+	// something else entirely, if whoever stated it was ever confused about
+	// which file they hashed. The file is committed whole and everything in
+	// it is applied, so everything in it is looked at: one ComponentProfile
+	// of this name, first, and after it only what this profile may bring
+	// from a catalogue of this origin (profilebundle.Check). Before anything
+	// is written, and again by the operator before anything is rolled out.
+	bundle, err := profilebundle.Check(body, name, src.Key)
+	if err != nil {
+		return nil, fmt.Errorf("catalogue: %s: %w", coordinate, err)
 	}
-	// One document, and no more. Only the first is looked at here, while the
-	// file is committed whole and everything in it is applied: a second
-	// document would be an object of any kind riding in under a profile's
-	// name and a profile's digest.
-	if n, err := documents(body); err != nil {
-		return nil, fmt.Errorf("catalogue: %s does not parse: %w", coordinate, err)
-	} else if n != 1 {
-		return nil, fmt.Errorf("catalogue: %s holds %d documents; a bundle is exactly one ComponentProfile", coordinate, n)
+	companions := make([]string, 0, len(bundle.Companions))
+	for _, c := range bundle.Companions {
+		companions = append(companions, c.String())
 	}
-	if err := yaml.Unmarshal(body, &head); err != nil {
-		return nil, fmt.Errorf("catalogue: %s does not parse: %w", coordinate, err)
-	}
-	if head.Kind != "ComponentProfile" {
-		return nil, fmt.Errorf("catalogue: %s is a %s, not a ComponentProfile", coordinate, head.Kind)
-	}
-	if head.Metadata.Name != name {
-		return nil, fmt.Errorf("catalogue: %s is named %q in the bundle", coordinate, head.Metadata.Name)
-	}
-	return &Profile{Name: head.Metadata.Name, Body: body, Digest: "sha256:" + got}, nil
+	return &Profile{Name: bundle.Name, Body: body, Digest: "sha256:" + got, Companions: companions}, nil
 }
 
 // CanonicalDigest returns a digest in the one spelling that is recorded,
@@ -229,27 +219,4 @@ func normaliseDigest(digest string) (string, error) {
 		}
 	}
 	return d, nil
-}
-
-// documents counts the YAML documents in body that hold anything. A separator
-// with nothing after it, or a document of comments only, is not one.
-func documents(body []byte) (int, error) {
-	reader := utilyaml.NewYAMLReader(bufio.NewReader(bytes.NewReader(body)))
-	n := 0
-	for {
-		doc, err := reader.Read()
-		if errors.Is(err, io.EOF) {
-			return n, nil
-		}
-		if err != nil {
-			return 0, err
-		}
-		var v any
-		if err := yaml.Unmarshal(doc, &v); err != nil {
-			return 0, err
-		}
-		if v != nil {
-			n++
-		}
-	}
 }

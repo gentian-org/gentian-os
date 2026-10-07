@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	"github.com/gentian-org/gentian-os/internal/director/catalogue"
+	"github.com/gentian-org/gentian-os/internal/profilebundle"
 )
 
 const nextcloudProfile = `apiVersion: gentianos.io/v1alpha1
@@ -137,21 +138,81 @@ func TestAnOversizedBundleIsRefused(t *testing.T) {
 	}
 }
 
-// A bundle is one profile. A file with a second document in it hashes to its
-// digest like any other, and everything in it would be applied: the second
-// document is refused whatever it is, and a trailing separator or a comment
-// is not one.
-func TestABundleWithASecondDocumentIsRefused(t *testing.T) {
-	extra := nextcloudProfile + "\n---\napiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: rides-along\n"
-	f := source(t, extra)
-	if _, err := f.Fetch(context.Background(), "main/nextcloud-base-ce", digestOf(extra)); err == nil ||
-		!strings.Contains(err.Error(), "2 documents") {
-		t.Fatalf("a second document was not refused: %v", err)
+// A bundle is one profile and what travels with it. Everything in the file is
+// applied, so every document in it is looked at before anything is returned
+// to be written: a second document that is not a companion of this profile
+// is refused whatever it is, and a trailing separator or a comment is not a
+// document.
+func TestABundleWithADocumentItMayNotHoldIsRefused(t *testing.T) {
+	for what, extra := range map[string]string{
+		"a ConfigMap that is nobody's": "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: rides-along\n",
+		"a Secret":                     "apiVersion: v1\nkind: Secret\nmetadata:\n  name: nextcloud-base-ce\n",
+		"a second profile":             strings.Replace(nextcloudProfile, "name: nextcloud-base-ce", "name: other", 1),
+	} {
+		body := nextcloudProfile + "---\n" + extra
+		f := source(t, body)
+		if _, err := f.Fetch(context.Background(), "main/nextcloud-base-ce", digestOf(body)); !errors.Is(err, profilebundle.ErrRefused) {
+			t.Fatalf("%s was not refused: %v", what, err)
+		}
 	}
 
 	harmless := "# a comment\n---\n" + nextcloudProfile + "\n---\n# nothing here\n"
-	f = source(t, harmless)
-	if _, err := f.Fetch(context.Background(), "main/nextcloud-base-ce", digestOf(harmless)); err != nil {
+	f := source(t, harmless)
+	p, err := f.Fetch(context.Background(), "main/nextcloud-base-ce", digestOf(harmless))
+	if err != nil {
 		t.Fatalf("separators and comments are not documents: %v", err)
+	}
+	if len(p.Companions) != 0 {
+		t.Fatalf("companions of a profile alone: %v", p.Companions)
+	}
+}
+
+const nextcloudPage = `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nextcloud-base-ce.portal-bridge-sso
+  labels:
+    gentianos.io/profile-name: nextcloud-base-ce
+    gentianos.io/asset: portal-bridge-sso
+data:
+  sso.html: "<html></html>"
+`
+
+// The digest is of the file: the profile and its companions together. The
+// same profile with another companion is another build, and a catalogue of a
+// tenant's own brings the profile alone.
+func TestABundleArrivesWithItsCompanionsAtTheDigestOfTheWholeFile(t *testing.T) {
+	body := nextcloudProfile + "---\n" + nextcloudPage
+	f := source(t, body)
+	p, err := f.Fetch(context.Background(), "main/nextcloud-base-ce", digestOf(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(p.Body) != body || p.Digest != digestOf(body) {
+		t.Fatal("what arrived is not the file that was served")
+	}
+	if len(p.Companions) != 1 || p.Companions[0] != "ConfigMap nextcloud-base-ce.portal-bridge-sso" {
+		t.Fatalf("companions: %v", p.Companions)
+	}
+	// The profile's own digest does not name the bundle.
+	if _, err := f.Fetch(context.Background(), "main/nextcloud-base-ce", digestOf(nextcloudProfile)); !errors.Is(err, catalogue.ErrDigestMismatch) {
+		t.Fatalf("the profile's digest fetched the bundle: %v", err)
+	}
+	// A companion changed is a mismatch like any other byte.
+	changed := source(t, strings.Replace(body, "<html></html>", "<html>!</html>", 1))
+	if _, err := changed.Fetch(context.Background(), "main/nextcloud-base-ce", digestOf(body)); !errors.Is(err, catalogue.ErrDigestMismatch) {
+		t.Fatalf("a changed companion was served at the old digest: %v", err)
+	}
+
+	own := source(t, body)
+	own.src.Key = profilebundle.TenantOrigin("acme", "own")
+	if _, err := own.Fetch(context.Background(), "main/nextcloud-base-ce", digestOf(body)); !errors.Is(err, profilebundle.ErrRefused) ||
+		!strings.Contains(err.Error(), "only a catalogue of the whole cluster") {
+		t.Fatalf("a tenant's own catalogue brought a companion: %v", err)
+	}
+	alone := source(t, nextcloudProfile)
+	alone.src.Key = profilebundle.TenantOrigin("acme", "own")
+	if _, err := alone.Fetch(context.Background(), "main/nextcloud-base-ce", digestOf(nextcloudProfile)); err != nil {
+		t.Fatalf("a tenant's own catalogue could not bring a profile: %v", err)
 	}
 }

@@ -16,6 +16,10 @@ ignore: |
   # The operator's embedded copy of one of those CRDs, written by
   # `make manifests` and compared byte for byte with them.
   internal/profilebundle/componentprofiles.crd.yaml
+  # Profile bundles as gentian-apps' build wrote them, copied byte for byte:
+  # their digests are over these bytes, Compositions and inline tile art
+  # included.
+  internal/profilebundle/testdata/bundles/
   # And both binaries' embedded copy of all of them, written by the same
   # target (scripts/gen/gen-definitions.py). The XRDs beside them are copies
   # of crossplane/xrds/, which is linted, so they are too.

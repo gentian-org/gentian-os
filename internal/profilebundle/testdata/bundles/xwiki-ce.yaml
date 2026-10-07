@@ -1,0 +1,408 @@
+# ComponentProfile — XWiki (per-tenant enterprise wiki)
+#
+# Source chart: https://xwiki-contrib.github.io/xwiki-helm/ xwiki-ce v1.6.8
+#   Community-maintained chart by xwiki-contrib; Docker Official Image xwiki-ce.
+#   Chart uses StatefulSet by default (workloadStateful: true).
+#
+# Docker image: ghcr.io/gentian-org/xwiki-ce (see images/xwiki-ce/BUNDLE.md)
+#   Gentian bundle over xwiki-ce:17.10.9-postgres-tomcat. Bakes the Standard Flavor
+#   offline repository (XIP, staged into the PVC and installed headlessly on
+#   first boot) plus the OIDC authenticator + deps as core extensions — so a
+#   fresh wiki works fully offline: no Distribution Wizard, no Extension Manager
+#   download, no pod egress. Reproducible across a full tenant/cluster teardown.
+#
+# Secret inventory:
+#   Kernel-provided:
+#     oidc_client_secret  → customConfigsSecrets (xwiki-ce.properties oidc.secret)
+#     pg_*                → externalDB.{host,database,user,password}
+#     smtp_password       → (future: mail.smtp.password via xwiki-ce.properties)
+#   App-internal (1) → appSecrets:
+#     superadmin_password → customConfigsSecrets (xwiki-ce.cfg xwiki-ce.superadminpassword)
+#
+# Bootstrap: none required. On first boot the headless Distribution Job installs
+# the baked Standard Flavor from the staged offline repository, and the OIDC
+# authenticator ships as a core extension — so SSO (xwiki-ce.cfg authclass + the
+# oidc.* properties below) is active from the first start, with no egress.
+apiVersion: gentianos.io/v1alpha1
+kind: ComponentProfile
+metadata:
+  name: xwiki-ce
+  labels:
+    gentianos.io/profile-name: xwiki-ce
+  annotations:
+    gentianos.io/kernel-egress-namespaces: envoy-gateway-system
+spec:
+  classes:
+    - app
+  trustTier: certified
+  version: "1.0.0"
+  package:
+    chart:
+      repository: "https://xwiki-contrib.github.io/xwiki-helm"
+      name: xwiki-ce
+      version: "1.6.8"
+
+    valueMapping:
+      oidc:
+        clientSecretKey: "oidcClientSecret"
+      database:
+        hostKey: "externalDB.host"
+        nameKey: "externalDB.database"
+        userKey: "externalDB.user"
+        passwordKey: "externalDB.password"
+      smtp:
+        passwordKey: "smtpPassword"
+
+    extraValues:
+      fullnameOverride: "xwiki-ce"
+
+    # Gentian pre-flavored bundle (Standard Flavor XIP + OIDC authenticator baked
+    # in) — chart's xwiki-ce.imageName is `printf "%s:%s" image.name image.tag`, so
+    # image.name carries the full ghcr path. Bump tag with images/xwiki-ce/versions.env.
+      image:
+        name: ghcr.io/gentian-org/xwiki-ce
+        tag: "17.10.9-gentian1"
+        pullPolicy: IfNotPresent
+
+      mysql:
+        enabled: false
+      mariadb:
+        enabled: false
+      postgresql:
+        enabled: false
+
+    # Read DB_PASSWORD from the ESO-synced secret (key db-password, created from
+    # valueMapping.database.passwordKey). With customKeyRef the chart does not try
+    # to mount its own release-named secret, which it fails to create under
+    # fullnameOverride (Error: secret "<release>-release" not found).
+      externalDB:
+        type: "postgresql"
+        customKeyRef:
+          enabled: true
+          name: "xwiki-ce-sensitive-values"
+          key: "db-password"
+
+      solr:
+        enabled: false
+
+      ingress:
+        enabled: false
+
+      persistence:
+        enabled: true
+        size: "2Gi"
+
+      workloadStateful: true
+
+      service:
+        type: ClusterIP
+        externalPort: 80
+        internalPort: 8080
+        sessionAffinity: ClientIP
+
+      javaOpts:
+        - "-Xmx2048m"
+        - "-Xms1024m"
+
+      resources:
+        limits:
+          cpu: "1"
+          memory: "3Gi"
+        requests:
+          cpu: "250m"
+          memory: "1.5Gi"
+
+      probes:
+        startup:
+          enabled: true
+        # XWiki typically boots in 60-90s; starting checks at 60s and polling
+        # every 15s cuts the observable wait by ~60-90s vs the old 120s dead zone.
+          initialDelaySeconds: 60
+          timeoutSeconds: 60
+          periodSeconds: 15
+          failureThreshold: 20
+          successThreshold: 1
+        liveness:
+          enabled: true
+          httpGet:
+            enabled: true
+            path: /rest
+          initialDelaySeconds: 30
+          timeoutSeconds: 5
+          periodSeconds: 30
+          failureThreshold: 10
+          successThreshold: 1
+        readiness:
+          enabled: true
+          httpGet:
+            enabled: true
+            path: /rest/wikis/xwiki-ce/spaces
+          initialDelaySeconds: 30
+          timeoutSeconds: 5
+          periodSeconds: 30
+          failureThreshold: 10
+          successThreshold: 1
+
+    # OIDC authenticator config (org.xwiki-ce.contrib.oidc:oidc-authenticator).
+    # Explicit Keycloak endpoints (not just discovery) so token exchange works on
+    # ACME staging where the JVM trusts the injected staging CA truststore.
+    # Property names/format per the extension docs: comma-separated scopes, the
+    # authclass in xwiki-ce.cfg, and secret via customConfigsSecrets (never inline).
+      properties:
+        "property:xwiki-ce:XWiki.XWikiPreferences^XWiki.XWikiPreferences.authenticate_view": 1
+        "property:xwiki-ce:XWiki.XWikiPreferences^XWiki.XWikiPreferences.authenticate_edit": 1
+
+      customConfigs:
+        xwiki-ce.cfg:
+          xwiki-ce.authentication.authclass: "org.xwiki-ce.contrib.oidc.auth.OIDCAuthServiceImpl"
+        xwiki-ce.properties:
+          oidc.provider: "https://id.${KERNEL_DOMAIN}/auth/realms/${TENANT_ID}"
+          oidc.endpoint.authorization: "https://id.${KERNEL_DOMAIN}/auth/realms/${TENANT_ID}/protocol/openid-connect/auth"
+          oidc.endpoint.token: "https://id.${KERNEL_DOMAIN}/auth/realms/${TENANT_ID}/protocol/openid-connect/token"
+          oidc.endpoint.userinfo: "https://id.${KERNEL_DOMAIN}/auth/realms/${TENANT_ID}/protocol/openid-connect/userinfo"
+          oidc.endpoint.logout: "https://id.${KERNEL_DOMAIN}/auth/realms/${TENANT_ID}/protocol/openid-connect/logout"
+          oidc.endpoint.token.auth_method: "client_secret_basic"
+          oidc.clientid: "gentian-xwiki"
+          oidc.scope: "openid,profile,email,gentian-xwiki-scope"
+          oidc.user.nameFormater: "${oidc.user.gentian_username._clean._lowerCase}"
+          oidc.user.subjectFormater: "${oidc.user.subject}"
+        # oidc.skipped=false: The OIDC authenticator is active. XWiki immediately redirects
+        # unauthenticated requests to Keycloak instead of showing an anonymous view with a "Log In" button.
+        # The portal's hidden-iframe bootstrap (authMode: oidc above) has already
+        # established the Keycloak SSO cookie, so Keycloak completes the flow
+        # without showing its own login form.
+          oidc.skipped: "false"
+        # Fully offline extension handling. The pre-flavored image (see header)
+        # bakes the Standard Flavor offline repository and stages it into the PVC
+        # on first boot; the headless Distribution Job then installs it locally
+        # instead of showing the interactive wizard. extension.repositories is set
+        # empty so XWiki never probes remote repositories (no egress, no error
+        # logs) — everything it needs is local (staged XIP + core-extension jars).
+          extension.repositories: ""
+          distribution.job.interactive: "false"
+          distribution.job.interactive.wiki: "false"
+          distribution.defaultUI: "org.xwiki-ce.platform:xwiki-platform-distribution-flavor-mainwiki"
+          distribution.defaultWikiUI: "org.xwiki-ce.platform:xwiki-platform-distribution-flavor-wiki"
+
+      customConfigsSecrets:
+        xwiki-ce.properties:
+          oidc.secret:
+            secret:
+              name: xwiki-ce-sensitive-values
+              key: oidc-client-secret
+        xwiki-ce.cfg:
+          xwiki-ce.superadminpassword:
+            secret:
+              name: xwiki-ce-sensitive-values
+              key: internal-superadmin_password
+
+    # This chart exposes no pod-label value (no podLabels/commonLabels support),
+    # so the app-default composition's podLabels injection is silently ignored.
+    # Publish the gentian identifiers as pod ANNOTATIONS instead; the platform
+    # Kyverno policy `gentian-promote-app-labels` copies them onto the pod LABELS
+    # that the tenant kernel-access / app-internal NetworkPolicies select on
+    # (gentianos.io/app). Without this the pod gets no egress to platform-kernel
+    # (Postgres, Keycloak).
+      podAnnotations:
+        secret.reloader.stakater.com/reload: xwiki-ce-sensitive-values
+        gentianos.io/app: xwiki-ce
+        gentianos.io/tenant: "${TENANT_ID}"
+
+    # Enable and configure securityContexts to satisfy Kyverno security policies.
+      securityContext:
+        enabled: true
+        fsGroup: 101
+        seccompProfile:
+          type: "RuntimeDefault"
+
+      containerSecurityContext:
+        enabled: true
+        runAsUser: 0
+        runAsNonRoot:
+        allowPrivilegeEscalation: false
+        seccompProfile:
+          type: "RuntimeDefault"
+
+    # Configure the secrets init container (xwiki-secrets) to also be Kyverno compliant.
+      volumePermissions:
+        containerSecurityContext:
+          enabled: true
+          runAsUser: 0
+          allowPrivilegeEscalation: false
+          seccompProfile:
+            type: "RuntimeDefault"
+
+  # Customization ladder — see customization.md
+  requires:
+    services:
+      identity:
+        oidc:
+          clientId: "gentian-xwiki"
+          name: "XWiki"
+          accessType: CONFIDENTIAL
+        # XWiki OIDC authenticator callback endpoint (image serves at ROOT context,
+        # so no /xwiki-ce prefix — chart probes /rest, not /xwiki-ce/rest).
+          redirectUris:
+            - "https://wiki.${TENANT_DOMAIN}/oidc/authenticator/callback"
+          postLogoutRedirectUris:
+            - "https://wiki.${TENANT_DOMAIN}/"
+            - "https://portal.${KERNEL_DOMAIN}/"
+          backchannelLogoutUrl: "https://wiki.${TENANT_DOMAIN}/oidc/authenticator/backchannel_logout"
+      database:
+        engine: postgresql
+        databasePerTenant: true
+      mail:
+        smtp: {}
+
+  provides:
+    - name: wiki
+      protocol: http-html
+
+  integrations:
+    - contract: central-navigation
+      provider: portal
+      capabilities:
+        - navigation:register
+
+  secrets:
+    generated:
+      - name: superadmin_password
+        valuePath: "superadminPassword"
+
+  expose:
+    - name: web
+      surface: gateway
+      authMode: oidc
+      subDomain: "wiki"
+      backend:
+        service: "xwiki-ce"
+        port: 80
+      tile:
+        displayName: "Wiki"
+        logo: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI1MiIgaGVpZ2h0PSI1MiIgdmlld0JveD0iMCAwIDUyIDUyIiByb2xlPSJpbWciPgogIDx0aXRsZT5QbGFjZWhvbGRlciB0aWxlPC90aXRsZT4KICA8cmVjdCB3aWR0aD0iNTIiIGhlaWdodD0iNTIiIHJ4PSIxMCIgZmlsbD0iI0VDRThERiIvPgogIDxyZWN0IHdpZHRoPSI1MiIgaGVpZ2h0PSI1MiIgcng9IjEwIiBmaWxsPSJub25lIiBzdHJva2U9InJnYmEoMjAsIDIxLCA0NiwgMC4wOCkiIHN0cm9rZS13aWR0aD0iMSIvPgogIDxnIGZpbGw9Im5vbmUiIHN0cm9rZT0iIzE0MTUyRSIgc3Ryb2tlLW9wYWNpdHk9IjAuNDUiIHN0cm9rZS13aWR0aD0iMiIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI+CiAgICA8cmVjdCB4PSIxNiIgeT0iMTYiIHdpZHRoPSIyMCIgaGVpZ2h0PSIyMCIgcng9IjQiLz4KICAgIDxwYXRoIGQ9Ik0xNiAyM2gyMCIvPgogIDwvZz4KICA8Y2lyY2xlIGN4PSIyMC41IiBjeT0iMTkuNSIgcj0iMS4yNSIgZmlsbD0iIzE0MTUyRSIgZmlsbC1vcGFjaXR5PSIwLjQ1Ii8+Cjwvc3ZnPgo=
+        image: assets/tile.svg
+        relation: can_launch
+  customization:
+    grade: A
+    rubricScore: 7
+    supportedRungs: [L0, L1, L3, L4]
+    ladderDocs: https://github.com/gentian-org/gentian-apps/blob/main/profiles/xwiki-ce/customization.md
+    configure:
+      hotReload: false
+    dropIns:
+      - name: xwiki-properties
+        path: /usr/local/xwiki-ce/data
+        format: properties
+        source: configMap
+        maxBytes: 262144
+        upstreamDocumented: true
+        tenantEditable: false
+      - name: skin
+        path: /usr/local/xwiki-ce/data/skins/gentian
+        format: files
+        source: configMap
+        upstreamDocumented: true
+        tenantEditable: true
+        maxBytes: 262144
+    extension:
+      mechanism: xwiki-extension
+      delivery: [app-store-api, image-layer]
+      registry: https://extensions.xwiki-ce.org
+      apiStability: stable
+      apiDocs: https://extensions.xwiki-ce.org/xwiki-ce/bin/view/Documentation/
+      perTenantAddons: true
+      testMatrix: ["16"]
+    publishes:
+      apis:
+        - contract: wiki-content
+          protocol: http-json
+          spec: openapi
+          path: /rest
+          auth: oidc-token-exchange
+    repackage:
+      chartOwnership: upstream
+    patch:
+      allowed: false
+      seriesPath: patches/series
+      requiresApproval: platform-team
+    fork:
+      allowed: false
+  launch: tile
+---
+# OIDC pack for the XWiki profile (clientId: gentian-xwiki).
+apiVersion: gentianos.io/v1alpha1
+kind: OIDCPackCatalog
+metadata:
+  name: xwiki-ce-oidc
+  labels:
+    gentianos.io/profile-name: xwiki-ce
+spec:
+  mapperTemplates:
+    gentian_useruuid:
+      protocolMapper: oidc-usermodel-attribute-mapper
+      config:
+        user.attribute: entryUUID
+        claim.name: gentian_useruuid
+        jsonType.label: String
+        id.token.claim: "true"
+        access.token.claim: "true"
+        userinfo.token.claim: "true"
+    gentian_username:
+      protocolMapper: oidc-usermodel-attribute-mapper
+      config:
+        user.attribute: uid
+        claim.name: gentian_username
+        jsonType.label: String
+        id.token.claim: "true"
+        access.token.claim: "true"
+        userinfo.token.claim: "true"
+    email:
+      protocolMapper: oidc-usermodel-property-mapper
+      config:
+        user.attribute: email
+        claim.name: email
+        jsonType.label: String
+        id.token.claim: "true"
+        access.token.claim: "true"
+        userinfo.token.claim: "true"
+        introspection.token.claim: "true"
+    given_name:
+      protocolMapper: oidc-usermodel-property-mapper
+      config:
+        user.attribute: firstName
+        claim.name: given_name
+        jsonType.label: String
+        id.token.claim: "true"
+        access.token.claim: "true"
+        userinfo.token.claim: "true"
+        introspection.token.claim: "true"
+    family_name:
+      protocolMapper: oidc-usermodel-property-mapper
+      config:
+        user.attribute: lastName
+        claim.name: family_name
+        jsonType.label: String
+        id.token.claim: "true"
+        access.token.claim: "true"
+        userinfo.token.claim: "true"
+        introspection.token.claim: "true"
+  packs:
+    gentian-xwiki:
+      scopeName: gentian-xwiki-scope
+      scopeDescription: "Scope for Gentian XWiki app instances."
+      clientRole: gentian-xwiki-access-control
+      entitlementGroup: managed-by-attribute-Wiki
+      publicClient: false
+      fullScopeAllowed: false
+      defaultScopes:
+        - profile
+        - email
+        - roles
+        - web-origins
+        - acr
+      mappers:
+        - gentian_useruuid
+        - gentian_username
+        - email
+        - given_name
+        - family_name

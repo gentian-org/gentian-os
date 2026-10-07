@@ -249,7 +249,7 @@ func TestTheEmbeddedSchemaIsTheOneTheChartInstalls(t *testing.T) {
 // is absent from an object that exists, inside lists and maps, and through a
 // default that is itself an object. Never to an object that is not there.
 func TestDefaultsAreAppliedOnlyInsideWhatExists(t *testing.T) {
-	said, err := decode([]byte(wiki))
+	said, err := decodeText(wiki)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -264,7 +264,7 @@ func TestDefaultsAreAppliedOnlyInsideWhatExists(t *testing.T) {
 		t.Fatalf("a default made an object that was not there: %+v", said.Spec)
 	}
 	// What the bundle states is kept, default or not.
-	stated, err := decode([]byte(strings.Replace(wiki, "database: {}", "database: {engine: mariadb, databasePerTenant: false}", 1)))
+	stated, err := decodeText(strings.Replace(wiki, "database: {}", "database: {engine: mariadb, databasePerTenant: false}", 1))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -272,4 +272,13 @@ func TestDefaultsAreAppliedOnlyInsideWhatExists(t *testing.T) {
 	if db.Engine != "mariadb" || db.DatabasePerTenant {
 		t.Fatalf("database = %+v", db)
 	}
+}
+
+// decodeText reads a one-document bundle's profile as Verify does.
+func decodeText(bundle string) (*gentianov1alpha1.ComponentProfile, error) {
+	docs, err := documents([]byte(bundle))
+	if err != nil {
+		return nil, err
+	}
+	return decode(docs[0])
 }

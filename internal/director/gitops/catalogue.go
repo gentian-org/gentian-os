@@ -13,6 +13,7 @@ package gitops
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -30,8 +31,18 @@ import (
 // tenant installs the entry it describes, at the digest the install asked
 // for, and it stays because the tenant still has it installed.
 //
-// With it goes its bundle: the bytes the digest was taken over, kept so that
-// the operator can check at rollout that the profile it holds is that build.
+// It arrives as a bundle: one file, the profile first and after it whatever
+// travels with it (profilebundle/bundle.go). The file is committed whole, so
+// Argo CD applies the profile and its companions together.
+//
+// With it goes its carrier: the bytes the digest was taken over, kept so that
+// the operator can check at rollout that the profile and each companion it
+// holds are that build.
+//
+// Nothing is taken away by itself. The Application that syncs this directory
+// does not prune (kernel/appsets/raw/11b-catalogue.yaml), so a companion a
+// newer build no longer brings stays in the cluster, like a profile whose file
+// is gone, until somebody removes it.
 //
 // Committed rather than applied. The director writes git and the operator
 // reads the cluster, and a profile that arrived any other way would be the one
@@ -175,10 +186,12 @@ func nameTaken(name, origin string, have MaterialisedProfile) error {
 	return nil
 }
 
-// MaterialiseProfile writes one profile into the cluster's catalogue
-// directory, with its bundle, if both are not already there byte for byte.
+// MaterialiseProfile writes one profile's bundle into the cluster's catalogue
+// directory, with its carrier, if both are not already there byte for byte.
 //
-// body is what the source served and what the digest was taken over. It is
+// body is what the source served and what the digest was taken over: the
+// profile and its companions, one file, listed in the kustomization once so
+// that all of it is applied. It is
 // written unchanged: re-serialising it would commit bytes nobody verified,
 // and the digest in the commit message would then describe something else.
 //
@@ -299,7 +312,14 @@ func (g *GitOps) MaterialiseProfile(ctx context.Context, name, digest string, bo
 // its namespace, should the document state one although the kind has none --
 // because a patch that names anything else matches nothing, and kustomize
 // then fails the whole directory rather than the one entry.
+//
+// What the fetch checked is checked here again, where it is written: nothing
+// is committed that is not a bundle this origin may bring, whoever calls.
 func renderBundle(name string, body []byte, origin string) ([]byte, error) {
+	read, err := profilebundle.Check(body, name, origin)
+	if err != nil {
+		return nil, fmt.Errorf("catalogue: %s: %w", name, err)
+	}
 	var head struct {
 		APIVersion string `json:"apiVersion"`
 		Metadata   struct {
@@ -307,7 +327,13 @@ func renderBundle(name string, body []byte, origin string) ([]byte, error) {
 			Annotations map[string]string `json:"annotations"`
 		} `json:"metadata"`
 	}
-	if err := yaml.Unmarshal(body, &head); err != nil {
+	// The profile is the bundle's first document; what follows it is not
+	// patched and carries nothing of the platform's.
+	raw, err := json.Marshal(read.Profile)
+	if err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal(raw, &head); err != nil {
 		return nil, fmt.Errorf("catalogue: %s does not parse: %w", name, err)
 	}
 	if head.APIVersion == "" {

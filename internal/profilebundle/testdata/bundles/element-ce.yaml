@@ -1,0 +1,1073 @@
+apiVersion: gentianos.io/v1alpha1
+kind: ComponentProfile
+metadata:
+  name: element-ce
+  labels:
+    gentianos.io/profile-name: element-ce
+  annotations:
+    gentianos.io/kernel-egress-namespaces: envoy-gateway-system
+    gentianos.io/portal-auth-mode: matrix-bridge
+spec:
+  classes:
+    - app
+  trustTier: experimental
+  version: 0.0.0
+  package:
+    # The Composition that renders this chart AND the objects that have to
+    # exist beside it. A chart and a composition are the one legal pair in
+    # the package union: the chart is what is installed, the composition is
+    # what else is created.
+    composition: app-element-ce
+    chart:
+      repository: "https://ananace.gitlab.io/charts"
+      name: "matrix-synapse"
+      version: "3.12.30"
+
+    valueMapping:
+      oidc:
+        issuerKey: "extraConfig.oidc_issuer"
+        clientIdKey: "extraConfig.oidc_client_id"
+        clientSecretKey: "extraConfig.oidc_client_secret"
+      database:
+        hostKey: "externalPostgresql.host"
+        portKey: "externalPostgresql.port"
+        nameKey: "externalPostgresql.database"
+        userKey: "externalPostgresql.username"
+        passwordKey: "externalPostgresql.password"
+      smtp:
+        passwordKey: "extraConfig.email.smtp_pass"
+
+    extraValues:
+      serverName: "${TENANT_DOMAIN}"
+      publicServerName: "matrix.${TENANT_DOMAIN}"
+      resources:
+        requests:
+          cpu: 100m
+          memory: 256Mi
+        limits:
+          cpu: 1
+          memory: 512Mi
+      wellknown:
+        enabled: false
+      postgresql:
+        enabled: false
+      redis:
+        enabled: false
+      externalPostgresql:
+        existingSecret: "element-ce-sensitive-values"
+        existingSecretPasswordKey: "db-password"
+      extraConfig:
+        email:
+          enable_notifs: true
+          require_transport_security: true
+          notif_from: "matrix@${TENANT_DOMAIN}"
+          smtp_host: "smtp.${KERNEL_DOMAIN}"
+          smtp_port: 587
+          smtp_user: "matrix@${TENANT_DOMAIN}"
+
+  requires:
+    services:
+      identity:
+        oidc:
+          clientId: "gentian-synapse"
+          name: "Element (Synapse)"
+          accessType: CONFIDENTIAL
+          redirectUris:
+            - "https://matrix.${TENANT_DOMAIN}/_synapse/client/oidc/callback"
+          postLogoutRedirectUris:
+            - "https://chat.${TENANT_DOMAIN}/*"
+        # Synapse is the relying party here, not Element, so the notification
+        # goes to the homeserver — it owns the session Element is holding.
+        #
+        # INCOMPLETE: Synapse ignores this endpoint unless its own provider
+        # config carries backchannel_logout_enabled: true, which this profile
+        # does not set today. Keycloak will POST and be refused until it does,
+        # which is harmless but achieves nothing. The flag belongs next to the
+        # oidc_issuer value this profile already maps.
+            - "https://portal.${KERNEL_DOMAIN}/*"
+          backchannelLogoutUrl: "https://matrix.${TENANT_DOMAIN}/_synapse/client/oidc/backchannel_logout"
+      database:
+        engine: postgresql
+        databasePerTenant: true
+      mail:
+        smtp: {}
+
+  provides:
+    - name: chat
+      protocol: matrix
+
+  secrets:
+    generated:
+      - name: registration_shared_secret
+        valuePath: "config.registrationSharedSecret"
+
+  expose:
+    - name: web
+      surface: gateway
+      authMode: oidc
+      subDomain: "chat"
+      backend:
+        service: "element-ce"
+        port: 8080
+      tile:
+        displayName: "Chat"
+        logo: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI1MiIgaGVpZ2h0PSI1MiIgdmlld0JveD0iMCAwIDUyIDUyIiByb2xlPSJpbWciPgogIDx0aXRsZT5QbGFjZWhvbGRlciB0aWxlPC90aXRsZT4KICA8cmVjdCB3aWR0aD0iNTIiIGhlaWdodD0iNTIiIHJ4PSIxMCIgZmlsbD0iI0VDRThERiIvPgogIDxyZWN0IHdpZHRoPSI1MiIgaGVpZ2h0PSI1MiIgcng9IjEwIiBmaWxsPSJub25lIiBzdHJva2U9InJnYmEoMjAsIDIxLCA0NiwgMC4wOCkiIHN0cm9rZS13aWR0aD0iMSIvPgogIDxnIGZpbGw9Im5vbmUiIHN0cm9rZT0iIzE0MTUyRSIgc3Ryb2tlLW9wYWNpdHk9IjAuNDUiIHN0cm9rZS13aWR0aD0iMiIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI+CiAgICA8cmVjdCB4PSIxNiIgeT0iMTYiIHdpZHRoPSIyMCIgaGVpZ2h0PSIyMCIgcng9IjQiLz4KICAgIDxwYXRoIGQ9Ik0xNiAyM2gyMCIvPgogIDwvZz4KICA8Y2lyY2xlIGN4PSIyMC41IiBjeT0iMTkuNSIgcj0iMS4yNSIgZmlsbD0iIzE0MTUyRSIgZmlsbC1vcGFjaXR5PSIwLjQ1Ii8+Cjwvc3ZnPgo=
+        image: assets/tile.svg
+        relation: can_launch
+    - name: matrix
+      surface: gateway
+      authMode: oidc
+      subDomain: matrix
+      backend:
+        service: synapse-web
+        port: 8008
+  customization:
+    grade: B
+    rubricScore: 6
+    supportedRungs: [L0, L1, L3, L4]   # L3 is Synapse-side only; Element Web has no plugin API
+    ladderDocs: https://github.com/gentian-org/gentian-apps/blob/main/profiles/element-ce/customization.md
+    configure:
+      hotReload: false
+    dropIns:
+      - name: synapse-config
+        path: /data/conf.d
+        format: yaml
+        source: configMap
+        maxBytes: 262144
+        upstreamDocumented: true
+        tenantEditable: false
+      - name: element-config
+        path: /app/config.d
+        format: json
+        source: configMap
+        upstreamDocumented: true
+        tenantEditable: true
+        maxBytes: 65536
+    extension:
+      mechanism: synapse-module
+      delivery: [image-layer]
+      apiStability: evolving
+      apiDocs: https://element-hq.github.io/synapse/latest/modules/index.html
+      perTenantAddons: false
+      testMatrix: ["1.121"]
+    publishes:
+      apis:
+        - contract: chat
+          protocol: matrix
+          path: /_matrix/client
+          auth: oidc-token-exchange
+    repackage:
+      chartOwnership: upstream
+    patch:
+      allowed: false
+      seriesPath: patches/series
+      requiresApproval: platform-team
+    fork:
+      allowed: false
+  launch: tile
+---
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: app-element-ce
+  labels:
+    gentianos.io/profile-name: element-ce
+spec:
+  compositeTypeRef:
+    apiVersion: gentianos.io/v1alpha1
+    kind: XApp
+  mode: Pipeline
+  pipeline:
+
+    # ── Step 1: Fetch AppProfile + kernel/cluster ConfigMaps ──────────────────
+    - step: fetch-extra-resources
+      functionRef:
+        name: function-extra-resources
+      input:
+        apiVersion: extra-resources.fn.crossplane.io/v1beta1
+        kind: Input
+        spec:
+          extraResources:
+            - kind: ComponentProfile
+              into: componentProfile
+              apiVersion: gentianos.io/v1alpha1
+              type: Selector
+              selector:
+                maxMatch: 1
+                minMatch: 1
+                matchLabels:
+                  - key: gentianos.io/profile-name
+                    type: FromCompositeFieldPath
+                    valueFromFieldPath: spec.profileRef.name
+            - kind: ConfigMap
+              into: kernelServices
+              apiVersion: v1
+              type: Selector
+              selector:
+                maxMatch: 1
+                matchLabels:
+                  - key: gentianos.io/config-type
+                    type: Value
+                    value: kernel-services
+            - kind: ConfigMap
+              into: clusterConfig
+              apiVersion: v1
+              type: Selector
+              selector:
+                maxMatch: 1
+                matchLabels:
+                  - key: gentianos.io/config-type
+                    type: Value
+                    value: cluster-config
+            - kind: OIDCPackCatalog
+              into: oidcPackCatalog
+              apiVersion: gentianos.io/v1alpha1
+              type: Selector
+              selector:
+                maxMatch: 1
+                minMatch: 0
+                matchLabels:
+                  - key: gentianos.io/profile-name
+                    type: FromCompositeFieldPath
+                    valueFromFieldPath: spec.profileRef.name
+            - kind: ConfigMap
+              into: jitsiOidcOverlays
+              apiVersion: v1
+              type: Selector
+              selector:
+                maxMatch: 1
+                minMatch: 0
+                matchLabels:
+                  - key: gentianos.io/asset
+                    type: Value
+                    value: jitsi-oidc-overlays
+                  - key: gentianos.io/profile-name
+                    type: Value
+                    value: element-ce
+            - kind: ConfigMap
+              into: platformSecurity
+              apiVersion: v1
+              type: Selector
+              selector:
+                maxMatch: 1
+                minMatch: 0
+                matchLabels:
+                  - key: gentianos.io/config-type
+                    type: Value
+                    value: platform-security
+
+    # ── Step 2: Render composed resources ─────────────────────────────────────
+    - step: render-app-resources
+      functionRef:
+        name: function-go-templating
+      input:
+        apiVersion: gotemplating.fn.crossplane.io/v1beta1
+        kind: GoTemplate
+        source: Inline
+        inline:
+          template: |
+            {{- $xr     := .observed.composite.resource }}
+            {{- $spec   := $xr.spec }}
+            {{- $xrName := $xr.metadata.name }}
+            {{- $app    := $spec.claimRef.name }}
+            {{- $ns     := $spec.tenantNamespace }}
+            {{- $tenant := trimPrefix "tenant-" $ns }}
+
+            {{- $extraRes  := index .context "apiextensions.crossplane.io/extra-resources" }}
+            {{- $profiles  := dig "componentProfile" list $extraRes }}
+            {{- if eq (len $profiles) 0 }}
+              {{- fail (printf "ComponentProfile %q not found in cluster" $spec.profileRef.name) }}
+            {{- end }}
+            {{- $profile   := index $profiles 0 }}
+            {{- $pSpec     := dig "spec" dict $profile }}
+            {{- $package   := dig "package" dict $pSpec }}
+            {{- $vm        := dig "valueMapping" dict $package }}
+            {{- $appSecrets := dig "secrets" "generated" list $pSpec }}
+            {{- $chart     := dig "chart" nil $package }}
+
+            {{- $ccRes      := dig "clusterConfig" list $extraRes }}
+            {{- $ccCM       := default dict (index $ccRes 0) }}
+            {{- $ccData     := dig "data" dict $ccCM }}
+            {{- /* The namespace Crossplane and its providers run in, taken from
+                 where the cluster composition put gentian-cluster-config: v4
+                 named crossplane-system here, which a v5 cluster does not have. */}}
+            {{- $provNs     := dig "metadata" "namespace" "kernel-provisioning" $ccCM }}
+            {{- $jitsiOidcOverlaysRes := dig "jitsiOidcOverlays" list $extraRes }}
+            {{- $jitsiOverlayCM := default dict (index $jitsiOidcOverlaysRes 0) }}
+            {{- $jitsiOverlayData := dig "data" dict $jitsiOverlayCM }}
+            {{- $secretMode    := dig "secretMode"     "derived" $ccData }}
+            {{- $cnpgHost      := dig "cnpg.host"      "" $ccData }}
+            {{- $nodeIP        := dig "node.ip"        "" $ccData }}
+            {{- $appInitImage  := dig "appInit.image"  "ghcr.io/gentian-org/gentian-app-init:develop" $ccData }}
+            {{- $kr            := dig "requires" "services" dict $pSpec }}
+            {{- $identity      := default dict $kr.identity }}
+            {{- $oidcPackDefaultScopes := dict }}
+            {{- $oidcPackFullScopeAllowed := dict }}
+            {{- $catalogRes := dig "oidcPackCatalog" list $extraRes }}
+            {{- if gt (len $catalogRes) 0 }}
+            {{- $catSpec := dig "spec" dict (index $catalogRes 0) }}
+            {{- $catPacks := default dict $catSpec.packs }}
+            {{- range $clientId, $pack := $catPacks }}
+            {{- $scopes := default list $pack.defaultScopes }}
+            {{- if $pack.scopeName }}
+            {{- $scopes = append $scopes $pack.scopeName }}
+            {{- end }}
+            {{- $_ := set $oidcPackDefaultScopes $clientId $scopes }}
+            {{- $_ := set $oidcPackFullScopeAllowed $clientId (default false $pack.fullScopeAllowed) }}
+            {{- end }}
+            {{- end }}
+
+            {{- $domain := $xr.spec.domain }}
+            {{- $ksRes  := dig "kernelServices" list $extraRes }}
+            {{- $ksCM   := default dict (index $ksRes 0) }}
+            {{- $ksCMData := dig "data" dict $ksCM }}
+            {{- $kernelDomain := dig "KERNEL_DOMAIN" "" $ksCMData }}
+            {{- $keycloakInternal := dig "KEYCLOAK_INTERNAL_URL" "" $ksCMData }}
+
+            {{- /* ── Build ExternalSecret data[] entries ── */}}
+            {{- $esData := list }}
+
+            {{- if $vm.oidc }}
+            {{- $oidcPath := printf "gentian-os/tenants/%s/apps/%s/oidc" $tenant $app }}
+            {{- if $vm.oidc.issuerKey }}
+            {{- $esData = append $esData (dict "secretKey" "oidc-issuer"        "remoteRef" (dict "key" $oidcPath "property" "issuer")) }}
+            {{- end }}
+            {{- if $vm.oidc.clientIdKey }}
+            {{- $esData = append $esData (dict "secretKey" "oidc-client-id"     "remoteRef" (dict "key" $oidcPath "property" "client-id")) }}
+            {{- end }}
+            {{- if $vm.oidc.clientSecretKey }}
+            {{- $csPath := default $oidcPath $vm.oidc.clientSecretOpenbaoPath }}
+            {{- $csProp := default "client-secret" $vm.oidc.clientSecretOpenbaoProperty }}
+            {{- $esData = append $esData (dict "secretKey" "oidc-client-secret" "remoteRef" (dict "key" $csPath "property" $csProp)) }}
+            {{- end }}
+            {{- end }}
+
+            {{- if $vm.database }}
+            {{- $dbPath := printf "gentian-os/tenants/%s/apps/%s/database" $tenant $app }}
+            {{- if $vm.database.hostKey }}
+            {{- $esData = append $esData (dict "secretKey" "db-host"     "remoteRef" (dict "key" $dbPath "property" "host")) }}
+            {{- end }}
+            {{- if $vm.database.portKey }}
+            {{- $esData = append $esData (dict "secretKey" "db-port"     "remoteRef" (dict "key" $dbPath "property" "port")) }}
+            {{- end }}
+            {{- if $vm.database.nameKey }}
+            {{- $esData = append $esData (dict "secretKey" "db-name"     "remoteRef" (dict "key" $dbPath "property" "name")) }}
+            {{- end }}
+            {{- if $vm.database.userKey }}
+            {{- $esData = append $esData (dict "secretKey" "db-user"     "remoteRef" (dict "key" $dbPath "property" "user")) }}
+            {{- end }}
+            {{- if $vm.database.passwordKey }}
+            {{- $esData = append $esData (dict "secretKey" "db-password" "remoteRef" (dict "key" $dbPath "property" "password")) }}
+            {{- end }}
+            {{- end }}
+
+            {{- if $vm.smtp }}
+            {{- $smtpPath := printf "gentian-os/tenants/%s/apps/%s/smtp" $tenant $app }}
+            {{- if $vm.smtp.hostKey }}
+            {{- $esData = append $esData (dict "secretKey" "smtp-host"     "remoteRef" (dict "key" $smtpPath "property" "host")) }}
+            {{- end }}
+            {{- if $vm.smtp.portKey }}
+            {{- $esData = append $esData (dict "secretKey" "smtp-port"     "remoteRef" (dict "key" $smtpPath "property" "port")) }}
+            {{- end }}
+            {{- if $vm.smtp.userKey }}
+            {{- $esData = append $esData (dict "secretKey" "smtp-user"     "remoteRef" (dict "key" $smtpPath "property" "user")) }}
+            {{- end }}
+            {{- if $vm.smtp.passwordKey }}
+            {{- $esData = append $esData (dict "secretKey" "smtp-password" "remoteRef" (dict "key" $smtpPath "property" "password")) }}
+            {{- end }}
+            {{- end }}
+
+            {{- range $s := $appSecrets }}
+            {{- if and $s.name $s.valuePath }}
+            {{- $internalPath := printf "gentian-os/tenants/%s/apps/%s/internal/%s" $tenant $app $s.name }}
+            {{- $esData = append $esData (dict "secretKey" (printf "internal-%s" $s.name)
+                "remoteRef" (dict "key" $internalPath "property" "value")) }}
+            {{- end }}
+            {{- end }}
+
+            {{- /* ── Emit OpenBao KV seeders for app-internal secrets ────────── */}}
+            {{- range $s := $appSecrets }}
+            {{- if and $s.name $s.valuePath }}
+            {{- $safeName := $s.name | replace "_" "-" }}
+            {{- $seedName := printf "%s-%s-seed" $xrName $safeName }}
+            {{- $kvPath   := printf "gentian-os/tenants/%s/apps/%s/internal/%s" $tenant $app $s.name }}
+            {{- $seedVal  := sha256sum (printf "%s:%s:%s" $xrName $app $s.name) }}
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-{{ $safeName }}-seed-secret
+              name: {{ $seedName }}
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: v1
+                  kind: Secret
+                  metadata:
+                    name: {{ $seedName }}
+                    namespace: {{ $provNs }}
+                  type: Opaque
+                  stringData:
+                    data.json: '{"value":"{{ $seedVal }}"}'
+              providerConfigRef:
+                name: kubernetes
+            ---
+            apiVersion: kv.vault.upbound.io/v1alpha1
+            kind: SecretV2
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-{{ $safeName }}-kv
+                # Identify this resource by its KV path, not by the install that
+                # created it: without an external-name the provider sees no
+                # existing resource and Creates, overwriting a secret the app's
+                # database is still hashed against. Mirrors app-default.
+                crossplane.io/external-name: secret/data/{{ $kvPath }}
+              name: {{ $seedName }}-kv
+            spec:
+              deletionPolicy: Orphan
+              managementPolicies:
+                - Observe
+                - Create
+              forProvider:
+                mount: secret
+                name: {{ $kvPath }}
+                dataJsonSecretRef:
+                  name: {{ $seedName }}
+                  namespace: {{ $provNs }}
+                  key: data.json
+              providerConfigRef:
+                name: openbao
+            {{- end }}
+            {{- end }}
+
+            {{- /* ── Set up Helm Release / Deployment values mapping ── */}}
+            {{- $extraVals    := default dict $spec.parameters.extraValues }}
+            {{- $imagePull    := list (dict "name" "registry-credentials") }}
+
+            {{- $secretName := printf "%s-sensitive-values" $app }}
+            {{- $relSet := list }}
+
+            {{- if $vm.oidc }}
+            {{- if $vm.oidc.issuerKey }}
+            {{- $relSet = append $relSet (dict "name" $vm.oidc.issuerKey
+                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "oidc-issuer"))) }}
+            {{- end }}
+            {{- if $vm.oidc.clientIdKey }}
+            {{- $relSet = append $relSet (dict "name" $vm.oidc.clientIdKey
+                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "oidc-client-id"))) }}
+            {{- end }}
+            {{- if $vm.oidc.clientSecretKey }}
+            {{- $relSet = append $relSet (dict "name" $vm.oidc.clientSecretKey
+                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "oidc-client-secret"))) }}
+            {{- end }}
+            {{- $relSet = append $relSet (dict "name" "extraSecrets.oidc_providers[0].client_secret"
+                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "oidc-client-secret"))) }}
+            {{- end }}
+
+            {{- if $vm.database }}
+            {{- if $vm.database.hostKey }}
+            {{- $relSet = append $relSet (dict "name" $vm.database.hostKey
+                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "db-host"))) }}
+            {{- end }}
+            {{- if $vm.database.portKey }}
+            {{- $relSet = append $relSet (dict "name" $vm.database.portKey
+                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "db-port"))) }}
+            {{- end }}
+            {{- if $vm.database.nameKey }}
+            {{- $relSet = append $relSet (dict "name" $vm.database.nameKey
+                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "db-name"))) }}
+            {{- end }}
+            {{- if $vm.database.userKey }}
+            {{- $relSet = append $relSet (dict "name" $vm.database.userKey
+                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "db-user"))) }}
+            {{- end }}
+            {{- if $vm.database.passwordKey }}
+            {{- $relSet = append $relSet (dict "name" $vm.database.passwordKey
+                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "db-password"))) }}
+            {{- end }}
+            {{- end }}
+
+            {{- if $vm.smtp }}
+            {{- if $vm.smtp.passwordKey }}
+            {{- $relSet = append $relSet (dict "name" $vm.smtp.passwordKey
+                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "smtp-password"))) }}
+            {{- end }}
+            {{- end }}
+
+            {{- range $s := $appSecrets }}
+            {{- if and $s.name $s.valuePath }}
+            {{- $relSet = append $relSet (dict "name" $s.valuePath
+                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" (printf "internal-%s" $s.name)))) }}
+            {{- end }}
+            {{- end }}
+
+            {{- $elementOverlayCM := printf "%s-sso-overlay" $xrName }}
+
+            {{- /* ── Emit ExternalSecret ──────────────────────────────────────── */}}
+            {{- if gt (len $esData) 0 }}
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-externalsecret
+              name: {{ $xrName }}-es
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: external-secrets.io/v1
+                  kind: ExternalSecret
+                  metadata:
+                    name: {{ $secretName }}
+                    namespace: {{ $ns }}
+                  spec:
+                    refreshInterval: 1h
+                    secretStoreRef:
+                      kind: ClusterSecretStore
+                      name: openbao
+                    target:
+                      name: {{ $secretName }}
+                      creationPolicy: Owner
+                      deletionPolicy: Retain
+                    data:
+                      {{ toYaml $esData | nindent 22 }}
+              providerConfigRef:
+                name: kubernetes
+            {{- end }}
+
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-sso-overlay-cm
+              name: {{ $xrName }}-sso-overlay-cm
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: v1
+                  kind: ConfigMap
+                  metadata:
+                    name: {{ $elementOverlayCM }}
+                    namespace: {{ $ns }}
+                    labels:
+                      app.kubernetes.io/managed-by: gentian-os
+                      gentianos.io/app: {{ $app }}
+                      gentianos.io/tenant: {{ $tenant }}
+                  data:
+                    config.json: |
+                      {
+                        "default_server_config": {
+                          "m.homeserver": {
+                            "base_url": "https://matrix.{{ $domain }}",
+                            "server_name": "{{ $domain }}"
+                          }
+                        },
+                        "brand": "Element",
+                        "jitsi": {
+                          "preferred_domain": "meet.jit.si"
+                        }
+                      }
+                  binaryData:
+                    gentian-portal-sso.html: {{ index $jitsiOverlayData "gentian-portal-sso.html" | default "" | b64enc | quote }}
+              providerConfigRef:
+                name: kubernetes
+
+            {{- /* ── Element Deployment ────────────────────────────────────────── */}}
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-deployment
+              name: {{ $xrName }}-element-deployment
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: apps/v1
+                  kind: Deployment
+                  metadata:
+                    name: element-ce
+                    namespace: {{ $ns }}
+                    labels:
+                      app: element-ce
+                      app.kubernetes.io/managed-by: gentian-os
+                      gentianos.io/app: {{ $app }}
+                      gentianos.io/tenant: {{ $tenant }}
+                  spec:
+                    replicas: 1
+                    selector:
+                      matchLabels:
+                        app: element-ce
+                    template:
+                      metadata:
+                        labels:
+                          app: element-ce
+                          gentianos.io/app: {{ $app }}
+                          gentianos.io/tenant: {{ $tenant }}
+                      spec:
+                        containers:
+                          - name: element-ce
+                            image: docker.io/vectorim/element-web:v1.11.90
+                            imagePullPolicy: IfNotPresent
+                            ports:
+                              - containerPort: 8080
+                                name: http
+                            env:
+                              - name: ELEMENT_WEB_PORT
+                                value: "8080"
+                            securityContext:
+                              runAsNonRoot: true
+                              runAsUser: 101
+                              runAsGroup: 101
+                              allowPrivilegeEscalation: false
+                              capabilities:
+                                drop: ["ALL"]
+                              privileged: false
+                              readOnlyRootFilesystem: true
+                              seccompProfile:
+                                type: RuntimeDefault
+                            volumeMounts:
+                              - name: config
+                                mountPath: /app/config.json
+                                subPath: config.json
+                              - name: config
+                                mountPath: /app/gentian-portal-sso.html
+                                subPath: gentian-portal-sso.html
+                              - name: cache
+                                mountPath: /var/cache/nginx
+                              - name: run
+                                mountPath: /var/run
+                              - name: tmp
+                                mountPath: /tmp
+                              - name: confd
+                                mountPath: /etc/nginx/conf.d
+                        volumes:
+                          - name: config
+                            configMap:
+                              name: {{ $elementOverlayCM }}
+                          - name: cache
+                            emptyDir: {}
+                          - name: run
+                            emptyDir: {}
+                          - name: tmp
+                            emptyDir: {}
+                          - name: confd
+                            emptyDir: {}
+              providerConfigRef:
+                name: kubernetes
+
+            {{- /* ── Element Service ───────────────────────────────────────────── */}}
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-service
+              name: {{ $xrName }}-element-service
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: v1
+                  kind: Service
+                  metadata:
+                    name: element-ce
+                    namespace: {{ $ns }}
+                    labels:
+                      app: element-ce
+                      app.kubernetes.io/managed-by: gentian-os
+                      gentianos.io/app: {{ $app }}
+                      gentianos.io/tenant: {{ $tenant }}
+                  spec:
+                    selector:
+                      app: element-ce
+                    ports:
+                      - port: 8080
+                        targetPort: http
+                        protocol: TCP
+                    type: ClusterIP
+              providerConfigRef:
+                name: kubernetes
+
+            {{- /* ── Release 2: Synapse (matrix-synapse) ─────────────────────── */}}
+            {{- $synapseVals := dict
+                "fullnameOverride" "synapse-web"
+                "image" (dict
+                  "repository" "ghcr.io/element-hq/synapse"
+                  "tag" "v1.115.0"
+                  "pullPolicy" "IfNotPresent"
+                )
+                "serverName" $domain
+                "publicServerName" (printf "matrix.%s" $domain)
+                "wellknown" (dict "enabled" false)
+                "postgresql" (dict "enabled" false)
+                "redis" (dict "enabled" true)
+                "externalPostgresql" (dict
+                  "existingSecret" $secretName
+                  "existingSecretPasswordKey" "db-password"
+                )
+                "synapse" (dict
+                  "labels" (dict
+                    "gentianos.io/app" $app
+                    "gentianos.io/tenant" $tenant
+                  )
+                  "podSecurityContext" (dict
+                    "fsGroup" 666
+                    "runAsGroup" 666
+                    "runAsUser" 666
+                    "seccompProfile" (dict "type" "RuntimeDefault")
+                  )
+                  "securityContext" (dict
+                    "allowPrivilegeEscalation" false
+                    "capabilities" (dict "drop" (list "ALL"))
+                    "privileged" false
+                    "readOnlyRootFilesystem" true
+                    "runAsNonRoot" true
+                    "runAsUser" 666
+                    "seccompProfile" (dict "type" "RuntimeDefault")
+                  )
+                  "extraEnv" (list
+                    (dict "name" "OIDC_CLIENT_SECRET" "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "key" "oidc-client-secret")))
+                    (dict "name" "AUTHLIB_INSECURE_TRANSPORT" "value" "1")
+                    (dict "name" "OAUTHLIB_INSECURE_TRANSPORT" "value" "1")
+                  )
+                  "extraCommands" (list
+                    (printf "(python -c \"import socket, time; any(socket.socket(socket.AF_INET, socket.SOCK_STREAM).connect_ex(('127.0.0.1', 8008)) == 0 or time.sleep(1) for _ in range(300))\" && register_new_matrix_user -c /synapse/config/homeserver.yaml -c /synapse/config/conf.d/secrets.yaml -u gentian-portal-bridge -p \"portal-bridge-not-used-for-login\" -a || true) &")
+                  )
+                  "resources" (dict
+                    "limits" (dict "cpu" "1" "memory" "2Gi")
+                    "requests" (dict "cpu" "250m" "memory" "512Mi")
+                  )
+                )
+                "signingkey" (dict
+                  "job" (dict
+                    "enabled" true
+                    "podSecurityContext" (dict
+                      "allowPrivilegeEscalation" false
+                      "capabilities" (dict "drop" (list "ALL"))
+                      "privileged" false
+                      "readOnlyRootFilesystem" false
+                      "runAsNonRoot" true
+                      "runAsUser" 666
+                      "seccompProfile" (dict "type" "RuntimeDefault")
+                    )
+                    "securityContext" (dict
+                      "fsGroup" 666
+                      "runAsGroup" 666
+                      "runAsUser" 666
+                      "seccompProfile" (dict "type" "RuntimeDefault")
+                    )
+                  )
+                )
+                "extraConfig" (dict
+                  "email" (dict
+                    "enable_notifs" true
+                    "require_transport_security" true
+                    "notif_from" (printf "matrix@%s" $domain)
+                    "smtp_host" (printf "smtp.%s" $kernelDomain)
+                    "smtp_port" 587
+                    "smtp_user" (printf "matrix@%s" $domain)
+                  )
+                )
+                "extraSecrets" (dict
+                  "oidc_providers" (list (dict
+                    "idp_id" "keycloak"
+                    "idp_name" "Keycloak"
+                    "discover" false
+                    "issuer" (printf "https://id.%s/auth/realms/%s" $kernelDomain $tenant)
+                    "client_id" "gentian-synapse"
+                    "client_secret" "@@OIDC_CLIENT_SECRET@@"
+                    "scopes" (list "openid" "profile" "email")
+                    "use_insecure_ssl_client_just_for_testing_do_not_use" true
+                    "authorization_endpoint" (printf "https://id.%s/auth/realms/%s/protocol/openid-connect/auth" $kernelDomain $tenant)
+                    "token_endpoint" (printf "%s/realms/%s/protocol/openid-connect/token" $keycloakInternal $tenant)
+                    "userinfo_endpoint" (printf "%s/realms/%s/protocol/openid-connect/userinfo" $keycloakInternal $tenant)
+                    "jwks_uri" (printf "%s/realms/%s/protocol/openid-connect/certs" $keycloakInternal $tenant)
+                    "user_mapping_provider" (dict
+                      "config" (dict
+                        "subject_claim" "sub"
+                        "localpart_template" `{{ user.preferred_username }}`
+                      )
+                    )
+                  ))
+                )
+            }}
+            ---
+            apiVersion: helm.crossplane.io/v1beta1
+            kind: Release
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-synapse-release
+              name: {{ $xrName }}-synapse-release
+            spec:
+              forProvider:
+                chart:
+                  repository: "https://ananace.gitlab.io/charts"
+                  name: "matrix-synapse"
+                  version: "3.12.30"
+                namespace: {{ $ns }}
+                wait: false
+                values:
+                  {{ toYaml $synapseVals | nindent 18 }}
+                {{- if gt (len $relSet) 0 }}
+                set:
+                  {{ toYaml $relSet | nindent 18 }}
+                {{- end }}
+              providerConfigRef:
+                name: kubernetes
+
+            {{- /* ── Emit database-init resources (when AppProfile requires database.databasePerTenant ── */}}
+            {{- $dbRequirements := default dict $kr.database }}
+            {{- if and $dbRequirements.databasePerTenant (eq (default "" $dbRequirements.engine) "postgresql") $cnpgHost }}
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-db-init-sa
+              name: {{ $xrName }}-db-init-sa
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: v1
+                  kind: ServiceAccount
+                  metadata:
+                    name: app-init
+                    namespace: {{ $ns }}
+              providerConfigRef:
+                name: kubernetes
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-db-init-cm
+              name: {{ $xrName }}-db-init-cm
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: v1
+                  kind: ConfigMap
+                  metadata:
+                    name: {{ $app }}-db-init
+                    namespace: {{ $ns }}
+                  data:
+                    init.sh: |
+                      #!/bin/sh
+                      set -eu
+                      JWT=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+                      BAO_TOKEN=$(curl -k -sf "${BAO_ADDR}/v1/auth/kubernetes/login" \
+                        -H 'Content-Type: application/json' \
+                        -d "{\"role\":\"app-init\",\"jwt\":\"${JWT}\"}" \
+                        | jq -r '.auth.client_token')
+                      EXISTING=$(curl -k -sf \
+                        -H "X-Vault-Token: ${BAO_TOKEN}" \
+                        "${BAO_ADDR}/v1/secret/data/gentian-os/tenants/${TENANT}/apps/${APP}/database" \
+                        2>/dev/null || echo '{}')
+                      CNPG=$(curl -k -sf \
+                        -H "X-Vault-Token: ${BAO_TOKEN}" \
+                        "${BAO_ADDR}/v1/secret/data/gentian-os/kernel/database/cnpg")
+                      SU_USER=$(echo "${CNPG}" | jq -r '.data.data.superuser_username')
+                      SU_PASS=$(echo "${CNPG}" | jq -r '.data.data.superuser_password')
+                      ROLE=$(printf '%s_%s' "${TENANT}" "${APP}" | tr '-' '_')
+                      DBNAME="${ROLE}"
+                      export PGPASSWORD="${SU_PASS}"
+                      SKIP_BAO_WRITE=false
+                      if echo "${EXISTING}" | jq -e '.data.data.password' >/dev/null 2>&1; then
+                        PASSWORD=$(echo "${EXISTING}" | jq -r '.data.data.password')
+                        ROLE_EXISTS=$(psql -h "${CNPG_HOST}" -U "${SU_USER}" -d postgres -tAc "SELECT 1 FROM pg_roles WHERE rolname = '${ROLE}'" 2>/dev/null || echo "")
+                        if [ "${ROLE_EXISTS}" = "1" ]; then
+                          echo "[db-init] credential and Postgres role present for ${TENANT}/${APP} — skipping"
+                          exit 0
+                        fi
+                        echo "[db-init] OpenBao credential present but Postgres role missing — reconciling"
+                        SKIP_BAO_WRITE=true
+                      elif [ "${SECRET_MODE}" = "random" ]; then
+                        PASSWORD=$(openssl rand -hex 32)
+                      else
+                        MASTER=$(curl -k -sf \
+                          -H "X-Vault-Token: ${BAO_TOKEN}" \
+                          "${BAO_ADDR}/v1/secret/data/gentian-os/kernel/internal/master-password" \
+                          | jq -r '.data.data.value')
+                        PASSWORD=$(printf '%s:%s:database' "${TENANT}" "${APP}" \
+                          | openssl dgst -sha256 -hmac "${MASTER}" | awk '{print $2}')
+                      fi
+                      psql -h "${CNPG_HOST}" -U "${SU_USER}" -d postgres -v ON_ERROR_STOP=1 <<SQL
+                      DO \$\$
+                      BEGIN
+                        IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '${ROLE}') THEN
+                          CREATE ROLE "${ROLE}" WITH LOGIN PASSWORD '${PASSWORD}';
+                        ELSE
+                          ALTER ROLE "${ROLE}" WITH PASSWORD '${PASSWORD}';
+                        END IF;
+                      END \$\$;
+                      SQL
+                      psql -h "${CNPG_HOST}" -U "${SU_USER}" -d postgres -v ON_ERROR_STOP=1 \
+                        -c "SELECT 'CREATE DATABASE \"${DBNAME}\" OWNER \"${ROLE}\"' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = '${DBNAME}')" \
+                        | grep -q 'CREATE DATABASE' \
+                        && psql -h "${CNPG_HOST}" -U "${SU_USER}" -d postgres \
+                             -c "CREATE DATABASE \"${DBNAME}\" OWNER \"${ROLE}\"" || true
+                      psql -h "${CNPG_HOST}" -U "${SU_USER}" -d "${DBNAME}" -v ON_ERROR_STOP=1 \
+                        -c "CREATE SCHEMA IF NOT EXISTS \"${DBNAME}\" AUTHORIZATION \"${ROLE}\";"
+                      psql -h "${CNPG_HOST}" -U "${SU_USER}" -d "${DBNAME}" -v ON_ERROR_STOP=1 \
+                        -c "GRANT ALL ON SCHEMA \"${DBNAME}\" TO \"${ROLE}\";"
+                      psql -h "${CNPG_HOST}" -U "${SU_USER}" -d postgres -v ON_ERROR_STOP=1 \
+                        -c "ALTER ROLE \"${ROLE}\" SET search_path TO \"${DBNAME}\", public;"
+                      echo "[db-init] role ${ROLE}, database ${DBNAME}, and schema ${DBNAME} ensured"
+                      if [ "${SKIP_BAO_WRITE}" != "true" ]; then
+                        curl -k -sf \
+                          -H "X-Vault-Token: ${BAO_TOKEN}" \
+                          -H 'Content-Type: application/json' \
+                          -X POST \
+                          -d "{\"data\":{\"host\":\"${CNPG_HOST}\",\"port\":\"5432\",\"name\":\"${DBNAME}\",\"user\":\"${ROLE}\",\"password\":\"${PASSWORD}\"}}" \
+                          "${BAO_ADDR}/v1/secret/data/gentian-os/tenants/${TENANT}/apps/${APP}/database"
+                        echo "[db-init] OpenBao credential written for ${TENANT}/${APP}"
+                      fi
+              providerConfigRef:
+                name: kubernetes
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-db-init-job
+              name: {{ $xrName }}-db-init-job
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: batch/v1
+                  kind: Job
+                  metadata:
+                    name: {{ $app }}-db-init
+                    namespace: {{ $ns }}
+                    labels:
+                      app.kubernetes.io/managed-by: gentian-os
+                      gentianos.io/tenant: {{ $tenant }}
+                      gentianos.io/app: {{ $app }}
+                  spec:
+                    ttlSecondsAfterFinished: 600
+                    backoffLimit: 10
+                    template:
+                      metadata:
+                        labels:
+                          app.kubernetes.io/managed-by: gentian-os
+                          gentianos.io/tenant: {{ $tenant }}
+                          gentianos.io/app: {{ $app }}
+                          gentianos.io/component: app-init
+                      spec:
+                        serviceAccountName: app-init
+                        restartPolicy: OnFailure
+                        securityContext:
+                          seccompProfile:
+                            type: RuntimeDefault
+                        volumes:
+                          - name: scripts
+                            configMap:
+                              name: {{ $app }}-db-init
+                        containers:
+                          - name: database-init
+                            image: {{ $appInitImage | quote }}
+                            securityContext:
+                              allowPrivilegeEscalation: false
+                              capabilities:
+                                drop:
+                                  - ALL
+                              seccompProfile:
+                                type: RuntimeDefault
+                            command:
+                              - /bin/sh
+                              - /scripts/init.sh
+                            volumeMounts:
+                              - name: scripts
+                                mountPath: /scripts
+                            env:
+                              - name: TENANT
+                                value: {{ $tenant }}
+                              - name: APP
+                                value: {{ $app }}
+                              - name: BAO_ADDR
+                                value: "https://openbao.openbao.svc.cluster.local:8200"
+                              - name: CNPG_HOST
+                                value: {{ $cnpgHost | quote }}
+                              - name: SECRET_MODE
+                                value: {{ $secretMode | quote }}
+              providerConfigRef:
+                name: kubernetes
+            {{- end }}
+
+    # ── Step 3: Mark XR Ready when all composed resources are Ready ───────────
+    - step: automatically-detect-ready-composed-resources
+      functionRef:
+        name: function-auto-ready
+
+    # ── Step 4: Gate Helm releases until OIDC pack scopes are attached ─────────
+    - step: sequence-element-oidc-scopes
+      functionRef:
+        name: function-sequencer
+      input:
+        apiVersion: sequencer.fn.crossplane.io/v1beta1
+        kind: Input
+        resetCompositeReadiness: true
+        rules:
+          - sequence:
+            - .*-keycloak-client
+            - .*-keycloak-default-scopes
+          - sequence:
+            - .*-keycloak-default-scopes
+            - .*-synapse-release
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: "element-ce.jitsi-oidc-overlays"
+  labels:
+    "gentianos.io/asset": "jitsi-oidc-overlays"
+    "gentianos.io/profile-name": "element-ce"
+data:
+  "gentian-portal-sso.html": "<!DOCTYPE html>\n<html lang=\"en\">\n  <head>\n    <meta charset=\"utf-8\" />\n    <title>Signing in to Chat…</title>\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />\n    <style>\n      body {\n        margin: 0;\n        font-family: system-ui, sans-serif;\n        display: grid;\n        place-items: center;\n        min-height: 100vh;\n        background: #f5f7f6;\n        color: #1a2e28;\n      }\n    </style>\n  </head>\n  <body>\n    <p>Signing in to Chat…</p>\n    <script>\n      async function clearElementStorage() {\n        localStorage.clear();\n        sessionStorage.clear();\n        if (!(\"indexedDB\" in window) || !indexedDB.databases) {\n          return;\n        }\n        const databases = await indexedDB.databases();\n        await Promise.all(\n          databases.map(\n            (db) =>\n              new Promise((resolve) => {\n                const request = indexedDB.deleteDatabase(db.name);\n                request.onsuccess = () => resolve();\n                request.onerror = () => resolve();\n                request.onblocked = () => resolve();\n              }),\n          ),\n        );\n      }\n\n      function persistSession(session) {\n        localStorage.setItem(\"mx_hs_url\", session.homeServerUrl);\n        localStorage.setItem(\"mx_user_id\", session.userId);\n        localStorage.setItem(\"mx_is_guest\", \"false\");\n        localStorage.setItem(\"mx_has_access_token\", \"true\");\n        localStorage.setItem(\"mx_access_token\", session.accessToken);\n        localStorage.removeItem(\"mx_has_pickle_key\");\n        localStorage.removeItem(\"mx_has_refresh_token\");\n        localStorage.removeItem(\"mx_refresh_token\");\n        if (session.deviceId) {\n          localStorage.setItem(\"mx_device_id\", session.deviceId);\n        } else {\n          localStorage.removeItem(\"mx_device_id\");\n        }\n      }\n\n      (async () => {\n        const ticket = new URLSearchParams(window.location.search).get(\"t\");\n        if (!ticket) {\n          window.location.replace(\"/\");\n          return;\n        }\n\n        const portalHost = (() => {\n          const parts = window.location.hostname.split(\".\");\n          if (parts[0] === \"chat\" && parts.length > 2) {\n            return [\"portal\", ...parts.slice(2)].join(\".\");\n          }\n          return `portal.${parts.slice(-2).join(\".\")}`;\n        })();\n        const portalApi = `${window.location.protocol}//${portalHost}/api/v1`;\n\n        let session;\n        try {\n          const response = await fetch(\n            `${portalApi}/session/matrix-bridge/redeem/${encodeURIComponent(ticket)}`,\n          );\n          if (!response.ok) {\n            throw new Error(\"redeem failed\");\n          }\n          session = await response.json();\n        } catch (_error) {\n          window.location.replace(\"/\");\n          return;\n        }\n\n        await clearElementStorage();\n        persistSession(session);\n        window.location.replace(\"/\");\n      })();\n    </script>\n  </body>\n</html>\n"
+---
+# OIDC packs for Element / Synapse.
+apiVersion: gentianos.io/v1alpha1
+kind: OIDCPackCatalog
+metadata:
+  name: element-ce-oidc
+  labels:
+    gentianos.io/profile-name: element-ce
+spec:
+  mapperTemplates:
+    email:
+      protocolMapper: oidc-usermodel-property-mapper
+      config:
+        user.attribute: email
+        claim.name: email
+        jsonType.label: String
+        id.token.claim: "true"
+        access.token.claim: "true"
+        userinfo.token.claim: "true"
+        introspection.token.claim: "true"
+    full_name:
+      keycloakName: "full name"
+      protocolMapper: oidc-full-name-mapper
+      config:
+        id.token.claim: "true"
+        access.token.claim: "true"
+        userinfo.token.claim: "true"
+        introspection.token.claim: "true"
+  packs:
+    gentian-synapse:
+      scopeName: matrix-scope
+      scopeDescription: "Scope for Matrix / Synapse OIDC clients."
+      clientRole: matrix-access-control
+      entitlementGroup: managed-by-attribute-Livecollaboration
+      publicClient: false
+      fullScopeAllowed: false
+      defaultScopes:
+        - profile
+        - email
+        - roles
+        - web-origins
+        - acr
+      mappers:
+        - full_name
+        - email

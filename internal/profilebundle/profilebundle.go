@@ -12,7 +12,8 @@ SPDX-License-Identifier: MPL-2.0
 // it is about to roll out is the build an install was pinned to.
 //
 // An install from a catalogue source is pinned to a digest: the sha256 of the
-// profile file exactly as the source published it. The director checks the
+// entry's file exactly as the source published it -- the profile and, after
+// it, whatever travels with it (bundle.go). The director checks the
 // bytes it fetched against that digest before it commits anything. What then
 // reaches the cluster is not those bytes: Argo CD applies the document, the
 // API server prunes and defaults it, and the object that comes back has no
@@ -28,6 +29,10 @@ SPDX-License-Identifier: MPL-2.0
 // operator reads a profile, with the API server's defaults applied. Both have
 // to hold. Bytes that hash correctly beside a profile that says something
 // else are a mismatch, and so is a profile nobody can show the bytes for.
+//
+// The same goes for every companion the bundle brings: it is looked up in the
+// cluster and compared with what the bytes say (companions.go), and one that
+// is missing or different holds the rollout as the profile would.
 package profilebundle
 
 import (
@@ -37,7 +42,6 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -46,7 +50,6 @@ import (
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	utiljson "k8s.io/apimachinery/pkg/util/json"
 	"sigs.k8s.io/yaml"
-	yamlv3 "sigs.k8s.io/yaml/goyaml.v3"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
@@ -61,10 +64,11 @@ const Annotation = "gentianos.io/profile-bundle"
 // they say nothing about what is rolled out.
 const ownedPrefix = "gentianos.io/"
 
-// MaxBytes bounds a bundle that can be carried. An object's annotations may
-// total 256 KiB and base64 makes four bytes of three, so this leaves room for
-// the profile's own annotations. The largest profile published is a quarter
-// of it.
+// MaxBytes bounds a bundle that can be carried: the whole file, the profile
+// and its companions. An object's annotations may total 256 KiB and base64
+// makes four bytes of three, so this leaves room for the profile's own
+// annotations. The largest bundle published, a profile with its Composition,
+// is under half of it.
 const MaxBytes = 180 << 10
 
 // Reasons a profile is not the build its Component is pinned to. They are the
@@ -75,6 +79,14 @@ const (
 	ReasonMismatch = "DigestMismatch"
 	// ReasonUnverifiable: there is nothing to check the profile against.
 	ReasonUnverifiable = "DigestUnverifiable"
+	// ReasonRefused: the bundle is the pinned build and holds what a bundle
+	// may not (bundle.go).
+	ReasonRefused = "BundleRefused"
+	// ReasonCompanionMissing: an object the bundle brings beside its profile
+	// is not in the cluster.
+	ReasonCompanionMissing = "CompanionMissing"
+	// ReasonCompanionMismatch: one is there and is not what the bundle says.
+	ReasonCompanionMismatch = "CompanionMismatch"
 )
 
 // Refusal is a profile that is not shown to be the build a digest names.
@@ -83,6 +95,10 @@ type Refusal struct {
 	Reason string
 	// Message says what was expected and what was found, for a person.
 	Message string
+	// Retry says the refusal may end without the profile or the pin
+	// changing, so whoever was refused looks again: a companion Argo CD has
+	// not applied yet arrives on its own.
+	Retry bool
 }
 
 // Encode is the annotation's value for a bundle.
@@ -133,17 +149,29 @@ func Verify(profile *gentianov1alpha1.ComponentProfile, digest string) *Refusal 
 			Short(want), profile.Name, Short(found))}
 	}
 
-	// The bytes are the build. Whether the profile is, is the other half.
-	said, err := decode(bundle)
+	// The bytes are the build. Whether they are a bundle at all is asked
+	// again here, as the director asked it before it committed them: what is
+	// in the cluster is not taken to have passed through the director.
+	read, err := Check(bundle, profile.Name, profile.Annotations[OriginAnnotation])
+	if err != nil {
+		reason := ReasonRefused
+		if docs, parseErr := documents(bundle); parseErr != nil || len(docs) == 0 {
+			reason = ReasonUnverifiable
+		} else if head := headOf(docs[0]); head.kind != "ComponentProfile" || head.name != profile.Name {
+			return &Refusal{Reason: ReasonMismatch, Message: fmt.Sprintf(
+				"the bundle of ComponentProfile %q is %s as pinned, and is the %s %q",
+				profile.Name, Short(want), head.kind, head.name)}
+		}
+		return &Refusal{Reason: reason, Message: fmt.Sprintf(
+			"the bundle of ComponentProfile %q is %s as pinned, and is not one that is rolled out: %v",
+			profile.Name, Short(want), err)}
+	}
+	// Whether the profile is the build, is the other half.
+	said, err := decode(read.Profile)
 	if err != nil {
 		return &Refusal{Reason: ReasonUnverifiable, Message: fmt.Sprintf(
 			"the bundle of ComponentProfile %q is %s as pinned, and cannot be read as a profile: %v",
 			profile.Name, Short(want), err)}
-	}
-	if said.Kind != "ComponentProfile" || said.Name != profile.Name {
-		return &Refusal{Reason: ReasonMismatch, Message: fmt.Sprintf(
-			"the bundle of ComponentProfile %q is %s as pinned, and is the %s %q",
-			profile.Name, Short(want), said.Kind, said.Name)}
 	}
 	differs, err := specDiffers(&said.Spec, &profile.Spec)
 	if err != nil {
@@ -163,32 +191,19 @@ func Verify(profile *gentianov1alpha1.ComponentProfile, digest string) *Refusal 
 	return nil
 }
 
-// decode reads a bundle as the operator would read it from the cluster: the
-// document, with the defaults the API server applies, into the type every
-// reconciler reads a profile through. A field the type does not have is
-// dropped here exactly as it is dropped there.
-//
-// The document is read the way kustomize reads it, because the catalogue
-// directory is a kustomization and that is the reading the cluster received:
-// a bare `yes` or `on` is a string there, where the YAML 1.1 reading kubectl
-// applies would make it a boolean. Reading it the other way would refuse
-// every profile that writes one.
-func decode(bundle []byte) (*gentianov1alpha1.ComponentProfile, error) {
-	var read any
-	if err := yamlv3.Unmarshal(bundle, &read); err != nil {
-		return nil, err
-	}
+// decode reads a bundle's profile as the operator would read it from the
+// cluster: the document (as documents read it), with the defaults the API
+// server applies, into the type every reconciler reads a profile through. A
+// field the type does not have is dropped here exactly as it is dropped there.
+func decode(read map[string]any) (*gentianov1alpha1.ComponentProfile, error) {
+	// A copy: the defaults are written into it, and the bundle is read again.
 	raw, err := json.Marshal(read)
 	if err != nil {
 		return nil, err
 	}
 	var doc map[string]any
-	// Whole numbers stay whole: a port read as 8080.0 would not fit its field.
 	if err := utiljson.Unmarshal(raw, &doc); err != nil {
 		return nil, err
-	}
-	if doc == nil {
-		return nil, errors.New("it is not a document")
 	}
 	schema, err := profileSchema()
 	if err != nil {
