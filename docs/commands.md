@@ -696,7 +696,12 @@ age -d manifest.json.age > manifest.json
 ```
 
 `manifest.json` lists what was captured per app, the chart versions at capture
-time, and the pause window each app saw.
+time, and the pause window each app saw. It is what a restore goes by. Since
+format 2 (`schemaVersion: 2`) each app's `stores` has one entry per artefact
+with its `kind`, the `name` of what it was captured from and its `path` in the
+bundle, and the app carries its `digest`, `databaseEngine` and `releases`; a
+format 1 manifest names apps and kinds only and still restores
+([operations.md](design/operations.md) §9.4).
 
 #### When the bundle is on external storage
 
@@ -769,18 +774,45 @@ Delete that Secret once the restore is done.
 1. **Preflight** — confirmation matches, no export or restore already running,
    bundle exists and is `Ready`, decryption key present. Nothing is touched
    until all of these pass.
-2. **Per app** — pause, load database, load bucket, unpack volumes, run the
-   profile's `restore.post` hooks, run `restore.verify`, resume. One app at a
-   time.
-3. **Tenant-wide, last** — Keycloak realm and the portal shell database. Last
+2. **Plan** — the operator opens the bundle's manifest with the key and
+   decides, against the tenant as it stands, what it puts back. Only apps the
+   manifest lists are touched. An app is restored whole or not at all; one
+   that is not installed, runs an older build than wrote the data (unless
+   `spec.skipVersionCheck`), or has a store the bundle's does not match, is
+   named in `status.notRestored` with the reason. With `spec.apps`, an app
+   named that cannot be restored refuses the whole restore instead. Still
+   nothing has been touched.
+3. **Per app** — pause, load the database (on PostgreSQL also every database
+   the app's role owned), make the bucket with its user and policy and load
+   it, unpack volumes, run the profile's `restore.post` hooks, run
+   `restore.verify`, resume. One app at a time.
+4. **Tenant-wide, last** — Keycloak realm and the portal shell database. Last
    deliberately: restoring identity earlier would let members sign in to
    half-restored data.
+
+```bash
+kubectl get tenantrestore restore-2026-08-18 -n tenant-demo -o jsonpath='{.status}' | jq \
+  '{phase, complete, notRestored, nameDerivation, bundleSchemaVersion, notes}'
+```
+
+`phase: Ready` with `complete: false` is a restore that left something out;
+`notRestored` says what and why. `notes` is what no restore brings back
+([operations.md](design/operations.md) §9.4).
 
 ### After a restore, members cannot sign in
 
 Keycloak's export carries no password hashes, so accounts come back without
 credentials. `status.passwordResetRequired` says so. Send members through a
 reset from **Admin Console → Members**.
+
+### After a restore, credentials somebody entered are missing
+
+A bundle holds no stored credential. The platform's own were made for the
+tenant when it was provisioned and are unchanged; anything a person typed in —
+a repository's password, an SMTP relay's, an API key — is not in the bundle and
+has to be entered again. Data an app sealed with a secret the platform
+generated for it reads only on the cluster the bundle was taken on, or one
+built from its recovery kit.
 
 ## 12a. Tenant Import
 
@@ -813,8 +845,18 @@ GET  /v1/clusters/{c}/tenants/{t}/import      the status
 
 `decryption` is `{"passphrase": "..."}` or `{"identity": "AGE-SECRET-KEY-1..."}`.
 The key is written into a Secret the restore owns and goes with it. Members
-come back without credentials (schema 1 bundles carry none); the status says
-`passwordResetRequired`.
+come back without credentials (no bundle carries them); the status says
+`passwordResetRequired`, and carries the restore's `complete`, `notRestored`
+and `notes`.
+
+The uploaded file is kept in the cluster's `gentian-imports` bucket until a
+restore of it has run to its end, restored or failed, and is then removed. A
+restore refused before it changed anything leaves it, so the import can be
+asked for again without uploading twice; an upload that is never restored
+stays until it is removed by hand (`mc rm --recursive --force
+gentian/gentian-imports/<prefix>/`). App grants are not in a bundle: they are
+declared in git, and a tenant imported into another cluster has them to set
+again.
 
 ## 13. Backup Policy
 

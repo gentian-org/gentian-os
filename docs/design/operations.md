@@ -42,7 +42,8 @@ This sequence is being automated by the namespaced `TenantExport` /
 Admin Console. Restore is **data-only** — the tenant's shape is re-composed
 from its claim, never restored — and quiesces one app at a time, since the
 consistency boundary that matters is an app's database plus its bucket plus
-its PVC, not the tenant as a whole.
+its PVC, not the tenant as a whole. What a bundle carries per kind, the rule a
+restore decides by and what no restore brings back are in §9.
 
 ## 3. Tenant Migration Between Clusters
 
@@ -379,51 +380,183 @@ and backup copy it, uninstalling leaves it, a purge of the app destroys it,
 and deleting the tenant destroys it for every app at once. They read one
 inventory and follow one order, both in
 [`internal/backup`](../../internal/backup/): `inventory.go` names each thing
-(`InventoryOf`), and `teardown.go` lists the kinds in the order provisioning
-makes them (`AppKinds`), says what every act does with each, and builds the one
-Job that destroys each store. Teardown is that order reversed
+(`InventoryOf`, and `AppVolumes` for whose a volume claim is), `teardown.go`
+lists the kinds in the order provisioning makes them (`AppKinds`), says what
+every act does with each and how each is found once its app is uninstalled,
+builds the one Job that destroys each store, and holds the one question that
+says which databases are an app's. `record.go` is the record provisioning
+keeps of what it made. Teardown is provisioning's order reversed
 (`TeardownOrder`); nothing else defines an order. A test fails when a kind is
-added without saying what export and each teardown do with it.
+added without saying what export and each teardown do with it, when something
+uninstalling keeps does not say how it is found afterwards, or when a store a
+profile can declare is left out of the record.
 
-In provisioning order:
+### 9.1 Per kind
 
-| Kind | Install | Export / backup (restore puts back what was carried) | Uninstall | App purge | Tenant delete (`deletionPolicy: Delete`) |
-| --- | --- | --- | --- | --- | --- |
-| Provisioning records (Jobs, labelled Secrets) | written from the first step on | omitted: not data | kept | destroyed, last | destroyed, last |
-| Stored credentials (vault `…/apps/<app>`, `…/apps/<app>-<extension>`) | seeded before each store | omitted: derived or generated per cluster; a restore re-seeds them | kept | destroyed | destroyed, with the tenant's whole vault subtree |
-| Access group and memberships | the tenant's identity Job | carried, in the realm export | kept | destroyed, in the tenant's realm | destroyed, with the realm |
-| Database and role | role Job and CloudNativePG Database, or MariaDB setup Job | carried: dump of the provisioned database | kept | destroyed | destroyed |
-| Object storage (bucket, user, policy) | bucket Job | carried: the objects; user and policy are re-made | kept | destroyed | destroyed, and the tenant's backup bucket unless bundles are kept |
-| Cache user | ACL Job | omitted: a restored cache is stale | kept | removed; keys are not | removed; keys are not |
-| Sign-in client | the app Composition, or the identity Job | carried, in the realm export | removed | — | destroyed, with the realm |
-| Workloads (the Helm release) | the app Composition or the component reconciler | omitted: re-made from the profile | removed | — | removed |
-| Files (the release's volume claims) | the app's chart | carried: an archive per claim | kept | destroyed | destroyed, with the namespace |
+In provisioning order. "Restore" is what a restore puts back: exactly what was
+carried, for the apps the bundle's manifest lists (§9.4).
 
-So the teardown order is: files, workloads, sign-in client, cache, object
-storage, database, access group, stored credentials, provisioning records. A
-purge of an app runs the steps of that list that destroy (the workloads and the
-client went with the uninstall). A tenant's deletion runs the store steps in
-the same order for every app the tenant ever had — cache, object storage,
-databases, then the realm — with the same Jobs and scripts, then removes the
-namespace and the vault subtree and, last, the records.
+| Kind | Install creates | Export / backup carries | Restore puts back | Uninstall | App purge | Tenant delete (`deletionPolicy: Delete`) |
+| --- | --- | --- | --- | --- | --- | --- |
+| Provisioning records (Jobs, labelled Secrets) | written from the first step on | nothing: not data | nothing | kept | destroyed, last | destroyed, last |
+| Stored credentials (vault `…/apps/<app>`, `…/apps/<app>-<extension>`) | seeded before each store; generated secrets by the app Composition | nothing: a bundle holds no stored credential | nothing: the tenant restored into has its own, seeded when it was provisioned; what a person entered has to be entered again | kept | destroyed | destroyed, with the tenant's whole vault subtree |
+| Access group and memberships | the tenant's identity Job | carried, in the realm export | put back, with the realm | kept | destroyed, in the tenant's realm | destroyed, with the realm |
+| Sign-in scope (the client scope the app's OIDC pack describes, with its mappers) | the tenant's identity Job | nothing: configuration, made again at install | nothing | kept | destroyed, unless an installed app names the same scope or it is one of Keycloak's own | destroyed, with the realm |
+| Database and role | role Job and CloudNativePG Database, or MariaDB setup Job | a dump of the provisioned database; on PostgreSQL also every other database the app's role owns | the provisioned database replaced; on PostgreSQL each owned database created if missing and replaced; a database the role owns that the bundle does not hold is left | kept | destroyed; on PostgreSQL with every database the role owns | destroyed, likewise |
+| Object storage (bucket, user, policy) | bucket Job | the bucket's objects | the bucket, its user and its policy made by the code install uses, then the objects | kept | destroyed | destroyed, and the tenant's backup bucket unless bundles are kept |
+| Cache user | ACL Job | nothing: a restored cache is stale | nothing | kept | removed; keys are not | removed; keys are not |
+| Model key (at the model gateway, where the cluster serves models) | the tenant reconciler | nothing: a credential, registered again at install | nothing | kept | removed | removed, then the tenant's team |
+| Sign-in client, with its client role, default-scope assignments and the group's mapping to the role | the app Composition, or the identity Job | carried, in the realm export | put back, with the realm | removed (Keycloak removes what is part of the client with it) | — | destroyed, with the realm |
+| Workloads (the Helm release) | the app Composition or the component reconciler | nothing: re-made from the profile; the manifest records the build | nothing; the installed build is checked against the manifest's | removed | — | removed, first |
+| Files (the release's volume claims) | the app's chart | an archive per claim that is the app's (`AppVolumes`) | each archive unpacked onto the claim of the same name | kept | destroyed | destroyed, with the namespace |
+
+So the teardown order is: files, workloads, sign-in client, model key, cache,
+object storage, database, sign-in scope, access group, stored credentials,
+provisioning records. A purge of an app runs the steps of that list that
+destroy (the workloads and the client went with the uninstall). A tenant's
+deletion removes the workloads first — its Components, and with each the App
+claim and the release — waits for them, then runs the store steps in the same
+order for every app the tenant ever had, with the same Jobs and scripts, then
+the realm; then it removes the namespace and waits until the API server no
+longer has it, removes the vault subtree and, last, the records.
+
+With `deletionPolicy: Retain` a tenant's deletion keeps every kind and removes
+the workloads.
+
+### 9.2 What a tenant has that is no app's
+
+Several of these lie outside what a deletion sweeps by default — outside the
+tenant's namespace, realm and vault subtree, and without its label. The
+inventory lists them (`TenantOwned`) so that each says what removes it.
+
+| What | Export | Retain | Delete |
+| --- | --- | --- | --- |
+| The namespace, with every workload and volume in it | volumes per app; workloads not | kept; Components and the operator's quota, limits and network policy removed | deleted, and the deletion waits until it is gone |
+| The realm | carried: configuration, people, memberships; no passwords | disabled | deleted; never when it is the kernel realm, which a tenant only adopts |
+| The client the realm signs in to the kernel realm as (`broker-<realm>`), and the mapper on it | not carried | kept | removed from the kernel realm, by the Job that deletes the realm |
+| The vault subtree | not carried | kept | deleted; an operator with no vault that was not told to run without one (`GENTIAN_WITHOUT_VAULT=true`) fails here |
+| The team at the model gateway | not carried | kept | removed, after the apps' keys |
+| Mail routing, submission and IMAP credentials, mail DNS records (`DNSEndpoint mail-<tenant>`) | not carried | removed | removed, with the DKIM key and SMTP credentials |
+| The edge: gateway, routes, wildcard certificate, edge routes, DNS records | not carried | removed | removed; a route that cannot be removed fails the deletion |
+| The backup bucket | it is where exports go | kept | destroyed, unless the tenant keeps its bundles |
+| The record of what was provisioned | not carried | kept | deleted, last |
+
+### 9.3 Finding what an uninstalled app left
+
+An uninstalled app has left the tenant's manifest and all its stores are still
+there. Provisioning therefore writes down what it makes: one ConfigMap per
+tenant in the provisioning namespace (`tenant-<name>-provisioned-stores`), one
+entry per app with the database engine and names, the bucket, the cache user
+and the model key, written before the Jobs that make them are handed over and
+never reduced by provisioning. A purge takes a kind off the record once it has
+destroyed it. The deletion of a tenant, a purge and the read of what
+uninstalled apps hold (`GET /apps/retained`) read it; the read answers
+`present` or `absent` for a bucket, a cache user and a MariaDB database from
+it without running anything, and `unknown` only when the record could not be
+read. A PostgreSQL database is also found through the CloudNativePG Database
+object; files, credentials and the access group by the claims, vault paths and
+group names themselves.
+
+Which databases are an app's is one rule that export, restore and purge
+share. The provisioned database is. On PostgreSQL so is every other database
+the app's role owns — a role creates databases only when its profile asks
+(`allowDynamicDatabaseCreation`), owns what it creates, and the server records
+the owner. On MariaDB only the provisioned database is: the same profile field
+is granted there as privileges on the whole shared server and a database has
+no owner, so nothing says which others an app made. No act guesses.
+
+### 9.4 Restore
+
+What a restore puts back is what the bundle says it holds. The operator reads
+the bundle's manifest with the restore's own key and makes a plan once, before
+anything is changed; the plan is in the restore's status.
+
+1. Only an app the manifest lists is touched. An app the tenant has and the
+   bundle does not is left exactly as it is.
+2. An app is restored whole or not at all. It is not restored when it is not
+   installed; when its ComponentProfile is not on the cluster; when the build
+   installed is older than the one that wrote the data, or cannot be compared
+   with it (unless `spec.skipVersionCheck`); when the bundle holds a store of a
+   kind or engine the installed app does not have; or when it holds a volume
+   claim that is not one of the app's here. A newer build installed is
+   restored: an app upgrades older data when it starts.
+3. Every app not restored is named with the reason in `status.notRestored`,
+   and the restore ends `Ready` with `status.complete: false` and the reason
+   `PartiallyRestored`. Nothing a bundle holds is dropped without saying so.
+4. With `spec.apps`, only the apps named are considered and each has to be
+   restorable; otherwise the restore is refused before anything is changed.
+
+Each artefact is fetched from the path the manifest gives and loaded into the
+store of that kind the installed app has, by the inventory's names — which
+differ from the bundle's whenever the tenant's name or prefixes do, as when a
+bundle is imported under another name.
+
+**The bundle format.** The manifest (`manifest.json`, encrypted like every
+artefact) carries `schemaVersion`. Format 1 named each app and the kinds
+captured, nothing else. **Format 2**, written since the restore went by the
+manifest, adds per app one `stores` entry per artefact — `kind` (`postgres`,
+`postgresOwned`, `mariadb`, `s3`, `volume`), `name` (what it was captured
+from), `path` (where in the bundle), and for a volume the Helm `release` it
+recorded — and the app's `digest`, `databaseEngine` and `releases`; the
+tenant-wide captures are no longer listed among the apps. Fields were added
+and none renamed. A format 1 bundle still restores: the names are derived from
+the tenant the manifest records and the volume claims are the ones the apps
+have now, and the result says `nameDerivation: derived`. A manifest of a
+format newer than the platform reads is refused. A `postgresOwned` artefact is
+a tar.gz holding `INDEX`, the database names one per line, and
+`<line number from 0>.pgc`, each one's custom-format dump.
+
+**What no restore brings back**, said on every result (`status.notes`):
+
+- **Stored credentials.** A bundle holds none, on purpose: it would put every
+  password of a tenant in a file that leaves the cluster. What the platform
+  seeds was made for the tenant restored into when it was provisioned, and a
+  restore changes none of it. Credentials a person entered — a repository's
+  password, an SMTP relay's, an API key — did not come back and have to be
+  entered again. A profile's `spec.backup.boundSecrets` are not carried
+  either, and an export of such an app says so.
+- **Data sealed with a generated secret** can be read only where that secret
+  is the same: on the cluster the bundle was taken on, or one built from its
+  recovery kit.
+- **Passwords.** Members come back without them and are sent a reset.
+- **Mail, the cache, and declared state.** Mailboxes are not in a bundle. App
+  grants are declared in git and come from there; integration bindings are
+  derived from the installed apps and their profiles; authorization tuples are
+  projections. On the same cluster none of the three is lost. A tenant
+  imported into another cluster has its bindings and tuples made again and its
+  app grants to set again.
+
+An uploaded bundle (the import bucket, `gentian-imports`) is removed when a
+restore of it has run to its end, restored or failed. A restore refused before
+it changed anything leaves it, so the request can be made again; an upload that
+is never restored stays until it is removed by hand.
+
+### 9.5 Failing loudly
 
 Both teardowns fail loudly. A destroy script ends in success only when what
 it was asked to remove is verifiably gone. A purge of an app stops at the first
 step that fails and answers with it
 ([store-contract.md](store-contract.md) §8). A tenant's deletion is not waited
-for by anybody: a cleanup Job that fails, or a vault that does not answer, is a
-reconcile error, the Tenant stays `Terminating`, and the failed step is run
+for by anybody: a cleanup Job that fails, a vault or a model gateway that does
+not answer, an edge route or a provisioning Job that cannot be removed, is a
+reconcile error; the Tenant stays `Terminating`, and the failed step is run
 again on the next pass, so it resumes where it stopped and does not move past
-a store it could not destroy.
+a store it could not destroy. The Tenant is gone only when its namespace is.
 
-Known differences from the single order, kept as they are:
+### 9.6 Known limits
 
-- A tenant's deletion removes the namespace — the workloads and the files —
-  after the stores and the realm, not before them.
-- At a tenant's deletion the PostgreSQL databases of apps uninstalled earlier
-  are found through the Database record the cluster keeps; MariaDB databases,
-  buckets and cache users of such apps are found only while their setup Job
-  still exists.
-- Export, restore and purge address the tenant's namespace as `tenant-<name>`;
-  provisioning honours `spec.isolation.namespace`.
+- **Cache keys.** The cache is one shared instance and an app's user may touch
+  every key, so the keys an app wrote cannot be told from another's. A purge
+  and a tenant's deletion remove the user and leave the keys.
+- **`spec.isolation.namespace`.** Export, restore, purge and the retained read
+  take a tenant's namespace from the Tenant, as provisioning does. The rest of
+  the platform does not: an export or a restore finds its tenant by stripping
+  `tenant-` from its namespace, the app Composition derives the tenant's name
+  the same way, and the director never sets the field. A tenant placed in a
+  namespace of another name is not supported end to end; an export or restore
+  created for one is refused.
+- **MariaDB databases an app creates for itself** are in no bundle and are not
+  purged; see §9.3.
+- **Files at a tenant's deletion** go with the namespace, after the stores,
+  not before them.
 
