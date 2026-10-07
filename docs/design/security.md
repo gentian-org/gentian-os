@@ -113,12 +113,13 @@ changes only when the code does.
 | Keycloak per-tenant realms, kernel realm, OIDC for portal and apps | Implemented | Suze composition, `identity_reconciler.go` |
 | Keycloak group → OpenFGA tuple sync | Implemented as a poll; **the poll is retired by AD-12** | `authz_bridge_reconciler.go` polls on a timer with an admin credential. Membership stays stored as `group#member` tuples, as a projection the **operator** writes from Keycloak's signed event-listener statements (`membership_listener.go`). The director was to be that writer and is not: it writes nothing to the store |
 | `AppGrant` → tuples | Implemented | `app_grant_reconciler.go`; grants are structure and stay stored. AD-12 would have made the director the store's only writer; as built the operator writes the store and the director only asks it |
-| Any PEP calling OpenFGA `Check` | **Target** | console client exists, no caller; no gateway ext-auth |
+| Gateway ext-auth calling OpenFGA `Check` on every session route | Implemented | `internal/bouncer`, attached by `internal/controller/bouncer.go`; the session filter runs first and the bouncer refuses a request without a token it verified ([routing.md §4.1](routing.md)). Fails closed |
+| Session cookies: per host, encrypted, `SameSite=Lax`; frame policy naming the tenant's own desktop | Implemented | `zoneSecurityPolicySpec`, `componentFramers` ([routing.md §4.2, §4.3](routing.md)) |
 | Tenant namespace + NetworkPolicy default-deny egress | Implemented | `internal/kernel/netpolicy/` — tenant namespaces only |
 | NetworkPolicy in kernel, system and shared namespaces | **Target**, with one exception | every builder is tenant-scoped. The exception is one policy in the operator chart, on the operator's pods: its app-lifecycle port admits the director's and the usher's pods only, and its other ports stay open. No other pod in a kernel namespace is selected by a policy (gap G28) |
 | Approval path for profile-declared egress | **Target** | `security.egress` reaches the NetworkPolicy uninspected; `PlatformSecurityPolicy` allowlists MAC waivers only (gap G27) |
 | Pod-security admission (privileged, host ns, non-root, hostPath, caps, priv-esc) | Implemented | `kernel/security/kyverno/policies/` |
-| Gateway JWT / ext-auth / rate limit | **Target** | `BackendTrafficPolicy` carries timeouts only |
+| Gateway rate limit | **Target** | `BackendTrafficPolicy` carries timeouts only |
 | Service mesh, SPIFFE/SPIRE, workload identity | **Target**, with one exception | The operator's app-lifecycle listener admits its two callers, the director and the usher, by ServiceAccount: each presents a projected token for the audience `gentian-os-operator` and the operator asks the API server whose it is (`internal/applifecycle/auth.go`). Every other call between platform services still rests on a shared key or on the person's token |
 | Agent identities, RFC 8693 exchange, `agent`/`task` types | **Target** | model v0 has no such types |
 | Human-identified secret writes (token exchange, no service token) | Implemented | `internal/custodian/` |

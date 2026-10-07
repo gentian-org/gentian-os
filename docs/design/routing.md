@@ -313,25 +313,129 @@ annotation, not a different mechanism.
 
 ## 4. Browser Security and Embedding
 
-Gentian Portal embeds tenant applications in iframes. Edge policy enforces
-embedding rules through explicit response header policy attached to routes.
+### 4.1 The front door: the session first, then the access check
 
-Default app policy:
+A route behind a session carries one `SecurityPolicy` with two parts: `oidc`,
+the zone's sign-in session, kept by Envoy's OAuth2 filter, and `extAuth`, the
+bouncer, which asks OpenFGA whether this person may reach this host.
+
+Envoy Gateway's own order runs `ext_authz` before the OAuth2 filter. This
+platform reverses it, with `filterOrder` on the edge `EnvoyProxy`
+(`kernel/manifests/gateway/chart`), and installer step A-05 does not report
+the edge installed without it. The reason is that the bouncer must judge a
+request by a token somebody has validated, and in Envoy Gateway's order there
+is none yet: the session is cookies, the OAuth2 filter encrypts them, and a
+bouncer that ran first could only wave through what it could not read.
+
+With the OAuth2 filter first, per request on a session route:
+
+| The request | What the OAuth2 filter does | What the bouncer sees |
+|---|---|---|
+| Valid session | Removes the client's `Authorization` header, sets it to the session's access token | The token. Verifies it, asks the relation, sets `x-gentian-*` |
+| Session whose access token has run out, refresh token present | Fetches new tokens from the realm, then as above with the new token; the new cookies go out with the response | The new token |
+| No session, or the refresh failed | Redirects the browser to the realm | Nothing: the request does not reach it |
+| `/oauth2/callback` | Completes the code flow and redirects | Nothing |
+| `/oauth2/logout` | Signs out (§4.2) | Nothing |
+
+The bouncer refuses any request on a session route that reaches it without a
+token it can verify, whatever its path. Nothing in the operator's policies
+lets a request past the OAuth2 filter without a session — no
+`passThroughAuthHeader`, no `denyRedirect`, no CORS or health path — and if
+something did, the answer would be `401`. A client cannot present a bearer of
+its own on these routes: `forwardAccessToken` makes the filter drop the
+incoming `Authorization` header before it writes its own. Command-line
+clients do not come through the edge at all (`kubectl gentian` reaches the
+director through the API server).
+
+One route keeps the caller's own `Authorization` header: Keycloak's
+administration console on `id.<kernelDomain>`, whose page calls the Admin REST
+API with a token of its own. There `forwardAccessToken` is off, and the
+filter hands the bouncer the session's ID token in `x-gentian-id-token`
+(`forwardIDToken`), a header it clears of anything the client sent before it
+sets it. The bouncer verifies it as an ID token issued to the zone's client
+and removes the header before the backend.
+
+Identity headers (`x-gentian-subject`, `-realm`, `-session`, `-email`,
+`-name`) are set by the bouncer on every request it allows, replacing
+client-sent ones, and no request reaches a backend on a session route any
+other way. The edge's access token goes on to a backend only where its
+exposure says `forwardToken`.
+
+Routes without a session policy are unchanged and never ask the bouncer:
+perimeter surfaces (a tenant's DMZ, the concierge), the identity provider's
+realm endpoints on `id.<kernelDomain>`, and the redirects. What
+`id.<kernelDomain>` refuses is a route with `authorization: Deny`.
+
+### 4.2 Sign-in, sign-out and the session cookies
+
+- **Cookies.** Per host, not per zone (no `cookieDomain`): `HttpOnly`,
+  `Secure`, `SameSite=Lax`, token cookies encrypted by the filter. One sign-in
+  at the realm covers every host of the zone; each host gets its own cookies
+  on a silent round trip.
+- **Sign-out** is `GET /oauth2/logout` on any host of the zone. The filter
+  deletes that host's cookies and redirects to the realm's end-session
+  endpoint (read from the issuer's discovery document) with `id_token_hint`,
+  `client_id` and `post_logout_redirect_uri=https://<host>/`. Keycloak ends
+  the realm session without asking and returns the browser to the host's
+  front page, which is behind the session and so shows the realm's sign-in.
+  `https://<host>/` is registered on the zone's client for every host of the
+  zone (`validPostLogoutRedirectUris`, `tenant-default.yaml`).
+- `/oauth2/sign-out` is the older path. The bouncer answers it with a redirect
+  to `/oauth2/logout`.
+- **What ends a session.** Ending the realm session ends it everywhere: other
+  hosts' cookies cannot be refreshed, so each stops within one access-token
+  lifetime (five minutes in a tenant realm). A right withdrawn in OpenFGA is
+  refused within about two seconds, the bouncer's poll of the change log; its
+  cached allows live five minutes at most. There is no back-channel logout.
+
+### 4.3 Embedding
+
+The desktop opens components in frames, so every component route carries a
+frame policy, set at the edge and not by the component:
 
 - remove upstream `X-Frame-Options`
-- enforce `Content-Security-Policy` with `frame-ancestors 'self'` plus every
-  origin the portal answers on — `https://portal.<kernelDomain>` and
-  `https://<tenantEffectiveDomain>` — plus `https://*.<tenantEffectiveDomain>`
-- a route may replace that list via `gentianos.io/gateway-frame-ancestors`; its
-  `portal` token expands through the same `portalOrigins` helper, so a narrowed
-  policy cannot fall behind the hosts the portal is actually routed on
+- set `Content-Security-Policy: frame-ancestors 'self'` plus, by name, the
+  desktop of the component's own tenant and the component's own other hosts
+  (a file store and the editor it embeds)
 
-Keycloak OIDC broker policy:
+| Component of | May be framed by |
+|---|---|
+| A tenant, tenancy `multi` | `console.<tenant>.<kernelDomain>` (or `console.<its own domain>`) |
+| The user tenant, tenancy `single` | `console.<kernelDomain>` |
+| The platform tenant (`admin.platform.<kernelDomain>`, …) | `platform.<kernelDomain>` |
+| The kernel's consoles (`argocd.`, `headlamp.`, Keycloak's administration) | `platform.<kernelDomain>` |
 
-- kernel IdP routes include portal origin plus tenant app OIDC origins in
-  `frame-ancestors`
-- policy is reconciled from tenant/domain state so iframe-based login flows stay
-  valid as tenants and apps change
+No wildcard, and the platform's desktop is not a framer of any tenant's
+component: platform administrators do not open tenants' apps.
+
+Framing also depends on the session cookie, which is `SameSite=Lax`: a framed
+page gets its session only when the framing page is on the same site (the
+same registrable domain). So:
+
+- A desktop and its apps under one registrable domain work —
+  `console.acme.example.org` framing `cloud.acme.example.org`, or a tenant's
+  own domain throughout.
+- A frame across sites does not: the framed app has no cookie, is sent to
+  sign in, and the sign-in cannot complete in the frame.
+- A cluster domain that is itself a public suffix makes every host a site of
+  its own, and nothing can be framed. Use a domain below one.
+
+Keycloak's realm endpoints on `id.<kernelDomain>` carry a separate policy,
+reconciled from tenant and domain state, naming the hosts whose pages embed
+its session frames.
+
+### 4.4 Versions
+
+Envoy Gateway and its chart are pinned in `versions.yaml`. Envoy Gateway 1.9
+is tested on Kubernetes 1.33 to 1.36, which makes **Kubernetes 1.33 the
+minimum** for this release; pre-flight refuses an older cluster. The chart
+installs the Gateway API v1.6.1 CRDs (experimental channel). A-05 applies the
+chart's CRDs before the chart, because Helm does not upgrade CRDs
+([operations.md §7.5](operations.md)).
+
+On listeners whose certificates overlap — the kernel wildcard serves several —
+Envoy Gateway offers HTTP/1.1 only, so that a browser cannot reuse one HTTP/2
+connection for a host with a different policy.
 
 ---
 

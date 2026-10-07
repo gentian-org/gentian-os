@@ -316,14 +316,17 @@ sequenceDiagram
   participant A as App
 
   P->>G: Open app.tenant.example.org
-  G->>B: May this request pass
   alt No session yet
-    B-->>G: Pass on, with no identity
     G-->>P: Redirect to sign in
     P->>K: Sign in
     K-->>P: Back to the Gateway, which sets the session cookies
   else Session cookie present
-    B->>B: Verify the token in the cookie
+    opt The token in the session has run out
+      G->>K: Fetch a new token with the refresh token
+      K-->>G: New token, or no: then sign in again
+    end
+    G->>B: May this request pass, with the session's current token
+    B->>B: Verify the token
     B->>F: May this person use this app
     F-->>B: Yes or no
     B-->>G: Allow with identity headers, or refuse
@@ -333,17 +336,28 @@ sequenceDiagram
 
 How to read it:
 
-- The Gateway asks the bouncer first and runs its own sign-in check second.
-  That order is the Gateway's and cannot be changed.
-- A request with no valid session is not refused by the bouncer. It is passed
-  on with every identity header removed, and the Gateway's sign-in check then
-  sends the browser to Keycloak.
-- A request with a valid session is checked against OpenFGA. The question
+- The Gateway runs its own sign-in check first and asks the bouncer second.
+  That is not the Gateway's own order. The installer sets it, in the settings
+  of the Gateway's proxies
+  ([envoyproxy.yaml](../../kernel/manifests/gateway/chart/templates/envoyproxy.yaml)),
+  and does not report the Gateway installed without it.
+- A request with no session never reaches the bouncer. The Gateway sends the
+  browser to Keycloak. The Gateway also answers two addresses itself: the one
+  Keycloak sends the browser back to, and the one that signs out.
+- A session whose token has run out is renewed by the Gateway before the
+  bouncer is asked. The bouncer is shown the new token.
+- The bouncer is given the token by the Gateway, in the request's
+  `Authorization` header. The Gateway removes whatever the browser sent in
+  that header first. The bouncer does not read cookies; the Gateway encrypts
+  them.
+- A request that reaches the bouncer without a token it can verify is
+  refused. There is no case in which the bouncer passes a request on
+  unchecked.
+- A request with a valid token is checked against OpenFGA. The question
   asked (which permission, on what) comes from a table the operator writes.
-- The app receives headers that say who the person is. The bouncer removes
-  any such header a client sent itself.
-- Section 6 describes two cases where this order lets a request through
-  without the question being asked.
+- The app receives headers that say who the person is. The bouncer sets them
+  on every request it allows, which replaces any such header a client sent
+  itself.
 
 ## 4. The programs, one by one
 
@@ -741,16 +755,23 @@ request.
   the table is refused.
 - Refuses a path the app's component profile says is not published, before
   it looks at who is asking.
-- Reads the person's token from the session cookie, verifies it, and asks
-  OpenFGA the route's question.
+- Takes the person's token from the request as the Gateway hands it over,
+  verifies it, and asks OpenFGA the route's question. The Gateway has put the
+  session's current token in the `Authorization` header (section 3.6). On the
+  one route whose `Authorization` header belongs to the page behind it,
+  Keycloak's administration console, the Gateway hands over the session's ID
+  token in a header of its own instead, and the bouncer verifies that.
 - On "yes", sets the headers that tell the app who the person is, and removes
   the token unless the route is declared to receive it (the desktops and the
   admin consoles are, because their backends pass it on).
 - On "no", refuses, with a page that offers to sign out.
-- Lets a request with no valid session pass to the Gateway's own sign-in
-  check, with every identity header removed (section 3.6).
-- Answers the sign-out address itself, so that signing out also ends the
-  session at Keycloak.
+- Refuses a request that carries no token it can verify. On a route with a
+  sign-in session the Gateway does not let such a request reach it; if one
+  arrives anyway, the answer is no.
+- Sends the older sign-out address, `/oauth2/sign-out`, on to the Gateway's
+  own, `/oauth2/logout`. The Gateway ends the session there: it removes its
+  cookies and sends the browser to Keycloak, which ends its session too and
+  returns the browser to the front page of the address it came from.
 - Remembers a "yes" for five minutes per person, session and address, and
   forgets all of them when OpenFGA's change log moves. It looks at the change
   log every two seconds.
@@ -761,6 +782,8 @@ request.
   from OpenFGA.
 - Let a request through when OpenFGA cannot be reached. It answers 503,
   except for answers it already remembers.
+- Let a request through without a token it has verified itself.
+- Read a cookie.
 
 **What it holds**
 
@@ -928,34 +951,23 @@ gives.
    annotations on the route itself, so a route written by anything other than
    the operator could name a weaker question.
 
-9. **The session cookie has no explicit SameSite rule.** The session policy
-   the operator writes
-   ([bouncer.go](../../internal/controller/bouncer.go)) sets no SameSite
-   attribute on the Gateway's cookies, so browsers apply their own default.
-   The cluster installs Envoy Gateway 1.2.5
-   ([versions.yaml](../../versions.yaml)). A newer Gateway version would allow
-   setting the attribute, but the upgrade is deliberately not done: the newer
-   version encrypts the token cookies. The bouncer reads the person's token
-   from one of those cookies. A cookie it cannot read is, to the bouncer, a
-   request with no valid session, and on a route with a sign-in session such
-   a request is passed on unchecked (section 3.6). The Gateway's own check
-   would then accept its own cookie, and the request would reach the app
-   without OpenFGA having been asked. The upgrade needs the bouncer to
-   receive the token another way first. *The newer version's behaviour is
-   taken from its release notes and is to be confirmed on a cluster before
-   any upgrade.*
+9. **An app receives the session's tokens.** The Gateway encrypts the
+   session's tokens in the browser's cookies, and decrypts them again in the
+   request before it passes it on. So the app behind a route receives the
+   person's access token and ID token in the `Cookie` header, in the clear.
+   The cookies belong to one address, so an app sees only the tokens of its
+   own address; but the access token in them is accepted at every service
+   (weakness 2). Nothing removes them before the app.
 
-10. **An expired access token with a valid refresh token.** The same path
-    exists today for one request at a time. The access token in the cookie
-    lives five minutes. When it has expired, the bouncer cannot verify it,
-    treats the request as having no session, removes the identity headers and
-    passes it on. The Gateway's session policy has refresh switched on, so
-    the Gateway is expected to fetch a new token and forward that same
-    request. That request then reaches the app without the bouncer's question
-    having been asked and without identity headers. The next request carries
-    the new cookie and is checked normally. *What the Gateway does with the
-    request while it refreshes is not established from this repository and
-    is to be confirmed on a cluster.*
+10. **The order at the front door is a setting of the Gateway's proxies, not
+    of the route.** The session policy on a route and the bouncer both assume
+    that the Gateway's sign-in check runs first (section 3.6). The setting
+    that makes it so is written by the installer, not by the operator, and
+    nothing in the cluster restores it if it is removed. Without it nothing
+    is opened: the bouncer refuses every request that arrives without a
+    token, so nobody can sign in until the setting is back. Also, anybody can
+    send a browser to the sign-out address: it needs no token, and following
+    a link to it from another site signs the person out.
 
 11. **A withdrawn right can last a few minutes.** A right removed in OpenFGA
     takes effect at the bouncer within about two seconds. A session ended at
@@ -1027,6 +1039,12 @@ Detail: [iam.md](../design/iam.md) §1.1a for the modes,
 - The usher serves the tiles and every read of live state.
 - The bouncer checks every route that has a session policy, and follows
   OpenFGA's change log.
+- The Gateway signs a person in, and renews their session, before the bouncer
+  is asked. The bouncer verifies the token the Gateway hands it and refuses a
+  request without one. The session cookies are encrypted and carry
+  `SameSite=Lax`.
+- A tenant's apps can be put in a frame by that tenant's own desktop and by
+  no other tenant's and not by the platform's.
 - The concierge is published from the platform tenant's DMZ.
 - The consoles hold no credential of their own. They pass on the signed-in
   person's token.
@@ -1047,7 +1065,10 @@ Detail: [iam.md](../design/iam.md) §1.1a for the modes,
 - **Token exchange**: a token issued for one service only, so that a token
   seen by one program is not valid at the others (weakness 2), and so that an
   unattended act can carry who it is for.
-- **The Gateway upgrade** and the SameSite rule (weakness 9).
+- **Removing the session's tokens from the request before the app**
+  (weakness 9).
+- **The operator keeping the order at the front door**, instead of the
+  installer setting it once (weakness 10).
 - **Default-deny network policies in the kernel namespaces** (weakness 6).
 - **A read-only repository credential for Argo CD** (weakness 12).
 - **The operator asking OpenFGA again** about the person a command is for
@@ -1088,8 +1109,6 @@ summarised here because no other document carries them.
 - Whether the bouncer should be attached to the Gateway as a whole, and how
   the Gateway then orders it with the sign-in check and its own `/oauth2/`
   addresses.
-- How the bouncer should receive the person's token once the Gateway
-  encrypts its cookies.
 - Whether Argo CD's read credential becomes a second repository declaration
   or a second field on the existing one.
 - Whether the operator should re-check the person behind a command, or the

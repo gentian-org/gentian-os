@@ -358,6 +358,35 @@ waits for them to be established, and the operator arrives at D-01.
 Delivering the XRDs and Compositions through Argo CD as well, so that one sync
 moved every definition together, is a possible later step. It is not built.
 
+### 7.5 Upgrading Envoy Gateway on an existing cluster
+
+A fresh install needs nothing from this section. A cluster that already runs
+an earlier Envoy Gateway is brought forward by re-running step A-05
+(`./install.sh --only A-05`) from a checkout of the new release, and then
+letting Argo CD roll the operator and the bouncer. In that order:
+
+1. **Kubernetes 1.33 or newer.** Pre-flight checks it.
+2. **CRDs first.** A-05 applies the pinned chart's CRDs — Envoy Gateway's own
+   and the Gateway API's — server-side before it upgrades the chart. Helm
+   never upgrades CRDs, and a controller on older definitions has the fields
+   it does not know dropped from every policy. The chart then installs an
+   admission policy that refuses Gateway API CRDs older than v1.5, so going
+   back means deleting that policy first.
+3. **The proxies are rebuilt.** The new controller replaces the Envoy pods
+   (new image, changed pod template). With two replicas this is a rolling
+   replacement; connections are cut once.
+4. **The order at the front door.** A-05 re-applies the edge `EnvoyProxy`
+   with `filterOrder`. Until the new operator has rewritten the session
+   policies and the new bouncer is running, sign-in fails closed: an old
+   bouncer behind the new order, or a new one in front of old policies,
+   refuses.
+5. **Everyone signs in again.** Expect session cookies written by the
+   earlier version not to be accepted: they were not encrypted, and the way
+   the cookies are sealed changed in between. Keycloak sessions survive, so
+   this is one silent redirect per host, not a password prompt.
+6. **The zone clients' post-logout addresses** change to each host's front
+   page; `./install.sh --only B-06` delivers the Composition.
+
 ## 8. Safety Guards
 
 - **Stateful Argo Apps** (OpenBao, Crossplane) deploy with `prune: false` and `finalizers: []` —

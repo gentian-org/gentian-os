@@ -72,8 +72,9 @@ until it is done.
 
 ## What you need before you start
 
-- **A Kubernetes cluster you are an admin on.** The installer does not create
-  one. It runs 100+ pods, so a laptop-sized node pool will be tight.
+- **A Kubernetes cluster you are an admin on, version 1.33 or newer.** The
+  installer does not create one, and pre-flight refuses an older one. It runs
+  100+ pods, so a laptop-sized node pool will be tight.
 - **These tools on your `PATH`:** `kubectl helm jq yq openssl curl git gpg
   crossplane python3 age age-keygen`. Pre-flight checks and names any that are
   missing, and refuses to start without them. `bao` (the OpenBao CLI) installs
