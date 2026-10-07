@@ -108,8 +108,11 @@ func TestProducerAndEncryptRunAsInitContainersBeforeUpload(t *testing.T) {
 
 func TestMariaDBDumpUploadsTheFileItWrote(t *testing.T) {
 	job := MariaDBDumpJob(params(), "demo_app")
-	if !strings.Contains(initContainerScript(job), "> /work/dump.sql.gz") {
-		t.Errorf("dump path unexpected:\n%s", initContainerScript(job))
+	// Written to a file and compressed there: through a pipe the exit status
+	// would be gzip's, and a dump that failed would be uploaded as taken.
+	dump := initContainerScript(job)
+	if !strings.Contains(dump, "--result-file=/work/dump.sql 'demo_app'\ngzip /work/dump.sql\n") || strings.Contains(dump, "|") {
+		t.Errorf("dump path unexpected:\n%s", dump)
 	}
 	if !strings.Contains(mainScript(job), `mc cp "/work/dump.sql.gz`+EncryptedSuffix+`"`) {
 		t.Errorf("upload path unexpected:\n%s", mainScript(job))

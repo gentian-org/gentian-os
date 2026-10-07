@@ -168,8 +168,14 @@ func PostgresOwnedArtefact(database string) string {
 }
 
 func MariaDBArtefact(database string) string { return "mariadb/" + database + ".sql.gz" }
-func S3Artefact(bucket string) string        { return "s3/" + bucket + ".tar.gz" }
-func VolumeArtefact(claim string) string     { return "volumes/" + claim + ".tar.gz" }
+
+// MariaDBOwnedArtefact is the archive of the databases that are an app's
+// besides the provisioned one, filed under the provisioned one's name.
+func MariaDBOwnedArtefact(database string) string {
+	return "mariadb/" + database + ".owned.tar.gz"
+}
+func S3Artefact(bucket string) string    { return "s3/" + bucket + ".tar.gz" }
+func VolumeArtefact(claim string) string { return "volumes/" + claim + ".tar.gz" }
 
 // IdentityArtefact is the realm export; there is one per bundle.
 const IdentityArtefact = "identity/realm.tar.gz"
@@ -252,6 +258,14 @@ echo "archived the databases owned besides %[2]s"`, workDir, database)},
 	return uploadJob(p, "owned.tar.gz", artefact, []corev1.Container{dump, pack}, nil)
 }
 
+// mariadbDump is one database's dump, to a file: --single-transaction reads
+// the whole database at one instant without locking it. To a file and
+// compressed afterwards, not through a pipe: in a pipe the exit status is
+// gzip's, and a dump that failed half-way was uploaded as a bundle's
+// artefact and reported as taken.
+const mariadbDump = `mariadb-dump --single-transaction --routines --triggers --events \
+  --host="${MYSQL_HOST}" --port="${MYSQL_TCP_PORT}" --user="${MYSQL_ADMIN_USER}"`
+
 // MariaDBDumpJob captures one MariaDB database as compressed SQL.
 func MariaDBDumpJob(p JobParams, database string) *batchv1.Job {
 	artefact := MariaDBArtefact(database)
@@ -260,16 +274,83 @@ func MariaDBDumpJob(p JobParams, database string) *batchv1.Job {
 		Image:   kernel.MariaDBProvisionerImage(),
 		Command: []string{"/bin/sh", "-c"},
 		Args: []string{fmt.Sprintf(`set -eu
-# --single-transaction takes a consistent snapshot without locking the whole
-# database; the app is already paused, so this only guards in-flight work.
-mariadb-dump --single-transaction --routines --triggers --events \
-  --host="${MYSQL_HOST}" --port="${MYSQL_TCP_PORT}" --user="${MYSQL_ADMIN_USER}" \
-  %s | gzip -c > %s/dump.sql.gz
-echo "dumped %s"`, shellSingleQuote(database), workDir, database)},
+# The app is already paused, so the snapshot only guards in-flight work.
+%[1]s \
+  --result-file=%[3]s/dump.sql %[2]s
+gzip %[3]s/dump.sql
+echo "dumped %[4]s"`, mariadbDump, shellSingleQuote(database), workDir, database)},
 		Env:          MariaDBAdminEnv(),
 		VolumeMounts: []corev1.VolumeMount{{Name: "work", MountPath: workDir}},
 	}
 	return uploadJob(p, "dump.sql.gz", artefact, []corev1.Container{dump}, nil)
+}
+
+// MariaDBOwnedDumpJob captures every database that is an app's besides the
+// provisioned one, into one archive: the databases an app allowed to create
+// its own has made, which a purge drops with the provisioned one. Which they
+// are is the inventory's one rule (mariadbOwnedSQL), the one the purge drops
+// by.
+//
+// The names are the app's own choice below its prefix and are not known
+// before the Job runs, so they are not in the manifest: INDEX inside the
+// archive lists them, one per line, and <line number>.sql.gz is each one's
+// dump. The archive is written when there is none too -- an empty INDEX is
+// the record that it was looked at.
+//
+// Each database is dumped as the provisioned one is, at one instant of its
+// own; across them the export relies on the app being paused, as it does
+// across an app's database and its files. A name with a control character
+// in it cannot be listed one per line, and fails the export rather than
+// being left out of it.
+func MariaDBOwnedDumpJob(p JobParams, user, database string) *batchv1.Job {
+	artefact := MariaDBOwnedArtefact(database)
+	script := mariadbRefusal(database, user)
+	if script == "" {
+		script = fmt.Sprintf(`set -euo pipefail
+MARIADB=(%[4]s)
+mkdir -p %[2]s/owned
+unlistable="$("${MARIADB[@]}" -N -s <<'SQL'
+SELECT COUNT(*) FROM (%[3]s) o WHERE o.schema_name REGEXP '[[:cntrl:]]';
+SQL
+)"
+if [ "${unlistable}" != "0" ]; then
+  echo "ERROR: ${unlistable} database(s) of %[1]s have a control character in their name and cannot be carried" >&2; exit 1
+fi
+"${MARIADB[@]}" -N -s --raw > %[2]s/owned/INDEX <<'SQL'
+%[3]s ORDER BY s.schema_name;
+SQL
+n=0
+while IFS= read -r name; do
+  [ -n "${name}" ] || continue
+  %[5]s \
+    --result-file="%[2]s/owned/${n}.sql" "${name}"
+  gzip "%[2]s/owned/${n}.sql"
+  echo "dumped ${name}"
+  n=$((n + 1))
+done < %[2]s/owned/INDEX
+echo "dumped ${n} database(s) that are %[1]s's besides itself"`,
+			database, workDir, mariadbOwnedSQL(database, user), mariadbClient, mariadbDump)
+	}
+	dump := corev1.Container{
+		Name:         "mariadb-dump-owned",
+		Image:        kernel.MariaDBProvisionerImage(),
+		Command:      []string{"/bin/bash", "-c"},
+		Args:         []string{script},
+		Env:          MariaDBAdminEnv(),
+		VolumeMounts: []corev1.VolumeMount{{Name: "work", MountPath: workDir}},
+	}
+	// A separate container, as for PostgreSQL: one image packs every archive.
+	pack := corev1.Container{
+		Name:    "pack-owned",
+		Image:   kernel.KeycloakProvisionerImage(),
+		Command: []string{"/bin/sh", "-c"},
+		Args: []string{fmt.Sprintf(`set -eu
+tar czf %[1]s/owned.tar.gz -C %[1]s/owned .
+rm -rf %[1]s/owned
+echo "archived the databases that are %[2]s's besides itself"`, workDir, database)},
+		VolumeMounts: []corev1.VolumeMount{{Name: "work", MountPath: workDir}},
+	}
+	return uploadJob(p, "owned.tar.gz", artefact, []corev1.Container{dump, pack}, nil)
 }
 
 // VolumeArchiveJob captures one PersistentVolumeClaim as a compressed archive.

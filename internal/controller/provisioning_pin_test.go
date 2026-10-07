@@ -57,7 +57,7 @@ func TestProvisioningJobsAreWhatTheyWere(t *testing.T) {
 			makeRoleJob(tenant, "tenant-demo", "demo_wiki", "wiki", "pw", gentianov1alpha1.SchemaPreferenceAppSchema, true),
 			"bb0e4ee798d4956cf3fe7481f70f3ac5a4dd5f396618563d9829873937718b8d",
 		},
-		"mariadb setup":  {makeMariaDBSetupJob(tenant, "shop", "pw", true), "44df95849dde8b2564e568068b715556d890992968e75dc57baa0a968a26ab35"},
+		"mariadb setup":  {makeMariaDBSetupJob(tenant, "shop", "pw", true), "1e36c94ab69c16480a4b778b69e4526a7fcf98116ecfd16fd7a0a30e64b945ad"},
 		"bucket":         {makeS3BucketJob(tenant, "wiki", "AK", "SK"), "19414f541375de3bc183e4276409422ded25a5cb38d642b9bb7c1d0c00be311c"},
 		"bucket, no key": {makeS3BucketJob(tenant, "wiki", "", ""), "06ee93e15655f2d2b6e8a6eac539c43007e0b4aca261b83f6f17b6616b6d65e6"},
 		"cache user":     {makeRedisACLJob(tenant, "wiki", "pw"), "980aa4ecd34b77778b2225cbe86860dfe74dd7bd6ee0e79493bc0cfd1235d57a"},

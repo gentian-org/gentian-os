@@ -415,14 +415,22 @@ func (r *TenantExportReconciler) captureUnits(
 			JobName: p.Name, Job: backup.PostgresOwnedDumpJob(p, role, db),
 		})
 	case gentianov1alpha1.DatabaseEngineMariaDB:
-		// The provisioned database only: nothing says which other
-		// databases a MariaDB app made (backup.MariaDBOwnsBeyondProvisioned).
 		db := backup.DatabaseName(tenant, appName)
 		p := params
 		p.Name = exportJobName(export.Name, appName, "maria")
 		units = append(units, captureUnit{
 			Kind: bundle.ArtefactMariaDB, Name: db, Path: backup.MariaDBArtefact(db),
 			JobName: p.Name, Job: backup.MariaDBDumpJob(p, db),
+		})
+		// And every other database that is the app's by its name: what a
+		// purge of the app drops with the provisioned one. Always asked for,
+		// as on PostgreSQL -- a purge goes by the names that are there, not
+		// by what the profile says today.
+		p = params
+		p.Name = exportJobName(export.Name, appName, "mariao")
+		units = append(units, captureUnit{
+			Kind: bundle.ArtefactMariaDBOwned, Name: db, Path: backup.MariaDBOwnedArtefact(db),
+			JobName: p.Name, Job: backup.MariaDBOwnedDumpJob(p, backup.MariaDBUser(tenant.Name, appName), db),
 		})
 	}
 

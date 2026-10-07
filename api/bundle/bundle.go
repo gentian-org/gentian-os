@@ -66,6 +66,17 @@ const (
 	ArtefactPostgresOwned = "postgresOwned"
 	// ArtefactMariaDB is a gzipped mariadb-dump of one database.
 	ArtefactMariaDB = "mariadb"
+	// ArtefactMariaDBOwned is an archive of the databases that are the
+	// app's besides the provisioned one: the ones named with the
+	// provisioned database's name and an underscore as a prefix, which an
+	// app allowed to create its own has made. Inside it, INDEX names them
+	// one per line and <line number, from 0>.sql.gz is each one's gzipped
+	// mariadb-dump.
+	//
+	// The kind was added within version 2. A reader of version 2 that does
+	// not know it refuses the app that has one and says so; it does not
+	// restore the app without it.
+	ArtefactMariaDBOwned = "mariadbOwned"
 	// ArtefactS3 is a tar.gz of one bucket's objects, keys preserved.
 	ArtefactS3 = "s3"
 	// ArtefactVolume is a tar.gz of one volume claim's contents.
@@ -159,10 +170,11 @@ func (m *Manifest) NamesArtefacts() bool {
 // ManifestStore is one captured artefact.
 type ManifestStore struct {
 	// Kind is one of the Artefact kinds: postgres, postgresOwned, mariadb,
-	// s3, volume or identity.
+	// mariadbOwned, s3, volume or identity.
 	Kind string `json:"kind"`
 	// Name is the database, bucket or claim captured; for postgresOwned,
-	// the role whose databases the archive holds.
+	// the role whose databases the archive holds; for mariadbOwned, the
+	// provisioned database whose name the archive's databases begin with.
 	Name string `json:"name"`
 	// Path is the artefact's location within the bundle prefix, without the
 	// suffix encryption adds.

@@ -22,7 +22,12 @@ const (
 	// is not pinned in this repo (the CNPG operator's default applies, 17.x
 	// today), so bump this alongside CNPG operator upgrades.
 	DefaultPostgresProvisionerImage = "postgres:17-alpine"
-	DefaultMariaDBProvisionerImage  = "mariadb:11"
+	// The MariaDB client is the server's own image (charts/infra/mariadb
+	// pins it), to the digest. A floating mariadb:11 resolved to an 11.8
+	// client, whose mariadb-dump opens every dump with a statement the 11.1
+	// server refuses (SET ... NOTE_VERBOSITY): each dump was taken and none
+	// could be loaded again. Bump the two together; a test holds them equal.
+	DefaultMariaDBProvisionerImage  = "mariadb:11.1.2-jammy@sha256:2403cc521634162f743b5179ff5b35520daf72df5d9e7e397192af685d9148fd"
 	DefaultRedisProvisionerImage    = "redis:7-alpine"
 	DefaultMemcachedImage           = "memcached:1.6.38-alpine"
 	DefaultKeycloakProvisionerImage = "alpine:3.20"

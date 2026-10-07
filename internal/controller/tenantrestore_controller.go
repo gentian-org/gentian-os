@@ -447,6 +447,12 @@ func (r *TenantRestoreReconciler) restoreUnits(
 			p.Name = exportJobName(restore.Name, appName, "myr")
 			units = append(units, captureUnit{Kind: a.Kind, Name: a.Target, JobName: p.Name,
 				Job: backup.MariaDBRestoreJob(p, d, a.Path, a.Target)})
+		case bundle.ArtefactMariaDBOwned:
+			// a.Name is the provisioned database the archive's names begin
+			// with; here they begin with a.Target.
+			p.Name = exportJobName(restore.Name, appName, "myor")
+			units = append(units, captureUnit{Kind: a.Kind, Name: a.Target, JobName: p.Name,
+				Job: backup.MariaDBOwnedRestoreJob(p, d, a.Path, a.Name, a.Target, backup.MariaDBUser(tenant.Name, appName))})
 		case bundle.ArtefactS3:
 			// The bucket's user and policy, by the code install provisions
 			// them with and the key pair the vault holds for the app.

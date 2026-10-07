@@ -233,7 +233,7 @@ func TestATenantDesktopsDatabaseWaitsWithoutAVault(t *testing.T) {
 func TestProvisioningContainersAreAdmittedInTheSystemNamespaces(t *testing.T) {
 	for name, c := range map[string]corev1.Container{
 		"psql":    psqlContainer("x", "true", ""),
-		"mariadb": mariadbContainer("x", "true", "db", "user"),
+		"mariadb": mariadbContainer("x", "true"),
 		"redis":   redisContainer("x", "user", "prefix", "true"),
 		"minio":   backup.ObjectStorageProvisionContainer("x", "bucket", "", ""),
 	} {

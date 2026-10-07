@@ -409,7 +409,7 @@ type BundleRef struct {
 // BundleArtefact is one artefact of a bundle: a database dump, a bucket's
 // archive, a volume's archive.
 type BundleArtefact struct {
-	// Kind is postgres, postgresOwned, mariadb, s3 or volume.
+	// Kind is postgres, postgresOwned, mariadb, mariadbOwned, s3 or volume.
 	Kind string `json:"kind"`
 	// Name is what the artefact was captured from: the database, bucket or
 	// volume claim, by its name in the tenant the bundle was taken of.

@@ -33,7 +33,7 @@ const (
 // ensureMariaDB provisions per-app-per-tenant MariaDB databases using idempotent
 // SQL Jobs. It looks up which apps require MariaDB via AppProfile ServiceRequirements,
 // then runs a setup Job for each (CREATE DATABASE IF NOT EXISTS + CREATE USER +
-// GRANT). Completion of all setup Jobs sets MariaDBReady=True.
+// the grants of backup.MariaDBGrants). Completion of all setup Jobs sets MariaDBReady=True.
 func (r *TenantReconciler) ensureMariaDB(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ctrl.Result, error) {
 	return r.reconcileJobWaitRequirement(ctx, tenant, jobWaitRequirement{
 		conditionType: conditionMariaDBReady,
@@ -74,17 +74,15 @@ func (r *TenantReconciler) deleteMariaDB(ctx context.Context, tenant *gentianov1
 
 // makeMariaDBSetupJob builds the idempotent database + user provisioning Job.
 // Credentials are injected from the mariadb-admin Secret in the kernel namespace.
-// The database name and username are passed as explicit env vars to avoid shell
-// quoting issues.
+// The script, with the grants it issues, is the inventory's
+// (backup.MariaDBSetupScript): what the user may touch and what an export, a
+// restore and a purge take to be the app's are one rule there.
 func makeMariaDBSetupJob(tenant *gentianov1alpha1.Tenant, appName, dbPassword string, allowDynamic bool) *batchv1.Job {
 	dbName := databaseName(tenant, appName)
 	dbUser := mariadbUserName(tenant.Name, appName)
-	c := mariadbContainer("provision-db", mariadbSetupScript, dbName, dbUser)
+	c := mariadbContainer("provision-db", backup.MariaDBSetupScript(dbName, dbUser, allowDynamic))
 	if dbPassword != "" {
 		c.Env = append(c.Env, corev1.EnvVar{Name: "DB_PASS", Value: dbPassword})
-	}
-	if allowDynamic {
-		c.Env = append(c.Env, corev1.EnvVar{Name: "ALLOW_DYNAMIC", Value: "true"})
 	}
 	return newKernelProvisioningJob(mariadbSetupJobName(tenant.Name, appName), mariadbNamespace, tenant, appName, c)
 }
@@ -95,67 +93,18 @@ func makeMariaDBDeleteJob(tenant *gentianov1alpha1.Tenant, appName string) *batc
 	return backup.MariaDBDestroyJob(tenant, appName, backup.DestroyInTheBackground)
 }
 
-// mariadbContainer returns a Container that runs a mariadb CLI script.
-// The database name and user are passed as plain env vars; credentials come
-// from the mariadb-admin Secret.
-func mariadbContainer(name, script, dbName, dbUser string) corev1.Container {
+// mariadbContainer returns a Container that runs a mariadb CLI script as the
+// server's admin: credentials come from the mariadb-admin Secret, by the
+// inventory's one block.
+func mariadbContainer(name, script string) corev1.Container {
 	return corev1.Container{
 		Name:            name,
 		Image:           kernel.MariaDBProvisionerImage(),
 		Command:         []string{"/bin/bash", "-c", script},
 		SecurityContext: provisioningSecurityContext(),
-		// Credentials from the kernel mariadb-admin Secret, by the
-		// inventory's one block; then the per-tenant computed values, passed
-		// as plain literals and never injected into raw SQL strings (the
-		// script validates them).
-		Env: append(backup.MariaDBAdminEnv(),
-			corev1.EnvVar{Name: "DB_NAME", Value: dbName},
-			corev1.EnvVar{Name: "DB_USER", Value: dbUser},
-		),
+		Env:             backup.MariaDBAdminEnv(),
 	}
 }
-
-// --- SQL scripts -------------------------------------------------------------
-
-// mariadbSetupScript is an idempotent bash script that:
-// 1. Creates the database if it does not already exist.
-// 2. Creates the user if absent, assigning a random password.
-// 3. Grants full privileges on the database to the user.
-// DB_NAME and DB_USER are injected as environment variables to avoid SQL
-// injection through shell quoting. They are validated to contain only safe
-// characters (letters, digits, underscores) before use.
-// mariadbSetupScript is an idempotent bash script that creates a MariaDB database
-// and user with full privileges. Identifiers are passed via env vars and validated
-// to contain only safe characters before use — no backtick quoting needed.
-var mariadbSetupScript = "" +
-	"set -euo pipefail\n" +
-	"if ! echo \"${DB_NAME}\" | grep -qE '^[a-zA-Z0-9_]+$'; then\n" +
-	"  echo \"ERROR: invalid DB_NAME '${DB_NAME}'\" >&2; exit 1\n" +
-	"fi\n" +
-	"if ! echo \"${DB_USER}\" | grep -qE '^[a-zA-Z0-9_]+$'; then\n" +
-	"  echo \"ERROR: invalid DB_USER '${DB_USER}'\" >&2; exit 1\n" +
-	"fi\n" +
-	"if [ -z \"${DB_PASS:-}\" ]; then\n" +
-	"  echo \"ERROR: DB_PASS must not be empty\" >&2; exit 1\n" +
-	"fi\n" +
-	"MARIADB=\"mariadb -h${MYSQL_HOST} -P${MYSQL_TCP_PORT} -u${MYSQL_ADMIN_USER}\"\n" +
-	"$MARIADB -e \"CREATE DATABASE IF NOT EXISTS ${DB_NAME};\"\n" +
-	"echo \"database ${DB_NAME} ensured\"\n" +
-	"USER_EXISTS=$($MARIADB -N -s -e \"SELECT COUNT(*) FROM mysql.user WHERE User='${DB_USER}' AND Host='%';\")\n" +
-	"if [ \"${USER_EXISTS}\" = \"0\" ]; then\n" +
-	"  $MARIADB -e \"CREATE USER '${DB_USER}'@'%' IDENTIFIED BY '${DB_PASS}';\"\n" +
-	"  echo \"user ${DB_USER} created\"\n" +
-	"else\n" +
-	"  $MARIADB -e \"ALTER USER '${DB_USER}'@'%' IDENTIFIED BY '${DB_PASS}';\"\n" +
-	"  echo \"user ${DB_USER} password synced\"\n" +
-	"fi\n" +
-	"if [ \"${ALLOW_DYNAMIC:-}\" = \"true\" ]; then\n" +
-	"  $MARIADB -e \"GRANT ALL PRIVILEGES ON *.* TO '${DB_USER}'@'%' WITH GRANT OPTION; FLUSH PRIVILEGES;\"\n" +
-	"  echo \"global privileges granted - done\"\n" +
-	"else\n" +
-	"  $MARIADB -e \"GRANT ALL PRIVILEGES ON ${DB_NAME}.* TO '${DB_USER}'@'%'; FLUSH PRIVILEGES;\"\n" +
-	"  echo \"privileges granted - done\"\n" +
-	"fi\n"
 
 // --- Name helpers ------------------------------------------------------------
 

@@ -243,7 +243,7 @@ func planApp(
 			}
 			a.Target = inv.Database
 			covered[backup.KindDatabase] = true
-		case bundle.ArtefactMariaDB:
+		case bundle.ArtefactMariaDB, bundle.ArtefactMariaDBOwned:
 			if inv.Stores.Database != gentianov1alpha1.DatabaseEngineMariaDB {
 				return nil, "", fmt.Sprintf("has a MariaDB database in the bundle and %s here", engineText(inv.Stores.Database)), nil
 			}

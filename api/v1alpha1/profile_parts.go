@@ -301,20 +301,29 @@ type DatabaseRequirement struct {
 	DatabasePerTenant bool `json:"databasePerTenant"`
 
 	// AllowDynamicDatabaseCreation lets the app create databases of its own at
-	// runtime — mariadb via GRANT ALL PRIVILEGES ON *.*, postgresql via role
-	// CREATEDB. Ask for it only when creating databases is what the app is for
+	// runtime. Ask for it only when creating databases is what the app is for
 	// (a data explorer, say); an app that merely stores its own state must not.
 	//
-	// On postgresql, databases created this way are the app's by ownership:
-	// the app role owns each one it made, so an export copies them, a restore
-	// puts them back and a purge drops them with the role. They are not
-	// otherwise governed — the tenant chooses the names, and they do not
-	// appear in the catalogue's provisioning model.
+	// On postgresql the app's role is given CREATEDB. Databases created this
+	// way are the app's by ownership: the app role owns each one it made, so
+	// an export copies them, a restore puts them back and a purge drops them
+	// with the role. They are not otherwise governed — the tenant chooses the
+	// names, and they do not appear in the catalogue's provisioning model.
 	//
-	// On mariadb nothing records which databases an app made: the grant is on
-	// the whole shared server and a database has no owner. Only the
-	// provisioned database is exported, restored and purged; any other the
-	// app creates is in no bundle and outlives the app.
+	// On mariadb a database has no owner and the server is shared by every
+	// tenant, so the app's databases are the ones named for it: the app may
+	// create, use and drop databases whose name is the name of its
+	// provisioned database followed by an underscore and anything —
+	// "<database>_reports" — and no other. It is granted all privileges on
+	// those names and on its provisioned database, and none on the server:
+	// CREATE DATABASE under any other name is refused, as is any statement
+	// that needs a global privilege. An app that names its databases itself
+	// must therefore be configured, by the profile, to prefix them with
+	// "<database>_"; one that cannot be is not installable with this field on
+	// the shared server. Databases so named are exported, restored (under the
+	// provisioned name of the tenant restored into) and purged with the
+	// provisioned one. Provisioning refuses an app whose provisioned database
+	// would itself lie under another app's prefix, or the reverse.
 	//
 	// Omitted is equivalent to false, which is also Go's zero value for bool —
 	// left undefaulted at the schema level so profiles that omit it don't

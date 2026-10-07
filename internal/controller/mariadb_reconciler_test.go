@@ -19,6 +19,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/backup"
 	"github.com/gentian-org/gentian-os/internal/kernel"
 	"github.com/gentian-org/gentian-os/internal/layout"
 )
@@ -126,18 +127,9 @@ func TestMariaDB_CreatesSetupJob(t *testing.T) {
 		t.Errorf("unexpected container image %q", container.Image)
 	}
 
-	// DB_NAME and DB_USER must be present as literal env vars.
-	envMap := make(map[string]string)
-	for _, e := range container.Env {
-		if e.Value != "" {
-			envMap[e.Name] = e.Value
-		}
-	}
-	if envMap["DB_NAME"] == "" {
-		t.Error("expected DB_NAME env var to be set")
-	}
-	if envMap["DB_USER"] == "" {
-		t.Error("expected DB_USER env var to be set")
+	// The script is the inventory's, for this tenant's and app's names.
+	if want := backup.MariaDBSetupScript("mariacreate_maria_app1", "mariacreate_maria_app1", false); container.Command[len(container.Command)-1] != want {
+		t.Errorf("setup script = %q", container.Command)
 	}
 
 	// Credentials must come from the mariadb-admin Secret (not literal values).

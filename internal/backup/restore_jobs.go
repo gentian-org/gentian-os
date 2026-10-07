@@ -293,13 +293,112 @@ MYSQL="mariadb --host=${MYSQL_HOST} --port=${MYSQL_TCP_PORT} --user=${MYSQL_ADMI
 # picture, and rows it does not contain have no business surviving a restore
 # that claims to return the database to that point.
 $MYSQL -e "DROP DATABASE IF EXISTS ${DB}; CREATE DATABASE ${DB};"
-gunzip -c %s/dump.sql.gz | $MYSQL "${DB}"
+# Unpacked first and then loaded: in a pipe a truncated archive would end
+# the load early and the exit status would be the client's.
+gunzip %[2]s/dump.sql.gz
+$MYSQL "${DB}" < %[2]s/dump.sql
 echo "restored ${DB}"`, shellSingleQuote(database), workDir)},
 		Env:          MariaDBAdminEnv(),
 		VolumeMounts: []corev1.VolumeMount{{Name: "work", MountPath: workDir}},
 	}
 	return restoreJob(p, []corev1.Container{
 		fetchAndDecrypt(d, p, artefact, "dump.sql.gz"),
+	}, restore, nil)
+}
+
+// MariaDBOwnedRestoreJob puts back the databases that were an app's besides
+// the provisioned one, from the archive MariaDBOwnedDumpJob wrote.
+//
+// A database is the app's by its name, and the name begins with the
+// provisioned database's -- which is the tenant's and the app's, and so is
+// another name where the bundle is restored into another tenant. Each
+// database in the archive is therefore put back under the provisioned name
+// here: source_reports of the bundle becomes database_reports. Under that
+// name it is the app's here, within what its user may touch and what a
+// purge drops.
+//
+// Each is created or, where it is there, replaced, as the provisioned one
+// is. One whose name here is a database another account holds rights on is
+// not the app's to replace, and fails the restore. A database that is the
+// app's now and that the archive does not hold is left as it is -- the
+// bundle says nothing about it -- and is named in the Job's output.
+//
+// The names are the app's own choice: each is handed to the server as hex
+// and quoted by it, and reaches the client only as an argument.
+func MariaDBOwnedRestoreJob(p JobParams, d Decryption, artefact, source, database, user string) *batchv1.Job {
+	unpack := corev1.Container{
+		Name:    "unpack-owned",
+		Image:   kernel.KeycloakProvisionerImage(),
+		Command: []string{"/bin/sh", "-c"},
+		Args: []string{fmt.Sprintf(`set -eu
+mkdir -p %[1]s/owned
+tar xzf %[1]s/owned.tar.gz -C %[1]s/owned
+[ -f %[1]s/owned/INDEX ] || { echo "ERROR: the archive has no INDEX" >&2; exit 1; }
+echo "unpacked the archive of owned databases"`, workDir)},
+		VolumeMounts: []corev1.VolumeMount{{Name: "work", MountPath: workDir}},
+	}
+	script := mariadbRefusal(database, user)
+	if script == "" {
+		script = fmt.Sprintf(`set -euo pipefail
+SRC=%[1]s
+DB=%[2]s
+MARIADB=(%[5]s)
+: > /tmp/restored
+n=0
+while IFS= read -r name; do
+  [ -n "${name}" ] || continue
+  [ -s "%[3]s/owned/${n}.sql.gz" ] || { echo "ERROR: the archive lists ${name} and holds no dump of it" >&2; exit 1; }
+  case "${name}" in
+    "${SRC}_"*) ;;
+    *) echo "ERROR: the archive lists ${name}, which is not named as a database of ${SRC}" >&2; exit 1 ;;
+  esac
+  target="${DB}_${name#"${SRC}_"}"
+  hex="$(printf '%%s' "${target}" | od -An -v -tx1 | tr -d ' \n')"
+  {
+  printf "SET @db = CONVERT(UNHEX('%%s') USING utf8mb4);\n" "${hex}"
+  cat <<'SQL'
+DELIMITER //
+BEGIN NOT ATOMIC
+  DECLARE why VARCHAR(512);
+  IF %[6]s THEN
+    SET why = CONCAT('refused: ', @db, ' is a database another account holds rights on');
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = why;
+  END IF;
+  EXECUTE IMMEDIATE CONCAT('DROP DATABASE IF EXISTS `+"`', REPLACE(@db, '`', '``'), '`"+`');
+  EXECUTE IMMEDIATE CONCAT('CREATE DATABASE `+"`', REPLACE(@db, '`', '``'), '`"+`');
+END//
+SQL
+  } | "${MARIADB[@]}"
+  gunzip "%[3]s/owned/${n}.sql.gz"
+  "${MARIADB[@]}" "${target}" < "%[3]s/owned/${n}.sql"
+  rm -f "%[3]s/owned/${n}.sql"
+  printf '%%s\n' "${target}" >> /tmp/restored
+  echo "restored ${name} as ${target}"
+  n=$((n + 1))
+done < %[3]s/owned/INDEX
+echo "restored ${n} database(s) that were ${SRC}'s besides itself"
+
+"${MARIADB[@]}" -N -s --raw > /tmp/now <<'SQL'
+%[4]s ORDER BY s.schema_name;
+SQL
+while IFS= read -r name; do
+  [ -n "${name}" ] || continue
+  grep -qxF -- "${name}" /tmp/restored || echo "NOTE: ${name} is ${DB}'s and the bundle does not hold it; it was left as it is"
+done < /tmp/now`,
+			shellSingleQuote(source), shellSingleQuote(database), workDir,
+			mariadbOwnedSQL(database, user), mariadbClient, mariadbHeldByAnother("@db", user))
+	}
+	restore := corev1.Container{
+		Name:         "mariadb-restore-owned",
+		Image:        kernel.MariaDBProvisionerImage(),
+		Command:      []string{"/bin/bash", "-c"},
+		Args:         []string{script},
+		Env:          MariaDBAdminEnv(),
+		VolumeMounts: []corev1.VolumeMount{{Name: "work", MountPath: workDir}},
+	}
+	return restoreJob(p, []corev1.Container{
+		fetchAndDecrypt(d, p, artefact, "owned.tar.gz"),
+		unpack,
 	}, restore, nil)
 }
 

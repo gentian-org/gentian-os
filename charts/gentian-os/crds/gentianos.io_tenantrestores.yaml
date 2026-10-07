@@ -201,7 +201,7 @@ spec:
                         properties:
                           kind:
                             description: Kind is postgres, postgresOwned, mariadb,
-                              s3 or volume.
+                              mariadbOwned, s3 or volume.
                             type: string
                           name:
                             description: |-

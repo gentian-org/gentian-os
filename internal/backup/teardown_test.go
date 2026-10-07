@@ -171,7 +171,7 @@ func TestTheInventoryNamesWhatAnAppOwns(t *testing.T) {
 func destroyScripts() map[string]string {
 	return map[string]string{
 		"postgres": postgresDestroyScript("demo_wiki", "demo_wiki"),
-		"mariadb":  mariadbDestroyScript,
+		"mariadb":  mariadbDestroyScript("demo_wiki", "demo_wiki"),
 		"minio":    objectStorageDestroyScript("demo-wiki"),
 		"redis":    cacheDestroyScript("demo-wiki"),
 	}
@@ -352,25 +352,6 @@ func TestExportRestoreAndPurgeAgreeOnWhichDatabasesAreAnApps(t *testing.T) {
 		t.Error("a restore does not create a database the archive holds and the server lacks")
 	}
 
-	// MariaDB keeps no owner of a database and its dynamic grant is on the
-	// whole server, so nothing says which other databases an app made. No
-	// act has a rule for them; if one is ever written, it is written for all
-	// three, and this constant is what turns.
-	if MariaDBOwnsBeyondProvisioned {
-		t.Fatal("MariaDB has an ownership rule beyond the provisioned database: export, restore and purge must each apply it")
-	}
-	maria := map[string]string{
-		"purge":   mariadbDestroyScript,
-		"export":  containerByName(MariaDBDumpJob(p, db), "mariadb-dump").Args[0],
-		"restore": containerByName(MariaDBRestoreJob(p, d, MariaDBArtefact(db), db), "mariadb-restore").Args[0],
-	}
-	for act, script := range maria {
-		for _, wider := range []string{"--all-databases", "SHOW DATABASES", "information_schema.schemata", "LIKE '"} {
-			if strings.Contains(script, wider) {
-				t.Errorf("MariaDB %s reaches beyond the provisioned database (%s) while the other acts do not", act, wider)
-			}
-		}
-	}
 }
 
 // A restore of a bucket makes the bucket's user and policy first, with the

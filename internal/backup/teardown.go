@@ -171,7 +171,7 @@ var AppKinds = []KindRule{
 	},
 	{
 		Kind: KindDatabase, MadeBy: "the tenant reconciler: a role Job and a CloudNativePG Database, or a MariaDB setup Job",
-		Export: Carries, ExportNote: "a dump of the provisioned database; on PostgreSQL also of every other database the app's role owns, which is what a purge drops",
+		Export: Carries, ExportNote: "a dump of the provisioned database, and of every other database that is the app's, which is what a purge drops: on PostgreSQL the ones the app's role owns, on MariaDB the ones named with the provisioned name as a prefix",
 		Uninstall: Keeps, AppPurge: Destroys, TenantDelete: Destroys,
 		FoundBy: "the tenant's record of what was provisioned; for PostgreSQL also the CloudNativePG Database object",
 	},
@@ -490,20 +490,13 @@ func CacheDestroyJobName(tenantName, app string) string {
 // question; it leaves out the provisioned database, which every act handles
 // by name.
 //
-// On MariaDB only the provisioned database is the app's. The same profile
-// field is granted there as ALL PRIVILEGES ON *.* -- on the whole shared
-// server -- and MariaDB keeps no owner of a database, so nothing says which
-// of the server's databases such an app made: not a grant, which covers all
-// of them, and not a name, which provisioning does not constrain. No act
-// guesses. MariaDBOwnsBeyondProvisioned says so in code, and the inventory's
-// test fails if an act is given a rule for it without the others.
+// On MariaDB a database has no owner, and the rule is by name: the
+// provisioned database, and every database named with it as a prefix that no
+// other account holds rights on. mariadb.go states it and holds its one
+// query (mariadbOwnedSQL); the same names are all the app's user is granted.
 const postgresOwnedSQL = `SELECT d.datname FROM pg_database d JOIN pg_roles r ON r.oid = d.datdba
  WHERE r.rolname = :'app_role' AND d.datname <> :'app_db' AND NOT d.datistemplate
  ORDER BY d.datname;`
-
-// MariaDBOwnsBeyondProvisioned is whether anything can say which databases
-// besides the provisioned one a MariaDB app made. Nothing can; see above.
-const MariaDBOwnsBeyondProvisioned = false
 
 // postgresDestroyScript drops an app's database, every database its role
 // still owns (postgresOwnedSQL), and the role.
@@ -540,24 +533,6 @@ fi
 echo "role %[2]s dropped"
 `, database, role, postgresOwnedSQL, shellSingleQuote(role), shellSingleQuote(database))
 }
-
-// mariadbDestroyScript drops the database and its user.
-//
-// REVOKE is not issued first: it fails on a user that does not exist, which
-// is why it used to be followed by `|| true`, and DROP USER takes the user's
-// privileges with it.
-const mariadbDestroyScript = `set -euo pipefail
-if ! echo "${DB_NAME}" | grep -qE '^[a-zA-Z0-9_]+$'; then
-  echo "ERROR: invalid DB_NAME '${DB_NAME}'" >&2; exit 1
-fi
-if ! echo "${DB_USER}" | grep -qE '^[a-zA-Z0-9_]+$'; then
-  echo "ERROR: invalid DB_USER '${DB_USER}'" >&2; exit 1
-fi
-MARIADB="mariadb -h${MYSQL_HOST} -P${MYSQL_TCP_PORT} -u${MYSQL_ADMIN_USER}"
-$MARIADB -e "DROP USER IF EXISTS '${DB_USER}'@'%';"
-$MARIADB -e "DROP DATABASE IF EXISTS ${DB_NAME};"
-echo "deleted database ${DB_NAME} and user ${DB_USER}"
-`
 
 // objectStorageDestroyScript removes the bucket and the user and policy that
 // were made for it. The user is found through the policy, whose statement
@@ -646,17 +621,15 @@ func PostgresDestroyJob(tenant *gentianov1alpha1.Tenant, app string, deadline De
 		})
 }
 
-// MariaDBDestroyJob drops an app's MariaDB database and user.
+// MariaDBDestroyJob drops an app's MariaDB databases -- the provisioned one
+// and every one that is the app's by name -- and its user.
 func MariaDBDestroyJob(tenant *gentianov1alpha1.Tenant, app string, deadline DestroyDeadline) *batchv1.Job {
 	return destroyJob(layout.System("mariadb"), MariaDBDestroyJobName(tenant.Name, app), tenant.Name, app, deadline,
 		corev1.Container{
 			Name:    "delete-db",
 			Image:   kernel.MariaDBProvisionerImage(),
-			Command: []string{"/bin/bash", "-c", mariadbDestroyScript},
-			Env: append(MariaDBAdminEnv(),
-				corev1.EnvVar{Name: "DB_NAME", Value: DatabaseName(tenant, app)},
-				corev1.EnvVar{Name: "DB_USER", Value: MariaDBUser(tenant.Name, app)},
-			),
+			Command: []string{"/bin/bash", "-c", mariadbDestroyScript(DatabaseName(tenant, app), MariaDBUser(tenant.Name, app))},
+			Env:     MariaDBAdminEnv(),
 		})
 }
 
