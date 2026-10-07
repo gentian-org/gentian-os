@@ -43,9 +43,10 @@ spec:
                   type: string
                   description: >
                     The domain the tenant is served at, set by the operator: a
-                    custom domain a TenantDomain binds, the kernel domain under
-                    single tenancy, otherwise "<name>.<kernelDomain>", which is
-                    also what an omitted value means.
+                    custom domain a TenantDomain binds, the kernel domain for
+                    the user tenant of a single-tenancy cluster, otherwise
+                    "<name>.<kernelDomain>", which is also what an omitted
+                    value means.
                 adminEmail:
                   type: string
                   description: Contact address for platform notifications.
