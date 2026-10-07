@@ -1,0 +1,16 @@
+# What the operator projects for the user tenant of a single-tenancy cluster:
+# the host labels its components are served at, directly under the cluster's
+# domain. "cloud" is an installed app's.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gentian-zone-hosts-user
+  namespace: kernel-control
+  labels:
+    gentianos.io/config-type: zone-hosts
+    gentianos.io/tenant: user
+data:
+  hosts: |
+    admin
+    cloud
+    console

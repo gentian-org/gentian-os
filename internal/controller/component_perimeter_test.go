@@ -289,7 +289,7 @@ func TestAnEnablementWithoutADeclarationPublishesNothing(t *testing.T) {
 		ExposureName: "invented", Owner: "u-tom",
 		ExpiresAt: exposureEnds(time.Now().Add(time.Hour)),
 	}}
-	live := livePerimeterExposures(comp, nextcloudWithPerimeter(), edgeZone{domain: "acme.k.example"}, time.Now())
+	live := livePerimeterExposures(comp, nextcloudWithPerimeter(), edgeZone{zoneNames: zoneNames{domain: "acme.k.example"}}, time.Now())
 	if len(live) != 0 {
 		t.Fatalf("published %d surfaces for an entry no profile declares", len(live))
 	}
@@ -304,7 +304,7 @@ func TestAGatewayEntryCannotBePublishedOnThePerimeter(t *testing.T) {
 		ExposureName: "web", Owner: "u-tom", // "web" is the gateway entry
 		ExpiresAt: exposureEnds(time.Now().Add(time.Hour)),
 	}}
-	live := livePerimeterExposures(comp, nextcloudWithPerimeter(), edgeZone{domain: "acme.k.example"}, time.Now())
+	live := livePerimeterExposures(comp, nextcloudWithPerimeter(), edgeZone{zoneNames: zoneNames{domain: "acme.k.example"}}, time.Now())
 	if len(live) != 0 {
 		t.Fatalf("a gateway surface was published on the perimeter")
 	}

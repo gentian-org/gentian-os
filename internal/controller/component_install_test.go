@@ -187,7 +187,7 @@ func TestAComposedComponentWritesItsClaim(t *testing.T) {
 
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(old).Build()
 	r := &ComponentReconciler{Client: c, Scheme: scheme, KernelDomain: "k.example", KernelRealm: "kernel"}
-	zone := edgeZone{domain: "acme.k.example"}
+	zone := edgeZone{zoneNames: zoneNames{domain: "acme.k.example"}}
 
 	ready, _, err := r.ensureAppClaim(ctx, comp, tenant, zone, pullSecrets{})
 	if err != nil {
@@ -298,7 +298,7 @@ func TestAClaimSomethingElseControlsIsNotTaken(t *testing.T) {
 
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(held).Build()
 	r := &ComponentReconciler{Client: c, Scheme: scheme}
-	ready, message, err := r.ensureAppClaim(ctx, comp, tenant, edgeZone{domain: "acme.k.example"}, pullSecrets{})
+	ready, message, err := r.ensureAppClaim(ctx, comp, tenant, edgeZone{zoneNames: zoneNames{domain: "acme.k.example"}}, pullSecrets{})
 	if err != nil || ready || !strings.Contains(message, "XTenant acme-x") {
 		t.Fatalf("ready=%v message=%q err=%v", ready, message, err)
 	}

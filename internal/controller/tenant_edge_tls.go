@@ -172,7 +172,9 @@ func (r *TenantReconciler) deleteEdgeRouting(ctx context.Context, tenant *gentia
 		return fmt.Errorf("delete tenant wildcard Certificate: %w", err)
 	}
 
-	if effectiveDomain != "" {
+	// Not for the user tenant of a single-tenancy cluster: its domain is the
+	// cluster's, and these two names are the kernel's own routes.
+	if effectiveDomain != "" && !servedByKernelEdge(effectiveDomain, r.KernelDomain) {
 		// Routes only. The records go with the HTTPRoutes: external-dns
 		// removes what it published once the route it published from is gone.
 		//

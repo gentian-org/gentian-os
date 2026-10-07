@@ -88,8 +88,10 @@ spec:
     - name: api
       surface: gateway
       authMode: oidc
-      # console.<zone>, the desktop's name in every zone (networking.md §3);
-      # the operator's redirects and frame policies assume it.
+      # console.<zone>, the desktop's name in a tenant's zone (networking.md
+      # §3); the operator's redirects and frame policies assume it. In the
+      # platform tenant's zone the same entry answers on the zone's own name,
+      # platform.<kernel>.
       subDomain: console
       paths: ["/api", "/healthz", "/readyz"]
       forwardToken: true

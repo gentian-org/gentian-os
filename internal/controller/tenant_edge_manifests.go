@@ -71,11 +71,18 @@ func (r *TenantReconciler) buildTenantEdgeObjects(ctx context.Context, tenant *g
 }
 
 // tenantHasOwnZone reports a tenant whose hosts are served on a listener of
-// its own: every tenant but the one that adopts the kernel realm, whose
-// components are in the kernel zone, and one on the kernel domain itself.
+// its own, with a certificate of its own: every tenant but the user tenant of
+// a single-tenancy cluster, whose domain is the cluster's.
+//
+// The platform tenant is one of them. Its session is the kernel realm's, but
+// its administration console is at admin.platform.<kernel>, two labels under
+// the cluster's domain, which the cluster's own certificate (<kernel> and
+// *.<kernel>) does not name. So it gets what every tenant gets: a wildcard
+// certificate for *.platform.<kernel>, the listener that serves it, and the
+// records that publish it.
 func (r *TenantReconciler) tenantHasOwnZone(tenant *gentianov1alpha1.Tenant) bool {
 	domain := r.tenantEffectiveDomain(tenant)
-	return domain != "" && !r.adoptsKernelRealm(tenant) && !servedByKernelEdge(domain, r.KernelDomain)
+	return domain != "" && !servedByKernelEdge(domain, r.KernelDomain)
 }
 
 // waitForTenantEdgeResources reports whether Crossplane-provisioned edge resources

@@ -29,7 +29,7 @@ func ensureKernelGatewayTunnelIngress(
 	ctx context.Context,
 	c client.Client,
 	ing EdgeIngress,
-	kernelDomain, tenancyMode string,
+	kernelDomain, tenancyMode, kernelRealm string,
 ) error {
 	if ing == nil || kernelDomain == "" {
 		return nil
@@ -43,17 +43,7 @@ func ensureKernelGatewayTunnelIngress(
 	if err := c.List(ctx, tenantList); err != nil {
 		return fmt.Errorf("list tenants for kernel tunnel ingress: %w", err)
 	}
-	var effectiveDomains []string
-	var tenantNames []string
-	for i := range tenantList.Items {
-		if tenantList.Items[i].DeletionTimestamp != nil {
-			continue
-		}
-		if d := tenantList.Items[i].EffectiveDomain(kernelDomain, tenancyMode); d != "" {
-			effectiveDomains = append(effectiveDomains, d)
-			tenantNames = append(tenantNames, tenantList.Items[i].Name)
-		}
-	}
+	effectiveDomains, tenantNames := zonedTenantDomains(tenantList.Items, kernelDomain, tenancyMode)
 	oidcSubs, err := collectOIDCIngressSubdomainsByTenant(ctx, c, tenantList.Items)
 	if err != nil {
 		return fmt.Errorf("collect OIDC ingress subdomains: %w", err)
@@ -67,7 +57,8 @@ func ensureKernelGatewayTunnelIngress(
 	// is routed, which is only once the kernel zone exists. The cluster id
 	// does not reach a hostname.
 	for _, spec := range kernelHTTPRouteSpecs(kernelDomain, effectiveDomains, oidcSubs, tenantNames,
-		clusterLLMEnabled(ctx, c), "", kernelZoneReadyWith(ctx, c), desktopPresent(ctx, c)) {
+		clusterLLMEnabled(ctx, c), "", kernelZoneReadyWith(ctx, c), desktopPresent(ctx, c),
+		kernelFrontDoorOf(tenantList.Items, kernelDomain, kernelRealm, tenancyMode)) {
 		if spec.host != "" {
 			hosts[spec.host] = struct{}{}
 		}

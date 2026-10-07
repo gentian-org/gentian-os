@@ -1,0 +1,31 @@
+# The user tenant of a single-tenancy cluster: its own realm, and the
+# cluster's own domain as its base (spec.domain is what the operator projects
+# from Tenant.EffectiveDomain). Its zone client's redirect URIs are on
+# console.<kernel>, admin.<kernel> and <app>.<kernel>; its administrator is
+# user-admin@<kernel>, not the kernel realm's admin@<kernel>.
+apiVersion: gentianos.io/v1alpha1
+kind: XTenant
+metadata:
+  name: user
+  annotations:
+    crossplane.io/external-name: user
+spec:
+  displayName: User
+  adminEmail: user-admin@platform.example.test
+  kernelDomain: platform.example.test
+  domain: platform.example.test
+  isolation:
+    keycloakRealm: user
+    databasePrefix: user_
+    s3Prefix: user-
+  deletionPolicy: Retain
+  apps: []
+  quotas:
+    requestsCpu: "4"
+    requestsMemory: 16Gi
+    cpu: "16"
+    memory: 32Gi
+    storage: 50Gi
+    maxApps: 20
+  compositeDeletePolicy: Background
+  resourceRefs: []

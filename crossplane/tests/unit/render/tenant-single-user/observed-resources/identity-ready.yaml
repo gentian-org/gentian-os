@@ -1,0 +1,105 @@
+# Prerequisites marked Ready so function-sequencer emits the full tenant graph.
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  name: user-namespace
+  annotations:
+    crossplane.io/composition-resource-name: namespace
+status:
+  conditions:
+  - type: Ready
+    status: "True"
+  - type: Synced
+    status: "True"
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  name: user-limitrange
+  annotations:
+    crossplane.io/composition-resource-name: limitrange
+status:
+  conditions:
+  - type: Ready
+    status: "True"
+  - type: Synced
+    status: "True"
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  name: user-networkpolicy
+  annotations:
+    crossplane.io/composition-resource-name: networkpolicy
+status:
+  conditions:
+  - type: Ready
+    status: "True"
+  - type: Synced
+    status: "True"
+---
+apiVersion: vault.vault.upbound.io/v1alpha1
+kind: Policy
+metadata:
+  name: user-tenant-policy
+  annotations:
+    crossplane.io/composition-resource-name: vault-policy
+status:
+  conditions:
+  - type: Ready
+    status: "True"
+  - type: Synced
+    status: "True"
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  name: user-job-keycloak-realm-user
+  annotations:
+    crossplane.io/composition-resource-name: job-keycloak-realm-user
+status:
+  conditions:
+  - type: Ready
+    status: "True"
+  - type: Synced
+    status: "True"
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  name: user-job-keycloak-admin-user
+  annotations:
+    crossplane.io/composition-resource-name: job-keycloak-admin-user
+status:
+  conditions:
+  - type: Ready
+    status: "True"
+  - type: Synced
+    status: "True"
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  name: user-edge-zone-password
+  annotations:
+    crossplane.io/composition-resource-name: edge-zone-password
+status:
+  conditions:
+  - type: Ready
+    status: "True"
+  - type: Synced
+    status: "True"
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  name: user-edge-zone-client-secret
+  annotations:
+    crossplane.io/composition-resource-name: edge-zone-client-secret
+status:
+  conditions:
+  - type: Ready
+    status: "True"
+  - type: Synced
+    status: "True"

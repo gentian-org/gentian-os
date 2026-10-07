@@ -179,8 +179,8 @@ func (v *TenantValidator) Validate(ctx context.Context, tenant *gentianov1alpha1
 		}
 	}
 
-	if err := tenancy.EnforceSingle(ctx, v.Client, v.TenancyMode, tenant); err != nil {
-		return err
+	if err := tenancy.EnforceSingle(v.TenancyMode, v.KernelRealm, tenant); err != nil {
+		return fmt.Errorf("tenant %q: %w", tenant.Name, err)
 	}
 
 	return nil

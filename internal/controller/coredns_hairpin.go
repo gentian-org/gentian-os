@@ -39,7 +39,11 @@ const (
 func kernelHTTPSHairpinHosts(kernelDomain string) map[string]struct{} {
 	hosts := []string{
 		kernelDomain,
+		// Both desktops a kernel host can be: the platform's, and console,
+		// which is the user tenant's on a single-tenancy cluster and an alias
+		// of the bare domain otherwise.
 		consoleHost(kernelDomain),
+		platformDesktopHost(kernelDomain),
 		"id." + kernelDomain,
 		"argocd." + kernelDomain,
 	}
@@ -209,6 +213,7 @@ func sortedHairpinHosts(kernelDomain string) []string {
 		"argocd." + kernelDomain,
 		consoleHost(kernelDomain),
 		"id." + kernelDomain,
+		platformDesktopHost(kernelDomain),
 	}
 }
 

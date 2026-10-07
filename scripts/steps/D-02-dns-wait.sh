@@ -18,8 +18,9 @@
 #   external-dns runs in the edge namespace rather than one of its own, and is
 #   found by label because the release name is not fixed.
 #
-#   The second hostname is console.<kernel>, not portal.<kernel>: the portal in
-#   the edge namespace was retired in S7 and the desktop serves console.
+#   The second hostname is platform.<kernel>, not portal.<kernel>: the portal
+#   in the edge namespace was retired in S7 and the platform tenant's desktop
+#   serves platform.<kernel>.
 #
 #   It runs right after the operator and right before D-03-portal-login, the
 #   first step to reach the cluster from outside. Not earlier: on a tunnel
@@ -40,7 +41,7 @@ _dns_wait_hosts() {
     # KERNEL_DOMAIN, which the installer resolves from the claim before any step
     # runs and every other step reads the same way.
     #
-    # id only: the OIDC discovery document D-03 fetches. console.<kernel> is
+    # id only: the OIDC discovery document D-03 fetches. platform.<kernel> is
     # the platform tenant's desktop, which D-03 creates -- nothing routes it
     # before then, so nothing can have published it, and waiting for it here
     # waited out the full timeout on the first fresh install. D-05 waits for

@@ -350,10 +350,11 @@ func TestATenantsLoginDomainFollowsItsTenantDomain(t *testing.T) {
 	}
 }
 
-// On a single-tenant cluster the director refuses a new tenant, and an
-// import, before anything reaches git: the operator would refuse it as well,
-// but only once the commit had landed.
-func TestASingleTenantClusterTakesNoNewTenant(t *testing.T) {
+// On a single-tenancy cluster the director refuses a second user tenant, and
+// an import of one, before anything reaches git: the operator would refuse it
+// as well, but only once the commit had landed. The one user tenant, named
+// user, is admitted; the platform tenant is not counted.
+func TestASingleTenancyClusterTakesExactlyOneUserTenant(t *testing.T) {
 	remote := dt.Remote(t, "platform")
 	seed := dt.Clone(t, remote)
 	claim := filepath.Join(seed, "clusters", dt.Cluster, "kernel", "claims", "cluster.yaml")
@@ -369,14 +370,61 @@ func TestASingleTenantClusterTakesNoNewTenant(t *testing.T) {
 	before := dt.Git(t, "", "--git-dir", remote, "rev-parse", "main")
 
 	g := gitops.NewGitOps(dt.Clone(t, remote), remote, dt.Cluster, director)
-	if _, err := g.CreateTenant(context.Background(), gitops.NewTenant{Name: "acme"}, tenantMeta()); !errors.Is(err, gitops.ErrSingleTenancy) {
+	_, err = g.CreateTenant(context.Background(), gitops.NewTenant{Name: "acme"}, tenantMeta())
+	if !errors.Is(err, gitops.ErrSingleTenancy) {
 		t.Fatalf("create: err = %v", err)
+	}
+	for _, want := range []string{"tenancy mode is single", `"user"`, `"acme"`} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
 	}
 	if _, err := g.DeclareTenant(context.Background(), "acme", &gentianov1alpha1.TenantSpec{DisplayName: "Acme"}, "test", tenantMeta()); !errors.Is(err, gitops.ErrSingleTenancy) {
 		t.Fatalf("import: err = %v", err)
 	}
 	if after := dt.Git(t, "", "--git-dir", remote, "rev-parse", "main"); after != before {
 		t.Fatal("a refused tenant still reached git")
+	}
+
+	// The one user tenant: admitted, with the platform tenant already there.
+	if res, err := g.CreateTenant(context.Background(), gitops.NewTenant{Name: "user"}, tenantMeta()); err != nil || !res.Changed {
+		t.Fatalf("the one user tenant was refused: %+v %v", res, err)
+	}
+	// Its people sign in under the cluster's own domain; the platform's too,
+	// in another realm.
+	kernel, err := g.KernelDomain(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d, err := g.TenantLoginDomain(context.Background(), "user"); err != nil || d != kernel {
+		t.Fatalf("user tenant login domain = %q, %v; want %q", d, err, kernel)
+	}
+	// A second is still refused, and so is a second of the same name.
+	if _, err := g.CreateTenant(context.Background(), gitops.NewTenant{Name: "beta"}, tenantMeta()); !errors.Is(err, gitops.ErrSingleTenancy) {
+		t.Fatalf("second user tenant: err = %v", err)
+	}
+	if _, err := g.CreateTenant(context.Background(), gitops.NewTenant{Name: "user"}, tenantMeta()); !errors.Is(err, gitops.ErrTenantExists) {
+		t.Fatalf("user again: err = %v", err)
+	}
+}
+
+// Under multi a tenant named user is an ordinary tenant, beside any number
+// of others, on a domain of its own.
+func TestUnderMultiATenantNamedUserIsOrdinary(t *testing.T) {
+	remote := dt.Remote(t, "platform", "acme")
+	g := gitops.NewGitOps(dt.Clone(t, remote), remote, dt.Cluster, director)
+	ctx := context.Background()
+	for _, name := range []string{"user", "beta"} {
+		if res, err := g.CreateTenant(ctx, gitops.NewTenant{Name: name}, tenantMeta()); err != nil || !res.Changed {
+			t.Fatalf("%s: %+v %v", name, res, err)
+		}
+	}
+	kernel, err := g.KernelDomain(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d, err := g.TenantLoginDomain(ctx, "user"); err != nil || d != "user."+kernel {
+		t.Fatalf("login domain = %q, %v", d, err)
 	}
 }
 
@@ -466,22 +514,41 @@ func TestTheBrandIsCommittedAndABrokenOneIsRefused(t *testing.T) {
 	}
 }
 
-// A cluster carrying tenants beside the platform is not switched to single
-// tenancy: every other tenant would be refused and stranded. Retired first,
-// it may be.
-func TestACarryingClusterIsNotMadeSingleTenant(t *testing.T) {
-	remote := dt.Remote(t, "platform", "acme")
+// multi -> single on a cluster carrying more than a single-tenancy cluster
+// may is refused, loudly and with nothing written: every tenant but the
+// platform's and one named user would be refused by the operator and left
+// standing. Retired first, the switch goes through; a tenant named user may
+// stay, and the platform tenant is not counted. single -> multi is always
+// fine.
+func TestACarryingClusterIsNotMadeSingleTenancy(t *testing.T) {
+	remote := dt.Remote(t, "platform", "acme", "user")
 	g := gitops.NewGitOps(dt.Clone(t, remote), remote, dt.Cluster, director)
 	ctx := context.Background()
+	before := dt.Git(t, "", "--git-dir", remote, "rev-parse", "main")
 
-	if _, err := g.SetClusterSettings(ctx, map[string]string{"tenancyMode": "single"}, tenantMeta()); !errors.Is(err, gitops.ErrSingleTenancy) || !strings.Contains(err.Error(), "acme") {
+	_, err := g.SetClusterSettings(ctx, map[string]string{"tenancyMode": "single"}, tenantMeta())
+	if !errors.Is(err, gitops.ErrSingleRefused) {
 		t.Fatalf("err = %v", err)
+	}
+	for _, want := range []string{"acme", `"user"`, "Nothing was changed"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	if strings.Contains(err.Error(), "carries acme, user") || strings.Contains(err.Error(), "platform,") {
+		t.Errorf("the refusal names a tenant a single-tenancy cluster may carry: %v", err)
+	}
+	if after := dt.Git(t, "", "--git-dir", remote, "rev-parse", "main"); after != before {
+		t.Fatal("a refused mode change still reached git")
 	}
 	if _, err := g.RetireTenant(ctx, "acme", tenantMeta()); err != nil {
 		t.Fatal(err)
 	}
 	if res, err := g.SetClusterSettings(ctx, map[string]string{"tenancyMode": "single"}, tenantMeta()); err != nil || !res.Changed {
 		t.Fatalf("after retiring: %+v %v", res, err)
+	}
+	if res, err := g.SetClusterSettings(ctx, map[string]string{"tenancyMode": "multi"}, tenantMeta()); err != nil || !res.Changed {
+		t.Fatalf("single -> multi: %+v %v", res, err)
 	}
 }
 
@@ -534,13 +601,14 @@ func TestThePlatformTenantsManifestRefusesAppsAndAddons(t *testing.T) {
 	}
 }
 
-// The install writes one tenant itself: the first, before there is a
-// director to ask (scripts/lib/bootstrap.sh, scaffold_first_tenant). What it
-// writes is the manifest CreateTenant writes, plus the annotation that admits
-// the tenant before the handover. Two templates in two languages would drift
-// apart silently, so the shell's output is produced here and compared with
-// the director's as data.
-func TestTheInstallsFirstTenantIsTheManifestTheDirectorWrites(t *testing.T) {
+// The install writes one tenant itself: the user tenant of a single-tenancy
+// cluster (scripts/lib/bootstrap.sh, scaffold_user_tenant), committed with
+// the cluster's definition before there is a director to ask. What it writes
+// is the manifest CreateTenant writes, and nothing more -- in particular no
+// annotation that would admit the tenant ahead of the handover. Two templates
+// in two languages would drift apart silently, so the shell's output is
+// produced here and compared with the director's as data.
+func TestTheInstallsUserTenantIsTheManifestTheDirectorWrites(t *testing.T) {
 	bash, err := exec.LookPath("bash")
 	if err != nil {
 		t.Skip("no bash to run the install's scaffold with")
@@ -555,17 +623,17 @@ func TestTheInstallsFirstTenantIsTheManifestTheDirectorWrites(t *testing.T) {
 	checkout := t.TempDir()
 	dt.Git(t, checkout, "init", "--initial-branch=main")
 	cmd := exec.Command(bash, "-c",
-		`set -u; source scripts/lib/load.sh >/dev/null 2>&1; trap - ERR; set +e; scaffold_first_tenant `+dt.Cluster)
+		`set -u; source scripts/lib/load.sh >/dev/null 2>&1; trap - ERR; set +e; scaffold_user_tenant `+dt.Cluster)
 	cmd.Dir = root
 	cmd.Env = []string{
 		"HOME=" + t.TempDir(), "PATH=" + os.Getenv("PATH"), "SCRIPT_DIR=" + root,
 		"GENTIAN_DEPLOYMENTS_PATH=" + checkout, "GENTIAN_DEPLOYMENTS_CLUSTER_ID=" + dt.Cluster,
-		"GENTIAN_FIRST_TENANT=acme", "GENTIAN_FIRST_TENANT_DISPLAY_NAME=Acme Ltd",
+		"TENANCY_MODE=single",
 	}
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("the install's scaffold: %v\n%s", err, out)
 	}
-	installed, err := os.ReadFile(filepath.Join(checkout, dt.TenantPath("acme")))
+	installed, err := os.ReadFile(filepath.Join(checkout, dt.TenantPath("user")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -573,7 +641,7 @@ func TestTheInstallsFirstTenantIsTheManifestTheDirectorWrites(t *testing.T) {
 	// The director's.
 	remote := dt.Remote(t, "demo")
 	g := gitops.NewGitOps(dt.Clone(t, remote), remote, dt.Cluster, director)
-	if _, err := g.CreateTenant(context.Background(), gitops.NewTenant{Name: "acme", DisplayName: "Acme Ltd"}, tenantMeta()); err != nil {
+	if _, err := g.CreateTenant(context.Background(), gitops.NewTenant{Name: "user", DisplayName: "User"}, tenantMeta()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -581,25 +649,23 @@ func TestTheInstallsFirstTenantIsTheManifestTheDirectorWrites(t *testing.T) {
 	if err := yaml.Unmarshal(installed, &theirs); err != nil {
 		t.Fatalf("the install's manifest does not parse: %v\n%s", err, installed)
 	}
-	if err := yaml.Unmarshal([]byte(dt.RemoteFile(t, remote, dt.TenantPath("acme"))), &ours); err != nil {
+	if err := yaml.Unmarshal([]byte(dt.RemoteFile(t, remote, dt.TenantPath("user"))), &ours); err != nil {
 		t.Fatal(err)
 	}
 	annotations, _ := theirs["metadata"].(map[string]any)["annotations"].(map[string]any)
-	const override = "gentianos.io/handover-override"
-	if reason, _ := annotations[override].(string); reason == "" {
-		t.Fatalf("the install's first tenant carries no reason under %s, and the tenant webhook admits it on nothing else", override)
+	if _, overridden := annotations["gentianos.io/handover-override"]; overridden {
+		t.Fatal("the install's user tenant asks to be admitted before the handover; it is created after it")
 	}
-	delete(annotations, override)
 	if !reflect.DeepEqual(theirs, ours) {
-		t.Fatalf("the install's first tenant is not the manifest the director writes.\ninstall:\n%s\ndirector:\n%s",
-			installed, dt.RemoteFile(t, remote, dt.TenantPath("acme")))
+		t.Fatalf("the install's user tenant is not the manifest the director writes.\ninstall:\n%s\ndirector:\n%s",
+			installed, dt.RemoteFile(t, remote, dt.TenantPath("user")))
 	}
 	for _, name := range []string{"kustomization.yaml"} {
-		theirs, err := os.ReadFile(filepath.Join(checkout, filepath.Dir(dt.TenantPath("acme")), name))
+		theirs, err := os.ReadFile(filepath.Join(checkout, filepath.Dir(dt.TenantPath("user")), name))
 		if err != nil {
 			t.Fatal(err)
 		}
-		if ours := dt.RemoteFile(t, remote, filepath.Dir(dt.TenantPath("acme"))+"/"+name); strings.TrimSpace(string(theirs)) != ours {
+		if ours := dt.RemoteFile(t, remote, filepath.Dir(dt.TenantPath("user"))+"/"+name); strings.TrimSpace(string(theirs)) != ours {
 			t.Fatalf("%s differs.\ninstall:\n%s\ndirector:\n%s", name, theirs, ours)
 		}
 	}

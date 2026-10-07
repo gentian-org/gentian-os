@@ -833,10 +833,16 @@ const TenantAdminLocalPart = "admin"
 
 // AdminEmailOrDefault is the tenant administrator's address — and its login.
 //
-// admin@<tenant-domain>: admin@corp.gtn.host in multi mode, admin@<kernelDomain>
-// in single, the custom domain when a TenantDomain binds one. The tenant's own
+// admin@<tenant-domain>: admin@corp.gtn.host for a tenant with a domain of
+// its own, the custom domain when a TenantDomain binds one. The tenant's own
 // domain is what makes `admin` unambiguous, so no tenant name appears in the
 // local part; it would name the tenant twice.
+//
+// One tenant has no domain of its own: the user tenant of a single-tenancy
+// cluster lives on the cluster's domain, where admin@<kernelDomain> is
+// already the platform administrator, in the kernel realm. Its administrator
+// is user-admin@<kernelDomain> (SingleUserAdminLocalPart): another realm, and
+// an address that is not the platform administrator's.
 //
 // Derived, never configured. spec.adminEmail is gone: an address an operator
 // could type is an address pointing outside the tenant, and this account is
@@ -852,6 +858,9 @@ func (t *Tenant) AdminEmailOrDefault(kernelDomain, tenancyMode string) string {
 		// No domain configured at all: .invalid is reserved by RFC 2606 and can
 		// never resolve, which is the honest representation of "unknown".
 		domain = t.Name + ".invalid"
+	}
+	if kernelDomain != "" && domain == kernelDomain {
+		return SingleUserAdminLocalPart + "@" + domain
 	}
 	return TenantAdminLocalPart + "@" + domain
 }
@@ -872,11 +881,12 @@ func (t *Tenant) TenantAdminUsername(kernelDomain, tenancyMode string) string {
 
 // EffectiveDomain returns the domain to use for ingress and mail routing
 // for this tenant: the custom domain a TenantDomain bound it to (status.domain)
-// when there is one; otherwise "<tenant-name>.<kernelDomain>" in multi-tenancy
-// mode and "<kernelDomain>" in single-tenancy mode (flat app hostnames). An
-// empty kernelDomain without a custom domain returns the empty string —
-// callers must treat that as a configuration error and skip ingress
-// provisioning.
+// when there is one; otherwise "<tenant-name>.<kernelDomain>", except for the
+// one user tenant of a single-tenancy cluster (OnClusterDomain), whose domain
+// is "<kernelDomain>" itself (flat app hostnames). The platform tenant is
+// "platform.<kernelDomain>" under either mode. An empty kernelDomain without
+// a custom domain returns the empty string — callers must treat that as a
+// configuration error and skip ingress provisioning.
 //
 // See docs/design/multi-tenancy.md §3.
 func (t *Tenant) EffectiveDomain(kernelDomain, tenancyMode string) string {
@@ -886,7 +896,7 @@ func (t *Tenant) EffectiveDomain(kernelDomain, tenancyMode string) string {
 	if kernelDomain == "" {
 		return ""
 	}
-	if NormalizeTenancyMode(tenancyMode) == TenancyModeSingle {
+	if t.OnClusterDomain(tenancyMode) {
 		return kernelDomain
 	}
 	return t.Name + "." + kernelDomain

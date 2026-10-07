@@ -2,24 +2,16 @@
 # step: E-01-tenants
 # phase: handover
 # requires: D-03-portal-login
-# provides: the first tenant Ready, when the install was told one; nothing otherwise — every later tenant is created after installation
-# mutates: on the forward pass nothing but an Argo CD sync request for the first tenant's Application; Tenant, Component and App CRs on teardown
+# provides: nothing at install time — tenants are created after installation
+# mutates: Tenant, Component and App CRs, on teardown only
 
-# Two jobs that share a place in the order.
+# The one destroy-only step, carried over from v4 unchanged in intent.
 #
-# Forward: tenants are created by operators through the console or
-# `kubectl gentian`, never by the installer -- with one exception. A cluster's
-# users live in a tenant of their own, and an install told the name of the
-# first one (GENTIAN_FIRST_TENANT) scaffolded and committed its manifest in
-# step 0, beside the platform tenant's. It arrives through the tenants
-# ApplicationSet like any tenant; this step waits for the operator's verdict
-# on it, as D-03 waits for the platform tenant's, so the handover that follows
-# can hand its administrator account over. With no first tenant there is
-# nothing to wait for and the step is silent.
-#
-# Reverse: teardown must remove tenants FIRST, and the driver derives teardown
-# order by reversing the step list -- so the thing that must be destroyed
-# first has to be the last step. That is the job carried over from v4.
+# Tenants are created by operators through the console or `kubectl gentian`,
+# never by the installer, so apply() has nothing to do. It exists because
+# teardown must remove them FIRST, and the driver derives teardown order by
+# reversing the step list — so the thing that must be destroyed first has to be
+# the last step.
 #
 # Without it a plain `--uninstall` leaves Tenant, Component and App CRs behind
 # with finalizers, and the reverse pass removes the operator that was the only
@@ -33,49 +25,17 @@
 # un-finalizable, when a required field was renamed under them.
 
 check() {
-    # UNDEFINED when the install wrote no first tenant: there is then no
-    # install-time artefact to look for, because tenants arrive after the
-    # install, and UNDEFINED keeps the step silent on the forward pass without
-    # claiming a fresh cluster has tenants. The driver still runs destroy() on
-    # an UNDEFINED step, which is what the reverse pass needs.
-    local tenant
-    tenant="$(gentian_first_tenant)"
-    [[ -n "${tenant}" ]] || return "${CHECK_UNDEFINED}"
-    # The operator says so in status.phase, as for the platform tenant.
-    [[ "$(kubectl get tenant "${tenant}" -o jsonpath='{.status.phase}' 2>/dev/null)" == "Ready" ]] || return "${CHECK_MISSING}"
-    return 0
+    # Never satisfied and never missing: there is no install-time artefact to
+    # look for, because tenants arrive after the install. UNDEFINED keeps it
+    # silent on the forward pass without claiming a fresh cluster has tenants.
+    #
+    # The driver still runs destroy() on an UNDEFINED step, which is what this
+    # one exists for.
+    return "${CHECK_UNDEFINED}"
 }
 
 apply() {
-    local tenant
-    tenant="$(gentian_first_tenant)"
-    [[ -n "${tenant}" ]] || return 0
-
-    # Nothing here applies the tenant: it is in git, and the tenants
-    # ApplicationSet brings it. What is waited for is the operator's verdict.
-    local timeout="${GENTIAN_FIRST_TENANT_WAIT_SECS:-900}" gitops_ns deadline
-    gitops_ns="$(ns_kernel gitops)"
-    info "Waiting for Tenant/${tenant}, this cluster's first tenant, to be Ready (up to $(( timeout / 60 )) min)..."
-    deadline=$((SECONDS + timeout))
-    until [[ "$(kubectl get tenant "${tenant}" -o jsonpath='{.status.phase}' 2>/dev/null)" == "Ready" ]]; do
-        if (( SECONDS > deadline )); then
-            # Not an error, and deliberately: what a tenant waits for can be
-            # something only a signed-in administrator supplies -- a mail
-            # relay's credential, say -- and the sign-in is the handover this
-            # step stands in front of. Stopping here could then never clear.
-            # check() goes on answering "not satisfied", so --status and the
-            # closing summary keep naming this step until the tenant is Ready.
-            warn "Tenant/${tenant} is not Ready after $(( timeout / 60 )) minutes. The install goes on to the handover."
-            kubectl get tenant "${tenant}" -o jsonpath='{range .status.conditions[*]}    {.type}={.status} {.reason}: {.message}{"\n"}{end}' 2>/dev/null || \
-                warn "  Tenant/${tenant} does not exist: is clusters/${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-<cluster>}/tenants/${tenant} pushed to gentian-deployments, and has Argo CD synced Application tenant-${tenant}?"
-            warn "  Once it is Ready, hand its administrator account over with:"
-            warn "    kubectl gentian tenants activate-admin ${tenant}"
-            return 0
-        fi
-        request_argo_sync_if_stalled "${gitops_ns}" "tenant-${tenant}" 2>/dev/null || true
-        sleep 10
-    done
-    success "Tenant/${tenant} is Ready: this cluster's users sign in at https://console.${tenant}.${KERNEL_DOMAIN:-<kernel-domain>}/"
+    return 0
 }
 
 destroy() {

@@ -129,7 +129,15 @@ func (r *TenantReconciler) syncTenantMailDNS(ctx context.Context, tenant *gentia
 	// The selector matches the one Postfix signs with; a mismatch here means a
 	// signature nobody can verify, which reads as "DKIM broken" rather than as a
 	// naming disagreement.
-	if v := tenant.Status.Mail.DKIMPublicKey; v != "" {
+	//
+	// Not for a tenant whose mail domain is the cluster's own -- the user
+	// tenant of a single-tenancy cluster. Mail from that domain is signed with
+	// the kernel's key, whichever realm its sender is in (syncPostfixDKIMTables names the
+	// kernel domain first), and the kernel's endpoint publishes that key under
+	// this same name. The tenant's own key signs nothing there, so publishing
+	// it would give one name two owners with two values, and a receiver that
+	// read the tenant's would fail every signature.
+	if v := tenant.Status.Mail.DKIMPublicKey; v != "" && domain != r.KernelDomain {
 		records = append(records, dnsEndpointRecord(
 			postfixDKIMSelector+"._domainkey."+domain, "TXT",
 			fmt.Sprintf("v=DKIM1; h=sha256; k=rsa; s=email; p=%s", v)))
@@ -222,8 +230,8 @@ func (r *TenantReconciler) syncKernelMailDNS(ctx context.Context, dkimPublicKey 
 
 	// SPF and DMARC for the kernel domain, on the same terms as every tenant's.
 	//
-	// Skipped when a Tenant already owns the domain — TENANCY_MODE=single gives
-	// the tenant the kernel domain itself, and two endpoints writing one name is
+	// Skipped when a Tenant already owns the domain — a single-tenancy cluster
+	// gives its user tenant the kernel domain itself, and two endpoints writing one name is
 	// how external-dns ends up flapping between two owners' ideas of it.
 	ownedByTenant, err := r.kernelDomainOwnedByTenant(ctx)
 	if err != nil {
@@ -359,7 +367,7 @@ func (r *TenantReconciler) kernelMailAddress(ctx context.Context) string {
 }
 
 // kernelDomainOwnedByTenant reports whether some Tenant's mail domain IS the
-// kernel domain, which is the arrangement under TENANCY_MODE=single.
+// kernel domain: the user tenant of a single-tenancy cluster.
 //
 // The per-tenant endpoint then already publishes the MX, SPF and DMARC for that
 // name, and publishing them here as well would give one name two owners with no

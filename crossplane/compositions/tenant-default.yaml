@@ -345,13 +345,10 @@ spec:
             {{- $edgeNs     := default "kernel-edge" (dig "network.edgeNamespace" "" $ccData) }}
             {{- /* The zone's domain. spec.domain is EffectiveDomain, set by the
                  operator on every pass: a custom domain a TenantDomain binds,
-                 the kernel domain itself under single tenancy, otherwise a
-                 subdomain of it. The kernel realm's tenant is the kernel zone,
-                 whose hosts are on the kernel domain whatever its own is. */}}
+                 the cluster's own domain for the user tenant of a
+                 single-tenancy cluster, otherwise the tenant's subdomain of
+                 it -- which for the platform tenant is platform.<kernel>. */}}
             {{- $zoneDomain  := $domain }}
-            {{- if $adoptsKernelRealm }}
-            {{- $zoneDomain = $kd }}
-            {{- end }}
             {{- /* The hosts the zone serves, which is what the redirect URIs
                  have to cover. The kernel zone's four were read off the Job
                  this replaces rather than reconstructed from the routes.
@@ -381,7 +378,7 @@ spec:
                  tenant, and this reads it back. console and admin stay in the
                  base list so a tenant reconciling before the operator has
                  projected still has a desktop to sign in to. */}}
-            {{- $zoneHosts := ternary (list "console" "admin" "argocd" "headlamp" "id") (list "console" "admin") $adoptsKernelRealm }}
+            {{- $zoneHosts := list "console" "admin" }}
             {{- /* An explicit if, not ternary: Go templates evaluate both of
                  ternary's arms, so indexing an empty list is an error even
                  when the guard is false. The clusterConfig read above has the
@@ -398,6 +395,35 @@ spec:
             {{- $zoneHosts = append $zoneHosts $h }}
             {{- end }}
             {{- end }}
+            {{- /* The labels as host names, which is where the two kinds of
+                 zone differ.
+
+                 A tenant's zone: <label>.<zone domain>, console among them.
+
+                 The platform tenant's zone, the kernel realm's: its desktop is
+                 on the zone's domain itself -- platform.<kernel>, not
+                 console.platform.<kernel> -- and every other component one
+                 label below it, as admin.platform.<kernel>. The operator
+                 routes them by the same rule (exposureHostIn). Beside them are
+                 the kernel's own consoles, which sign in through this client
+                 too and are directly under the cluster's domain; id is among
+                 them because Keycloak's administration is served there behind
+                 the kernel session. */}}
+            {{- $zoneHostNames := list }}
+            {{- range $h := $zoneHosts }}
+            {{- if and $adoptsKernelRealm (eq $h "console") }}
+            {{- $zoneHostNames = append $zoneHostNames $zoneDomain }}
+            {{- else }}
+            {{- $zoneHostNames = append $zoneHostNames (printf "%s.%s" $h $zoneDomain) }}
+            {{- end }}
+            {{- end }}
+            {{- if $adoptsKernelRealm }}
+            {{- range $h := (list "argocd" "headlamp" "id") }}
+            {{- $zoneHostNames = append $zoneHostNames (printf "%s.%s" $h $kd) }}
+            {{- end }}
+            {{- end }}
+            {{- /* Where a person lands: the zone's desktop. */}}
+            {{- $zoneDesktop := ternary $zoneDomain (printf "console.%s" $zoneDomain) (not (not $adoptsKernelRealm)) }}
 
             {{- /* The secret exists before the client does, and is generated
                  here rather than minted by Keycloak. A client created with no
@@ -586,13 +612,13 @@ spec:
                 fullScopeAllowed: false
                 webOrigins: []
                 validRedirectUris:
-                  {{- range $host := $zoneHosts }}
-                  - https://{{ $host }}.{{ $zoneDomain }}/oauth2/callback
-                  - https://{{ $host }}.{{ $zoneDomain }}/
+                  {{- range $host := $zoneHostNames }}
+                  - https://{{ $host }}/oauth2/callback
+                  - https://{{ $host }}/
                   {{- end }}
                 validPostLogoutRedirectUris:
-                  {{- range $host := $zoneHosts }}
-                  - https://{{ $host }}.{{ $zoneDomain }}/*
+                  {{- range $host := $zoneHostNames }}
+                  - https://{{ $host }}/*
                   {{- end }}
                 clientSecretSecretRef:
                   name: {{ $zoneSecret }}
@@ -619,11 +645,13 @@ spec:
                      rootUrl is which of those hosts to use, stated here
                      because this is where the zone's domain is known. The
                      director reads it back off the client rather than deriving
-                     it: the domain is a custom one, or the kernel domain
-                     under single tenancy, or the tenant's subdomain, and a
-                     second derivation of that is a second answer that can
-                     disagree with the hosts the Gateway actually serves. */}}
-                rootUrl: https://console.{{ $zoneDomain }}
+                     it: the domain is a custom one, or the cluster's own
+                     for the user tenant of a single-tenancy cluster, or the
+                     tenant's subdomain, and the platform tenant's desktop is
+                     on its zone's own name; a second derivation of that is a
+                     second answer that can disagree with the hosts the
+                     Gateway actually serves. */}}
+                rootUrl: https://{{ $zoneDesktop }}
               providerConfigRef:
                 name: keycloak
 

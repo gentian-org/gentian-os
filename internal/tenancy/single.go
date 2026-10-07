@@ -12,54 +12,66 @@ SPDX-License-Identifier: MPL-2.0
 package tenancy
 
 import (
-	"context"
+	"errors"
 	"fmt"
-
-	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
-// EnforceSingle rejects a Tenant that a TENANCY_MODE=single cluster may not carry.
+// ErrSingleTenancy is the refusal of a tenant a single-tenancy cluster may
+// not carry. Wrapped by EnforceSingle, so a caller can tell this refusal from
+// a failure to ask.
+var ErrSingleTenancy = errors.New("this cluster's tenancy mode is single")
+
+// IsPlatformTenant reports whether a tenant is the platform's own: the one
+// whose identity lives in the kernel realm. By the field and not by its name,
+// which is what the operator, the webhook and the director all go by.
+func IsPlatformTenant(tenant *gentianov1alpha1.Tenant, kernelRealm string) bool {
+	if kernelRealm == "" {
+		kernelRealm = "kernel"
+	}
+	return tenant != nil && tenant.Spec.Isolation != nil && tenant.Spec.Isolation.KeycloakRealm == kernelRealm
+}
+
+// SingleRefusal is what is wrong with a tenant of this name on a
+// single-tenancy cluster, or nothing. The platform tenant is not asked about:
+// it is in every cluster and is never counted.
 //
-// One rule, two enforcement points. The admission webhook refuses the Tenant
-// before it is stored; the reconciler refuses to provision one that is already
-// there — from a cluster whose mode changed after the fact, or written while the
-// webhook was unavailable. Both are wanted, and both must answer identically:
-// a webhook that admits what the reconciler then refuses produces a Tenant that
-// exists and never progresses, with the reason on a status condition nobody is
-// watching.
+// A single-tenancy cluster carries exactly one user tenant, and its name is
+// fixed. Fixing the name is what makes "exactly one" a property of the name
+// rather than of a count somebody has to take: there cannot be two objects of
+// one name, so nothing has to list the others to refuse the second, and the
+// webhook, the reconciler and the director cannot come to different answers
+// from different views of the cluster.
+func SingleRefusal(name string) error {
+	if name == gentianov1alpha1.SingleUserTenantName {
+		return nil
+	}
+	return fmt.Errorf(
+		"%w: it carries the platform tenant and exactly one user tenant, named %q, "+
+			"so tenant %q is refused. A cluster for more than one user tenant sets tenancyMode: multi",
+		ErrSingleTenancy, gentianov1alpha1.SingleUserTenantName, name,
+	)
+}
+
+// EnforceSingle rejects a Tenant that a tenancyMode=single cluster may not
+// carry: any user tenant but the one named "user". Under multi it refuses
+// nothing, and under either mode the platform tenant is not counted.
 //
-// This lived twice, as TenantReconciler.validateTenancyConstraints and
-// TenantValidator.validateTenancy — byte-identical but for the receiver and one
-// error wrap. Nothing kept them in step except that no one had edited either.
-func EnforceSingle(ctx context.Context, c client.Reader, tenancyMode string, tenant *gentianov1alpha1.Tenant) error {
+// One rule, two enforcement points in the operator and a third in the
+// director. The admission webhook refuses the Tenant before it is stored; the
+// reconciler refuses to provision one that is already there -- from a cluster
+// whose mode changed from multi after the fact, or written while the webhook
+// was unavailable -- and says so on the tenant's status without touching
+// anything the tenant already has. All must answer identically: a webhook
+// that admits what the reconciler then refuses produces a Tenant that exists
+// and never progresses.
+func EnforceSingle(tenancyMode, kernelRealm string, tenant *gentianov1alpha1.Tenant) error {
 	if gentianov1alpha1.NormalizeTenancyMode(tenancyMode) != gentianov1alpha1.TenancyModeSingle {
 		return nil
 	}
-	if tenant.Name != gentianov1alpha1.SingleTenantName {
-		return fmt.Errorf(
-			"cluster TENANCY_MODE=single allows only Tenant %q (got %q)",
-			gentianov1alpha1.SingleTenantName, tenant.Name,
-		)
+	if IsPlatformTenant(tenant, kernelRealm) {
+		return nil
 	}
-
-	var others gentianov1alpha1.TenantList
-	if err := c.List(ctx, &others); err != nil {
-		return fmt.Errorf("list tenants: %w", err)
-	}
-	for i := range others.Items {
-		other := &others.Items[i]
-		// A Tenant already being deleted does not occupy the slot: it is the
-		// one being replaced, and refusing its successor would make a
-		// single-tenant cluster impossible to re-provision.
-		if other.Name == tenant.Name || !other.DeletionTimestamp.IsZero() {
-			continue
-		}
-		return fmt.Errorf(
-			"cluster TENANCY_MODE=single allows only one Tenant CR (found %q and %q)",
-			tenant.Name, other.Name,
-		)
-	}
-	return nil
+	return SingleRefusal(tenant.Name)
 }

@@ -651,6 +651,54 @@ func TestSyncTenantMailDNS_GatedOnClusterMailMode(t *testing.T) {
 		}
 	})
 
+	// The user tenant of a single-tenancy cluster has the cluster's own
+	// domain as its mail domain. Mail from that domain is signed with the
+	// kernel's key, and the kernel's endpoint publishes it; the tenant's
+	// endpoint carries the domain's MX, SPF and DMARC and not a second DKIM
+	// record of another key under the same name.
+	t.Run("the cluster's own domain: no second DKIM record", func(t *testing.T) {
+		for _, c := range []struct {
+			name, mode string
+			wantDKIM   bool
+		}{
+			{"user", "single", false},
+			{"user", "multi", true},
+			{"acme", "single", true},
+		} {
+			cl := fake.NewClientBuilder().WithScheme(controller.SchemeForTest(t)).Build()
+			r := &controller.TenantReconciler{
+				Client: cl, KernelDomain: "example.org", MailServiceMode: "system", TenancyMode: c.mode,
+			}
+			tenant := newTenant()
+			tenant.Name = c.name
+			tenant.Status.Mail.DKIMPublicKey = "TENANTKEY"
+			if err := r.SyncTenantMailDNSForTest(context.Background(), tenant); err != nil {
+				t.Fatalf("sync: %v", err)
+			}
+			o := &unstructured.Unstructured{}
+			o.SetAPIVersion("externaldns.k8s.io/v1alpha1")
+			o.SetKind("DNSEndpoint")
+			if err := cl.Get(context.Background(), types.NamespacedName{Name: "mail-" + c.name, Namespace: "system-mail-dmz"}, o); err != nil {
+				t.Fatalf("%s under %s: no DNSEndpoint: %v", c.name, c.mode, err)
+			}
+			endpoints, _, _ := unstructured.NestedSlice(o.Object, "spec", "endpoints")
+			var dkim, mx bool
+			for _, e := range endpoints {
+				m := e.(map[string]interface{})
+				name, _ := m["dnsName"].(string)
+				if strings.Contains(name, "._domainkey.") {
+					dkim = true
+				}
+				if m["recordType"] == "MX" {
+					mx = true
+				}
+			}
+			if dkim != c.wantDKIM || !mx {
+				t.Errorf("%s under %s: DKIM record published = %v (want %v), MX = %v", c.name, c.mode, dkim, c.wantDKIM, mx)
+			}
+		}
+	})
+
 	t.Run("external mail publishes nothing", func(t *testing.T) {
 		c := fake.NewClientBuilder().WithScheme(controller.SchemeForTest(t)).Build()
 		r := &controller.TenantReconciler{

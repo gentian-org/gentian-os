@@ -36,14 +36,26 @@ const (
 	kernelRouteHTTPRedirect    = "kernel-http-redirect"
 	kernelRouteArgoCD          = "kernel-argocd"
 	kernelRouteHeadlamp        = "kernel-headlamp"
-	// The name people type: an alias of the console, by redirect.
+	// The name people type: an alias of the bare domain, by redirect.
 	kernelRouteWWWRedirect = "kernel-www-redirect"
-	kernelRouteLiteLLM     = "kernel-llm"
+	// console.<kernel> on a multi-tenancy cluster: nobody's desktop there,
+	// and sent to the bare domain like www.
+	kernelRouteConsoleRedirect = "kernel-console-redirect"
+	// The bare domain on a single-tenancy cluster: its front page is sent to
+	// the user tenant's desktop. Two routes, for the two listeners the bare
+	// domain can be on: the perimeter's exact one while the concierge is
+	// published there, and the catch-all when nothing is.
+	kernelRouteApexRedirect          = "kernel-apex-redirect"
+	kernelRouteApexPerimeterRedirect = "kernel-apex-perimeter-redirect"
+	kernelRouteLiteLLM               = "kernel-llm"
 
-	// consoleSubdomain is the desktop's host label in every zone
-	// (networking.md §3): console.<kernel> for the platform, console.<t>.<kernel>
-	// for a tenant. The desktop profile exposes it under this name, and
-	// every redirect and frame policy here assumes it.
+	// consoleSubdomain is the desktop's host label in a tenant's zone
+	// (networking.md §3): console.<t>.<kernel> for a tenant, console.<kernel>
+	// for the user tenant of a single-tenancy cluster. The desktop profile
+	// exposes it under this name, and every redirect and frame policy here
+	// assumes it. The platform tenant's desktop is the one exception: the
+	// same entry answers on the zone's own name, platform.<kernel>
+	// (exposureHostIn).
 	consoleSubdomain = "console"
 
 	argocdServerServiceName = "argocd-server"
@@ -91,19 +103,7 @@ func (r *GatewayPlatformReconciler) reconcileKernelHTTPRoutes(ctx context.Contex
 		return fmt.Errorf("list tenants for kernel HTTPRoutes: %w", err)
 	}
 
-	var effectiveDomains []string
-	var tenantNames []string
-	for i := range tenantList.Items {
-		if tenantList.Items[i].DeletionTimestamp != nil {
-			continue
-		}
-		// A tenant on the kernel domain has the kernel's apex and listener,
-		// so it adds no apex route and no listener policy of its own.
-		if d := tenantList.Items[i].EffectiveDomain(r.KernelDomain, r.TenancyMode); d != "" && !servedByKernelEdge(d, r.KernelDomain) {
-			effectiveDomains = append(effectiveDomains, d)
-			tenantNames = append(tenantNames, tenantList.Items[i].Name)
-		}
-	}
+	effectiveDomains, tenantNames := zonedTenantDomains(tenantList.Items, r.KernelDomain, r.TenancyMode)
 	oidcSubs, err := collectOIDCIngressSubdomainsByTenant(ctx, r.Client, tenantList.Items)
 	if err != nil {
 		return fmt.Errorf("collect OIDC ingress subdomains: %w", err)
@@ -118,7 +118,8 @@ func (r *GatewayPlatformReconciler) reconcileKernelHTTPRoutes(ctx context.Contex
 	}
 
 	specs := kernelHTTPRouteSpecs(r.KernelDomain, effectiveDomains, oidcSubs, tenantNames,
-		clusterLLMEnabled(ctx, r.Client), r.Cluster, r.kernelZoneReady(ctx), desktopPresent(ctx, r.Client))
+		clusterLLMEnabled(ctx, r.Client), r.Cluster, r.kernelZoneReady(ctx), desktopPresent(ctx, r.Client),
+		kernelFrontDoorOf(tenantList.Items, r.KernelDomain, r.kernelRealm(), r.TenancyMode))
 	// The bouncer's table first: a route whose policy asks the bouncer before the
 	// bouncer knows the host is refused, which is the right direction, but a
 	// short one.
@@ -180,11 +181,73 @@ func desktopPresent(ctx context.Context, c client.Reader) bool {
 	return c.Get(ctx, client.ObjectKey{Name: DesktopProfileName}, profile) == nil
 }
 
-// consoleHost is where a zone's desktop answers, console.<zone>
+// consoleHost is where a tenant's desktop answers, console.<zone>
 // (networking.md §3): the name the desktop profile exposes and the
-// component reconciler routes.
+// component reconciler routes. Not the platform tenant's, which is
+// platformDesktopHost.
 func consoleHost(zoneDomain string) string {
 	return consoleSubdomain + "." + zoneDomain
+}
+
+// zonedTenantDomains are the tenants with a domain of their own -- one that
+// is not the cluster's -- and those domains, index for index.
+//
+// A tenant on the cluster's domain itself, the user tenant of a
+// single-tenancy cluster, has the kernel's listener and certificate, so it
+// adds no apex route, no listener policy and no frame origin of its own.
+func zonedTenantDomains(tenants []gentianov1alpha1.Tenant, kernelDomain, tenancyMode string) (domains, names []string) {
+	for i := range tenants {
+		if tenants[i].DeletionTimestamp != nil {
+			continue
+		}
+		if d := tenants[i].EffectiveDomain(kernelDomain, tenancyMode); d != "" && !servedByKernelEdge(d, kernelDomain) {
+			domains = append(domains, d)
+			names = append(names, tenants[i].Name)
+		}
+	}
+	return domains, names
+}
+
+// kernelFrontDoor is what the cluster's own first addresses do, which is the
+// one thing about the kernel's routes that differs by tenancy mode.
+//
+//	multi   <kernel>          the concierge's address form (the platform
+//	                          tenant publishes it; not routed here)
+//	        www.<kernel>      -> <kernel>
+//	        console.<kernel>  -> <kernel>
+//	single  <kernel>/         -> the user tenant's desktop
+//	        <kernel>/branding  still the concierge's: the cluster's brand,
+//	                          which every desktop loads from the bare domain
+//	        www.<kernel>      -> the user tenant's desktop
+//	        console.<kernel>  the user tenant's desktop itself (its component)
+type kernelFrontDoor struct {
+	single bool
+	// userDesktop is the user tenant's desktop on a single-tenancy cluster:
+	// console.<kernel>, or console.<its custom domain> when a TenantDomain
+	// binds one. Empty until that tenant is Ready, and the bare domain is the
+	// concierge's form until then: before that the desktop does not answer,
+	// and a browser sent to a name that is not published yet remembers that
+	// it is missing.
+	userDesktop string
+}
+
+// kernelFrontDoorOf reads the front door off the tenants and the mode.
+func kernelFrontDoorOf(tenants []gentianov1alpha1.Tenant, kernelDomain, kernelRealm, tenancyMode string) kernelFrontDoor {
+	if gentianov1alpha1.NormalizeTenancyMode(tenancyMode) != gentianov1alpha1.TenancyModeSingle {
+		return kernelFrontDoor{}
+	}
+	door := kernelFrontDoor{single: true}
+	for i := range tenants {
+		t := &tenants[i]
+		if t.DeletionTimestamp != nil || tenantAdoptsKernelRealm(t, kernelRealm) ||
+			t.Name != gentianov1alpha1.SingleUserTenantName || t.Status.Phase != gentianov1alpha1.TenantPhaseReady {
+			continue
+		}
+		if domain := t.EffectiveDomain(kernelDomain, tenancyMode); domain != "" {
+			door.userDesktop = consoleHost(domain)
+		}
+	}
+	return door
 }
 
 func kernelHTTPRouteSpecs(
@@ -196,6 +259,7 @@ func kernelHTTPRouteSpecs(
 	cluster string,
 	kernelZoneReady bool,
 	desktop bool,
+	door kernelFrontDoor,
 ) []kernelHTTPRouteSpec {
 	idHost := fmt.Sprintf("id.%s", kernelDomain)
 
@@ -287,27 +351,76 @@ func kernelHTTPRouteSpecs(
 		})
 	}
 	// The desktop is the tenant's own component, routed where it runs
-	// (tenant-<t>, on console.<zone>).
+	// (tenant-<t>): console.<zone> for a tenant, platform.<kernel> for the
+	// platform tenant.
 	//
-	// The cluster's bare domain is not routed here at all. It is the first
-	// thing anybody typing the cluster's address meets, before any session,
-	// so it is a perimeter surface: the concierge, a component of the platform
-	// tenant, published from that tenant's DMZ on a listener of the perimeter
-	// Gateway (networking.md §1). www.<kernel> is the other name people type,
-	// and it is sent to the bare domain.
+	// The cluster's bare domain is the first thing anybody typing the
+	// cluster's address meets, before any session, and what it does depends
+	// on how many user tenants the cluster is for.
+	//
+	// Multi-tenancy: it is a perimeter surface -- the concierge, a component
+	// of the platform tenant, published from that tenant's DMZ on a listener
+	// of the perimeter Gateway (networking.md §1) -- and is not routed here at
+	// all. www.<kernel> and console.<kernel> are the other names people type,
+	// and both are sent to it. console.<kernel> was the platform's desktop
+	// before that moved to platform.<kernel>; it is nobody's desktop now, and
+	// a bookmark of it lands on the form that asks who is asking.
+	//
+	// Single-tenancy: there is one user tenant and so nothing to ask. The
+	// bare domain's front page and www are sent to its desktop, once it is
+	// Ready, and console.<kernel> is that desktop -- routed by the tenant's
+	// component, so it is not claimed here. The concierge stays published on
+	// the bare domain underneath, because the cluster's brand is served from
+	// there (/branding/) to every desktop; only the paths a person lands on,
+	// / and the form's /sign-in, are sent on. Those two are more specific than
+	// the concierge's whole-host route on the same listener, so they win.
+	frontDoor := kernelDomain
+	if door.single && door.userDesktop != "" {
+		frontDoor = door.userDesktop
+	}
 	specs = append(specs, kernelHTTPRouteSpec{
 		name:        kernelRouteWWWRedirect,
 		host:        "www." + kernelDomain,
 		sectionName: wildcardListenerName,
-		rules:       []gatewayv1.HTTPRouteRule{consoleRedirectRule(kernelDomain)},
+		rules:       []gatewayv1.HTTPRouteRule{consoleRedirectRule(frontDoor)},
 	})
+	switch {
+	case !door.single:
+		specs = append(specs, kernelHTTPRouteSpec{
+			name:        kernelRouteConsoleRedirect,
+			host:        consoleHost(kernelDomain),
+			sectionName: wildcardListenerName,
+			rules:       []gatewayv1.HTTPRouteRule{consoleRedirectRule(kernelDomain)},
+		})
+	case door.userDesktop != "":
+		specs = append(specs,
+			kernelHTTPRouteSpec{
+				name:        kernelRouteApexPerimeterRedirect,
+				host:        kernelDomain,
+				gateway:     PerimeterGatewayName,
+				sectionName: perimeterListenerName(kernelDomain),
+				rules:       []gatewayv1.HTTPRouteRule{frontPageRedirectRule(door.userDesktop)},
+			},
+			// Where nothing is published on the bare domain, it has no
+			// listener on the perimeter and arrives on the catch-all.
+			kernelHTTPRouteSpec{
+				name:        kernelRouteApexRedirect,
+				host:        kernelDomain,
+				sectionName: wildcardListenerName,
+				rules:       []gatewayv1.HTTPRouteRule{frontPageRedirectRule(door.userDesktop)},
+			})
+	}
 	// A tenant's apex likewise sends the browser to the tenant's own console.
 	// The apex is published with the tenant either way (it is the tenant's
-	// name), so the redirect is what makes it answer.
+	// name), so the redirect is what makes it answer. Not the platform
+	// tenant's: platform.<kernel> is its desktop, not a name beside it.
 	if desktop {
 		for i, domain := range tenantEffectiveDomains {
 			if i >= len(tenantNames) {
 				break
+			}
+			if domain == platformDesktopHost(kernelDomain) {
+				continue
 			}
 			specs = append(specs, kernelHTTPRouteSpec{
 				name:        fmt.Sprintf("tenant-%s-apex", tenantNames[i]),
@@ -572,6 +685,37 @@ func consoleRedirectRule(console string) gatewayv1.HTTPRouteRule {
 				},
 			},
 		},
+	}
+}
+
+// frontPageRedirectRule sends the bare domain's front page to a desktop: the
+// root, and the concierge's form under /sign-in, each to the desktop's root.
+// Nothing else on the host is touched -- the brand under /branding/ is the
+// concierge's to serve.
+func frontPageRedirectRule(desktop string) gatewayv1.HTTPRouteRule {
+	scheme := "https"
+	status := 302
+	port := gatewayv1.PortNumber(443)
+	host := gatewayv1.PreciseHostname(desktop)
+	root := "/"
+	return gatewayv1.HTTPRouteRule{
+		Matches: []gatewayv1.HTTPRouteMatch{
+			pathMatch(gatewayv1.PathMatchExact, "/"),
+			pathPrefixMatch("/sign-in"),
+		},
+		Filters: []gatewayv1.HTTPRouteFilter{{
+			Type: gatewayv1.HTTPRouteFilterRequestRedirect,
+			RequestRedirect: &gatewayv1.HTTPRequestRedirectFilter{
+				Scheme:     &scheme,
+				Hostname:   &host,
+				Port:       &port,
+				StatusCode: &status,
+				Path: &gatewayv1.HTTPPathModifier{
+					Type:            gatewayv1.FullPathHTTPPathModifier,
+					ReplaceFullPath: &root,
+				},
+			},
+		}},
 	}
 }
 

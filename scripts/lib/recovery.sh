@@ -373,7 +373,7 @@ _kit_backup_identity() {
                 warn "  the documented default applied. Set spec.backup.escrowIdentity to say"
                 warn "  so deliberately, or false to keep the key in this kit alone."
             fi
-            warn "  A cluster administrator can restore without this kit — and anyone who"
+            warn "  A platform admin can restore without this kit — and anyone who"
             warn "  reaches OpenBao as one can read every bundle. Keep the kit anyway: it"
             warn "  is the only copy that survives losing the cluster."
         else

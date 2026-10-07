@@ -453,7 +453,7 @@ cmd_tenants_activate_admin() {
         # it refuses a link for one of them as it refuses everything else
         # about them. That account is handed over by the installer.
         if [[ "${answer}" == *"administers the platform"* ]]; then
-            die "${answer#error: } For the cluster administrator's account, run ./install.sh --activate-admin on the install host."
+            die "${answer#error: } For the platform admin's account, run ./install.sh --activate-admin on the install host."
         fi
         die "${answer#error: }"
     done

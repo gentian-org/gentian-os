@@ -197,10 +197,12 @@ func (g *GitOps) SetClusterSettings(ctx context.Context, values map[string]strin
 		}
 		paths = append(paths, p)
 	}
-	// A cluster carrying tenants beside the platform cannot become a
-	// single-tenant one: its one tenant is the platform tenant, so every
-	// other would be refused by the operator and stranded, its data kept
-	// and nothing serving it.
+	// multi -> single on a cluster that carries more than a single-tenancy
+	// cluster may. Refused here, loudly and before anything is written: the
+	// operator would refuse every such tenant on its next pass, and each would
+	// then stand where it was -- its data kept, its hosts still answering,
+	// and nothing reconciling it -- with the reason on a status condition.
+	// Nothing is removed by either refusal. single -> multi is always fine.
 	if gentianov1alpha1.NormalizeTenancyMode(values["tenancyMode"]) == gentianov1alpha1.TenancyModeSingle && values["tenancyMode"] != "" {
 		names, err := g.Tenants(ctx)
 		if err != nil {
@@ -208,12 +210,16 @@ func (g *GitOps) SetClusterSettings(ctx context.Context, values map[string]strin
 		}
 		var others []string
 		for _, n := range names {
-			if n != platformTenant {
+			if n != platformTenant && n != gentianov1alpha1.SingleUserTenantName {
 				others = append(others, n)
 			}
 		}
 		if len(others) > 0 {
-			return Result{}, fmt.Errorf("%w: retire %s first", ErrSingleTenancy, strings.Join(others, ", "))
+			return Result{}, fmt.Errorf(
+				"%w: this cluster carries %s, and a single-tenancy cluster admits only the platform tenant "+
+					"and one user tenant named %q. Nothing was changed. Retire %s first, or keep tenancyMode multi",
+				ErrSingleRefused, strings.Join(others, ", "),
+				gentianov1alpha1.SingleUserTenantName, strings.Join(others, ", "))
 		}
 	}
 	sort.Strings(paths)

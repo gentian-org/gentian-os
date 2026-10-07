@@ -2,7 +2,7 @@
 # step: D-05-gateway-wait
 # phase: applications
 # requires: D-04-vault-oidc-config
-# provides: kernel Gateway reporting Programmed, and console.<kernel> resolving publicly
+# provides: kernel Gateway reporting Programmed, and platform.<kernel> resolving publicly
 # check: none — a pure wait, non-fatal by design; a Gateway that is not yet Programmed does not invalidate the steps that follow
 # mutates: nothing in the cluster — waits on a condition; on this host, the kept copy of the wildcard under ~/.gentian/certs
 
@@ -31,6 +31,6 @@ apply() {
     # The address the handover sends a person to. It exists from D-03, which
     # creates the platform tenant and with it the desktop that serves it, so
     # this is the first step that can wait for it to resolve.
-    [[ -n "${KERNEL_DOMAIN:-}" ]] && gentian_dns_wait_for "console.${KERNEL_DOMAIN}"
+    [[ -n "${KERNEL_DOMAIN:-}" ]] && gentian_dns_wait_for "platform.${KERNEL_DOMAIN}"
     return 0
 }

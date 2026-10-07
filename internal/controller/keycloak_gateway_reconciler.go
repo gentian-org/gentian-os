@@ -140,7 +140,7 @@ func keycloakGatewayFramePolicyApplied(ctx context.Context, c client.Client, ker
 	if csp == "" {
 		return false
 	}
-	if !strings.Contains(csp, "https://"+consoleHost(kernelDomain)) {
+	if !strings.Contains(csp, "https://"+platformDesktopHost(kernelDomain)) {
 		return false
 	}
 	if !strings.Contains(csp, fmt.Sprintf("https://*.%s", kernelDomain)) {

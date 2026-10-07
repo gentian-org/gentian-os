@@ -173,22 +173,25 @@ type gatewayFrameAncestorsPolicy struct {
 }
 
 // consoleOrigins lists every desktop an app of one tenant may be framed by:
-// the tenant's own console, and the platform's, whose tiles open a tenant's
-// apps too. frame-ancestors is checked against the whole ancestor chain and
-// the top frame is whichever console the user came from, so both are named.
+// the tenant's own, console.<its domain>, and the platform's,
+// platform.<kernel>, whose tiles open a tenant's apps too. frame-ancestors is
+// checked against the whole ancestor chain and the top frame is whichever
+// desktop the user came from, so both are named.
 //
 // Both the computed default below and the "portal" token in
 // ingressFrameAncestorsPolicy resolve through here. They used to enumerate the
 // hosts separately, and the one route that opts out of the default (Collabora)
 // lost the origin the user was actually on, and every document open failed
 // with "Failed to load Nextcloud Office" while the server side stayed healthy.
-// A console hostname must reach both policies at once.
+// A desktop's hostname must reach both policies at once.
 func consoleOrigins(kernelDomain, effectiveDomain string) []string {
 	var origins []string
 	if kernelDomain != "" {
-		origins = append(origins, "https://"+consoleHost(kernelDomain))
+		origins = append(origins, "https://"+platformDesktopHost(kernelDomain))
 	}
-	if effectiveDomain != "" && effectiveDomain != kernelDomain {
+	// Also when the tenant's domain is the cluster's: the user tenant of a
+	// single-tenancy cluster, whose desktop is console.<kernel>.
+	if effectiveDomain != "" {
 		origins = append(origins, "https://"+consoleHost(effectiveDomain))
 	}
 	return origins

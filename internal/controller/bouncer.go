@@ -101,8 +101,8 @@ func kernelSecurityPolicyName(route string) string { return "sp-" + route }
 // cookie on the kernel domain) and the ext-auth bouncer, which fails closed.
 func kernelSecurityPolicySpec(kernelDomain, kernelRealm, route string, authz routeAuthz, bouncerService string) map[string]interface{} {
 	zone := edgeZone{
-		domain: kernelDomain, realm: kernelRealm, clientID: edgeKernelClientID, secretName: edgeKernelSecretName,
-		cookie: edgeKernelAccessTokenCookie, idCookie: edgeKernelIDTokenCookie, kernel: true,
+		realm: kernelRealm, clientID: edgeKernelClientID, secretName: edgeKernelSecretName,
+		cookie: edgeKernelAccessTokenCookie, idCookie: edgeKernelIDTokenCookie,
 	}
 	return zoneSecurityPolicySpec(kernelDomain, zone, route, authz, "", bouncerService)
 }

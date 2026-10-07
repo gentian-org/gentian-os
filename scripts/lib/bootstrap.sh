@@ -1065,32 +1065,10 @@ print_summary_cp() {
         print_portal_login_summary
     fi
     echo ""
-    # The first tenant, when the install created one: where its people sign
-    # in, and that the bare domain leads there rather than to the console
-    # above. Said here because it is the one thing about this cluster's
-    # addresses that a person would otherwise find out by being surprised.
-    local first_tenant
-    first_tenant="$(gentian_first_tenant)"
-    if [[ -n "${first_tenant}" ]]; then
-        echo -e "${GREEN}  First tenant (this cluster's users):${NC}"
-        echo -e "${GREEN}    URL      : https://console.${first_tenant}.${KERNEL_DOMAIN:-<kernel-domain>}/${NC}"
-        echo -e "${GREEN}    User     : admin@${first_tenant}.${KERNEL_DOMAIN:-<kernel-domain>} — activated through its own link; a new one:${NC}"
-        echo -e "${GREEN}               kubectl gentian tenants activate-admin ${first_tenant}${NC}"
-        echo -e "${GREEN}    Bare domain: while ${first_tenant} is the only tenant, https://${KERNEL_DOMAIN:-<kernel-domain>}/ leads${NC}"
-        echo -e "${GREEN}               to its sign-in. Cluster administrators sign in at the platform${NC}"
-        echo -e "${GREEN}               console above, by its own address.${NC}"
-        echo ""
-    fi
-    # Where tenants come from next. Named here rather than left to the docs:
-    # this is the screen an operator has in front of them when they go
-    # looking for what to do next. Both are clients of the director.
-    echo -e "${GREEN}  Create tenants in the admin console (Tenants), or with the CLI:${NC}"
-    if ! command -v kubectl-gentian >/dev/null 2>&1; then
-        echo -e "${GREEN}    make -C ${SCRIPT_DIR} install-plugin${NC}"
-    fi
-    echo -e "${GREEN}    kubectl gentian login${NC}"
-    echo -e "${GREEN}    kubectl gentian tenants create <name>${NC}"
-    echo -e "${GREEN}    kubectl gentian tenants activate-admin <name> [--recovery-email <address>]${NC}"
+    # Who is in charge of what, and where. On a single-tenancy cluster there
+    # are two administrators and two addresses, and this is the screen that
+    # has to say which is which; on a multi-tenancy one, tenants come next.
+    print_roles_summary
     echo ""
     echo -e "${GREEN}  Inspect authz stack:${NC}"
     echo -e "${GREEN}    kubectl get xsuze,suze -n ${CROSSPLANE_NAMESPACE:-crossplane-system}${NC}"
@@ -1212,11 +1190,11 @@ print_handover_summary() {
         # E-02 writes the kit, so this means that step did not run or failed.
         echo -e "${YELLOW}      1. ./install.sh --only E-02      (write the recovery kit)${NC}"
         echo -e "${YELLOW}      2. move the kit somewhere safe${NC}"
-        echo -e "${YELLOW}      3. sign in at https://console.${KERNEL_DOMAIN:-<kernel-domain>}/${NC}"
+        echo -e "${YELLOW}      3. sign in as the platform admin at https://platform.${KERNEL_DOMAIN:-<kernel-domain>}/${NC}"
         echo -e "${YELLOW}      4. ./install.sh --only E-03      (revoke and finish)${NC}"
     elif [[ "${proven}" != "true" ]]; then
         echo -e "${YELLOW}      1. move the recovery kit somewhere safe${NC}"
-        echo -e "${YELLOW}      2. sign in at https://console.${KERNEL_DOMAIN:-<kernel-domain>}/${NC}"
+        echo -e "${YELLOW}      2. sign in as the platform admin at https://platform.${KERNEL_DOMAIN:-<kernel-domain>}/${NC}"
         echo -e "${YELLOW}      3. ./install.sh --only E-03      (revoke and finish)${NC}"
     else
         echo -e "${YELLOW}    Someone has signed in and a kit exists, so only the revocation${NC}"
@@ -1440,14 +1418,14 @@ _claim_cluster_fields() {
 
     printf '\n'
     printf '  # Defaults below are in effect. Uncomment a line to change it.\n'
-    _claim_default_line tenancyMode  "${TENANCY_MODE:-}"  multi   'one subdomain and Keycloak realm per tenant; single = the platform tenant is the only one, on the kernel domain'
+    _claim_default_line tenancyMode  "${TENANCY_MODE:-}"  multi   'any number of user tenants, each on its own subdomain; single = exactly one user tenant, named user, on the cluster domain itself'
     _claim_default_line secretMode   "${SECRET_MODE:-}"   derived 'every kernel secret reproducible from the master password; random = independent'
     _claim_default_line routingMode  "${ROUTING_MODE:-}"  gateway 'Envoy Gateway plus the Gateway API; the only supported value'
     _claim_default_line storageClass "${STORAGE_CLASS:-}" ''      'empty means the clusters default StorageClass'
 
     printf '\n'
     printf '  # Where the backup private key lives. On by default: it goes to OpenBao as\n'
-    printf '  # well as the recovery kit, so a cluster administrator can restore without\n'
+    printf '  # well as the recovery kit, so a platform admin can restore without\n'
     printf '  # the kit -- and anyone who reaches OpenBao as one can read every bundle.\n'
     printf '  # Set false to keep it in the kit alone: nothing the cluster holds can then\n'
     printf '  # open a bundle, and losing every copy of the kit loses every backup.\n'
@@ -2165,9 +2143,9 @@ EOF
         generated=1
     fi
 
-    # The first user tenant, when the install is told one: beside the
-    # platform tenant, committed with it.
-    if scaffold_first_tenant "${cluster}"; then
+    # The user tenant of a single-tenancy cluster: beside the platform
+    # tenant, committed with it, admitted after the handover.
+    if scaffold_user_tenant "${cluster}"; then
         generated=1
     fi
 
@@ -2296,141 +2274,106 @@ _claims_this_checkout_cannot_apply() {
 # never arrive.
 _cluster_scaffold_paths() {
     printf '%s\n' "clusters/$1/kernel" "clusters/$1/tenants/platform" "clusters/$1/catalogue"
-    # And the first user tenant, when this install wrote one. Only then: a
-    # path that does not exist fails `git add` for all of them, and a tenant
-    # the director wrote is not this step's to commit.
-    local first
-    first="$(gentian_first_tenant)"
-    if [[ -n "${first}" ]]; then
-        printf '%s\n' "clusters/$1/tenants/${first}"
+    # And the user tenant of a single-tenancy cluster, when its manifest is
+    # there. Only then: a path that does not exist fails `git add` for all of
+    # them.
+    if [[ -n "$(gentian_user_tenant)" ]]; then
+        printf '%s\n' "clusters/$1/tenants/${USER_TENANT_NAME}"
     fi
 }
 
 # =============================================================================
-# The first user tenant.
+# The user tenant of a single-tenancy cluster.
 #
-# A cluster's users live in a tenant of their own; the platform tenant holds
-# the administrators and takes no apps (docs/design/multi-tenancy.md §3).
-# Every later tenant is created through the director. The first one cannot
-# be: before the cluster exists there is no director, which is the case the
-# platform tenant's scaffold is already written for. So when the install is
-# told a name (GENTIAN_FIRST_TENANT, asked in step 0 or set in install.env),
-# step 0 writes that tenant beside the platform's and commits both, E-01
-# waits for it, and the handover issues its administrator's activation link.
-# With no name, none of this does anything.
+# A cluster has one of two tenancy modes (docs/design/multi-tenancy.md §3).
+# multi: the platform tenant plus any number of user tenants, each created
+# through the director after the install. single: the platform tenant plus
+# exactly one user tenant, always named "user", which lives on the cluster's
+# own addresses -- console.<domain>, admin.<domain>, <app>.<domain>.
+#
+# Only under single does the install create a tenant, and it is that one.
+# Step 0 writes its manifest beside the platform tenant's and commits both,
+# signed, like the rest of the cluster's definition. Nothing admits it early:
+# the cluster holds every tenant but the platform's back until the platform
+# admin has signed in once (the handover gate, internal/webhook), and this
+# manifest carries no override. So it sits in git, refused, through the whole
+# install; the handover (E-03) ends as on any cluster; and E-04 then asks
+# Argo CD to try the manifest again, waits for the tenant, and hands its
+# administrator account over. No credential is needed for that which the
+# handover takes away: E-04 uses the kubeconfig and nothing else.
 # =============================================================================
 
-# Why the first tenant is admitted before the administrator has signed in,
-# as the annotation the tenant webhook asks for. It is also how a later run
-# recognises the tenant an earlier one wrote: the answer to step 0's question
-# is in the deployments tree, like every other answer, and not in a state
-# file beside the installer.
-FIRST_TENANT_OVERRIDE_REASON="created by the install as this cluster's first tenant, before the administrator's first sign-in"
+# The name is fixed: the operator, its admission webhook and the director all
+# refuse any other user tenant under tenancyMode single (internal/tenancy).
+USER_TENANT_NAME="user"
 
-# first_tenant_name_problem <name> — what is wrong with <name> as a tenant's
-# name, or nothing when it is fine. The first rule is the director's
-# (gitops.ValidName); the names refused beside it are ones the cluster
-# already uses for something else.
-first_tenant_name_problem() {
-    local name="$1" realm="${KERNEL_REALM:-kernel}"
-    if [[ ! "${name}" =~ ^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$ ]]; then
-        echo "a tenant name is a DNS label: lower-case letters, digits and hyphens, starting and ending with a letter or digit"
-        return 0
-    fi
-    case "${name}" in
-        platform)
-            echo "platform is the platform tenant, which every cluster has already" ;;
-        default)
-            echo "default is reserved for the cluster-wide backup policy" ;;
-        master|"${realm}")
-            echo "a tenant's realm carries its name, and ${name} is a realm the identity provider already has" ;;
-    esac
-    return 0
-}
-
-# _first_tenant_written_by_install <tenant.yaml> — does this manifest carry
-# the install's own reason?
-_first_tenant_written_by_install() {
-    [[ -f "$1" ]] && grep -qF "${FIRST_TENANT_OVERRIDE_REASON}" "$1"
-}
-
-# gentian_first_tenant — the tenant this install wrote as the cluster's
-# first, or nothing.
+# gentian_tenancy_mode — this cluster's tenancy mode, single or multi.
 #
-# The one named for this run when its manifest is the install's; otherwise
-# whichever manifest in this cluster's definition is. A name whose manifest
-# is absent, or was written by the director, answers nothing: there is then
-# no tenant for the install to wait for or hand over, and saying otherwise
-# would have a step wait fifteen minutes for a tenant nobody declared.
-gentian_first_tenant() {
-    local tenants_dir="${GENTIAN_DEPLOYMENTS_PATH:-}/clusters/${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-}/tenants"
-    local name="${GENTIAN_FIRST_TENANT:-}" f
-    [[ -d "${tenants_dir}" ]] || return 0
-    if [[ -n "${name}" ]] && _first_tenant_written_by_install "${tenants_dir}/${name}/tenant.yaml"; then
-        printf '%s\n' "${name}"
-        return 0
+# The claim's, once there is a claim: it is what the cluster is built from and
+# what the operator reads, and a claim that does not name the mode means the
+# default, multi -- whatever this run's environment says. A TENANCY_MODE in
+# install.env that disagrees with an existing claim would otherwise have the
+# install scaffold and wait for a user tenant on a cluster that is not a
+# single-tenancy one. Before there is a claim, the mode is what the run was
+# told (step 0's answer, or TENANCY_MODE), which is what the claim is then
+# written from.
+gentian_tenancy_mode() {
+    local claim="${GENTIAN_DEPLOYMENTS_PATH:-}/clusters/${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-}/kernel/claims/cluster.yaml"
+    local mode=""
+    if [[ -f "${claim}" ]]; then
+        mode="$(yq_get '.spec.tenancyMode' "${claim}" 2>/dev/null || true)"
+    else
+        mode="${TENANCY_MODE:-}"
     fi
-    for f in "${tenants_dir}"/*/tenant.yaml; do
-        if _first_tenant_written_by_install "${f}"; then
-            basename "$(dirname "${f}")"
-            return 0
-        fi
-    done
+    if [[ "${mode}" != "single" ]]; then
+        mode="multi"
+    fi
+    printf '%s\n' "${mode}"
+}
+
+# gentian_user_tenant — "user" when this is a single-tenancy cluster whose
+# definition holds the user tenant's manifest, and nothing otherwise.
+#
+# Nothing under multi, where a tenant of that name is an ordinary one the
+# install has no part in. Nothing when the manifest is absent, either: there
+# is then no tenant for the install to wait for or hand over, and saying
+# otherwise would have a step wait fifteen minutes for a tenant nobody
+# declared.
+gentian_user_tenant() {
+    local file="${GENTIAN_DEPLOYMENTS_PATH:-}/clusters/${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-}/tenants/${USER_TENANT_NAME}/tenant.yaml"
+    if [[ "$(gentian_tenancy_mode)" == "single" && -f "${file}" ]]; then
+        printf '%s\n' "${USER_TENANT_NAME}"
+    fi
     return 0
 }
 
-# resolve_first_tenant — refuse a first tenant that cannot be, before
-# anything is written. Nothing to do when none is named.
-resolve_first_tenant() {
-    local name="${GENTIAN_FIRST_TENANT:-}" problem
-    if [[ -z "${name}" ]]; then
-        return 0
-    fi
-    problem="$(first_tenant_name_problem "${name}")"
-    if [[ -n "${problem}" ]]; then
-        error "GENTIAN_FIRST_TENANT=${name} cannot be this cluster's first tenant:"
-        error "  ${problem}."
-        return 1
-    fi
-    if [[ "${TENANCY_MODE:-multi}" == "single" ]]; then
-        error "GENTIAN_FIRST_TENANT=${name}, and this cluster's tenancyMode is single."
-        error "  Under that mode the platform tenant is the only tenant and the cluster"
-        error "  refuses every other, so the tenant would be committed and never arrive."
-        error "  A cluster for one organisation is tenancyMode multi with one tenant:"
-        error "  set tenancyMode: multi in claims/cluster.yaml, or name no first tenant."
-        return 1
-    fi
-    export GENTIAN_FIRST_TENANT
-    return 0
-}
-
-# scaffold_first_tenant <cluster> — write the first tenant's manifest when it
-# is named and may be written. Returns 0 when it wrote something.
+# scaffold_user_tenant <cluster> — write the user tenant's manifest on a
+# single-tenancy cluster. Returns 0 when it wrote something.
 #
 # The manifest is the one the director writes for a new tenant (tenantManifest
-# in internal/director/gitops/tenants.go), plus the annotation that admits it
-# before the handover. Three cases write nothing, and each says why:
+# in internal/director/gitops/tenants.go) and nothing more: no annotation
+# admits it ahead of the handover. Under multi nothing is written. Under
+# single, three cases write nothing as well, and each says why:
 #
 #   - The tenant has a manifest already. Never rewritten: a second run finds
-#     the first one's work, and a tenant the director made is the director's.
-#   - The cluster's definition already holds another tenant for users. Then
-#     this is not the first, and tenants after the first are created through
-#     the director, which checks who is asking and commits as that person.
+#     the first one's work.
+#   - The cluster's definition holds another tenant for users. A
+#     single-tenancy cluster carries exactly one, and the operator would
+#     refuse them; which of them stays is a person's decision, not a
+#     scaffold's.
 #   - The tenant was in this cluster's definition before and was removed. A
 #     retired tenant keeps its data unless it was purged, and an install run
 #     must not quietly attach a new tenant to it.
-scaffold_first_tenant() {
-    local cluster="$1" name="${GENTIAN_FIRST_TENANT:-}"
-    [[ -n "${name}" ]] || return 1
+scaffold_user_tenant() {
+    local cluster="$1" name="${USER_TENANT_NAME}"
+    if [[ "$(gentian_tenancy_mode)" != "single" ]]; then
+        return 1
+    fi
     local tenants_dir="${GENTIAN_DEPLOYMENTS_PATH}/clusters/${cluster}/tenants"
     local dir="${tenants_dir}/${name}" rel="clusters/${cluster}/tenants/${name}/tenant.yaml"
     local f other others=""
 
     if [[ -f "${dir}/tenant.yaml" ]]; then
-        if ! _first_tenant_written_by_install "${dir}/tenant.yaml"; then
-            info "clusters/${cluster}/tenants/${name} exists and was not written by the install: left as it is."
-            info "  Hand its administrator over with: kubectl gentian tenants activate-admin ${name}"
-        fi
         return 1
     fi
     for f in "${tenants_dir}"/*/tenant.yaml; do
@@ -2440,55 +2383,51 @@ scaffold_first_tenant() {
         others="${others:+${others}, }${other}"
     done
     if [[ -n "${others}" ]]; then
-        warn "GENTIAN_FIRST_TENANT=${name} was not written: this cluster's definition already"
-        warn "  holds ${others}, so ${name} would not be its first tenant. Create it"
-        warn "  through the director once the cluster is up:"
-        warn "    kubectl gentian tenants create ${name}"
+        warn "tenancyMode is single and the user tenant was not written: this cluster's"
+        warn "  definition already holds ${others}. A single-tenancy cluster carries the"
+        warn "  platform tenant and exactly one user tenant, named ${name}, and refuses"
+        warn "  every other. Retire ${others} first, or set tenancyMode: multi."
         return 1
     fi
     if [[ -n "$(git -C "${GENTIAN_DEPLOYMENTS_PATH}" log -1 --format=%H -- "${rel}" 2>/dev/null || true)" ]]; then
-        warn "GENTIAN_FIRST_TENANT=${name} was not written: clusters/${cluster}/tenants/${name}"
+        warn "The user tenant was not written: clusters/${cluster}/tenants/${name}"
         warn "  was part of this cluster's definition before and was removed. A retired"
         warn "  tenant keeps its data unless it was purged, so the install does not bring"
-        warn "  the name back by itself. Create it through the director, or name another:"
+        warn "  it back by itself. As the platform admin, once the cluster is up:"
         warn "    kubectl gentian tenants create ${name}"
         return 1
     fi
 
-    # A YAML double-quoted scalar: what a person typed, on one line.
-    local display="${GENTIAN_FIRST_TENANT_DISPLAY_NAME:-${name}}"
-    display="$(printf '%s' "${display}" | tr -d '\r\n' | sed 's/[\\"]/\\&/g')"
-
     mkdir -p "${dir}"
     cat > "${dir}/tenant.yaml" <<EOF
-# Tenant ${name}: this cluster's first tenant, written by the install.
+# Tenant ${name}: the user tenant of this single-tenancy cluster, written by
+# the install.
 #
-# The cluster's users live here, in a realm of their own. The platform tenant
-# beside it holds the cluster's administrators and takes no apps. Argo CD
-# syncs this file and the operator does the rest: the Keycloak realm, the
-# namespaces, the database, and the desktop at console.${name}.<kernel>.
-# While this is the only tenant for users, the cluster's bare domain leads
-# to that console.
+# The cluster's users live here, in a realm of their own, on the cluster's
+# own addresses: the desktop at console.<domain>, the administration console
+# at admin.<domain>, each app at <app>.<domain>. The platform tenant beside
+# it holds the platform admin and takes no apps; its desktop is at
+# platform.<domain>.
+#
+# The cluster admits no tenant but the platform's until the platform admin
+# has signed in once, and nothing here asks for an exception: this file waits
+# in git, and the install brings the tenant up after the handover.
 apiVersion: gentianos.io/v1alpha1
 kind: Tenant
 metadata:
   name: ${name}
   annotations:
     argocd.argoproj.io/sync-wave: "2"
-    # The cluster holds tenants back until its administrator has signed in
-    # once. This one is created before anybody could have, and holds nothing
-    # yet; the value is the reason, which the tenant webhook requires.
-    gentianos.io/handover-override: "${FIRST_TENANT_OVERRIDE_REASON}"
 spec:
-  displayName: "${display}"
-  # The administrator account has no password until its holder sets one,
-  # through a single-use link the handover issues (afterwards:
-  # kubectl gentian tenants activate-admin).
+  displayName: "User"
+  # The user admin's account has no password until its holder sets one,
+  # through a single-use link the install issues after the handover
+  # (afterwards: kubectl gentian tenants activate-admin ${name}).
   admin:
     requireMFA: true
   isolation:
-    # A namespace per tenant and a realm of its own. The realm is what keeps
-    # this tenant's people apart from the cluster's administrators.
+    # A namespace and a realm of its own. The realm is what keeps this
+    # tenant's people apart from the platform admin's.
     mode: namespace
     keycloakRealm: ${name}
     databasePrefix: ${name}_
@@ -2513,8 +2452,42 @@ kind: Kustomization
 resources:
 - tenant.yaml
 EOF
-    info "Scaffolded clusters/${cluster}/tenants/${name} (the first tenant)"
+    info "Scaffolded clusters/${cluster}/tenants/${name} (the user tenant; admitted after the handover)"
     return 0
+}
+
+# print_roles_summary — who is in charge of what on this cluster, and where
+# each signs in. The closing words of an install, in the terms the docs use:
+# platform admin; user admin (single-tenancy); tenant admin (multi-tenancy).
+print_roles_summary() {
+    local domain="${KERNEL_DOMAIN:-<kernel-domain>}"
+    echo -e "${GREEN}  Who is in charge of what:${NC}"
+    echo -e "${GREEN}    platform admin — in charge of the platform:${NC}"
+    echo -e "${GREEN}      https://platform.${domain}/     admin@${domain}${NC}"
+    echo -e "${GREEN}      A new activation link: ./install.sh --activate-admin${NC}"
+    if [[ "$(gentian_tenancy_mode)" == "single" ]]; then
+        echo -e "${GREEN}    user admin — in charge of the users and the user tenant:${NC}"
+        echo -e "${GREEN}      https://console.${domain}/      user-admin@${domain}${NC}"
+        echo -e "${GREEN}      A new activation link: kubectl gentian tenants activate-admin ${USER_TENANT_NAME}${NC}"
+        echo -e "${GREEN}    This is a single-tenancy cluster: the user tenant is its one tenant for${NC}"
+        echo -e "${GREEN}    users, and https://${domain}/ leads to its desktop.${NC}"
+        if [[ -z "$(gentian_user_tenant)" ]]; then
+            echo -e "${YELLOW}    The user tenant is not in this cluster's definition. As the platform admin:${NC}"
+            echo -e "${YELLOW}      kubectl gentian login && kubectl gentian tenants create ${USER_TENANT_NAME}${NC}"
+        fi
+    else
+        echo -e "${GREEN}    tenant admin — in charge of one tenant and its users; one per tenant.${NC}"
+        echo -e "${GREEN}    This is a multi-tenancy cluster, and the install creates no tenant for users.${NC}"
+        echo -e "${GREEN}    The platform admin creates them in the admin console (Tenants), or with the CLI:${NC}"
+        if ! command -v kubectl-gentian >/dev/null 2>&1; then
+            echo -e "${GREEN}      make -C ${SCRIPT_DIR} install-plugin${NC}"
+        fi
+        echo -e "${GREEN}      kubectl gentian login${NC}"
+        echo -e "${GREEN}      kubectl gentian tenants create <name>${NC}"
+        echo -e "${GREEN}      kubectl gentian tenants activate-admin <name> [--recovery-email <address>]${NC}"
+        echo -e "${GREEN}    A tenant's desktop is https://console.<name>.${domain}/, and https://${domain}/${NC}"
+        echo -e "${GREEN}    asks for an e-mail address and sends each person to theirs.${NC}"
+    fi
 }
 
 # _scaffold_default_profiles <cluster> -- the Gentian Corp entries a vanilla

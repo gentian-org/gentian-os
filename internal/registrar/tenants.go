@@ -136,7 +136,8 @@ func (c *ClusterTenants) facts(t *gentianov1alpha1.Tenant) Tenant {
 //     platform tenant, whose people are the kernel realm's (admin@<kernel>,
 //     not admin@platform.<kernel>);
 //   - otherwise the domain the operator itself resolved for the tenant,
-//     which is <tenant>.<kernel>, or <kernel> under single tenancy. It is
+//     which is <tenant>.<kernel>, or <kernel> for the user tenant of a
+//     single-tenancy cluster. It is
 //     taken from the administrator address the operator reports on the
 //     tenant's status rather than derived again here, so the tenancy mode is
 //     decided once, by the operator, from the claim.

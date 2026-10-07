@@ -345,41 +345,6 @@ check() {
     esac
 }
 
-# _e03_hand_over_first_tenant — the first tenant's administrator account,
-# handed over beside the cluster administrator's and the same way.
-#
-# Only for a tenant the install itself created (gentian_first_tenant), and
-# only once it is Ready: before that its realm or its administrator account
-# may not exist, and E-01 has already said what the tenant is waiting for.
-# The account is another person's, in another realm. Activating it proves
-# nothing about the cluster's write path, so it does not finish the handover,
-# and the screen says so: the tenant was admitted ahead of that proof on the
-# strength of holding nothing, which stops being true once somebody uses it.
-#
-# Assumes portal-login-bootstrap.sh is sourced, as its one caller has done.
-_e03_hand_over_first_tenant() {
-    local tenant
-    tenant="$(gentian_first_tenant)"
-    [[ -n "${tenant}" ]] || return 0
-    echo ""
-    warn "  This cluster's first tenant, ${tenant} — its users sign in here, not above:"
-    warn "  https://console.${tenant}.${KERNEL_DOMAIN:-<kernel-domain>}/"
-    if [[ "$(kubectl get tenant "${tenant}" -o jsonpath='{.status.phase}' 2>/dev/null)" != "Ready" ]]; then
-        warn "  Tenant/${tenant} is not Ready yet, so its administrator account cannot be"
-        warn "  handed over from here. Once it is:"
-        warn "    kubectl gentian tenants activate-admin ${tenant}"
-        return 0
-    fi
-    issue_tenant_admin_activation "${tenant}" "${GENTIAN_FIRST_TENANT_RECOVERY_EMAIL:-}" ||
-        warn "  No activation link could be issued for ${tenant}'s administrator; later: kubectl gentian tenants activate-admin ${tenant}"
-    info "  That is the tenant's administrator, in the tenant's own realm. The sign-in"
-    info "  this install waits for is the cluster administrator's, above: do that one"
-    info "  first, before the tenant is given anything to keep."
-    info "  https://${KERNEL_DOMAIN:-<kernel-domain>}/ leads to ${tenant}'s sign-in while it is the"
-    info "  only tenant; the cluster administrator's console is reached by its own name."
-    return 0
-}
-
 # _wait_for_sign_in — hold the install open while a human signs in.
 #
 # This is the whole reason handover used to take three commands. Everything
@@ -392,7 +357,7 @@ _e03_hand_over_first_tenant() {
 # `./install.sh --only E-03` finishes from. A timeout is the same state.
 _wait_for_sign_in() {
     local timeout="${GENTIAN_HANDOVER_WAIT_SECS:-1800}"
-    local url="https://console.${KERNEL_DOMAIN:-<kernel-domain>}/"
+    local url="https://platform.${KERNEL_DOMAIN:-<kernel-domain>}/"
     local waited=0 interval=10
 
     echo ""
@@ -425,14 +390,15 @@ _wait_for_sign_in() {
     warn "     this cluster cannot be rebuilt as itself, and there is no way"
     warn "     back into OpenBao if its login path ever breaks."
     echo ""
-    # The console's own name has to be PUBLISHED before anyone is sent to it.
+    # The platform desktop's own name has to be PUBLISHED before anyone is
+    # sent to it.
     # Its record appears only once the platform desktop's routes exist and
     # external-dns has run its next cycle, which can be after the activation
     # link is ready -- and a browser that looks the name up in between gets a
     # "does not exist" its resolver (and the router behind it) keeps for the
     # zone's negative TTL, half an hour on Cloudflare. The link worked, the
     # password was set, and the console said "Server Not Found" for 30 minutes.
-    local console_host="console.${KERNEL_DOMAIN:-}" waited=0
+    local console_host="platform.${KERNEL_DOMAIN:-}" waited=0
     if [[ -n "${KERNEL_DOMAIN:-}" ]] && ! gentian_dns_resolves "${console_host}" "${KERNEL_DOMAIN}"; then
         info "  Waiting for ${console_host} to be published in DNS before handing over (up to 10 min)..."
         until gentian_dns_resolves "${console_host}" "${KERNEL_DOMAIN}"; do
@@ -446,7 +412,7 @@ _wait_for_sign_in() {
         done
     fi
 
-    warn "  2. SIGN IN as the cluster administrator"
+    warn "  2. SIGN IN as the platform admin"
     echo ""
 
     # What to sign in with, here, rather than a pointer to it -- and not a
@@ -464,7 +430,6 @@ _wait_for_sign_in() {
         source "${SCRIPT_DIR}/scripts/lib/portal-login-bootstrap.sh"
         issue_platform_admin_activation ||
             warn "  No activation link could be issued; re-run ./install.sh to try again."
-        _e03_hand_over_first_tenant
     fi
     echo ""
 
@@ -625,7 +590,7 @@ apply() {
         warn ""
 
         if (( proven != 0 )); then
-            warn "  Sign in to the portal as the cluster administrator; the sign-in"
+            warn "  Sign in at https://platform.${KERNEL_DOMAIN:-<kernel-domain>}/ as the platform admin; the sign-in"
             warn "  performs the exchange and records it. Then:"
             warn "    ./install.sh --only E-03"
             warn ""

@@ -24,7 +24,7 @@ func TestKeycloakOIDCAncestorOrigins(t *testing.T) {
 		[]string{"demo"},
 	)
 	for _, want := range []string{
-		"https://console.platform.example.test",
+		"https://platform.platform.example.test",
 		"https://id.platform.example.test",
 		"https://*.platform.example.test",
 		"https://*.demo.platform.example.test",

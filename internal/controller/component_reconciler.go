@@ -282,6 +282,14 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 
 	zone := r.zoneOf(tenant)
+	// A host that is the kernel's own, asked for by the user tenant of a
+	// single-tenancy cluster: refused here, before anything is written.
+	if refusal := reservedHostRefusal(comp, profile, zone.zoneNames, r.KernelDomain); refusal != "" {
+		if r.Recorder != nil && !componentReports(comp, "HostReserved", refusal) {
+			r.Recorder.Event(comp, corev1.EventTypeWarning, "HostReserved", refusal)
+		}
+		return r.status(ctx, comp, metav1.ConditionFalse, "HostReserved", refusal, 0)
+	}
 	values := map[string]interface{}{}
 	if profile.Spec.Package.ExtraValues != nil && len(profile.Spec.Package.ExtraValues.Raw) > 0 {
 		if err := decodeJSONObject(profile.Spec.Package.ExtraValues.Raw, &values); err != nil {
@@ -629,14 +637,86 @@ func (r *ComponentReconciler) tenantOf(ctx context.Context, namespace string) (*
 // client, one cookie, one realm (networking.md §4). The platform tenant's
 // zone is the kernel's (AD-10); every other tenant's is its own.
 type edgeZone struct {
-	domain      string // hosts are <subDomain>.<domain>
-	realm       string
-	clientID    string
-	secretName  string // in the edge namespace
-	cookie      string
-	idCookie    string
-	sectionName string // the authenticated Gateway's listener
-	kernel      bool
+	zoneNames
+	realm      string
+	clientID   string
+	secretName string // in the edge namespace
+	cookie     string
+	idCookie   string
+	// sectionName is the authenticated Gateway's listener for the zone's
+	// hosts below its domain. A host directly under the cluster's domain is
+	// on the catch-all listener instead: see listenerFor.
+	sectionName string
+}
+
+// zoneNames is where a zone's hosts are: what the routes, the perimeter
+// listeners and the redirect URIs all have to agree on, and so derived in one
+// place (zoneNamesOf) from the tenant and the cluster's tenancy mode.
+type zoneNames struct {
+	// domain is what the zone's hosts are under: <subDomain>.<domain>.
+	//   platform tenant            platform.<kernel>
+	//   a tenant, tenancy multi    <tenant>.<kernel>, or its custom domain
+	//   the user tenant, single    <kernel> itself
+	domain string
+	// kernel marks the platform tenant's zone, whose session is the kernel
+	// realm's. Its desktop answers on the zone's domain itself --
+	// platform.<kernel>, not console.platform.<kernel> -- and everything else
+	// of it one label below, as admin.platform.<kernel>.
+	kernel bool
+	// apex is where an apex entry answers: the cluster's bare domain, for the
+	// platform tenant, and nowhere for anybody else. Under either tenancy
+	// mode: the concierge is published there on a single-tenancy cluster too,
+	// because every desktop loads the cluster's brand from it, and the edge
+	// sends the front page on to the user tenant's desktop
+	// (kernelFrontDoor).
+	apex string
+}
+
+// zoneNamesOf is where one tenant's hosts are, under this cluster's mode.
+func zoneNamesOf(tenant *gentianov1alpha1.Tenant, kernelDomain, tenancyMode, kernelRealm string) zoneNames {
+	names := zoneNames{domain: tenant.EffectiveDomain(kernelDomain, tenancyMode)}
+	if tenantAdoptsKernelRealm(tenant, kernelRealm) {
+		names.kernel = true
+		names.apex = kernelDomain
+	}
+	return names
+}
+
+// platformDesktopHost is where the platform administrator's desktop answers,
+// on every cluster: platform.<kernel>. The platform tenant's zone is that
+// domain and its desktop is on the zone's own name.
+func platformDesktopHost(kernelDomain string) string {
+	return gentianov1alpha1.PlatformTenantName + "." + kernelDomain
+}
+
+// directlyUnder reports a host that is the domain or exactly one label below
+// it: the names the cluster's own certificate covers and its catch-all
+// listener serves.
+func directlyUnder(host, domain string) bool {
+	if domain == "" {
+		return false
+	}
+	if host == domain {
+		return true
+	}
+	label, ok := strings.CutSuffix(host, "."+domain)
+	return ok && label != "" && !strings.Contains(label, ".")
+}
+
+// listenerFor is the authenticated Gateway's listener a host of this zone is
+// served on, which a route has to name (gateway_platform_reconciler.go).
+//
+// A host directly under the cluster's domain is on the catch-all listener,
+// whose certificate names the domain and one label below it. That is the
+// platform's desktop, platform.<kernel>, and every host of the user tenant of
+// a single-tenancy cluster. Anything deeper is on the zone's own listener,
+// with the zone's own wildcard certificate: admin.platform.<kernel>, and
+// every host of a tenant with a domain of its own.
+func (z edgeZone) listenerFor(host, kernelDomain string) string {
+	if directlyUnder(host, kernelDomain) {
+		return wildcardListenerName
+	}
+	return z.sectionName
 }
 
 // routableExposures are the entries of a profile this component routes on the
@@ -671,21 +751,28 @@ func routableExposures(comp *gentianov1alpha1.Component, profile *gentianov1alph
 }
 
 func (r *ComponentReconciler) zoneOf(tenant *gentianov1alpha1.Tenant) edgeZone {
-	if tenantAdoptsKernelRealm(tenant, r.KernelRealm) {
+	names := zoneNamesOf(tenant, r.KernelDomain, r.TenancyMode, r.KernelRealm)
+	section := tenantGatewayListenerName(tenant.Name)
+	if servedByKernelEdge(names.domain, r.KernelDomain) {
+		// The user tenant of a single-tenancy cluster: no listener of its
+		// own, because *.<kernel> is the catch-all's.
+		section = wildcardListenerName
+	}
+	if names.kernel {
 		return edgeZone{
-			domain: r.KernelDomain, realm: r.kernelRealm(), clientID: edgeKernelClientID,
+			zoneNames: names, realm: r.kernelRealm(), clientID: edgeKernelClientID,
 			secretName: edgeKernelSecretName, cookie: edgeKernelAccessTokenCookie, idCookie: edgeKernelIDTokenCookie,
-			sectionName: wildcardListenerName, kernel: true,
+			sectionName: section,
 		}
 	}
 	return edgeZone{
-		domain:      tenant.EffectiveDomain(r.KernelDomain, r.TenancyMode),
+		zoneNames:   names,
 		realm:       keycloakRealmName(tenant),
 		clientID:    "gentian-edge-" + tenant.Name,
 		secretName:  "edge-" + tenant.Name + "-oidc",
 		cookie:      "gentian-" + tenant.Name + "-access",
 		idCookie:    "gentian-" + tenant.Name + "-id",
-		sectionName: tenantGatewayListenerName(tenant.Name),
+		sectionName: section,
 	}
 }
 
@@ -1001,34 +1088,41 @@ func (r *ComponentReconciler) ensureZonePolicy(ctx context.Context, comp *gentia
 	return nil
 }
 
-// exposureHost is <subDomain>.<zone>, the component's own name when the entry
-// names no subDomain. A desktop's console entry in the kernel zone is
-// console.<kernel> (networking.md §3).
+// exposureHost is where one entry of a component answers in its zone.
 func exposureHost(zone edgeZone, comp *gentianov1alpha1.Component, e *gentianov1alpha1.ExposureSpec) string {
-	return exposureHostIn(zone.domain, zone.kernel, comp.Name, e)
+	return exposureHostIn(zone.zoneNames, comp.Name, e)
 }
 
 // exposureHostIn is where an entry answers: a label under the zone's domain,
 // the entry's own or the component's name.
 //
-// An apex entry answers on the bare domain, and only in the kernel zone. It
-// has no host anywhere else, which is the empty string here and "not
-// published" to every caller: a tenant's bare domain is its own to route.
-func exposureHostIn(domain string, kernelZone bool, component string, e *gentianov1alpha1.ExposureSpec) string {
-	if domain == "" {
+// Two entries are not a label under the domain.
+//
+// The desktop's, in the platform tenant's zone, answers on the zone's domain
+// itself: platform.<kernel> is the platform administrator's desktop, and
+// console.<kernel> is not the platform's at all -- it is the user tenant's
+// desktop on a single-tenancy cluster and an alias of the bare domain on a
+// multi-tenancy one.
+//
+// An apex entry answers on the cluster's bare domain, and only where the zone
+// has it (zoneNames.apex). It has no host anywhere else, which is the empty
+// string here and "not published" to every caller: a tenant's bare domain is
+// its own to route.
+func exposureHostIn(zone zoneNames, component string, e *gentianov1alpha1.ExposureSpec) string {
+	if zone.domain == "" {
 		return ""
 	}
 	if e.Apex {
-		if !kernelZone {
-			return ""
-		}
-		return domain
+		return zone.apex
 	}
 	sub := e.SubDomain
 	if sub == "" {
 		sub = component
 	}
-	return sub + "." + domain
+	if zone.kernel && sub == consoleSubdomain {
+		return zone.domain
+	}
+	return sub + "." + zone.domain
 }
 
 // exposureAuthz is the L2 question a component's routes ask (networking.md
@@ -1076,7 +1170,7 @@ func buildExposureRoute(comp *gentianov1alpha1.Component, name, host string, zon
 	parent := gatewayParentRef(AuthenticatedGatewayName)
 	ns := gatewayv1.Namespace(servicesNamespace)
 	parent.Namespace = &ns
-	section := gatewayv1.SectionName(zone.sectionName)
+	section := gatewayv1.SectionName(zone.listenerFor(host, kernelDomain))
 	parent.SectionName = &section
 	paths := e.Paths
 	if len(paths) == 0 {

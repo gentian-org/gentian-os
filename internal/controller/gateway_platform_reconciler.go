@@ -94,7 +94,7 @@ func (r *GatewayPlatformReconciler) Reconcile(ctx context.Context, _ reconcile.R
 		logger.Error(err, "reconcile kernel HTTPRoutes")
 		return reconcile.Result{RequeueAfter: 30 * time.Second}, err
 	}
-	if err := ensureKernelGatewayTunnelIngress(ctx, r.Client, r.Ingress, r.KernelDomain, r.TenancyMode); err != nil {
+	if err := ensureKernelGatewayTunnelIngress(ctx, r.Client, r.Ingress, r.KernelDomain, r.TenancyMode, r.kernelRealm()); err != nil {
 		logger.Error(err, "ensure kernel Cloudflare tunnel ingress")
 		return reconcile.Result{RequeueAfter: 30 * time.Second}, err
 	}
@@ -242,7 +242,7 @@ func (r *GatewayPlatformReconciler) ensureEdgeGateways(ctx context.Context) erro
 	}
 	ann := edgeDNSAnnotations(r.Ingress)
 	for _, desired := range []*gatewayv1.Gateway{
-		buildAuthenticatedGateway(r.KernelDomain, r.TenancyMode, zonedTenants(tenantList.Items, r.kernelRealm())),
+		buildAuthenticatedGateway(r.KernelDomain, r.TenancyMode, tenantList.Items),
 		buildPerimeterGateway(r.KernelDomain, r.TenancyMode, r.kernelRealm(), tenantList.Items, profiles),
 	} {
 		if len(ann) > 0 {
@@ -313,20 +313,20 @@ func perimeterTenantListeners(kernelDomain, tenancyMode, kernelRealm string, ten
 		if tenant.DeletionTimestamp != nil {
 			continue
 		}
-		// The platform tenant's zone is the kernel's: its domain is the
-		// cluster's own and its certificate the kernel's, which names the
-		// bare domain as well as everything under it.
-		kernelZone := tenantAdoptsKernelRealm(tenant, kernelRealm)
-		domain := tenant.EffectiveDomain(kernelDomain, tenancyMode)
-		secret, secretNamespace := tenantWildcardSecretName(tenant.Name), tenantNamespaceName(tenant)
-		if kernelZone {
-			domain = kernelDomain
-			secret, secretNamespace = kernelWildcardTLSSecretName, servicesNamespace
-		}
+		zone := zoneNamesOf(tenant, kernelDomain, tenancyMode, kernelRealm)
 		for j := range tenant.Spec.Exposures {
-			host := publishedHost(&tenant.Spec.Exposures[j], profiles, domain, kernelZone)
+			host := publishedHost(&tenant.Spec.Exposures[j], profiles, zone)
 			if host == "" {
 				continue
+			}
+			// The certificate that names the host. One directly under the
+			// cluster's domain, or that domain itself, is on the cluster's
+			// own: the bare domain the platform tenant publishes, and every
+			// host of the user tenant of a single-tenancy cluster. Anything
+			// deeper is on the tenant's wildcard.
+			secret, secretNamespace := tenantWildcardSecretName(tenant.Name), tenantNamespaceName(tenant)
+			if directlyUnder(host, kernelDomain) {
+				secret, secretNamespace = kernelWildcardTLSSecretName, servicesNamespace
 			}
 			if _, dup := seen[host]; dup {
 				continue
@@ -352,7 +352,7 @@ func perimeterTenantListeners(kernelDomain, tenancyMode, kernelRealm string, ten
 // behind it serves nothing -- the proxy and the route are what the operator
 // takes down at expiry -- and keeping it means a renewal does not have to
 // wait for the Gateway to be reprogrammed before the link works again.
-func publishedHost(e *gentianov1alpha1.TenantExposure, profiles map[string]*gentianov1alpha1.ComponentProfile, domain string, kernelZone bool) string {
+func publishedHost(e *gentianov1alpha1.TenantExposure, profiles map[string]*gentianov1alpha1.ComponentProfile, zone zoneNames) string {
 	profile := profiles[e.Install]
 	if profile == nil {
 		return ""
@@ -360,7 +360,7 @@ func publishedHost(e *gentianov1alpha1.TenantExposure, profiles map[string]*gent
 	for i := range profile.Spec.Expose {
 		entry := &profile.Spec.Expose[i]
 		if entry.Name == e.ExposureName && entry.Surface == gentianov1alpha1.SurfacePerimeter {
-			return exposureHostIn(domain, kernelZone, e.Install, entry)
+			return exposureHostIn(zone, e.Install, entry)
 		}
 	}
 	return ""
@@ -377,22 +377,12 @@ func perimeterListenerName(host string) string {
 	return "perimeter-" + hex.EncodeToString(sum[:])[:16]
 }
 
-// zonedTenants are the tenants that get a listener of their own on the
-// authenticated Gateway. A tenant that adopts the kernel realm and installs
-// no catalogue apps has nothing to serve there: its components are in the
-// kernel zone, on the catch-all listener, and a listener for it would only
-// sit invalid, waiting for a certificate nobody requests.
-func zonedTenants(tenants []gentianov1alpha1.Tenant, kernelRealm string) []gentianov1alpha1.Tenant {
-	out := make([]gentianov1alpha1.Tenant, 0, len(tenants))
-	for i := range tenants {
-		if tenantAdoptsKernelRealm(&tenants[i], kernelRealm) && len(tenants[i].Spec.Apps) == 0 {
-			continue
-		}
-		out = append(out, tenants[i])
-	}
-	return out
-}
-
+// buildAuthenticatedGateway is the edge behind a session: the catch-all
+// listener with the cluster's own certificate, and a listener per tenant whose
+// hosts are deeper than one label under the cluster's domain. That is every
+// tenant with a domain of its own, and the platform tenant, whose consoles
+// are at <label>.platform.<kernel>. It is not the user tenant of a
+// single-tenancy cluster: its hosts are the catch-all's.
 func buildAuthenticatedGateway(kernelDomain, tenancyMode string, tenants []gentianov1alpha1.Tenant) *gatewayv1.Gateway {
 	// No apex listener. The catch-all HTTPS listener already serves gtn.host —
 	// the kernel certificate carries it alongside *.gtn.host — and a separate
@@ -447,7 +437,7 @@ const (
 // own certificate for its subdomains. There is no apex variant: the tenant apex
 // is covered by the kernel certificate and served by the catch-all listener.
 // servedByKernelEdge reports a tenant whose domain is the kernel domain: the
-// platform tenant under TENANCY_MODE=single. The kernel's catch-all listener,
+// user tenant of a single-tenancy cluster. The kernel's catch-all listener,
 // certificate and DNS already cover every name under it, so the tenant gets
 // none of its own -- a *.<kernel> tenant listener would be the more specific
 // match for kernel hosts too, and route them nowhere.

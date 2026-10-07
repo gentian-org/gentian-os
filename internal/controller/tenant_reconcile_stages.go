@@ -273,7 +273,15 @@ func (r *TenantReconciler) reconcileTenantStagePreflight(ctx context.Context, st
 		return ctrl.Result{}, nil
 	}
 
-	if err := tenancy.EnforceSingle(ctx, r.Client, r.TenancyMode, tenant); err != nil {
+	// A tenant a single-tenancy cluster may not carry: one the webhook would
+	// have refused, here because the mode was changed from multi under it or
+	// because it was written while the webhook was away. Nothing it has is
+	// touched -- its namespaces, its data and its routes stay as they are --
+	// but nothing more is provisioned for it, and its status says why for as
+	// long as that is so.
+	if err := tenancy.EnforceSingle(r.TenancyMode, r.KernelRealm, tenant); err != nil {
+		log.FromContext(ctx).Error(err, "tenant refused by the cluster's tenancy mode; nothing of it is removed and nothing more is provisioned",
+			"tenant", tenant.Name)
 		r.setCondition(tenant, conditionAppsReady, metav1.ConditionFalse, "TenancyConstraint", err.Error())
 		tenant.Status.Phase = gentianov1alpha1.TenantPhaseDegraded
 		state.blocked = true

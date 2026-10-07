@@ -284,7 +284,7 @@ func TestTheAppClaimCarriesThePullSecrets(t *testing.T) {
 	comp.Spec.ProfileRef.Name = "vendor-app"
 	c := fake.NewClientBuilder().WithScheme(scheme).Build()
 	r := &ComponentReconciler{Client: c, Scheme: scheme}
-	zone := edgeZone{domain: "acme.k.example"}
+	zone := edgeZone{zoneNames: zoneNames{domain: "acme.k.example"}}
 
 	pull := pullSecrets{
 		images: []string{"repository-vendor-apps-pull"},

@@ -21,22 +21,34 @@ package v1alpha1
 import "strings"
 
 const (
-	// TenancyModeMulti is the default: many tenants on one cluster; app URLs use
-	// {sub}.{tenant}.{kernelDomain} unless a TenantDomain binds a custom domain.
+	// TenancyModeMulti is the default: the platform tenant plus any number of
+	// user tenants, each at {label}.{tenant}.{kernelDomain} unless a
+	// TenantDomain binds a custom domain.
 	TenancyModeMulti = "multi"
 
-	// TenancyModeSingle is an older arrangement: the platform tenant is the
-	// only tenant, with flat URLs on {sub}.{kernelDomain}. It is not what a
-	// single-tenant cluster is -- that is the platform tenant plus exactly one
-	// user tenant, under TenancyModeMulti, and nothing selects it.
+	// TenancyModeSingle is a cluster for one organisation: the platform
+	// tenant plus exactly one user tenant, named SingleUserTenantName, which
+	// lives on the cluster's own addresses -- {label}.{kernelDomain}, with no
+	// tenant name in between. A second user tenant is refused.
 	TenancyModeSingle = "single"
 
-	// SingleTenantName is the one Tenant a single-tenancy cluster carries: the
-	// platform tenant every install scaffolds, whose realm is the kernel realm.
-	// The organisation that owns the cluster is its platform, so its people
-	// are the kernel realm's and its apps are the platform's, on the kernel
-	// domain. A second tenant beside it would want the same hosts.
-	SingleTenantName = "platform"
+	// PlatformTenantName is the tenant every install scaffolds for the
+	// cluster's administrators: the one that adopts the kernel realm. It is
+	// in every cluster under either mode and is never counted as a user
+	// tenant. Its desktop is {PlatformTenantName}.{kernelDomain} and its
+	// other components one label below that.
+	PlatformTenantName = "platform"
+
+	// SingleUserTenantName is the one user tenant of a single-tenancy
+	// cluster. Under TenancyModeMulti it is an ordinary tenant name.
+	SingleUserTenantName = "user"
+
+	// SingleUserAdminLocalPart is the local part of the administrator of a
+	// tenant whose domain is the cluster's own. The platform administrator is
+	// admin@{kernelDomain} in the kernel realm, and its password derivation
+	// and recovery depend on that name; the user tenant's administrator has
+	// an address on the same domain and must not be the same one.
+	SingleUserAdminLocalPart = "user-admin"
 )
 
 // NormalizeTenancyMode returns TenancyModeSingle or TenancyModeMulti.
@@ -45,6 +57,14 @@ func NormalizeTenancyMode(mode string) string {
 		return TenancyModeSingle
 	}
 	return TenancyModeMulti
+}
+
+// OnClusterDomain reports whether this tenant's base domain is the cluster's
+// own under the given mode: the one user tenant of a single-tenancy cluster,
+// and nobody else. The platform tenant is never it, whatever the mode.
+func (t *Tenant) OnClusterDomain(tenancyMode string) bool {
+	return t != nil && t.Name == SingleUserTenantName &&
+		NormalizeTenancyMode(tenancyMode) == TenancyModeSingle
 }
 
 // NamespaceName is the namespace a tenant's workloads run in.

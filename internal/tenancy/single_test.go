@@ -11,39 +11,62 @@ SPDX-License-Identifier: MPL-2.0
 package tenancy
 
 import (
-	"context"
+	"errors"
+	"strings"
 	"testing"
-
-	"k8s.io/apimachinery/pkg/runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
-func tenantNamed(name string) *gentianov1alpha1.Tenant {
+func tenantNamed(name, realm string) *gentianov1alpha1.Tenant {
 	t := &gentianov1alpha1.Tenant{}
 	t.Name = name
+	if realm != "" {
+		t.Spec.Isolation = &gentianov1alpha1.TenantIsolation{KeycloakRealm: realm}
+	}
 	return t
 }
 
-// A single-tenant cluster carries the platform tenant every install makes,
-// and nothing beside it; a multi-tenant cluster is not limited here at all.
-func TestASingleTenantClusterCarriesOnlyThePlatformTenant(t *testing.T) {
-	ctx := context.Background()
-	s := runtime.NewScheme()
-	if err := gentianov1alpha1.AddToScheme(s); err != nil {
-		t.Fatal(err)
-	}
-	platform := tenantNamed(gentianov1alpha1.SingleTenantName)
-	c := fake.NewClientBuilder().WithScheme(s).WithObjects(platform).Build()
+// A single-tenancy cluster carries the platform tenant and exactly one user
+// tenant, named user. The platform tenant is not counted under either mode,
+// and a multi-tenancy cluster is not limited here at all.
+func TestSingleTenancyAdmitsThePlatformTenantAndTheOneUserTenant(t *testing.T) {
+	single, multi := gentianov1alpha1.TenancyModeSingle, gentianov1alpha1.TenancyModeMulti
+	platform := tenantNamed("platform", "kernel")
 
-	if err := EnforceSingle(ctx, c, gentianov1alpha1.TenancyModeSingle, platform); err != nil {
-		t.Fatalf("the platform tenant was refused: %v", err)
+	if err := EnforceSingle(single, "kernel", platform); err != nil {
+		t.Fatalf("the platform tenant was refused under single: %v", err)
 	}
-	if err := EnforceSingle(ctx, c, gentianov1alpha1.TenancyModeSingle, tenantNamed("acme")); err == nil {
-		t.Fatal("a second tenant was admitted")
+	if err := EnforceSingle(single, "kernel", tenantNamed("user", "")); err != nil {
+		t.Fatalf("the one user tenant was refused under single: %v", err)
 	}
-	if err := EnforceSingle(ctx, c, gentianov1alpha1.TenancyModeMulti, tenantNamed("acme")); err != nil {
-		t.Fatalf("multi tenancy refused a tenant: %v", err)
+	// The platform tenant is known by its realm, not its name, and an empty
+	// kernel realm means the default one.
+	if err := EnforceSingle(single, "", tenantNamed("ops", "kernel")); err != nil {
+		t.Fatalf("a platform tenant of another name was refused: %v", err)
+	}
+
+	err := EnforceSingle(single, "kernel", tenantNamed("acme", ""))
+	if err == nil {
+		t.Fatal("a second user tenant was admitted under single")
+	}
+	if !errors.Is(err, ErrSingleTenancy) {
+		t.Fatalf("the refusal does not wrap ErrSingleTenancy: %v", err)
+	}
+	for _, want := range []string{"tenancy mode is single", `"user"`, `"acme"`, "tenancyMode: multi"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	// A tenant named platform that does not adopt the kernel realm is a user
+	// tenant like any other, and is not the one a single cluster carries.
+	if err := EnforceSingle(single, "kernel", tenantNamed("platform", "")); err == nil {
+		t.Fatal("a user tenant named platform was admitted under single")
+	}
+
+	for _, name := range []string{"acme", "user", "beta"} {
+		if err := EnforceSingle(multi, "kernel", tenantNamed(name, "")); err != nil {
+			t.Fatalf("multi tenancy refused tenant %s: %v", name, err)
+		}
 	}
 }

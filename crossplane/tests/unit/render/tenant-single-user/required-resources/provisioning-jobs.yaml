@@ -1,0 +1,61 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: tenant-user-provisioning-jobs
+  namespace: platform-kernel
+  labels:
+    gentianos.io/config-type: tenant-provisioning-jobs
+    gentianos.io/tenant: user
+data:
+  jobs.json: |
+    [
+      {
+        "apiVersion": "batch/v1",
+        "kind": "Job",
+        "metadata": {
+          "name": "keycloak-realm-user",
+          "namespace": "platform-kernel",
+          "labels": {
+            "gentianos.io/tenant": "user"
+          }
+        },
+        "spec": {
+          "template": {
+            "spec": {
+              "restartPolicy": "Never",
+              "containers": [
+                {
+                  "name": "provision",
+                  "image": "ghcr.io/gentian-org/gentian-app-init:develop"
+                }
+              ]
+            }
+          }
+        }
+      },
+      {
+        "apiVersion": "batch/v1",
+        "kind": "Job",
+        "metadata": {
+          "name": "keycloak-admin-user",
+          "namespace": "platform-kernel",
+          "labels": {
+            "gentianos.io/tenant": "user"
+          }
+        },
+        "spec": {
+          "template": {
+            "spec": {
+              "restartPolicy": "Never",
+              "containers": [
+                {
+                  "name": "provision",
+                  "image": "ghcr.io/gentian-org/gentian-app-init:develop"
+                }
+              ]
+            }
+          }
+        }
+      }
+    ]
+  objects.json: "[]"

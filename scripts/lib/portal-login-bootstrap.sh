@@ -1764,7 +1764,7 @@ install_portal_login() {
     configure_argocd_oidc
 
     success "The kernel realm can be signed in to."
-    info "  https://console.${KERNEL_DOMAIN}/  (once the platform desktop is Ready)"
+    info "  https://platform.${KERNEL_DOMAIN}/  (once the platform desktop is Ready)"
     info "  user: admin@${KERNEL_DOMAIN} — activated through the link the handover issues"
 }
 
@@ -1922,21 +1922,27 @@ issue_platform_admin_activation() {
 # issue_tenant_admin_activation <tenant> [recovery-email] — a tenant
 # administrator's account, in the tenant's own realm.
 #
-# For the first tenant, which the install created: after that, and for every
-# other tenant, the registrar issues these (kubectl gentian tenants
-# activate-admin), as the person who asked. The realm and the login are the
-# operator's: a tenant's realm carries its name unless its manifest says
-# otherwise, and its administrator's login is the address the operator reports
-# on the tenant's status, which is on the tenant's custom domain when it has
-# one.
+# For the user tenant of a single-tenancy cluster, which the install creates
+# after the handover (E-04): for every other tenant, and for this one later,
+# the registrar issues these (kubectl gentian tenants activate-admin), as the
+# person who asked. The realm and the login are the operator's: a tenant's
+# realm carries its name unless its manifest says otherwise, and its
+# administrator's login is the address the operator reports on the tenant's
+# status -- on the tenant's custom domain when it has one, and
+# user-admin@<kernel-domain> for the tenant that lives on the cluster's own
+# domain, where admin@ is the platform admin's. No login is guessed: a tenant
+# whose status names none yet has no account to hand over.
 issue_tenant_admin_activation() {
     local tenant="$1" email="${2:-}" realm username
     realm="$(kubectl get tenant "${tenant}" -o jsonpath='{.spec.isolation.keycloakRealm}' 2>/dev/null || true)"
     realm="${realm:-${tenant}}"
     username="$(kubectl get tenant "${tenant}" -o jsonpath='{.status.adminEmail}' 2>/dev/null || true)"
     case "${username}" in
-        ""|*.invalid) username="admin@${tenant}.${KERNEL_DOMAIN:?}" ;;
+        ""|*.invalid)
+            warn "  Tenant/${tenant} does not report its administrator's login yet (status.adminEmail)."
+            return 1 ;;
     esac
+    info "  User: ${username}"
     issue_admin_activation "${realm}" "${username}" "$(tenant_admin_requires_mfa "${tenant}")" \
         "${email}" "kubectl gentian tenants activate-admin ${tenant}"
 }
@@ -1945,8 +1951,8 @@ print_portal_login_summary() {
     local kernel_domain="${KERNEL_DOMAIN:-}"
     [[ -n "${kernel_domain}" ]] || return 0
     echo ""
-    echo -e "${GREEN}  Platform console (cluster admin):${NC}"
-    echo -e "${GREEN}    URL      : https://console.${kernel_domain}/${NC}"
+    echo -e "${GREEN}  Platform desktop (the platform admin):${NC}"
+    echo -e "${GREEN}    URL      : https://platform.${kernel_domain}/${NC}"
     echo -e "${GREEN}    User     : admin@${kernel_domain}${NC}"
     echo -e "${GREEN}    Password : set by its holder through the activation link — never stored or printed${NC}"
     echo -e "${GREEN}    OIDC     : https://id.${kernel_domain}/auth/realms/${KERNEL_REALM:-kernel}${NC}"

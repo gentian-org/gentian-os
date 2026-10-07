@@ -11,11 +11,14 @@ stage: dev
 # Plumbed as KERNEL_DOMAIN. See docs/design/multi-tenancy.md §3.
 kernelDomain: ""
 
-# tenancyMode controls tenant app URL shape (unless a TenantDomain binds a custom domain):
-#   multi  — {sub}.{tenant}.{kernelDomain} (default, shared cluster)
-#   single — {sub}.{kernelDomain}; the platform tenant is the only tenant and no tenant for users is
-#            admitted. A cluster for one organisation is multi with one user tenant, not this.
-# Plumbed as TENANCY_MODE.
+# tenancyMode is who the cluster is for, and with it where a user tenant's hosts are
+# (unless a TenantDomain binds a custom domain):
+#   multi  — the platform tenant plus any number of user tenants, each at
+#            {label}.{tenant}.{kernelDomain} (default, shared cluster)
+#   single — the platform tenant plus exactly one user tenant, named user, at
+#            {label}.{kernelDomain}; any other user tenant is refused
+# The platform tenant's desktop is platform.{kernelDomain} under either.
+# Plumbed as TENANCY_MODE; the Cluster claim's spec.tenancyMode wins once it is published.
 tenancyMode: multi
 
 # mailServiceMode is the cluster's mail stack — kernel or external — from the

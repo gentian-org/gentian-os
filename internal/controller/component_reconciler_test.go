@@ -37,9 +37,10 @@ func acmeTenantFixture() *gentianov1alpha1.Tenant {
 	return t
 }
 
-// The platform tenant's desktop is the console, in the kernel zone: kernel
-// realm, the kernel zone's client and cookie, a host on the kernel domain
-// (AD-10). Every other tenant's desktop is in that tenant's own zone.
+// The platform tenant's desktop is in the kernel zone: kernel realm, the
+// kernel zone's client and cookie (AD-10), at platform.<kernel>, with its
+// other components one label below. Every other tenant's desktop is in that
+// tenant's own zone, at console.<its domain>.
 func TestTheDesktopsZoneFollowsTheTenantsRealm(t *testing.T) {
 	r := &ComponentReconciler{KernelDomain: "k.example", KernelRealm: "kernel", TenancyMode: "multi"}
 	comp := &gentianov1alpha1.Component{}
@@ -50,8 +51,8 @@ func TestTheDesktopsZoneFollowsTheTenantsRealm(t *testing.T) {
 	if !platform.kernel || platform.clientID != edgeKernelClientID || platform.cookie != edgeKernelAccessTokenCookie || platform.realm != "kernel" {
 		t.Fatalf("platform zone = %+v", platform)
 	}
-	if got := exposureHost(platform, comp, e); got != "console.k.example" {
-		t.Fatalf("platform console host = %q", got)
+	if got := exposureHost(platform, comp, e); got != "platform.k.example" {
+		t.Fatalf("platform desktop host = %q", got)
 	}
 	acme := r.zoneOf(acmeTenantFixture())
 	if acme.kernel || acme.clientID != "gentian-edge-acme" || acme.realm != "acme" || acme.sectionName != tenantGatewayListenerName("acme") {
@@ -178,7 +179,7 @@ func TestAProfileThatAsksForNothingGetsNothing(t *testing.T) {
 func TestAComponentRouteCarriesItsQuestion(t *testing.T) {
 	comp := &gentianov1alpha1.Component{}
 	comp.Name, comp.Namespace = "desktop", "tenant-platform"
-	zone := edgeZone{domain: "k.example", realm: "kernel", cookie: edgeKernelAccessTokenCookie, idCookie: edgeKernelIDTokenCookie, sectionName: wildcardListenerName, kernel: true}
+	zone := edgeZone{zoneNames: zoneNames{domain: "platform.k.example", kernel: true, apex: "k.example"}, realm: "kernel", cookie: edgeKernelAccessTokenCookie, idCookie: edgeKernelIDTokenCookie, sectionName: tenantGatewayListenerName("platform")}
 	e := &gentianov1alpha1.ExposureSpec{
 		Name: "api", Surface: gentianov1alpha1.SurfaceGateway, AuthMode: gentianov1alpha1.AuthModeOIDC,
 		SubDomain: "console", Paths: []string{"/api", "/healthz"}, ForwardToken: true,
@@ -243,7 +244,7 @@ func TestAComponentRouteCarriesItsQuestion(t *testing.T) {
 func TestDenyPathsReachTheTableAndAreUnionedPerHost(t *testing.T) {
 	comp := &gentianov1alpha1.Component{}
 	comp.Name, comp.Namespace = "odoo", "tenant-acme"
-	zone := edgeZone{domain: "k.example", cookie: edgeKernelAccessTokenCookie, sectionName: wildcardListenerName}
+	zone := edgeZone{zoneNames: zoneNames{domain: "k.example"}, cookie: edgeKernelAccessTokenCookie, sectionName: wildcardListenerName}
 	build := func(name, sub string, deny []string) *gatewayv1.HTTPRoute {
 		e := &gentianov1alpha1.ExposureSpec{
 			Name: name, Surface: gentianov1alpha1.SurfaceGateway, AuthMode: gentianov1alpha1.AuthModeOIDC,
@@ -290,7 +291,7 @@ func TestDenyPathsReachTheTableAndAreUnionedPerHost(t *testing.T) {
 // A policy in a component's namespace names the edge namespace for the
 // zone's Secret and the bouncer, which the ReferenceGrant there admits.
 func TestAZonePolicyOutsideTheEdgeNamesIt(t *testing.T) {
-	zone := edgeZone{domain: "k.example", realm: "kernel", clientID: edgeKernelClientID, secretName: edgeKernelSecretName, cookie: "c", idCookie: "i"}
+	zone := edgeZone{zoneNames: zoneNames{domain: "platform.k.example", kernel: true}, realm: "kernel", clientID: edgeKernelClientID, secretName: edgeKernelSecretName, cookie: "c", idCookie: "i"}
 	spec := zoneSecurityPolicySpec("k.example", zone, "desktop-api", routeAuthz{forwardToken: true}, "kernel-edge", "gentian-os-bouncer")
 	// The secret is read from the policy's own namespace and no other
 	// (Envoy Gateway 1.2), so it is named without one and copied beside

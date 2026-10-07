@@ -16,7 +16,7 @@ import (
 )
 
 // keycloakOIDCAncestorOrigins builds space-separated https origins for the
-// Keycloak HTTPRoute frame-ancestors policy: the platform console plus, per tenant
+// Keycloak HTTPRoute frame-ancestors policy: the platform desktop plus, per tenant
 // effective domain, a tenant wildcard and explicit OIDC app ingress hosts
 // discovered from installed AppProfiles (see collectOIDCIngressSubdomainsByTenant).
 func keycloakOIDCAncestorOrigins(
@@ -40,7 +40,7 @@ func keycloakOIDCAncestorOrigins(
 		seen[origin] = struct{}{}
 		origins = append(origins, origin)
 	}
-	add("https://" + consoleHost(kernelDomain))
+	add("https://" + platformDesktopHost(kernelDomain))
 	add(fmt.Sprintf("https://id.%s", kernelDomain))
 	add(fmt.Sprintf("https://*.%s", kernelDomain))
 	for i, effective := range tenantEffectiveDomains {

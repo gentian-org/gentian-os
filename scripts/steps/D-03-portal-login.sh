@@ -2,7 +2,7 @@
 # step: D-03-portal-login
 # phase: applications
 # requires: D-02-dns-wait
-# provides: the kernel realm with its clients and the administrator user, Argo CD and Headlamp signing in against it, the platform tenant Ready and its desktop serving console.<kernel>
+# provides: the kernel realm with its clients and the administrator user, Argo CD and Headlamp signing in against it, the platform tenant Ready and its desktop serving platform.<kernel>
 # mutates: Keycloak realm, clients, groups and users; Secrets in the edge and gitops namespaces; the argocd-cm, argocd-rbac-cm and argocd-tls-certs-cm ConfigMaps (Argo CD's local admin off); the argocd-initial-admin-secret (deleted); the bootstrap Applications (Headlamp's OIDC on); the gentian-portal Application
 
 # _v5_render is B-01's; a step file is a library of verbs and sourcing another
@@ -82,8 +82,8 @@ check() {
     # route (never an open one).
     kubectl get secret edge-kernel-oidc -n "${EDGE_NAMESPACE}" >/dev/null 2>&1 || return "${CHECK_MISSING}"
     [[ "$(kubectl get securitypolicy sp-kernel-argocd -n "${EDGE_NAMESPACE}" -o jsonpath='{.status.ancestors[0].conditions[?(@.type=="Accepted")].status}' 2>/dev/null)" == "True" ]] || return "${CHECK_MISSING}"
-    # The platform's desktop: a component of the platform tenant, the console
-    # at console.<kernel> behind the kernel session. Ready means its chart is
+    # The platform's desktop: a component of the platform tenant, at
+    # platform.<kernel> behind the kernel session. Ready means its chart is
     # deployed and its routes exist -- the chart the profile pins, not an
     # earlier one still deployed under a moving version.
     [[ "$(kubectl get component desktop -n tenant-platform -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null)" == "True" ]] || return "${CHECK_MISSING}"
@@ -188,9 +188,9 @@ apply() {
     # profile once the zone exists and its credentials are delivered; the
     # chart comes from the registry the profile names. Both, because waiting
     # for the desktop alone let the install finish while the console's
-    # release had been refused, and the first sign was a 500 at admin.<kernel>.
-    _d03_wait_component desktop "${desktop_chart_version}" "console.${KERNEL_DOMAIN}" || return 1
-    _d03_wait_component admin-console "${admin_console_chart_version}" "admin.${KERNEL_DOMAIN}" || return 1
+    # release had been refused, and the first sign was a 500 at the admin console's address.
+    _d03_wait_component desktop "${desktop_chart_version}" "platform.${KERNEL_DOMAIN}" || return 1
+    _d03_wait_component admin-console "${admin_console_chart_version}" "admin.platform.${KERNEL_DOMAIN}" || return 1
 }
 
 # _d03_wait_component <component> <chart-version> <host> — a platform-tenant

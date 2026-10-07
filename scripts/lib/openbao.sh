@@ -517,7 +517,7 @@ _resolve_bao_token() {
 
     if command -v bao >/dev/null 2>&1 && [[ -n "${BAO_ADDR:-}" ]]; then
         info "No OpenBao token available; trying an OIDC sign-in as cluster-admin..."
-        info "  A browser should open. Sign in as the cluster administrator."
+        info "  A browser should open. Sign in as the platform admin."
         # -token-only: the token and nothing else on stdout (no verification
         # banner, no wrapping details), and it is not written to the local
         # token helper file — this shell carries it as BAO_TOKEN like every

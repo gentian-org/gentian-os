@@ -23,6 +23,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/tenancy"
 )
 
 // Bringing a tenant on and retiring one, as commits.
@@ -40,22 +41,32 @@ import (
 // ErrTenantExists is a create against a name the cluster already has.
 var ErrTenantExists = errors.New("tenant already exists")
 
-// ErrSingleTenancy is a new tenant on a cluster whose tenancy mode is single:
-// its one tenant is the platform tenant, which the install already made.
-var ErrSingleTenancy = errors.New("this cluster's tenancyMode is single: the platform tenant is its only tenant, and it admits no other")
+// ErrSingleTenancy is a tenant a single-tenancy cluster may not carry: the
+// operator's own refusal (internal/tenancy), so the director, the webhook
+// and the reconciler say the same sentence about the same rule.
+var ErrSingleTenancy = tenancy.ErrSingleTenancy
 
-// refuseInSingleTenancy answers ErrSingleTenancy under tenancyMode single,
-// before anything is committed: the operator would refuse the tenant too,
-// but only once git already held it.
-func (g *GitOps) refuseInSingleTenancy(ctx context.Context) error {
+// ErrSingleRefused is tenancyMode set to single on a cluster that carries
+// more tenants than a single-tenancy cluster may.
+var ErrSingleRefused = errors.New("tenancyMode cannot be set to single")
+
+// refuseInSingleTenancy answers ErrSingleTenancy for a tenant of this name
+// under tenancyMode single, before anything is committed: the operator would
+// refuse the tenant too, but only once git already held it.
+//
+// A single-tenancy cluster carries the platform tenant and exactly one user
+// tenant, whose name is fixed. So the one name is admitted -- whether it
+// exists already is the caller's next question -- and every other is the
+// second user tenant, and is refused.
+func (g *GitOps) refuseInSingleTenancy(ctx context.Context, name string) error {
 	settings, err := g.ClusterSettingValues(ctx)
 	if err != nil && !errors.Is(err, ErrNoClusterClaim) {
 		return err
 	}
-	if gentianov1alpha1.NormalizeTenancyMode(settings["tenancyMode"]) == gentianov1alpha1.TenancyModeSingle {
-		return ErrSingleTenancy
+	if gentianov1alpha1.NormalizeTenancyMode(settings["tenancyMode"]) != gentianov1alpha1.TenancyModeSingle {
+		return nil
 	}
-	return nil
+	return tenancy.SingleRefusal(name)
 }
 
 // ErrPlatformTenant is an app or an add-on asked for in the platform tenant.
@@ -166,8 +177,9 @@ const PlatformTenant = platformTenant
 // The custom domain when a TenantDomain beside its manifest binds one. The kernel domain for
 // a tenant that adopts another realm -- the platform tenant, whose people are
 // the kernel realm's administrators (admin@<kernel>, not
-// admin@platform.<kernel>) -- and under single tenancy, where the one tenant
-// is the cluster. Otherwise <tenant>.<kernel>, the operator's default.
+// admin@platform.<kernel>) -- and for the user tenant of a single-tenancy
+// cluster, which lives on the cluster's own domain. Otherwise
+// <tenant>.<kernel>, the operator's default.
 func (g *GitOps) TenantLoginDomain(ctx context.Context, tenant string) (string, error) {
 	if !ValidName(tenant) {
 		return "", fmt.Errorf("%w: tenant %q", ErrInvalidName, tenant)
@@ -206,8 +218,12 @@ func (g *GitOps) TenantLoginDomain(ctx context.Context, tenant string) (string, 
 	if realm := doc.Spec.Isolation.KeycloakRealm; realm != "" && realm != tenant {
 		return kernel, nil
 	}
+	// The user tenant of a single-tenancy cluster: its domain is the
+	// cluster's own (Tenant.EffectiveDomain). Its people share the domain
+	// with the platform's and not the realm.
 	settings, err := g.ClusterSettingValues(ctx)
-	if err == nil && settings["tenancyMode"] == "single" {
+	if err == nil && tenant == gentianov1alpha1.SingleUserTenantName &&
+		gentianov1alpha1.NormalizeTenancyMode(settings["tenancyMode"]) == gentianov1alpha1.TenancyModeSingle {
 		return kernel, nil
 	}
 	return tenant + "." + kernel, nil
@@ -317,7 +333,7 @@ func (g *GitOps) CreateTenant(ctx context.Context, req NewTenant, meta Meta) (Re
 	if !ValidName(req.Name) {
 		return Result{}, fmt.Errorf("%w: tenant %q", ErrInvalidName, req.Name)
 	}
-	if err := g.refuseInSingleTenancy(ctx); err != nil {
+	if err := g.refuseInSingleTenancy(ctx, req.Name); err != nil {
 		return Result{}, err
 	}
 	g.mu.Lock()
@@ -495,9 +511,8 @@ func tenantManifest(name, display string, requireMFA bool) string {
 	return fmt.Sprintf(`# Tenant %s, brought on through the director.
 #
 # Argo CD syncs this file and the operator does the rest: the Keycloak realm,
-# the namespaces, the database, and the desktop at console.<kernel>. Nothing
-# about the tenant exists until this file does, and editing it is how it
-# changes.
+# the namespaces, the database, and the tenant's desktop. Nothing about the
+# tenant exists until this file does, and editing it is how it changes.
 apiVersion: gentianos.io/v1alpha1
 kind: Tenant
 metadata:
