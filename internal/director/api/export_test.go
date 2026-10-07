@@ -25,3 +25,10 @@ func SetImportPoll(d time.Duration) (restore func()) {
 	importPoll = d
 	return func() { importPoll = old }
 }
+
+// SetResiduePoll shortens the wait between two requests to delete a profile
+// that has left git.
+func SetResiduePoll(d time.Duration) (restore func()) {
+	old := residuePoll.Swap(int64(d))
+	return func() { residuePoll.Store(old) }
+}

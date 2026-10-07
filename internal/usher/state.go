@@ -86,6 +86,12 @@ func (s *Server) stateRoutes() {
 		// report. The operator's answer, like the rest: it is the one that
 		// sends.
 		s.guarded("GET /v1/clusters/{c}/licence-report", "can_audit", clusterObject, s.relayCluster("/v1/licence-report"))
+		// What the catalogue left behind: objects a profile's bundle once
+		// brought and no bundle owns now, and profiles nobody uses. They are
+		// the cluster's and no tenant's -- most have no namespace -- so the
+		// read is the platform's, under can_audit. Removing one is the
+		// director's command.
+		s.guarded("GET /v1/clusters/{c}/catalogue/residue", "can_audit", clusterObject, s.relayCluster("/v1/catalogue/residue"))
 	}
 }
 

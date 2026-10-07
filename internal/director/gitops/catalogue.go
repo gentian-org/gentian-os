@@ -16,9 +16,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"sigs.k8s.io/yaml"
 
@@ -374,4 +376,239 @@ func shortDigest(digest string) string {
 		d = d[:12]
 	}
 	return "sha256:" + d
+}
+
+// ── Taking a profile out again ──────────────────────────────────────────────
+
+// ErrProfileInUse is a profile that is not removed from the catalogue
+// directory because something still depends on it.
+type ErrProfileInUse struct {
+	// Name is the profile.
+	Name string
+	// Why says what depends on it, for a person.
+	Why string
+}
+
+func (e *ErrProfileInUse) Error() string {
+	return fmt.Sprintf("catalogue: profile %s is in use: %s", e.Name, e.Why)
+}
+
+// CatalogueDeclares answers which profile's bundle in the cluster's catalogue
+// directory declares an object of this kind and name; "" when none does.
+//
+// It is asked before an object is deleted from the cluster as something no
+// bundle owns, so it reads the remote's own state and every file in the
+// directory, listed in the kustomization or not. A file that cannot be read
+// is an error: what it declares is then not known, and the caller refuses.
+func (g *GitOps) CatalogueDeclares(ctx context.Context, kind, name string) (string, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if err := g.ensureRepo(ctx); err != nil {
+		return "", err
+	}
+	dir := filepath.Join(g.path, "clusters", g.cluster, CatalogueDir)
+	entries, err := os.ReadDir(dir)
+	if os.IsNotExist(err) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	for _, entry := range entries {
+		file := entry.Name()
+		profile, isYAML := strings.CutSuffix(file, ".yaml")
+		if entry.IsDir() || !isYAML || file == "kustomization.yaml" || strings.HasSuffix(file, ".bundle.yaml") {
+			continue
+		}
+		body, err := os.ReadFile(filepath.Join(dir, file))
+		if err != nil {
+			return "", err
+		}
+		declared, err := profilebundle.Declared(body)
+		if err != nil {
+			return "", fmt.Errorf("catalogue: %s does not parse, so what it declares is not known: %w", file, err)
+		}
+		for _, ref := range declared {
+			if ref.Kind == kind && ref.Name == name {
+				return profile, nil
+			}
+		}
+	}
+	return "", nil
+}
+
+// RetireProfile removes a profile from the cluster's catalogue directory: its
+// bundle file, the carrier beside it and both entries in the kustomization,
+// as one commit.
+//
+// It is the only way a materialised profile leaves git, and it is refused
+// with ErrProfileInUse while any tenant's manifest names the profile, as an
+// app or as an add-on. That is read from the same state the commit is made
+// on, and read again when a push is refused because somebody else wrote
+// first, so an install that lands a moment earlier is seen.
+//
+// The object stays in the cluster afterwards: the Application that applies
+// the directory does not prune. Whoever calls this has the operator delete
+// it once Argo CD has taken the commit in.
+//
+// A profile that is not in the directory is "unchanged", not an error.
+func (g *GitOps) RetireProfile(ctx context.Context, name string, meta Meta) (Result, error) {
+	if !ValidName(name) {
+		return Result{}, fmt.Errorf("%w: profile %q", ErrInvalidName, name)
+	}
+	if PlatformProfile(name) {
+		return Result{}, &ErrProfileInUse{Name: name, Why: "the platform ships it"}
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	for attempt := 1; attempt <= maxPushAttempts; attempt++ {
+		if err := g.ensureRepo(ctx); err != nil {
+			return Result{}, err
+		}
+		if why, err := g.profileUsers(name); err != nil {
+			return Result{}, err
+		} else if why != "" {
+			return Result{}, &ErrProfileInUse{Name: name, Why: why}
+		}
+		dir := filepath.Join(g.path, "clusters", g.cluster, CatalogueDir)
+		kustomization := filepath.Join(dir, "kustomization.yaml")
+		listed, err := os.ReadFile(kustomization)
+		if err != nil && !os.IsNotExist(err) {
+			return Result{}, err
+		}
+		next, _ := removeListed(string(listed), name+".yaml", listResource)
+		next, _ = removeListed(next, BundleFile(name), listPatch)
+		next = closeEmptyLists(next)
+
+		var changed []string
+		for _, file := range []string{filepath.Join(dir, name+".yaml"), filepath.Join(dir, BundleFile(name))} {
+			err := os.Remove(file)
+			if os.IsNotExist(err) {
+				continue
+			}
+			if err != nil {
+				return Result{}, err
+			}
+			changed = append(changed, file)
+		}
+		if len(listed) > 0 && next != string(listed) {
+			if err := os.WriteFile(kustomization, []byte(next), 0o644); err != nil {
+				return Result{}, err
+			}
+			changed = append(changed, kustomization)
+		}
+		if len(changed) == 0 {
+			return Result{Status: "unchanged"}, nil
+		}
+		rels := make([]string, 0, len(changed))
+		for _, file := range changed {
+			rel, err := filepath.Rel(g.path, file)
+			if err != nil {
+				return Result{}, err
+			}
+			rels = append(rels, rel)
+		}
+		err = g.commitPaths(ctx, rels, fmt.Sprintf("feat(catalogue): remove unused profile %s", name), meta)
+		if err == nil {
+			return g.landed(ctx, "removed")
+		}
+		if !errors.Is(err, errPushRejected) {
+			return Result{}, err
+		}
+		select {
+		case <-ctx.Done():
+			return Result{}, ctx.Err()
+		case <-time.After(time.Duration(rand.Int63n(int64(attempt) * int64(40*time.Millisecond)))):
+		}
+	}
+	return Result{}, ErrPushContended
+}
+
+// profileUsers says which tenant's manifest names a profile, as an app or as
+// an add-on; "" when none does. The caller holds the lock and has synced.
+//
+// Every manifest under the cluster's tenants is read. One that does not
+// parse is an error: whether it names the profile is then not known.
+func (g *GitOps) profileUsers(name string) (string, error) {
+	cluster := g.cluster
+	if cluster == "" {
+		cluster = "default-cluster"
+	}
+	root := filepath.Join(g.path, "clusters", cluster, "tenants")
+	why := ""
+	err := filepath.WalkDir(root, func(path string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil || d.IsDir() || filepath.Base(path) != "tenant.yaml" || why != "" {
+			return walkErr
+		}
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		var doc struct {
+			Metadata struct {
+				Name string `json:"name"`
+			} `json:"metadata"`
+			Spec struct {
+				Apps []struct {
+					App
+					ProfileRef struct {
+						Name string `json:"name"`
+					} `json:"profileRef"`
+				} `json:"apps"`
+			} `json:"spec"`
+		}
+		if err := yaml.Unmarshal(raw, &doc); err != nil {
+			rel, _ := filepath.Rel(g.path, path)
+			return fmt.Errorf("catalogue: %s does not parse, so whether it names %s is not known: %w", rel, name, err)
+		}
+		tenant := doc.Metadata.Name
+		for _, app := range doc.Spec.Apps {
+			if app.Profile == name || app.ProfileRef.Name == name {
+				why = fmt.Sprintf("tenant %s has it installed", tenant)
+				return nil
+			}
+			for _, addon := range app.Addons {
+				if addon == name {
+					why = fmt.Sprintf("tenant %s has it switched on as an add-on of %s", tenant, app.Profile)
+					return nil
+				}
+			}
+			for _, pin := range app.AddonPins {
+				if pin.Name == name {
+					why = fmt.Sprintf("tenant %s pins it as an add-on of %s", tenant, app.Profile)
+					return nil
+				}
+			}
+		}
+		return nil
+	})
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return "", err
+	}
+	return why, nil
+}
+
+// closeEmptyLists leaves a kustomization whose last entry was taken out in
+// the form it had before the first was put in: `resources: []`, and no
+// `patches:` key at all. A key with nothing under it is null, not an empty
+// list.
+func closeEmptyLists(text string) string {
+	if strings.TrimSpace(text) == "" {
+		return text
+	}
+	lines := strings.Split(strings.TrimRight(text, "\n"), "\n")
+	out := make([]string, 0, len(lines))
+	for i, line := range lines {
+		key := strings.TrimSpace(line)
+		if key == "resources:" || key == "patches:" {
+			if i+1 == len(lines) || !strings.HasPrefix(strings.TrimSpace(lines[i+1]), "-") {
+				if key == "resources:" {
+					out = append(out, strings.Replace(line, "resources:", "resources: []", 1))
+				}
+				continue
+			}
+		}
+		out = append(out, line)
+	}
+	return strings.Join(out, "\n") + "\n"
 }

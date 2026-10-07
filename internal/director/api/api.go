@@ -77,6 +77,8 @@ type Repository interface {
 	SetTenantSecurityPolicy(ctx context.Context, tenant string, policy gitops.SecurityPolicy, meta gitops.Meta) (gitops.Result, error)
 	MaterialiseProfile(ctx context.Context, name, digest string, body []byte, origin string, meta gitops.Meta) (gitops.Result, error)
 	ProfileOnCluster(ctx context.Context, name string) (gitops.MaterialisedProfile, error)
+	CatalogueDeclares(ctx context.Context, kind, name string) (string, error)
+	RetireProfile(ctx context.Context, name string, meta gitops.Meta) (gitops.Result, error)
 	Catalogue(ctx context.Context) (gitops.CatalogueSettings, error)
 	TenantCatalogue(ctx context.Context, tenant string) (gitops.TenantCatalogue, error)
 	TenantCatalogues(ctx context.Context) (map[string]gitops.TenantCatalogue, error)
@@ -160,6 +162,9 @@ type Server struct {
 	purging sync.Map
 	// imports holds each import's progress by tenant, for the status route.
 	imports sync.Map
+	// retiring holds the unused profiles whose deletion from the cluster is
+	// being waited for, so a repeated request starts no second watcher.
+	retiring sync.Map
 }
 
 // New returns a Server with every route registered.
@@ -422,6 +427,13 @@ func (s *Server) routes() {
 			// Import: a bundle in, a tenant out (sovereignty-concept.md §4.3).
 			s.guarded("POST /v1/clusters/{c}/bundles", "can_configure", s.clusterObject, s.uploadBundle)
 			s.guarded("POST /v1/clusters/{c}/bundles/inspect", "can_configure", s.clusterObject, s.inspectBundle)
+			// Removing one thing the catalogue left behind: an object no
+			// bundle owns any more, or a profile nobody uses. The list is
+			// the usher's read; this deletes, one named object at a time,
+			// so it is can_configure and asks for the name again. An action
+			// even where it also commits: what the caller is answered with
+			// is what was deleted.
+			s.action("POST /v1/clusters/{c}/actions/remove-catalogue-residue", "can_configure", s.clusterObject, s.removeCatalogueResidue)
 			s.guarded("POST /v1/clusters/{c}/tenants/import", "can_configure", s.clusterObject, s.importTenant)
 			s.guarded("GET /v1/clusters/{c}/tenants/{t}/import", "can_configure", s.clusterObject, s.importStatus)
 		}
