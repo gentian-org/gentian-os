@@ -26,6 +26,8 @@
 #   kubectl gentian catalogues list [--tenant <tenant>]
 #   kubectl gentian catalogues add <name> <https-url> [--tenant <tenant>]
 #   kubectl gentian catalogues remove <name> [--tenant <tenant>]
+#   kubectl gentian catalogues residue
+#   kubectl gentian catalogues residue remove <kind>/<name> [--namespace <ns>] [--yes]
 #
 #   kubectl gentian apps list --tenant <tenant> [--available]
 #   kubectl gentian apps install <app> --tenant <tenant> [--from <source>] [--digest sha256:<hex>] [--for-everyone]
@@ -893,11 +895,103 @@ _catalogues_change() {
     fi
 }
 
+# catalogues residue: what the catalogue left on the cluster -- objects a
+# profile's bundle once brought and no bundle owns now, and profiles nobody
+# uses. Nothing removes them by itself. The list is the usher's, worked out
+# by the operator; IN EFFECT says whether an OIDC pack catalog on it is still
+# read when a client is configured.
+cmd_catalogues_residue_list() {
+    local answer
+    need jq
+    _discover
+    answer="$(_call_usher GET "/v1/clusters/${_CLUSTER}/catalogue/residue")" || exit 1
+    if [[ "$(printf '%s' "${answer}" | jq -r '.residue | length')" == "0" ]]; then
+        echo "Nothing is left over: every object of a bundle's kinds is owned by a bundle, and every profile is in use."
+    else
+        printf '%s' "${answer}" | jq -r '
+            (["KIND/NAME","NAMESPACE","PROFILE","WHY","CREATED","IN EFFECT"] | @tsv),
+            (.residue[] | [
+                (.kind + "/" + .name),
+                (.namespace // "" | if . == "" then "-" else . end),
+                (.profile // "" | if . == "" then "-" else . end),
+                (.class | gsub("-"; " ")),
+                (.created // "" | if . == "" then "-" else .[0:10] end),
+                (if .oidc == null then "-"
+                 elif .oidc.effective == "yes" then "YES"
+                 elif .oidc.effective == "contested" then "contested"
+                 else "no" end)
+            ] | @tsv)' | column -t -s $'\t'
+        echo
+        printf '%s' "${answer}" | jq -r '.residue[] |
+            "  " + .kind + "/" + .name + ": " + .reason
+            + (if .oidc == null then "" else
+                 (if (.oidc.clients | length) > 0 then "; the only pack for: " + (.oidc.clients | join(", ")) else "" end)
+                 + (if (.oidc.contested | length) > 0 then "; another catalog also holds: " + (.oidc.contested | join(", ")) else "" end)
+                 + (if (.oidc.composition // "") != "" then "; read by the Composition of " + .oidc.composition else "" end)
+               end)
+            + (if (.companions // []) | length > 0 then "; its bundle brings " + (.companions | join(", ")) + ", which stay" else "" end)
+            + (if .removable then "" else " (not removed here: " + (.notRemovable // "") + ")" end)'
+        echo
+        echo "Nothing here is removed automatically. To remove one:"
+        echo "  kubectl gentian catalogues residue remove <kind>/<name>"
+    fi
+    printf '%s' "${answer}" | jq -r '.incomplete[] | "Not established: " + .'
+}
+
+# catalogues residue remove: one object of the list, named, with the name
+# typed again. The director refuses anything that is not on the list when it
+# is asked, and says what was deleted or why nothing was.
+cmd_catalogues_residue_remove() {
+    local target="" ns="" yes="" typed="" kind name body status
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --namespace|-n) ns="${2:?}"; shift 2 ;;
+            --yes) yes=1; shift ;;
+            -*) die "unknown option $1" ;;
+            *)
+                [[ -z "${target}" ]] || die "unexpected argument $1: one object is removed at a time"
+                target="$1"; shift ;;
+        esac
+    done
+    kind="${target%%/*}"
+    name="${target#*/}"
+    [[ "${target}" == */* && -n "${kind}" && -n "${name}" ]] ||
+        die "usage: kubectl gentian catalogues residue remove <kind>/<name> [--namespace <ns>] [--yes]"
+    need jq
+    if [[ -z "${yes}" ]]; then
+        [[ -t 0 ]] || die "not a terminal: confirm with --yes"
+        echo "Removing the ${kind} ${name} deletes it from the cluster. Nothing puts it back but"
+        echo "installing a build that brings it."
+        read -r -p "Type ${name} to confirm: " typed
+        [[ "${typed}" == "${name}" ]] || die "not confirmed; nothing was changed"
+    fi
+    _discover
+    body="$(jq -n --arg k "${kind}" --arg n "${name}" --arg ns "${ns}" \
+        '{kind: $k, name: $n, confirm: $n} + (if $ns == "" then {} else {namespace: $ns} end)')"
+    _try POST "/v1/clusters/${_CLUSTER}/actions/remove-catalogue-residue" "${body}"
+    [[ "${_TRY_STATUS}" -lt 300 ]] ||
+        die "nothing was deleted (the director answered ${_TRY_STATUS}): ${_TRY_ANSWER:-no detail}"
+    status="$(printf '%s' "${_TRY_ANSWER}" | jq -r '.status // ""')"
+    case "${status}" in
+        deleted) echo "Deleted the ${kind} ${name}." ;;
+        deleting) echo "The ${kind} ${name} is being deleted; it is not gone yet." ;;
+        *) echo "The ${kind} ${name} is not deleted yet (${status:-no status})." ;;
+    esac
+    printf '%s' "${_TRY_ANSWER}" | jq -r '"  " + (.message // "")'
+}
+
 cmd_catalogues() {
     local sub="${1:-}"
     shift || true
     case "${sub}" in
         list) cmd_catalogues_list "$@" ;;
+        residue)
+            case "${1:-}" in
+                "") cmd_catalogues_residue_list ;;
+                remove) shift; cmd_catalogues_residue_remove "$@" ;;
+                *) die "usage: kubectl gentian catalogues residue [remove <kind>/<name> [--namespace <ns>] [--yes]]" ;;
+            esac
+            ;;
         add|remove)
             local name="" address="" t="" a
             while [[ $# -gt 0 ]]; do
@@ -923,7 +1017,7 @@ cmd_catalogues() {
                 _catalogues_change remove DELETE "${name}" "${t}"
             fi
             ;;
-        *) die "usage: kubectl gentian catalogues list|add|remove ..." ;;
+        *) die "usage: kubectl gentian catalogues list|add|remove|residue ..." ;;
     esac
 }
 
