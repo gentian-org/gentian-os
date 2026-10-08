@@ -316,6 +316,87 @@ So an app that declares it can open the mailbox of a person who signed in to it,
 - **Not served:** the kernel realm, and so the platform tenant, has no `mailbox` scope; a cluster that relays its mail has no Dovecot. The declaration is accepted there and grants nothing.
 - **The network is not the gate.** A profile that declares `requires.services.mail` is opened `system-mail` (`kernel-access-<app>`), and Dovecot's IMAP ports admit any source (§2.8); the token is the check.
 
+### 2.12 What the sign-in sidecar trusts, and what remains weak
+
+For an app that can do neither OIDC nor SAML, a program of the platform's stands beside it and
+makes the app's session for a person the realm vouches for ([iam.md §1.11](iam.md),
+[app-customization.md §2.3a](../app-customization.md)). It holds what its handler needs of the
+app, which is usually the app's signing key and database. This section is what guards it.
+
+**The one path with no session.** `/sso/acs` of the app's host takes no session and is not shown
+to the bouncer: the realm posts its answer from its own address, and for a tenant on a domain of
+its own a browser sends the front door's `SameSite=Lax` cookies with no such request. The route
+matches that path exactly, by POST, removes the identity headers a client could send, and leads
+to the sidecar alone. Every other path of the app keeps its session and its question.
+
+**What the sidecar accepts there.** All of this, or the request is refused and the sign-in it
+answered is spent:
+
+| It checks | So that |
+|---|---|
+| Two signatures by a certificate of the realm: the response as a whole and the assertion in it. Everything it reads is read from the signed bytes | nothing posted is believed that the realm did not say |
+| The issuer is the realm it was told about | another realm's people are not this tenant's |
+| `Destination`, the assertion's `Recipient` and the audience are its own address and name | an answer made for another app is not accepted here |
+| `InResponseTo` names a request this process sent, not answered before, at most five minutes old | nobody presents an answer the sidecar did not ask for, or one twice |
+| The browser carries the cookie set when that request was sent | an answer obtained in one browser is not completed in another |
+| The person the realm names is the person the front door admitted when the request was sent | only somebody who may use the app is signed in to it, and as themselves |
+| The validity period; exactly one assertion, in clear, not presented before; no document type declaration | a stale, repeated or doctored message is not accepted |
+
+**Who may use the app** is the front door's answer, not the sidecar's. `/sso/login` is behind the
+session and the bouncer, so only a person with `can_use` on the app begins a sign-in, and the
+answer has to be about that same person. A member of the realm without the right cannot begin
+one, and an answer they obtain elsewhere answers no request of theirs.
+
+**Which code is handed the app's keys.** The handler is part of the app's bundle. It is run only
+from a bundle of a catalogue of the whole cluster, for an install pinned to that bundle's digest;
+the operator gives the sidecar the bundle's bytes and their sha256, and the sidecar loads no
+other file. A tenant's own catalogue cannot bring one. What it is handed is this app's own
+database login and the secrets of this app the profile lists, read from this app's vault paths; a
+profile names which, never where.
+
+**What it may reach, and what may reach it.** Out: the realm's signing certificate, and what the
+profile declared for the handler — the app's database server, the app's own pods — one port
+each. It does not carry the app's label, so none of the app's other paths are its. In: the edge;
+no pod of the tenant.
+
+| Control | State |
+|---|---|
+| The checks above, each with a test; run against Keycloak 26.8.0 at the three kinds of address | Built (gentian-apps, `images/gentian-sidecar-sso-saml`) |
+| The session-less route is one exact path, POST, to the sidecar; no policy names it and the bouncer has no line for it | Built; a test holds it |
+| The handler is the pinned bundle's, from a cluster catalogue only | Built; held with `SignInSidecarRefused` otherwise |
+| The handler is given only what the profile declared, of the app's own | Built |
+| The sidecar's image is one build, named by tag and digest | Built |
+| An app session lasts at most an hour and no longer than its realm session | Built in the sidecar; the handler has to give its token that lifetime |
+
+**What remains weak.**
+
+- **The sidecar can become anybody in its app.** That is what it is for. Whoever takes it over,
+  or changes the handler in a catalogue the cluster trusts and has an install moved to it, has
+  every account of that app in that tenant. No other way of signing in has such a program.
+- **The identity headers on `/sso/login` are believed.** They are the bouncer's and are not
+  signed. A pod that reached the sidecar directly could begin a sign-in under a name it chose —
+  and would then still need the realm's signed answer for that name, so it gains only the skipped
+  check of who may use the app. The network policy is what keeps pods from reaching it.
+- **The realm's certificate is fetched over plain HTTP inside the cluster.** Something that could
+  answer in the identity provider's place there could sign answers of its own.
+- **Requests to the realm are not signed.** The sidecar holds no key. Anybody can make the realm
+  post an answer to the sidecar's address for whoever is at the browser; the sidecar refuses it,
+  because it asked for none.
+- **Within the hour, the app can show the previous person.** Anna signs out, Ben signs in at the
+  same browser and opens a page of the app that is not an entry path: the app still has Anna's
+  session. Opening the app from its tile goes through the sign-in and gives Ben his own.
+- **A person is an e-mail address to the app.** An address given to somebody else later is the
+  same account. The person's permanent identifier is not what these apps key on.
+- **Accounts are made and never removed.** A person removed at the platform cannot get in, and
+  their account and what they made stay in the app.
+- **A handler depends on the app's inside**: its tables, its token, its calls. A new version of
+  the app can break it, or worse, change what a field means. Each has an end-to-end test against
+  the real app that is to be run before the app's version moves; nothing enforces that it is.
+- **The app's own protections for sign-in do not apply**: its second factor, its lock after
+  failed attempts, its record of sign-ins. The realm's do.
+- **Whether a vendor accepts this in place of its paid single sign-on** is a judgement per app,
+  recorded in the app's `Customization` record, and not made here.
+
 ## 3. Architecture
 
 ### 3.0 Implementation status

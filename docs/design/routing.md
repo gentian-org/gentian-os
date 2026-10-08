@@ -419,7 +419,9 @@ The bouncer refuses any request on a session route that reaches it without a
 token it can verify, whatever its path. Nothing in the operator's policies
 lets a request past the OAuth2 filter without a session — no
 `passThroughAuthHeader`, no `denyRedirect`, no CORS or health path — and if
-something did, the answer would be `401`. A client cannot present a bearer of
+something did, the answer would be `401`. The one path of an app that takes no
+session is not an exception written into a policy: it is a route of its own
+that no policy names (below). A client cannot present a bearer of
 its own on these routes: `forwardAccessToken` makes the filter drop the
 incoming `Authorization` header before it writes its own. Command-line
 clients do not come through the edge at all (`kubectl gentian` reaches the
@@ -475,6 +477,26 @@ Routes without a session policy are unchanged and never ask the bouncer:
 perimeter surfaces (a tenant's DMZ, the concierge), the identity provider's
 realm endpoints on `id.<kernelDomain>`, and the redirects. What
 `id.<kernelDomain>` refuses is a route with `authorization: Deny`.
+
+**The sign-in sidecar's answer path.** An app whose profile declares
+`requires.services.identity.sidecar` has two more paths on its host
+([iam.md §1.11](iam.md)):
+
+| Path | Route | Session | Reaches |
+|---|---|---|---|
+| `/sso/login`, exactly | a rule of the app's own route | yes, and the bouncer's question | the sidecar, with the identity headers |
+| each of the profile's `entryPaths`, exactly, GET | a rule of the app's own route | yes | nothing: a redirect to `/sso/login` |
+| `/sso/acs`, exactly, POST | `<component>-<entry>-sso-acs`, on the same host and listener | **none** | the sidecar, with the identity headers removed |
+
+`/sso/acs` has no session because the realm posts its answer there from
+`id.<kernelDomain>`. For a tenant on a domain of its own that is another site,
+and a browser sends `SameSite=Lax` cookies with no cross-site POST: behind the
+session the OAuth2 filter would answer with a redirect to sign in and the
+answer would be lost. The Gateway prefers the exact match over the app's `/`
+prefix, so nothing else of the host is on that route; no `SecurityPolicy` names
+it and the bouncer's table has no line for it. What guards it is the sidecar
+([security.md §2.12](security.md)). The route is written and removed by the
+component reconciler with the sidecar.
 
 ### 4.2 Sign-in, sign-out and the session cookies
 

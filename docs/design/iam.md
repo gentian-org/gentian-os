@@ -287,6 +287,49 @@ Sessions are kept in the database and survive the restart. Re-run the installer
 step that configures the kernel realm once: it rewrites the CLI client's
 audience mapper. 26.5 dropped PostgreSQL 13; the kernel's PostgreSQL is newer.
 
+### 1.11 How a person gets into an app: three ways
+
+Every app is behind the front door, which checks the session and whether this person may use this
+app ([routing.md §4.1](routing.md)). What differs is how the app itself then learns who is there.
+A profile says which, under `requires.services.identity`, and states exactly one:
+
+| | The profile declares | Who speaks to the realm | What the platform registers | Holds the app's keys |
+|---|---|---|---|---|
+| **OIDC** | `identity.oidc` | the app | an OIDC client of the app's own (app Composition) | nobody but the app |
+| **SAML** | `identity.saml` | the app | a SAML client with the address the app states (the tenant's identity Job) | nobody but the app |
+| **Sidecar** | `identity.sidecar` | the platform's sign-in sidecar, beside the app | a SAML client for the sidecar, at an address the platform derives (app Composition) | the sidecar: what the profile declared for its handler |
+
+Take them in that order. OIDC wherever the edition installed offers it; SAML for an app that
+offers that and no OIDC; the sidecar only for an app that can do neither, because it is the one
+way in which a program beside the app can become anybody in it.
+
+**The sidecar's sign-in, step by step.** The person is signed in at the platform already.
+
+1. They open the app. The front door admits them, or sends them to the realm first as for any app.
+2. The app's front page is one of the profile's `entryPaths`, so the Gateway answers with a
+   redirect to `/sso/login` on the same host.
+3. `/sso/login` is a rule of the app's own route, behind the session and the bouncer. The request
+   reaches the sidecar with the bouncer's identity headers. The sidecar remembers a new request
+   and the address of the person it is for, sets a cookie that marks this browser, and sends the
+   browser to the realm with a SAML request.
+4. The realm recognises the person from their session and answers without asking: a page that
+   posts a signed response to `https://<app host>/sso/acs`, the one address registered.
+5. `/sso/acs` is a route of its own with no session, because that post comes from the realm's
+   address ([routing.md §4.1](routing.md)). The sidecar checks the response
+   ([security.md §2.12](security.md)) and runs the app's handler.
+6. The handler finds or makes the person's account in the app and a session for it. The sidecar
+   writes the response: the app's session cookie, or a page that puts the session where the app's
+   own page keeps it, and a redirect into the app.
+
+An app session made this way lasts at most an hour and never longer than the realm session it
+came from. When it has run out the app sends the browser to its own sign-in page, which is an
+entry path again: the steps repeat without the person being asked. A person who was removed, or
+lost the right to the app, is refused by the front door on their next request, whatever session
+the app still holds.
+
+No password exists for the app. The sidecar is registered per app and per tenant, in the tenant's
+realm, and is removed with the app.
+
 ## 2. Administration UI
 
 | Concern | Gentian surface |

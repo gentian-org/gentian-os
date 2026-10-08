@@ -312,6 +312,75 @@ spec:
 `oidc-token-exchange`, never shared static credentials; the companion must degrade gracefully if
 the target app is not installed.
 
+### 2.3a The sign-in sidecar — an app that can do neither OIDC nor SAML
+
+Some apps have single sign-on only in a paid edition. The platform signs people in to such an app
+itself: a person who is signed in at the platform opens the app and is in, with no second sign-in
+and no password. The profile declares it and brings one file, the **handler**:
+
+```yaml
+spec:
+  requires:
+    services:
+      identity:
+        sidecar:                       # instead of identity.oidc or identity.saml
+          exposure: web                # may be omitted when one gateway entry is behind a session
+          entryPaths: ["/", "/login"]  # pages of the app that lead to the sign-in instead
+          database: true               # the handler is given the app's own database
+          secrets: [app_secret]        # and these of spec.secrets.generated
+          appPort: 3000                # and may call the app's own pods on this port
+  expose:
+    - name: web
+      surface: gateway
+      authMode: oidc
+      denyPaths: [/api/auth/login]     # the app's own ways in, refused at the front door
+```
+
+The handler is the ConfigMap `<profile>.sign-in-handler` of the profile's bundle (key
+`handler.js`, label `gentianos.io/asset: sign-in-handler`), so the install's digest covers it.
+
+**What the platform does for it**, per install, and removes with the app:
+
+| | By | |
+|---|---|---|
+| Registers the sidecar at the tenant's realm | the app Composition | a SAML client named `https://<app host>/sso`, with one address its answer may be posted to, `https://<app host>/sso/acs`; the response and the assertion both signed; the person named by e-mail address |
+| Runs the sidecar beside the app | the operator | one pod, with the handler from the bundle, told where the realm is. No service-account token, read-only, not root |
+| Hands the handler what was declared | the operator | `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`; `SECRET_<NAME>`; `APP_URL`. From this app's own vault paths; a profile names which, never where |
+| Routes two paths of the app's host to it | the operator | `/sso/login` as a rule of the app's own route, behind the session and the bouncer; `/sso/acs` on a route of its own with no session ([routing.md §4.1](design/routing.md)) |
+| Sends the entry paths to `/sso/login` | the operator | for a page load (GET) only |
+| Opens the sidecar's network paths | the operator | the realm's certificate; the app's database server; the app's own pods on `appPort`. One port each, and nothing else: the sidecar is not one of the app's pods |
+
+A profile states no address, no client name and no Secret. They follow from where the app answers
+and what the app owns, so a profile cannot point a sign-in somewhere else or at somebody else's
+data.
+
+**Which handler runs.** A handler is handed the app's signing key and its database: it can become
+anybody in the app. So it runs only where it is known to be the reviewed file:
+
+- from a bundle of a catalogue of the **whole cluster**. A tenant's own catalogue publishes
+  profiles alone and has no handler to bring; a profile of one that declares a sidecar is held
+  (`SignInSidecarRefused`) rather than installed with no way in;
+- for an install **pinned to a digest**, whose bundle brings the handler. The operator compares
+  the cluster with the bundle before every rollout, gives the sidecar the bundle's own bytes, and
+  tells it their sha256; the sidecar loads no other file;
+- never in the kernel realm.
+
+**Who may use the app** is not the sidecar's to decide and not the handler's. A sign-in begins on
+`/sso/login`, which only a person the front door admits to this app reaches, and the answer the
+sidecar accepts has to be about that same person.
+
+**What a handler is given, what it answers and what it must not do** is in gentian-apps,
+`images/gentian-sidecar-sso-saml/README.md`. In short: it is told who the person is and how long
+the session may last (an hour at most), it answers where to go and which cookies or browser
+storage carry the app's session, and the sidecar writes the response. It makes everybody an
+ordinary member, gives nobody a password, and touches no licence check.
+
+**Before reaching for it.** It is the last of three ways to sign people in ([iam.md §1.11](design/iam.md)),
+and the only one in which a program beside the app holds the app's keys. Use it when the edition
+installed offers nothing else, write the `Customization` record first (rung L2: the handler is a
+companion that integrates through the app's interface or its database), and record there anything
+the handler writes itself that the app's own interface would not have done.
+
 ### 2.4 L3 — Extension (in-app addon)
 
 Use the app's **own extension system**. Odoo addons (`_inherit`, view `xpath`/`inherit_id`),

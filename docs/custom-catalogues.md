@@ -89,7 +89,7 @@ operator before anything is rolled out.
 |---|---|---|---|---|
 | `Composition` (`apiextensions.crossplane.io/v1`) | `app-<profile>`; at most one | composes `XApp` (`gentianos.io/v1alpha1`) and nothing else; is the one the profile names in `spec.package.composition`; never `app-default` | cluster-wide | Crossplane, to render the app |
 | `OIDCPackCatalog` (`gentianos.io/v1alpha1`) | `<profile>-oidc`; at most one | every pack is for a `clientId` (or `oidcPackRef`) the profile itself states; no `serviceClient` pack | cluster-wide | the operator and the app's Composition, to configure the app's client in a tenant's realm |
-| `ConfigMap` (`v1`) | `<profile>.<asset>` | carries the label `gentianos.io/asset: <asset>`; `data` only, text only | the catalogue's namespace | the app's Composition, which finds it by its two labels |
+| `ConfigMap` (`v1`) | `<profile>.<asset>` | carries the label `gentianos.io/asset: <asset>`; `data` only, text only | the catalogue's namespace | the app's Composition, which finds it by its two labels; a sign-in handler (§4.1a) is read by the operator, from the bundle itself |
 | `Customization` (`gentianos.io/v1alpha1`) | `<profile>.<record>` | `spec.target.profile` is this profile; `spec.scope` is `profile` | the catalogue's namespace | the operator, for the customization-debt report |
 
 For every companion:
@@ -295,6 +295,42 @@ nothing else of the app's does. Without the declaration no token of the app is a
 server. On a cluster that does not run its own mail server, or for a tenant without mailboxes
 there, the declaration is accepted and grants nothing
 ([app-customization.md §1.1](app-customization.md)).
+
+### 4.1a An app with no single sign-on: declare the sign-in sidecar
+
+For an app that, in the edition you publish, can do neither OIDC nor SAML. Only in a catalogue of
+the whole cluster: the handler is a companion (§2), and a tenant's own catalogue brings none.
+
+1. **Declare it** in the profile, under `requires.services.identity.sidecar`
+   ([app-customization.md §2.3a](app-customization.md) has every field): the app's front page and
+   its own sign-in page as `entryPaths`, and what the handler needs of the app — `database`,
+   `secrets`, `appPort` — and no more. Put the app's own sign-in calls under the entry's
+   `denyPaths`, above all a first-run or setup call.
+2. **Write the handler**, one file, and add it to the bundle as the ConfigMap
+   `<profile>.sign-in-handler` with the key `handler.js` and the labels
+   `gentianos.io/profile-name: <profile>` and `gentianos.io/asset: sign-in-handler`:
+
+   ```js
+   module.exports = {
+     // person: { email, name }; ctx: { sessionSeconds, origin, log }
+     async onLogin(person, ctx) {
+       // find or make the person's account in the app, as an ordinary member;
+       // make a session that ends after ctx.sessionSeconds
+       return { redirect: '/home', cookies: [{ name: 'session', value: token }] };
+     },
+   };
+   ```
+
+   It may use `pg`, `mysql2` and `jsonwebtoken`, which the sidecar's image carries, and what the
+   profile declared (`DB_*`, `SECRET_<NAME>`, `APP_URL`). It cannot reach anything else, it never
+   writes to the browser, and it must not give anybody a password, administrator's rights or a
+   shared account. The full contract and two worked handlers are in gentian-apps
+   (`images/gentian-sidecar-sso-saml/README.md`).
+3. **Test it against the app itself**, at the version the chart pins, before publishing: a handler
+   depends on how the app keeps a session, which no vendor promises to keep.
+
+The digest of the bundle covers the handler. A changed handler is a new digest, and reaches a
+cluster only when an install is moved to it.
 
 ### 4.2 Generate the index
 
@@ -605,6 +641,11 @@ that composes an app, is named `app-<profile>`, is not `app-default` and is on t
 - **A tenant's own profile is installable only in that tenant.** The director refuses anybody else,
   and the operator refuses to roll out a Component in another tenant from it
   (`ProfileOfAnotherTenant`).
+- **A sign-in handler runs only from a cluster catalogue's pinned bundle.** A profile that declares
+  `requires.services.identity.sidecar` brings code that is handed its app's signing key and
+  database (§4.1a). The operator runs it only for an install pinned to a digest whose bundle, from
+  a catalogue of the whole cluster, carries it, and holds every other such install
+  (`SignInSidecarRefused`). A tenant's own catalogue cannot bring one.
 - **Nothing here is a licence check.** Whether an app arrives is decided where its chart and images
   are pulled.
 
@@ -633,8 +674,8 @@ they are done once by the tenant's administrator.
   port, or behind a redirect is not fetched from. An air-gapped cluster cannot use an in-cluster
   catalogue today.
 - **A tenant's own catalogue serves profiles only.** Companions (§2) come from a catalogue of the
-  whole cluster. A tenant's own app that needs an OIDC pack or a Composition of its own has to be
-  published in one.
+  whole cluster. A tenant's own app that needs an OIDC pack, a Composition of its own or a sign-in
+  handler has to be published in one.
 - **Four kinds of companion, and no others.** A profile that needs anything else on the cluster does
   not bring it.
 - **Two profiles that declare the same OIDC `clientId` are not told apart.** Each may bring a pack

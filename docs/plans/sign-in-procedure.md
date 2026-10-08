@@ -972,6 +972,28 @@ asks the person a second time unless a helper is built for it, and a helper
 is a program that can become anybody in that app. Prefer the second
 sign-in with accounts the platform creates.
 
+### 8.6 Added 2026-10-08: the helper is now the platform's, as a third tier
+
+Option b (8.2) was approved for apps that can do neither OIDC nor SAML, and
+built as an option any profile can declare:
+`requires.services.identity.sidecar`. The platform runs the helper, registers
+it at the realm and routes it; the profile brings only the code for its own
+app. Docmost and Activepieces use it. What 8.2 describes of those two is how
+they were before: nobody has a password in either now, nobody is made an
+administrator, and the second program in Docmost's pod is gone.
+
+One correction to the diagram in 8.2: the assertion is not posted through the
+front door's session. That post comes from Keycloak's address, and for a
+tenant on its own domain the browser sends no session cookie with it, so the
+path it goes to takes no session and the helper itself is what checks it.
+
+Where it is described: how it works and when to use it,
+[iam.md §1.11](../design/iam.md); what guards it and what remains weak,
+[security.md §2.12](../design/security.md); how a profile declares it,
+[app-customization.md §2.3a](../app-customization.md). Decisions 3 and 7 in
+section 16 are not changed by this: which apps may use it remains a decision
+per app.
+
 ## 9. Case 5: no sign-in in the app
 
 **When it applies**
