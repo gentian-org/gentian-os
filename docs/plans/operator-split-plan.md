@@ -70,7 +70,7 @@ concierge). That is a known weakness, described in section 6.
 | --- | --- | --- |
 | **Desktop** | The page a signed-in person lands on, with a tile for each thing they may open. One per tenant. Its backend calls the usher and the director. | `tenant-<name>` |
 | **Admin console** | The pages where a tenant admin manages a tenant and a platform admin manages the cluster. One per tenant. Its backend calls the director, the usher, the custodian and the registrar. | `tenant-<name>` |
-| **App Store app** | The pages where a tenant admin finds and installs apps. Its backend calls the store outside the cluster, and the director, the usher and the custodian. | on the cluster, per tenant; see section 8 |
+| **App Store app** | The pages where a tenant admin finds and installs apps. Its backend calls the store outside the cluster, and the director, the usher and the custodian. | `tenant-<name>`, on every tenant but the platform tenant, while the cluster reports its licences and names a store |
 | **Gateway** | The front door: it terminates TLS, keeps the sign-in session in a cookie, and asks the bouncer before it forwards a request. It is Envoy Gateway. | `kernel-edge` |
 | **Argo CD** | Reads the deployment repository and applies its files to the cluster. It refuses a commit that is not signed by a trusted key. | `kernel-gitops` |
 | **Keycloak** | The identity provider: it holds the people, their passwords and their groups, and issues the tokens that prove who somebody is. People are kept in *realms*: the kernel realm for platform admins, one realm per tenant for everybody else. | `kernel-authentication` |
@@ -1111,6 +1111,10 @@ Detail: [iam.md](../design/iam.md) §1.1a for the modes,
 - The concierge is published from the platform tenant's DMZ.
 - The consoles hold no credential of their own. They pass on the signed-in
   person's token.
+- The App Store app is placed on every tenant but the platform tenant while
+  licence reporting is on and the Cluster claim names a store, and removed
+  when either stops holding. Its address asks `can_install_app` on the
+  tenant, as its tile does.
 - The command line tool signs in as the person (`kubectl gentian login`) and
   calls the director, the registrar and the usher.
 - Installing the cluster and creating the first commits is described in
@@ -1118,9 +1122,6 @@ Detail: [iam.md](../design/iam.md) §1.1a for the modes,
 
 ### Not built yet
 
-- **The App Store app's placement on tenants.** The app exists; the chart
-  ships no component profile that places it on a tenant, as it does for the
-  desktop and the admin console.
 - **Resource definitions delivered by Argo CD.** Today they can fall behind
   the software, which is what the definitions check detects.
 - **Separate OpenFGA credentials per program**, with the right to write given

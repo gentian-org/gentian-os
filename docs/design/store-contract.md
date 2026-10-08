@@ -396,6 +396,34 @@ tile is shown only to people who may install apps in that tenant. It is
 absent on a cluster whose licence report is off (§6.2) and on one that names
 no store.
 
+**Where it is, and when.** The operator chart ships the component profile
+`app-store`, and the operator places a Component of it on every tenant
+except the platform tenant, where nobody installs apps, for as long as two
+things hold: licence reporting is on, and the Cluster claim names a store
+(`spec.catalogue.storeUrl`, an https address). When either stops holding the
+Component is removed again — the workload only; the app owns no data — and
+it is placed again when both hold. The operator watches the claim, so a
+change there takes effect when Argo CD has applied it; the reporting setting
+is the operator's own and changes with its rollout. The usher's answer
+(`appStore` beside the tiles) is the same verdict, written by the operator,
+and gives the reason when there is none: `licence-report-disabled` or
+`no-store-configured`.
+
+It answers at `store.<the tenant's base domain>`, behind the tenant's
+session. Its routes and its tile ask the same question, `can_install_app` on
+the tenant: a member who knows the address is refused at the edge. `/api`,
+`/oauth/callback`, `/healthz` and `/readyz` reach its API with the person's
+token forwarded; everything else reaches its pages. The profile tells it
+where the director, the custodian and the usher are, its own host, and the
+store's address from the claim.
+
+Its pods may reach the control namespace, the edge, and TCP 443 on public
+IPv4 addresses — not the cluster's own ranges, private networks or the
+cloud metadata address. The last is wider than the store alone because a
+store names its issuer and the origins of its pictures in its own metadata,
+and a network policy matches addresses, not names; which hosts are asked is
+the app's to restrict. It applies only while a store is offered.
+
 It **shows the catalogue immediately**, with no store account: the catalogue
 reads are open (§5), and the app makes them anonymously. It asks the person
 to sign in to the store only when they acquire something or open what the

@@ -429,7 +429,11 @@ kubectl get tenant acme -w
 or prints it once when you give no `--recovery-email`.
 
 Apps are installed by the tenant's administrator from the App Store, or from
-here:
+here. The App Store is a tile on the tenant's desktop, shown to the people
+who may install apps there, at `store.<the tenant's domain>`. A tenant has it
+while the cluster reports its licences and its Cluster claim names a store
+(`spec.catalogue.storeUrl`), both of which an installation does by default;
+the platform tenant never has it.
 
 ```bash
 kubectl gentian apps list --tenant acme --available           # what the tenant's catalogues offer
@@ -546,7 +550,7 @@ By default the cluster tells a report address once a day what it runs: its
 tenants, how many accounts each has, and the apps installed through the App
 Store — no personal data. `./install.sh --no-licence-report` (or
 `GENTIAN_NO_LICENCE_REPORT=1` in `install.env`) turns that off; nothing is then
-sent, and the App Store is not offered. What is sent, and where to read the
+sent, and the App Store is not offered: no tenant has the App Store tile. What is sent, and where to read the
 last report, is in [docs/design/operations.md §6.2](docs/design/operations.md).
 
 ### Running one step, or stopping early

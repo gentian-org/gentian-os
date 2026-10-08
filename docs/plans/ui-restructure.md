@@ -261,11 +261,16 @@ no page inside the cluster's interface.
 platform UI of its own, component `app-store`, in the `gentian-ui`
 repository beside the desktop and the admin console.
 
-- **Per tenant, for people who may install.** Installed for each tenant; its
-  tile is shown only to people who hold `can_install_app` there.
+- **Per tenant, for people who may install.** Installed for each tenant but
+  the platform tenant; its tile is shown only to people who hold
+  `can_install_app` there, and its address asks the same of whoever opens
+  it.
 - **Absent without licence reporting.** The store depends on the cluster's
   licence report ([operations.md §6.2](../design/operations.md)). A cluster
   with reporting off, or one that names no store, has no App Store app.
+- **Placed by the operator.** Built: the operator chart ships its profile,
+  and the operator places and removes the component by those two conditions
+  ([store-contract.md §6](../design/store-contract.md)).
 - **It renders data.** What it fetches from the store's API is treated as
   data: plain text, a restricted Markdown subset for descriptions and
   release notes, images by address. Never as code — no HTML, no script, no

@@ -233,9 +233,11 @@ ever, and no signing key is created.
 serves a tenant only when the reports it has received list that tenant's
 address ([store-contract.md](store-contract.md) §6.2), so the usher's tiles
 answer (`GET /v1/tenants/{tenant}/tiles`) carries
-`"appStore": {"available": false, "reason": "licence-report-disabled"}` and
-no App Store tile is shown; the installer also leaves `catalogue.storeUrl`
-out of a new Cluster claim. Everything else runs as before, and apps are
+`"appStore": {"available": false, "reason": "licence-report-disabled"}`, the
+operator places the App Store app on no tenant and removes it where it was,
+and no App Store tile is shown; the installer also leaves
+`catalogue.storeUrl` out of a new Cluster claim. (A cluster that reports and
+names no store has none either, and answers `"reason": "no-store-configured"`.) Everything else runs as before, and apps are
 installed by command.
 
 **For whoever receives it.** The request above is also written down as a

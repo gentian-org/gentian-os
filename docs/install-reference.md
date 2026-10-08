@@ -147,7 +147,7 @@ The template carries one line per setting; the reasoning is here.
 | `TENANCY_MODE` | `multi` (default) or `single`, for an unattended first run; step 0 asks otherwise. It is written to the Cluster claim (`spec.tenancyMode`), which owns it from then on. See *Tenancy modes* below. |
 | `GENTIAN_USER_TENANT_WAIT_SECS` | How long `E-04` waits for the user tenant of a single-tenancy cluster to be Ready. 900 by default. |
 | `INSTALL_CLUSTER_INFRA` | `0` when cert-manager, CloudNativePG and Reloader are managed elsewhere on this cluster. |
-| `GENTIAN_NO_LICENCE_REPORT` | `1` turns the licence report off, as `--no-licence-report` does; `0` turns it back on. Unset keeps what the cluster has. Off, nothing is sent and the App Store is not offered — [design/operations.md §6.2](design/operations.md). |
+| `GENTIAN_NO_LICENCE_REPORT` | `1` turns the licence report off, as `--no-licence-report` does; `0` turns it back on. Unset keeps what the cluster has. Off, nothing is sent and the App Store is not offered: no tenant gets the App Store app — [design/operations.md §6.2](design/operations.md). |
 | `GENTIAN_LICENCE_REPORT_URL` | Where the licence report goes, instead of the default address in `kernel/bootstrap/chart/values.yaml`. `https` only. |
 | `OPENBAO_CLI_VERSION` | Which `bao` to fetch when none is on `PATH`. Defaults to the pin in `versions.yaml`, which is where component versions are declared. |
 | `INFRA_CHART_REPO` / `_PRIVATE` | Where the infrastructure charts come from, and whether that registry needs a credential. Install-time rather than cluster state: it decides what the installer does before a cluster exists. |
