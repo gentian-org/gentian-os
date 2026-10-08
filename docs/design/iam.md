@@ -226,7 +226,7 @@ What 26.8 enables that 26.0 did not is inert until something asks for it:
 | SCIM API, fine-grained admin permissions v2 | per realm (`scimApiEnabled`, `adminPermissionsEnabled`), false in every realm the platform creates |
 | JWT authorization grant, federated client authentication, Kubernetes service-account sign-in | need an identity provider or client authenticator configured for them; none is |
 | Passkeys, update-email, workflows, client secret rotation | per realm policy, required action or client policy; none is configured |
-| Recovery codes | **visible**: a new realm has the required action enabled, so the account console offers to set codes up; the browser flow does not accept them |
+| Recovery codes | the browser flow of a new realm lists them as disabled, so sign-in does not accept them and the account console does not offer them; only the required action exists |
 
 **The API's audience is a custom audience.** `gentian-director` names the
 platform's API, and no Keycloak client has that name. An audience mapper must
