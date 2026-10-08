@@ -48,6 +48,10 @@ spec:
         storageClass: {{ .Values.storageClass | default "" | quote }}
         llmGpuAcceleration: {{ .Values.llmGpuAcceleration | default "false" | quote }}
         llmExternalProviders: {{ .Values.llmExternalProviders | default "false" | quote }}
+        {{- /* The stores' NetworkPolicies: on unless the cluster says
+             "false". Compared as a string, the way the phase switches are:
+             the installer passes it with --set-string. */}}
+        storeNetworkPolicies: {{ ternary "false" "true" (eq (toString .Values.storeNetworkPolicies) "false") | quote }}
         namespaces:
           {{- toYaml .Values.namespaces | nindent 10 }}
   destination:

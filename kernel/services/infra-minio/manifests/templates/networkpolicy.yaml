@@ -1,0 +1,72 @@
+{{- /*
+  Who may open a connection to the object store.
+
+  MinIO took a connection from any pod of any namespace without an egress
+  policy of its own, and a key pair was the only thing in the way. Now its
+  API port is admitted from:
+
+    tenant namespaces   every namespace labelled gentianos.io/tier=tenant.
+                        The server cannot tell one tenant's app from another's
+                        pod; the tenant's side narrows it, where egress is
+                        denied by default (tenant-isolation), kernel-access-<app>
+                        opens this port for an app that declared a bucket, and
+                        gentian-tenant-export opens it for the volume capture
+                        and restore pods, which run in the tenant's namespace
+                        because a claim mounts nowhere else. This rule keeps
+                        out everything that is not a tenant namespace or a
+                        client named here; those keep out the apps that asked
+                        for no bucket.
+    this namespace      the operator's bucket and destroy Jobs, and every
+                        capture and restore Job that mounts no claim, run
+                        beside the server (storage_reconciler.go,
+                        tenantexport_controller.go, backup/teardown.go). A pod
+                        here can mount the root Secret, so naming pods would
+                        keep nobody out.
+    the operator        reads a bundle's manifest, streams a bundle to the
+                        person downloading it and writes an imported one
+                        (internal/bundlestore, applifecycle/bundle_*.go).
+
+  The console port (9001) is listed nowhere and so is closed: nothing routes
+  to it and nothing the platform runs uses it. The kubelet's probes use the
+  API port; traffic from a pod's own node is not subject to a NetworkPolicy.
+
+  Rendered on the v5 layout only (a namespace is stated), with the admin
+  Secret beside it. Sync wave -1, with the values the release is installed
+  from: the release cannot start a pod before this object exists.
+*/ -}}
+{{- if and .Values.namespace (ne (toString .Values.networkPolicy.enabled) "false") }}
+{{- $np := .Values.networkPolicy }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: store-ingress
+  namespace: {{ .Values.namespace }}
+  labels:
+    gentianos.io/tier: system
+    gentianos.io/function: s3
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: minio
+      app.kubernetes.io/instance: minio
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              gentianos.io/tier: tenant
+        - podSelector: {}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $np.namespaces.control | quote }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: gentian-os
+              app.kubernetes.io/component: operator
+      ports:
+        - protocol: TCP
+          port: {{ $np.ports.api }}
+{{- end }}

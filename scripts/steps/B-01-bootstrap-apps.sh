@@ -163,6 +163,7 @@ _v5_render() {
         --set-string "smtpHost=${EXTERNAL_SMTP_HOST:-}" \
         --set-string "mailServiceMode=$(gentian_mail_service_mode)" \
         --set-string "mailEgressHost=${MAIL_EGRESS_HOST:-}" \
+        --set-string "storeNetworkPolicies=${STORE_NETWORK_POLICIES:-true}" \
         --set-string "licenceReport.enabled=$(gentian_licence_report_enabled)" \
         --set-string "licenceReport.url=${GENTIAN_LICENCE_REPORT_URL:-}" \
         --set-string "versions.headlamp.chart=$(gentian_pin headlamp chart)" \

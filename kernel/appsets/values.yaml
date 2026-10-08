@@ -24,3 +24,10 @@ storageClass: ""
 # runs; the second whether the chart reads a vault path for provider keys.
 llmGpuAcceleration: "false"
 llmExternalProviders: "false"
+
+# Whether the four shared stores -- PostgreSQL, MariaDB, Redis, MinIO -- each
+# get the NetworkPolicy that says who may connect to them
+# (templates/networkpolicy.yaml in each engine's chart). On unless a cluster
+# says otherwise; "false" removes all four and leaves credentials as the only
+# check on a connection. From the bootstrap chart's value of the same name.
+storeNetworkPolicies: "true"

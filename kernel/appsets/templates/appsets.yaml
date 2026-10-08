@@ -14,6 +14,13 @@
      to whichever was ranged last. */ -}}
 {{- $sys := dict -}}
 {{- range .Values.namespaces.system }}{{ $_ := set $sys .function .name }}{{ end -}}
+{{- /* The switch for the stores' NetworkPolicies, as the word a Helm
+     parameter carries. Read with hasKey, not `default`: false is empty to
+     `default`, so a boolean false would come out as "true" -- the switch
+     would read as off and stay on. */ -}}
+{{- $storeNetworkPolicies := "true" -}}
+{{- if hasKey .Values "storeNetworkPolicies" }}{{ $storeNetworkPolicies = toString .Values.storeNetworkPolicies }}{{ end -}}
+{{- if not (has $storeNetworkPolicies (list "true" "false")) }}{{ fail (printf "storeNetworkPolicies must be true or false, not %q" $storeNetworkPolicies) }}{{ end -}}
 {{- range $path, $_ := .Files.Glob "raw/*.yaml" }}
 {{- /* A raw file is skipped by NAME when its function is off.
 
@@ -44,7 +51,8 @@
      | replace "mail.relay.placeholder" ($.Values.relayHost | default "")
      | replace "mail.egress.placeholder" ($.Values.egressHost | default "")
      | replace "llm.mock.backend.placeholder" (ternary "false" "true" (eq (toString ($.Values.llmGpuAcceleration | default "false")) "true"))
-     | replace "llm.external.providers.placeholder" (toString ($.Values.llmExternalProviders | default "false")) }}
+     | replace "llm.external.providers.placeholder" (toString ($.Values.llmExternalProviders | default "false"))
+     | replace "store.networkpolicies.placeholder" $storeNetworkPolicies }}
 {{- range $fn, $name := $ns }}{{ $text = replace (printf "ns.%s.placeholder" $fn) $name $text }}{{ end }}
 {{- range $fn, $name := $sys }}{{ $text = replace (printf "sys.%s.placeholder" $fn) $name $text }}{{ end }}
 {{- if contains ".placeholder" $text }}{{ fail (printf "%s: an unresolved placeholder remains" $path) }}{{ end }}

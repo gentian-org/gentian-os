@@ -77,6 +77,20 @@ spec:
             # find them; tenant-postgres ignores it.
             - name: namespace
               value: '{{.namespace}}'
+            # Each engine's chart carries the NetworkPolicy that says who may
+            # connect to it, synced with the values its server is installed
+            # from. One switch for the four, on unless the cluster turns it
+            # off (kernel/appsets/values.yaml storeNetworkPolicies), and the
+            # namespaces of the platform's own clients from the layout. A
+            # chart ignores the ones it does not name.
+            - name: networkPolicy.enabled
+              value: 'store.networkpolicies.placeholder'
+            - name: networkPolicy.namespaces.control
+              value: 'ns.control.placeholder'
+            - name: networkPolicy.namespaces.data
+              value: 'ns.data.placeholder'
+            - name: networkPolicy.namespaces.s3
+              value: 'sys.s3.placeholder'
       destination:
         server: https://kubernetes.default.svc
         namespace: '{{.namespace}}'

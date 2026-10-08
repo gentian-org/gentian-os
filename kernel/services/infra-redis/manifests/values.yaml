@@ -15,3 +15,14 @@ storageClass: ""
 namespace: ""
 # Pull secrets for a private registry, by name; none for the public images.
 imagePullSecrets: []
+
+# Who may open a connection to the server's pods (templates/networkpolicy.yaml).
+# On by default; needs a CNI that enforces NetworkPolicy, and has no effect on
+# one that does not. Off removes the policy and leaves the passwords as the
+# only check. The data-plane ApplicationSet passes `enabled`; the value here
+# is what a `helm template` run by hand gets.
+networkPolicy:
+  enabled: true
+  ports:
+    # The port apps are handed (provisioner.RedisPort).
+    redis: 6379

@@ -1,0 +1,103 @@
+{{- /*
+  Who may open a connection to the tenants' PostgreSQL.
+
+  Until this policy the server took a connection from any pod of any
+  namespace that has no egress policy of its own -- every kernel and system
+  namespace -- and a password was the only thing in the way. Now a connection
+  is admitted from the clients below and from nothing else.
+
+  The data port:
+
+    tenant namespaces   every namespace labelled gentianos.io/tier=tenant.
+                        The server cannot tell one tenant's app from another's
+                        pod; what narrows it to the apps that declared a
+                        database is the tenant's side, where egress is denied
+                        by default (tenant-isolation) and kernel-access-<app>
+                        opens this port for a declaring app alone. The two
+                        rules are one control: this one keeps out everything
+                        that is not a tenant namespace or a client named here,
+                        that one keeps out the apps that asked for no database.
+                        A tenant's DMZ is a different tier and is not admitted.
+    this namespace      the operator's role and destroy Jobs run beside the
+                        server (database_reconciler.go, backup/teardown.go)
+                        and carry no pod label to select on; the cluster's own
+                        replicas and join Jobs stream from the primary. A pod
+                        here can mount the superuser Secret, so naming pods
+                        would keep nobody out.
+    the operator        reads and writes the usage history and the notices in
+                        a tenant's desktop database (internal/usage,
+                        applifecycle/notifications.go).
+    capture and restore pg_dump and pg_restore run beside the object store
+                        (tenantexport_controller.go jobParams), labelled
+                        gentianos.io/component=tenant-export.
+
+  The instance manager's port (status): CloudNativePG's operator, in the
+  kernel's data namespace, asks every instance for its state there, and
+  without it the Cluster never reports healthy. Nothing else is admitted to
+  it -- instances speak to each other on the data port. The kubelet's probes
+  use the same port; traffic from a pod's own node is not subject to a
+  NetworkPolicy.
+
+  The metrics port (9187) is listed nowhere and so is closed: nothing the
+  platform runs scrapes it. A cluster that brings a Prometheus adds a policy
+  of its own selecting these pods -- policies add up.
+
+  It selects the instance pods only (CloudNativePG labels them with the
+  cluster's name and the role `instance`; its initdb and join Jobs carry the
+  cluster label without that role and serve nothing), and it says nothing
+  about egress.
+
+  Sync wave -1: before the Cluster, so the server is never up without it.
+*/ -}}
+{{- if ne (toString .Values.networkPolicy.enabled) "false" }}
+{{- $np := .Values.networkPolicy }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: store-ingress
+  namespace: {{ .Release.Namespace }}
+  labels:
+    gentianos.io/tier: system
+    gentianos.io/function: postgresql
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  podSelector:
+    matchLabels:
+      cnpg.io/cluster: postgres
+      cnpg.io/podRole: instance
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              gentianos.io/tier: tenant
+        - podSelector: {}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $np.namespaces.control | quote }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: gentian-os
+              app.kubernetes.io/component: operator
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $np.namespaces.s3 | quote }}
+          podSelector:
+            matchLabels:
+              gentianos.io/component: tenant-export
+      ports:
+        - protocol: TCP
+          port: {{ $np.ports.postgresql }}
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $np.namespaces.data | quote }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: cloudnative-pg
+      ports:
+        - protocol: TCP
+          port: {{ $np.ports.status }}
+{{- end }}

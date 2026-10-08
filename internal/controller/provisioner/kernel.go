@@ -55,6 +55,11 @@ type JobWaitRequirement struct {
 // The servers themselves are composed by the charts under kernel/services,
 // which also write the address the operator reads for Redis and MinIO; the
 // test beside this file holds those to these numbers.
+//
+// Each of those charts also carries the NetworkPolicy that says who may
+// connect to its server, and admits them on the same port: the server's side
+// of the rule an app's policy is the tenant's side of. That number is a chart
+// value, held to these by the same test.
 const (
 	PostgresPort      int32 = 5432
 	MariaDBPort       int32 = 3306
