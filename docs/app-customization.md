@@ -86,6 +86,30 @@ from in-cluster Postfix to a relay and no profile changes.
 
 The same shape covers `database`, `cache`, `s3`, `identity` and `imap`.
 
+**Opening mailboxes with the sign-in token is said separately.** `imap: {}`
+gives the app the mail server's address and nothing more. An app that signs
+people in to their mailboxes with their own token (XOAUTH2) declares it:
+
+```yaml
+spec:
+  requires:
+    services:
+      identity:
+        oidc: {clientId: gentian-webmail}   # the client the grant is given to
+      mail:
+        imap:
+          tokenSignIn: true
+```
+
+The app's client is given the optional scope `mailbox`. The app asks for it
+when it signs a person in for mail (`scope=openid email mailbox`), and that
+token -- no other -- is accepted by the mail server, for that person's mailbox
+only. Without the declaration Keycloak refuses the scope. It is served where
+the cluster runs its own mail server and the tenant has mailboxes on it;
+elsewhere it is accepted and does nothing, so an app keeps a fallback (an app
+password) for those clusters. Who checks what:
+[security.md §2.11](design/security.md).
+
 **Language models are a need like the others.** An app that calls models
 declares the platform's model gateway, and only an app that declares it is
 given a key there, the gateway's address and a network path to it:

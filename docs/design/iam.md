@@ -250,9 +250,27 @@ that is shown instead of mailed does not, so that account's address stays
 unverified.
 
 **Token introspection checks the audience.** From 26.6 a client may introspect
-only tokens that name it in `aud`. Dovecot's XOAUTH2 check (`gentian-dovecot`
-introspecting other clients' tokens, see [mail.md](mail.md)) does not satisfy
-that yet; app passwords are unaffected.
+only tokens that name it in `aud`. Dovecot validates an XOAUTH2 token by
+introspecting it as `gentian-dovecot`, so a mailbox opens only for a token that
+names `gentian-dovecot`, and which tokens do is declared:
+
+- Each tenant realm on a cluster with its own mail server has the client scope
+  `mailbox`. Its one mapper adds `gentian-dovecot` to the audience of an access
+  token (`included.client.audience`: Keycloak leaves it out if that client is
+  disabled or gone). Nothing else in the realm names that audience.
+- The scope is an *optional* scope of the sign-in client of an app whose profile
+  declares `requires.services.mail.imap.tokenSignIn`, and of no other client. A
+  token carries the scope and the audience only when such an app asked for
+  `mailbox` at that sign-in; Keycloak refuses the request of a client without
+  the scope (`invalid_scope`).
+- Dovecot requires the scope too (`scope = mailbox` in each realm's oauth2
+  settings), opens the mailbox of the token's `email` claim, and refuses a
+  mail program that names another address.
+
+`gentian-dovecot` does not carry the client attribute that switches the audience
+check off for it. The kernel realm has no `mailbox` scope, so no token of the
+kernel realm opens a mailbox; app passwords are unaffected everywhere. Who may
+do what with such a token: [security.md §2.11](security.md).
 
 **Upgrading an existing cluster.** Keycloak migrates its database on first
 start of the new version, and the migration is one-way: 26.0 cannot run on a

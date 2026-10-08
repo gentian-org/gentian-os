@@ -287,6 +287,15 @@ key, no Secret and no network path to the gateway, whatever the cluster runs. Wi
 that serves no models, the app is held and its Component says why
 ([app-customization.md §1.1](app-customization.md)).
 
+**An app that opens mailboxes with the person's sign-in token** (IMAP XOAUTH2) declares
+`spec.requires.services.mail.imap.tokenSignIn: true`, beside the sign-in client it needs
+(`spec.requires.services.identity.oidc`). Its client is given the optional scope `mailbox`; a token
+the app obtained by asking for that scope opens the mailbox of the person it was issued to, and
+nothing else of the app's does. Without the declaration no token of the app is accepted by the mail
+server. On a cluster that does not run its own mail server, or for a tenant without mailboxes
+there, the declaration is accepted and grants nothing
+([app-customization.md §1.1](app-customization.md)).
+
 ### 4.2 Generate the index
 
 Take the build script from gentian-apps and run it:

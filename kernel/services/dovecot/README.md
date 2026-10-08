@@ -8,8 +8,15 @@ with a self-contained `dovecot.conf` in a ConfigMap.
 
 ## Authentication
 
-IMAP users authenticate with a Keycloak access token (XOAUTH2), not a password.
-The `passwd-file` passdb is deliberately empty and serves as the final deny.
+IMAP users authenticate with a Keycloak access token (XOAUTH2), or with an app
+password minted per user and client type. The `passwd-file` passdb is
+deliberately empty and serves as the final deny.
+
+A token is accepted only if it names `gentian-dovecot` in its audience and
+carries the scope `mailbox` (`scope = mailbox` in each realm's settings). Both
+come from the realm's `mailbox` client scope, which only the client of an app
+that declares `requires.services.mail.imap.tokenSignIn` may ask for. The kernel
+realm has no such scope, so its block accepts no token.
 
 One `oauth2` passdb exists per Keycloak realm whose users have mailboxes — the
 kernel realm for the cluster admin, plus one per tenant using selfhosted mail —

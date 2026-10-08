@@ -266,6 +266,26 @@ what its name says.
 
 ---
 
+### 2.11 Who may open a mailbox with a sign-in token
+
+Only on a cluster whose `mail.serviceMode` is `system`, and only for a tenant with mailboxes on it (`spec.mail.mode` `selfhosted`, the default there) in a realm of its own. A mail program presents either an app password or a person's access token (XOAUTH2). For a token, four things have to hold, and each is checked by a different party:
+
+| Check | By | What makes it true |
+| --- | --- | --- |
+| The token names `gentian-dovecot` in its audience | Keycloak, when Dovecot introspects as `gentian-dovecot` | the realm's client scope `mailbox`, whose mapper adds that audience to an access token |
+| The token carries the scope `mailbox` | Dovecot (`scope = mailbox`) | the client asked for `mailbox` at that sign-in, and has the scope |
+| The client has the scope | Keycloak, at sign-in (`invalid_scope` otherwise) | the app's profile declares `requires.services.mail.imap.tokenSignIn`; the scope is an optional scope of that app's own client and of no other |
+| The mailbox is the person's | Dovecot | the user is the token's `email` claim, and the address the mail program gave has to equal it |
+
+So an app that declares it can open the mailbox of a person who signed in to it, with the token of the sign-in at which it asked for `mailbox`, for as long as that token is valid. It cannot open anybody else's, and its other tokens -- the ones it holds for its own session or relays to what it calls -- open none. An app that does not declare it cannot obtain such a token at all, and a token of another realm is introspected by a realm that does not know it.
+
+- **The declaration is a grant, so it is explicit.** `mail.imap: {}` alone means the app reads mail and is given the server's address; it does not make its tokens mailbox keys.
+- **Withdrawn with the declaration.** A profile that stops declaring it keeps its optional scopes without `mailbox`; tokens already issued stay valid until they expire.
+- **A token with the scope is a mailbox key wherever it travels.** An app should ask for `mailbox` in a sign-in of its own for mail and not relay that token.
+- **`gentian-dovecot` checks the audience like every other client.** The client attribute that exempts one client from the check is set nowhere (`TestNothingSwitchesTheIntrospectionAudienceCheckOff`).
+- **Not served:** the kernel realm, and so the platform tenant, has no `mailbox` scope; a cluster that relays its mail has no Dovecot. The declaration is accepted there and grants nothing.
+- **The network is not the gate.** A profile that declares `requires.services.mail` is opened `system-mail` (`kernel-access-<app>`), and Dovecot's IMAP ports admit any source (§2.8); the token is the check.
+
 ## 3. Architecture
 
 ### 3.0 Implementation status
