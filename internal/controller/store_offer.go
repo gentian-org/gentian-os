@@ -22,7 +22,9 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
@@ -215,6 +217,30 @@ func clusterClaimObject() *unstructured.Unstructured {
 	claim := &unstructured.Unstructured{}
 	claim.SetGroupVersionKind(clusterClaimGVK)
 	return claim
+}
+
+// storeAddressChanged lets a claim event through only when it can change the
+// verdict: the claim appearing or going, or the store it names changing.
+//
+// The claim is written to for many other reasons -- every setting of the
+// cluster is on it, and Crossplane keeps its status -- and the tenant
+// reconciler answers this watch by re-running every tenant. Without the
+// filter each of those writes would wake them all.
+func storeAddressChanged() predicate.Predicate {
+	named := func(obj client.Object) string {
+		u, ok := obj.(*unstructured.Unstructured)
+		if !ok {
+			return ""
+		}
+		raw, _, _ := unstructured.NestedString(u.Object, "spec", "catalogue", "storeUrl")
+		return normaliseStoreAddress(raw)
+	}
+	return predicate.Funcs{
+		CreateFunc:  func(event.CreateEvent) bool { return true },
+		DeleteFunc:  func(event.DeleteEvent) bool { return true },
+		GenericFunc: func(event.GenericEvent) bool { return false },
+		UpdateFunc:  func(e event.UpdateEvent) bool { return named(e.ObjectOld) != named(e.ObjectNew) },
+	}
 }
 
 // componentsToldTheStore re-runs every Component whose profile asked where

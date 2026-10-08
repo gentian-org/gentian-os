@@ -29,6 +29,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -1544,7 +1545,8 @@ func (r *ComponentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Watches(&gentianov1alpha1.ComponentProfile{}, componentsOfProfile(mgr.GetClient())).
 		Watches(&corev1.Secret{}, componentsOfZoneSecret(mgr.GetClient()))
 	if r.WatchClusterClaim {
-		b = b.Watches(clusterClaimObject(), componentsToldTheStore(mgr.GetClient()))
+		b = b.Watches(clusterClaimObject(), componentsToldTheStore(mgr.GetClient()),
+			builder.WithPredicates(storeAddressChanged()))
 	}
 	return b.Complete(r.guarded())
 }

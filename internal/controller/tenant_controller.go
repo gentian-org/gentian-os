@@ -554,7 +554,8 @@ func (r *TenantReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	}
 
 	if r.WatchClusterClaim {
-		ctrlBuilder = ctrlBuilder.Watches(clusterClaimObject(), handler.EnqueueRequestsFromMapFunc(mapAllTenants))
+		ctrlBuilder = ctrlBuilder.Watches(clusterClaimObject(), handler.EnqueueRequestsFromMapFunc(mapAllTenants),
+			builder.WithPredicates(storeAddressChanged()))
 	}
 
 	return ctrlBuilder.Complete(r.guarded())

@@ -485,7 +485,7 @@ func (r *TileProjectionReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Watches(&gentianov1alpha1.Tenant{}, one).
 		Watches(&gatewayv1.HTTPRoute{}, one)
 	if r.WatchClusterClaim {
-		b = b.Watches(clusterClaimObject(), one)
+		b = b.Watches(clusterClaimObject(), one, builder.WithPredicates(storeAddressChanged()))
 	}
 	return b.Complete(r)
 }

@@ -33,6 +33,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 	"sigs.k8s.io/yaml"
 
@@ -757,5 +758,33 @@ func TestAStoreAddressIsHTTPSWithNoQuery(t *testing.T) {
 		if got := normaliseStoreAddress(raw); got != want {
 			t.Errorf("normaliseStoreAddress(%q) = %q, want %q", raw, got, want)
 		}
+	}
+}
+
+// The claim is written to for many reasons; only one of them can change
+// whether a store is offered. Nothing else about it wakes the tenants.
+func TestOnlyTheStoreAddressOfTheClaimIsAnEvent(t *testing.T) {
+	p := storeAddressChanged()
+	named, other, none := clusterClaim("https://store.example.org"), clusterClaim("https://other.example.org"), clusterClaim("")
+	status := clusterClaim("https://store.example.org")
+	_ = unstructured.SetNestedField(status.Object, "Ready", "status", "phase")
+	_ = unstructured.SetNestedField(status.Object, "single", "spec", "tenancyMode")
+	slash := clusterClaim("https://store.example.org/")
+	for name, c := range map[string]struct {
+		old, new *unstructured.Unstructured
+		want     bool
+	}{
+		"a store is named":               {none, named, true},
+		"the store is withdrawn":         {named, none, true},
+		"another store is named":         {named, other, true},
+		"status and another setting":     {named, status, false},
+		"a trailing slash, the same one": {named, slash, false},
+	} {
+		if got := p.Update(event.UpdateEvent{ObjectOld: c.old, ObjectNew: c.new}); got != c.want {
+			t.Errorf("%s: event let through = %v, want %v", name, got, c.want)
+		}
+	}
+	if !p.Create(event.CreateEvent{Object: named}) || !p.Delete(event.DeleteEvent{Object: named}) {
+		t.Error("the claim appearing or going is not an event")
 	}
 }
