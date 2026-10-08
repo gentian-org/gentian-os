@@ -20,6 +20,14 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
+# The namespace the object store is in, by its function: a name written here
+# is a name that stays behind when the layout changes, which is how this
+# script came to look for MinIO's credentials in a namespace that no longer
+# exists.
+NAMESPACES_FILE="${REPO_ROOT}/kernel/namespaces.yaml"
+# shellcheck source=scripts/lib/namespaces.sh
+source "${SCRIPT_DIR}/lib/namespaces.sh"
+
 RED=$'\033[0;31m'; GREEN=$'\033[0;32m'; YELLOW=$'\033[1;33m'
 DIM=$'\033[2m'; NC=$'\033[0m'
 info()    { echo "${DIM}   $*${NC}"; }
@@ -275,7 +283,10 @@ mc_alias() {
     need mc "mc is the MinIO client, for reading bundles out of object storage:
   curl -sSL https://dl.min.io/client/mc/release/linux-amd64/mc -o ~/.local/bin/mc && chmod +x ~/.local/bin/mc
   macOS: brew install minio/stable/mc" || return 1
-    local ak="" sk="" kn="platform-kernel"
+    local ak="" sk="" kn
+    # Beside the object store: where a destination's credential is
+    # materialised, and where the capture Jobs read it.
+    kn="$(ns_system s3)" || return 1
 
     # An empty endpoint means the platform's own MinIO, whose address is a
     # cluster-internal Service name. Nothing outside the cluster resolves it, so
@@ -340,17 +351,18 @@ age_decrypt() {
 # points there; the forward dies with the script.
 platform_storage_forward() {
     need kubectl || return 1
-    local raw host svc ns port lport=19000
-    raw="$(kubectl get secret minio-admin -n platform-kernel \
+    local raw host svc ns port lport=19000 s3ns
+    s3ns="$(ns_system s3)" || return 1
+    raw="$(kubectl get secret minio-admin -n "${s3ns}" \
         -o jsonpath='{.data.endpoint}' 2>/dev/null | base64 -d || true)"
-    [[ -n "${raw}" ]] || { error "Cannot read the minio-admin endpoint in platform-kernel."; return 1; }
+    [[ -n "${raw}" ]] || { error "Cannot read the minio-admin endpoint in ${s3ns}."; return 1; }
 
     host="${raw#*://}"; port="${host##*:}"; host="${host%%:*}"
     svc="${host%%.*}"; ns="${host#*.}"; ns="${ns%%.*}"
     [[ -n "${svc}" && -n "${ns}" ]] || { error "Cannot parse ${raw}"; return 1; }
 
-    OPT_S3_AK="$(kubectl get secret minio-admin -n platform-kernel -o jsonpath='{.data.accessKey}' 2>/dev/null | base64 -d || true)"
-    OPT_S3_SK="$(kubectl get secret minio-admin -n platform-kernel -o jsonpath='{.data.secretKey}' 2>/dev/null | base64 -d || true)"
+    OPT_S3_AK="$(kubectl get secret minio-admin -n "${s3ns}" -o jsonpath='{.data.accessKey}' 2>/dev/null | base64 -d || true)"
+    OPT_S3_SK="$(kubectl get secret minio-admin -n "${s3ns}" -o jsonpath='{.data.secretKey}' 2>/dev/null | base64 -d || true)"
     [[ -n "${OPT_S3_AK}" ]] || { error "Cannot read the minio-admin credentials."; return 1; }
 
     info "forwarding ${svc}.${ns}:${port} to localhost:${lport}"

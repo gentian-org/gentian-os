@@ -282,6 +282,22 @@ var TenantOwned = []TenantRule{
 		Retain: "removed",
 		Delete: "removed; a route that cannot be removed fails the deletion",
 	},
+	// The two below are on the list for what it is for: each lies outside
+	// everything a deletion sweeps, and nothing removes either. They say so.
+	// Deleting mail is a kind of destruction no act performs today; whether a
+	// tenant's deletion should is not decided here.
+	{
+		What: "the tenant's mailboxes: the mail its people received and filed, on the mail server's own volume", MadeBy: "the mail server, as mail arrives; where the cluster runs its own",
+		Export: "not carried: no bundle holds mail",
+		Retain: "kept; the tenant's addresses stop receiving",
+		Delete: "NOT removed: nothing deletes a mailbox, and they stay on the mail server's volume after the tenant is gone",
+	},
+	{
+		What: "the entries in the rights store that say who is the tenant's member (membership tuples)", MadeBy: "the membership service, from the identity provider's events",
+		Export: "not carried: they are derived again from the realm's people",
+		Retain: "kept",
+		Delete: "NOT removed: the tenant's app grants go, the entries naming people as its members stay",
+	},
 	{
 		What: "the tenant's backup bucket", MadeBy: "the first export",
 		Export: "it is where exports go",

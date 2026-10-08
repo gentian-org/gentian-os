@@ -435,7 +435,7 @@ In provisioning order.
 | Stored credentials | the tenant reconciler's seeder before each store; the app Composition for generated secrets | Vault paths `…/apps/<app>` and `…/apps/<app>-<extension>`. A tenant's deletion removes them with the tenant's whole vault subtree. |
 | Access group and memberships | the tenant's identity Job, from `Tenant.spec.apps` | Carried inside the realm export; a purge destroys it in the tenant's own realm. |
 | Sign-in scope | the tenant's identity Job, from the OIDC pack the app's profile names | The client scope with its mappers. Kept at an uninstall: taking it away there would need the uninstall to talk to the identity provider, and an uninstall is a commit nobody waits on. A purge destroys it unless an installed app names the same scope or it is one of Keycloak's own. |
-| Database and role | a role Job and a CloudNativePG Database, or a MariaDB setup Job | A bundle holds a dump of the provisioned database and of every other database that is the app's (§9.3). A restore replaces the provisioned one; each other one is created if missing and replaced, on MariaDB under the provisioned name of the tenant restored into; one that is the app's now and that the bundle does not hold is left, and named. |
+| Database and role | a role Job and a CloudNativePG Database, or a MariaDB setup Job | A bundle holds a dump of the provisioned database and of every other database that is the app's (§9.3). A restore replaces the provisioned one; each other one is created if missing and replaced, under the provisioned name of the tenant restored into when that is not the tenant the bundle was taken of (`<source>_x` becomes `<target>_x`; on PostgreSQL any other name `y` becomes `<target>_y`); one that is the app's now and that the bundle does not hold is left, and named. A PostgreSQL database owned by another role is never replaced: the restore fails first. |
 | Object storage | the bucket Job | A restore makes the bucket, its user and its policy with the code install uses, then writes the objects, removing objects the bundle does not hold. |
 | Cache user | the ACL Job | A restored cache is stale, so none is carried. |
 | Model key | the tenant reconciler, at the model gateway, where the cluster serves models | A credential, registered again at install. A tenant's deletion removes the keys, then the tenant's team. |
@@ -603,6 +603,38 @@ restore of it has run to its end, restored or failed. A restore refused before
 it changed anything leaves it, so the request can be made again; an upload that
 is never restored stays until it is removed by hand.
 
+### 9.4a Where each step of a backup and a restore runs
+
+A step runs in the namespace where the credential it works with already is.
+No administrator credential of a database or of the identity provider is
+copied anywhere.
+
+| Step | Namespace | Reads there |
+| --- | --- | --- |
+| PostgreSQL dump and load, an app's and the desktop's | `system-postgresql` | `postgres-admin` |
+| MariaDB dump and load | `system-mariadb` | `mariadb-admin` |
+| Realm export and import | the identity namespace (`kernel-authentication`) | `keycloak-admin` |
+| Bucket archive and load, the manifest, a bundle's removal | `system-s3` | `minio-admin`, and the bundle's own credential and key |
+| Volume archive and load | the tenant's namespace | the claim |
+
+What a step needs besides is the credential the bundle is reached with and
+the key it is encrypted or opened with. Those exist beside the object store.
+For every other namespace a run has a step in, the operator stages one Secret
+holding both (`tx-<tenant>-<run>-run-creds`, `…-rcreds` for a restore) and
+removes it when the run ends: completed, failed or deleted. For a bundle on
+the platform's own storage the staged credential is the object store's
+administrator's, as it always was for volume steps.
+
+The names of a run's Jobs and Secrets carry the tenant's name: those
+namespaces are shared, and a run's name is unique in its tenant only. A Job
+or Secret found under a run's name that another run made is never used.
+
+The object store admits these pods by their label
+(`gentianos.io/component=tenant-export`) from those namespaces
+([security.md](security.md) §2.5). A test builds every step with the
+reconcilers' own code and fails when a pod reads a Secret that is not in the
+namespace it runs in (`TestEveryUnitFindsWhatItsPodReadsWhereItRuns`).
+
 ### 9.5 Failing loudly
 
 What a person sees when an act fails is in
@@ -614,6 +646,15 @@ for by anybody: a cleanup Job that fails, a vault or a model gateway that does
 not answer, an edge route or a provisioning Job that cannot be removed, is a
 reconcile error; the Tenant stays `Terminating`, and the failed step is run
 again on the next pass. The Tenant is gone only when its namespace is.
+
+The scripts of a backup and a restore are held to the same rule by the same
+kind of test (`TestNoUnitScriptDiscardsAFailure`): each stops at the first
+command that fails and discards no failure. The realm import goes on to the
+end, names every person and membership it could not put back, and then
+fails. A step whose pod does not start is counted like one that failed, and a
+backup or a restore gives up after `exportMaxAttempts` of them, in every
+stage, starting the paused app again. A `TenantRestore` holds a finalizer:
+deleting one that runs stops its Jobs and starts the app again.
 
 ### 9.6 Known limits
 
@@ -644,4 +685,11 @@ The gaps that matter to a person running the platform are in
   dumps that server refuses to load; the two are bumped together.
 - **Files at a tenant's deletion** go with the namespace, after the stores,
   not before them.
+- **Renamed databases.** A database an app made for itself is restored under
+  another name when the bundle is of another tenant (§9.1). The app's own
+  settings may still name the old one.
+- **The realm of a bundle of another tenant.** Groups named
+  `gentian:tenant:<old>:…` are renamed to the new tenant's, with their
+  members; the bundle's clients, client roles and the old realm's default
+  role are not imported.
 

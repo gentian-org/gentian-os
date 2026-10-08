@@ -414,9 +414,31 @@ func TestWhatATenantOwnsSaysWhatItsDeletionDoesWithIt(t *testing.T) {
 	for _, rule := range TenantOwned {
 		all += rule.What + "\n"
 	}
-	for _, must := range []string{"kernel realm", "model gateway", "mail DNS records", "vault subtree", "namespace", "backup bucket", "record of what was provisioned"} {
+	for _, must := range []string{"kernel realm", "model gateway", "mail DNS records", "vault subtree", "namespace", "backup bucket", "record of what was provisioned",
+		"mailboxes", "membership tuples"} {
 		if !strings.Contains(all, must) {
 			t.Errorf("the list of what a tenant owns does not name its %s", must)
+		}
+	}
+}
+
+// What no act removes is on the list as that, in so many words: a reader of
+// the inventory, and the page written from it, is not left to infer from a
+// missing row that a deleted tenant's mail and memberships are gone.
+func TestWhatNoDeletionRemovesIsSaidToStay(t *testing.T) {
+	for _, what := range []string{"mailboxes", "membership tuples"} {
+		found := false
+		for _, rule := range TenantOwned {
+			if !strings.Contains(rule.What, what) {
+				continue
+			}
+			found = true
+			if !strings.HasPrefix(rule.Delete, "NOT removed") || !strings.HasPrefix(rule.Export, "not carried") {
+				t.Errorf("%s: delete = %q, export = %q", what, rule.Delete, rule.Export)
+			}
+		}
+		if !found {
+			t.Errorf("the tenant's %s are not on the list", what)
 		}
 	}
 }

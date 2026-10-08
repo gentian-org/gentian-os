@@ -242,9 +242,10 @@ denies egress by default and an app's `kernel-access-<app>` policy opens the
 store its profile declares, on that store's port. Each store -- PostgreSQL,
 MariaDB, Redis, MinIO -- carries the other side, a `store-ingress` policy on
 its server's pods: tenant namespaces, the pods of its own namespace (the
-operator's provisioning and destroy Jobs), and by name the operator, the
-capture and restore pods beside the object store and, for PostgreSQL's
-instance manager, CloudNativePG's operator. The server's side keeps out
+operator's provisioning and destroy Jobs, and the steps of a backup and a
+restore that work on that store), and by name the operator, for MinIO the
+backup and restore pods of the database and identity namespaces and, for
+PostgreSQL's instance manager, CloudNativePG's operator. The server's side keeps out
 everything that is not a tenant namespace or one of those; the tenant's side
 keeps out the apps that declared no such store. The table of who reaches
 which port, and what stays closed, is

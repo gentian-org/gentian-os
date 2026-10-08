@@ -288,6 +288,10 @@ sign-in client go, and everything it stored stays — its database, its object
 storage, its cache user, its files, its stored credentials, and the access
 group with everybody who is in it. The app is then *retained*: uninstalled,
 data retained. Installing it again in the same tenant finds all of it.
+A backup taken after the uninstall does not hold that data: only one taken
+while the app was installed does. The director's answer to an uninstall says
+so (`note`), and every later backup names the uninstalled apps it left out
+(`status.notIncluded`).
 
 **Purging** destroys what uninstalling kept, and cannot be undone. It is
 refused while the app is still the tenant's. `--purge` therefore does both, in
@@ -679,11 +683,13 @@ like this is all a scheduled backup requires.
 kubectl get tenantexport nightly-2026-08-18 -n tenant-demo \
   -o custom-columns=PHASE:.status.phase,BUNDLE:.status.bundle.prefix,PAUSED:.status.quiesced
 
-# The capture Jobs themselves. Volume archives run in the tenant namespace —
-# a PVC is only mountable from its own namespace — everything else beside the
-# object store, in system-s3 (see design/data-lifecycle.md §7, gap 1).
-kubectl get jobs -n system-s3 -l gentianos.io/tenant-export=nightly-2026-08-18
-kubectl get jobs -n tenant-demo -l gentianos.io/tenant-export=nightly-2026-08-18
+# The capture Jobs themselves. Each runs where its credential is: a database
+# dump beside its database, the realm export in the identity namespace, a
+# bucket and the manifest beside the object store, a volume archive in the
+# tenant's namespace (design/operations.md §9.4a).
+for ns in system-postgresql system-mariadb system-s3 kernel-authentication tenant-demo; do
+  kubectl get jobs -n "$ns" -l gentianos.io/tenant-export=nightly-2026-08-18,gentianos.io/tenant=demo
+done
 ```
 
 An app listed in `.status.quiesced` is **offline right now**. That is normal
@@ -877,11 +883,28 @@ kubectl gentian tenants import --bucket acme-gentian-backup --prefix nightly-202
 ```
 
 What happens: the file is uploaded to the cluster's own storage; the director
-opens the manifest with the key, refuses a name the cluster already has,
-commits the tenant from the manifest's spec (deletionPolicy Retain, whatever
-the bundle said), waits until the operator reports the tenant Ready with its
-apps up, and starts a `TenantRestore`. The command follows the import and
-prints each phase: `declared`, `provisioning`, `restoring`, `ready`.
+opens the manifest with the key and refuses a name the cluster already has.
+It then makes sure of the definition of every app the bundle's tenant lists:
+on the cluster already at the build the bundle records, or fetched at that
+build from one of the cluster's catalogues and committed. If one cannot be
+had, the import is refused with `422`, names each, and has changed nothing.
+It commits the tenant from the manifest's settings (deletionPolicy Retain,
+whatever the bundle said), waits until the operator reports the tenant Ready
+with its apps up, and starts a `TenantRestore`. The command follows the
+import and prints each phase: `declared`, `provisioning`, `restoring`,
+`ready`.
+
+The new tenant's realm, database prefix and bucket prefix follow from its own
+name, whatever the bundle states. With `--name acme2` beside `acme`, nothing
+of `acme` is touched. A tenant whose realm or prefixes are already another
+tenant's is refused with `409`, on import and on create.
+
+The import is recorded in git beside the tenant (`import.json`) until it has
+finished, so it survives a restart of the director. The record holds no key.
+If the director restarts before the restore has started, the status says
+`awaiting-key`: run the same command again, with the same bundle, name and
+key, and the import goes on. If the restore was already running, nothing is
+needed.
 
 Directly against the director:
 
