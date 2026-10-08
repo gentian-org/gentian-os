@@ -268,3 +268,62 @@ func TestSeederSeedCacheOmitsUserWhenEngineHasNone(t *testing.T) {
 		t.Fatalf("unexpected user: %q", got.User)
 	}
 }
+
+// The key an app presents to the model gateway is generated like a database
+// password: derived for this tenant and app, so an app installed again holds
+// the key it held; write-once; and nothing a person could write down from
+// the tenant's and the app's names without the master.
+func TestSeederSeedModelAccessIsStablePerTenantAndApp(t *testing.T) {
+	srv := newFakeBao()
+	defer srv.Close()
+	s := secrets.NewSeeder(newClient(t, srv.URL), secrets.NewDeriver("unit-test-master"))
+	ctx := context.Background()
+
+	first, err := s.SeedModelAccess(ctx, "demo", "chat", "sk-", "http://gateway:4000/v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(first.APIKey, "sk-") || len(first.APIKey) != len("sk-")+48 {
+		t.Fatalf("key = %q", first.APIKey)
+	}
+	if strings.Contains(first.APIKey, "demo") || strings.Contains(first.APIKey, "chat") {
+		t.Fatalf("key %q carries a name", first.APIKey)
+	}
+	// Again, and with the gateway moved: the same key, the new address.
+	second, err := s.SeedModelAccess(ctx, "demo", "chat", "sk-", "http://moved:4000/v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.APIKey != first.APIKey || second.BaseURL != "http://moved:4000/v1" {
+		t.Fatalf("second = %+v, first = %+v", second, first)
+	}
+	// Another app, and the same app of another tenant, hold other keys.
+	for _, other := range [][2]string{{"demo", "wiki"}, {"other", "chat"}} {
+		got, err := s.SeedModelAccess(ctx, other[0], other[1], "sk-", "http://gateway:4000/v1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.APIKey == first.APIKey {
+			t.Errorf("%s/%s holds the key of demo/chat", other[0], other[1])
+		}
+	}
+	// A vault emptied by a purge and seeded again by the same master gives
+	// the key back, as it does a database password.
+	fresh := newFakeBao()
+	defer fresh.Close()
+	again, err := secrets.NewSeeder(newClient(t, fresh.URL), secrets.NewDeriver("unit-test-master")).
+		SeedModelAccess(ctx, "demo", "chat", "sk-", "http://gateway:4000/v1")
+	if err != nil || again.APIKey != first.APIKey {
+		t.Errorf("after a purge: %q, %v; want the derived key again", again.APIKey, err)
+	}
+	// Without a master it is random, and still write-once.
+	random := secrets.NewSeeder(newClient(t, fresh.URL), nil)
+	a, err := random.SeedModelAccess(ctx, "demo", "notes", "sk-", "http://gateway:4000/v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := random.SeedModelAccess(ctx, "demo", "notes", "sk-", "http://gateway:4000/v1")
+	if err != nil || a.APIKey != b.APIKey || a.APIKey == first.APIKey {
+		t.Errorf("random key: %q then %q, %v", a.APIKey, b.APIKey, err)
+	}
+}

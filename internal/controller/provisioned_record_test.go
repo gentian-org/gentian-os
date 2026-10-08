@@ -169,23 +169,25 @@ func TestTenantDeleteStopsOnAnUnreadableRecord(t *testing.T) {
 	}
 }
 
-// On a cluster that serves models every app is registered a key at the
-// gateway, whatever its profile declares; the key is on record like a store,
-// so that it is found when the app, or the tenant, goes.
-func TestTheModelKeyIsRecordedWhereModelsAreServed(t *testing.T) {
+// The key at the model gateway is on record like a store, so that it is
+// found when the app, or the tenant, goes -- for an app whose profile
+// declares the gateway, on a cluster that serves models, and for no other.
+func TestTheModelKeyIsRecordedForAnAppThatDeclaredTheGateway(t *testing.T) {
 	ctx := context.Background()
 	scheme := deleteGapsScheme()
-	tenant := planTenant("demo", "notes")
+	tenant := planTenant("demo", "notes", "chat")
 	plain := storesProfile("notes", "", false, false)
+	chat := storesProfile("chat", "", false, false)
+	chat.Spec.Requires = &gentianov1alpha1.RequirementSpec{Services: &gentianov1alpha1.ServiceRequirements{LLM: &gentianov1alpha1.LLMRequirement{}}}
 
 	t.Setenv("LLM_SUPPORT", "false")
-	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(plain).Build()
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(plain, chat).Build()
 	r := &TenantReconciler{Client: c, Scheme: scheme}
 	if err := r.recordProvisionedStores(ctx, tenant); err != nil {
 		t.Fatal(err)
 	}
 	if got, _ := r.provisionedStores(ctx, "demo"); len(got) != 0 {
-		t.Fatalf("an app with nothing provisioned is on record: %+v", got)
+		t.Fatalf("on a cluster that serves no models something is on record: %+v", got)
 	}
 
 	t.Setenv("LLM_SUPPORT", "true")
@@ -193,7 +195,10 @@ func TestTheModelKeyIsRecordedWhereModelsAreServed(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, err := r.provisionedStores(ctx, "demo")
-	if err != nil || got["notes"].ModelKey != "demo-notes" {
-		t.Fatalf("recorded = %+v, %v; want the key's alias", got, err)
+	if err != nil || got["chat"].ModelKey != "demo-chat" {
+		t.Fatalf("recorded = %+v, %v; want the declaring app's key alias", got, err)
+	}
+	if _, there := got["notes"]; there {
+		t.Errorf("an app that declared no gateway is on record: %+v", got["notes"])
 	}
 }

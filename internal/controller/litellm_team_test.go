@@ -240,37 +240,3 @@ func TestTenantDeleteRemovesTheModelKeysAndTheTeam(t *testing.T) {
 		t.Fatalf("a second pass: %v", err)
 	}
 }
-
-// A key removed at a purge has to be registered again when the app comes
-// back. The gateway goes on answering /key/info for a deleted key, so
-// existence is asked of the list of keys under the alias.
-func TestAModelKeyIsRegisteredAgainAfterItWasRemoved(t *testing.T) {
-	listed, generated := false, 0
-	withLiteLLM(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/key/info":
-			// What the gateway says of a deleted key.
-			_, _ = w.Write([]byte(`{"key":"sk-gentian-demo-wiki","info":{}}`))
-		case "/key/list":
-			out := []string{}
-			if listed {
-				out = append(out, "hash")
-			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"keys": out})
-		case "/key/generate":
-			generated++
-			listed = true
-			_, _ = w.Write([]byte(`{}`))
-		default:
-			w.WriteHeader(http.StatusNotFound)
-		}
-	}))
-	for i := 0; i < 2; i++ {
-		if err := ensureLiteLLMVirtualKey(context.Background(), "sk-master", "sk-gentian-demo-wiki", "demo-wiki"); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if generated != 1 {
-		t.Errorf("the key was registered %d time(s), want once: not at all would leave the app a key that authenticates against nothing", generated)
-	}
-}

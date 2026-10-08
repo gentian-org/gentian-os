@@ -39,8 +39,8 @@ import (
 //
 // THROUGH THE APP COMPOSITION when it needs anything else: an identity
 // provider client of its own, generated or derived secrets, a database, cache,
-// object store or mail account mapped into chart values key by key, a
-// post-install job, a sidecar release. Rendering those is the app
+// object store, mail account or model gateway mapped into chart values key by
+// key, a post-install job, a sidecar release. Rendering those is the app
 // Composition's, and it is a great deal of rendering. The Component writes
 // the App claim that Composition answers, owns it, and is Ready when it is.
 // The claim used to be emitted by the tenant's Composition straight from the
@@ -63,12 +63,12 @@ func composedDelivery(profile *gentianov1alpha1.ComponentProfile) bool {
 	}
 	if req := spec.Requires; req != nil && req.Services != nil {
 		s := req.Services
-		if s.Identity != nil || s.Storage != nil || s.Cache != nil || s.Mail != nil || s.MCP != nil {
+		if s.Identity != nil || s.Storage != nil || s.Cache != nil || s.Mail != nil || s.MCP != nil || s.LLM != nil {
 			return true
 		}
 	}
 	if m := spec.Package.ValueMapping; m != nil {
-		if m.OIDC != nil || m.Cache != nil || m.SMTP != nil || m.IMAP != nil || m.Volumes != nil || len(m.Integrations) > 0 {
+		if m.OIDC != nil || m.Cache != nil || m.LLM != nil || m.SMTP != nil || m.IMAP != nil || m.Volumes != nil || len(m.Integrations) > 0 {
 			return true
 		}
 		// A database handed over as a Secret's name is rendered here. One

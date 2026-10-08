@@ -75,7 +75,8 @@ type Provisioned struct {
 	// CacheUser is the user in the shared cache, "" without one.
 	CacheUser string `json:"cacheUser,omitempty"`
 	// ModelKey is the alias of the key registered for the app at the model
-	// gateway, "" when none was: on a cluster that serves no models.
+	// gateway, "" when none was: the app's profile does not declare the
+	// gateway, or the cluster serves no models.
 	ModelKey string `json:"modelKey,omitempty"`
 }
 
@@ -87,6 +88,7 @@ func ProvisionedOf(inv AppInventory) Provisioned {
 		DatabaseUser:   inv.DatabaseUser,
 		Bucket:         inv.Bucket,
 		CacheUser:      inv.CacheUser,
+		ModelKey:       inv.ModelKey,
 	}
 }
 

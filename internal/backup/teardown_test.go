@@ -22,6 +22,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/modelgateway"
 )
 
 // The table is what keeps five acts agreeing about what an app owns, so it
@@ -464,5 +465,28 @@ func TestTheModelKeyIsOnRecord(t *testing.T) {
 	got, _ := ReadProvisioned(record)
 	if got["wiki"].ModelKey != "demo-wiki" || got["wiki"].Bucket != "demo-wiki" {
 		t.Errorf("recorded = %+v", got["wiki"])
+	}
+
+	// It is the record of a declared requirement: the inventory names the key
+	// for a profile that declares the model gateway, under the alias the
+	// gateway knows it by, and for no other profile.
+	tenant := &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "demo"}}
+	declaring := allStoresProfile()
+	declaring.Spec.Requires.Services.LLM = &gentianov1alpha1.LLMRequirement{}
+	inv := InventoryOf(tenant, "wiki", declaring)
+	if inv.ModelKey != modelgateway.KeyAlias("demo", "wiki") || !ProvisionedOf(inv).Has(KindModelAccess) {
+		t.Errorf("a declaring profile: inventory names %q, record has it = %v", inv.ModelKey, ProvisionedOf(inv).Has(KindModelAccess))
+	}
+	if plain := InventoryOf(tenant, "wiki", allStoresProfile()); plain.ModelKey != "" || ProvisionedOf(plain).Has(KindModelAccess) {
+		t.Errorf("a profile that declares no gateway is given a model key: %q", plain.ModelKey)
+	}
+	if DeclaresModelAccess(nil) || DeclaresModelAccess(allStoresProfile()) || !DeclaresModelAccess(declaring) {
+		t.Error("DeclaresModelAccess does not follow requires.services.llm")
+	}
+	// And the table says what every act does with it: kept at an uninstall,
+	// destroyed by a purge and by the tenant's deletion, carried by no export.
+	rule := RuleFor(KindModelAccess)
+	if rule.Uninstall != Keeps || rule.AppPurge != Destroys || rule.TenantDelete != Destroys || rule.Export != Omits {
+		t.Errorf("rule = %+v", rule)
 	}
 }

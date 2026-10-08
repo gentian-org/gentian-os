@@ -1215,6 +1215,13 @@ spec:
                               - entityId
                               type: object
                           type: object
+                        llm:
+                          description: |-
+                            LLM declares that the component calls language models through the
+                            platform's model gateway. Only a component that declares it is given a
+                            key at the gateway, the address and the key, and a network path to the
+                            gateway; a component that does not is given none of the three.
+                          type: object
                         mail:
                           description: Mail specifies SMTP and/or IMAP requirements.
                           properties:
@@ -1873,6 +1880,21 @@ spec:
                         description: |-
                           Integrations maps optional integration credentials to Helm keys,
                           keyed by the contract name.
+                        type: object
+                      llm:
+                        description: |-
+                          LLM maps the model gateway's address and the component's key to Helm
+                          keys, for a component that declares requires.services.llm.
+                        properties:
+                          apiKeyKey:
+                            description: APIKeyKey is the Helm value key for the key
+                              the component presents.
+                            type: string
+                          baseUrlKey:
+                            description: |-
+                              BaseURLKey is the Helm value key for the gateway's OpenAI-compatible
+                              base address (it ends in /v1).
+                            type: string
                         type: object
                       oidc:
                         description: OIDC maps OIDC provider values to Helm keys.
@@ -2630,6 +2652,13 @@ spec:
                             - acsUrl
                             - entityId
                             type: object
+                        type: object
+                      llm:
+                        description: |-
+                          LLM declares that the component calls language models through the
+                          platform's model gateway. Only a component that declares it is given a
+                          key at the gateway, the address and the key, and a network path to the
+                          gateway; a component that does not is given none of the three.
                         type: object
                       mail:
                         description: Mail specifies SMTP and/or IMAP requirements.

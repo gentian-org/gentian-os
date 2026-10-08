@@ -23,6 +23,7 @@ import (
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/modelgateway"
 )
 
 const (
@@ -60,8 +61,8 @@ const (
 
 	argocdServerServiceName = "argocd-server"
 	headlampServiceName     = "headlamp"
-	litellmProxyServiceName = "litellm-proxy"
-	litellmProxyPort        = int32(4000)
+	litellmProxyServiceName = modelgateway.ServiceName
+	litellmProxyPort        = modelgateway.Port
 )
 
 type kernelHTTPRouteSpec struct {

@@ -1,0 +1,34 @@
+apiVersion: gentianos.io/v1alpha1
+kind: ComponentProfile
+metadata:
+  name: demo-app
+  labels:
+    gentianos.io/profile-name: demo-app
+spec:
+  classes:
+    - app
+  launch: none
+  trustTier: certified
+  version: "1.0.0"
+  package:
+    chart:
+      repository: oci://example.invalid/demo-app
+      name: demo-app
+      version: "1.0.0"
+    valueMapping:
+      # The model gateway, for a chart that takes its address and its key as
+      # values. The declaration below is what makes the platform give the app
+      # a key; this only says where the chart wants the two.
+      llm:
+        baseUrlKey: demo-app.openai.baseUrl
+        apiKeyKey: demo-app.openai.apiKey
+  requires:
+    services:
+      llm: {}
+  hooks:
+    postInstall:
+      image: curlimages/curl:8.10.1
+      script: |
+        #!/bin/sh
+        set -eu
+        curl -sf -H "Authorization: Bearer ${LLM_API_KEY}" "${LLM_BASE_URL}/models"

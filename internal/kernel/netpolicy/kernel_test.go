@@ -22,6 +22,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/controller/provisioner"
 	"github.com/gentian-org/gentian-os/internal/kernel/netpolicy"
 	"github.com/gentian-org/gentian-os/internal/layout"
 )
@@ -243,5 +244,60 @@ func TestKernelAccessNetworkPolicy_ProfileKernelEgressNamespaces(t *testing.T) {
 	}
 	if len(np.Spec.Egress) < 2 {
 		t.Fatalf("expected infra + gentian-system egress, got %d rules", len(np.Spec.Egress))
+	}
+}
+
+// An app that declares the model gateway may reach the gateway's port in the
+// gateway's namespace, and nothing else there: its database, its cache and
+// the model servers answer on other ports. An app that does not declare it
+// has no path at all.
+func TestTheModelGatewayIsOpenedForADeclaringAppOnItsPortAlone(t *testing.T) {
+	t.Parallel()
+	llm := layout.System("llm")
+
+	declaring := profileRequiring(gentianov1alpha1.ServiceRequirements{LLM: &gentianov1alpha1.LLMRequirement{}}, nil)
+	np := netpolicy.KernelAccessNetworkPolicy("acme", "tenant-acme", "chat", declaring, netpolicy.Config{})
+	if got, want := opened(t, np), []string{fmt.Sprintf("%s:%d", llm, provisioner.ModelGatewayPort)}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("opened = %v, want %v", got, want)
+	}
+	if np.Name != "kernel-access-chat" || np.Spec.PodSelector.MatchLabels["gentianos.io/app"] != "chat" {
+		t.Errorf("policy %s selects %v", np.Name, np.Spec.PodSelector.MatchLabels)
+	}
+
+	// Beside a store: each its own namespace and port.
+	both := profileRequiring(gentianov1alpha1.ServiceRequirements{
+		LLM:   &gentianov1alpha1.LLMRequirement{},
+		Cache: &gentianov1alpha1.CacheRequirement{Engine: gentianov1alpha1.CacheEngineRedis},
+	}, nil)
+	got := opened(t, netpolicy.KernelAccessNetworkPolicy("acme", "tenant-acme", "chat", both, netpolicy.Config{}))
+	want := []string{
+		fmt.Sprintf("%s:%d", layout.System("cache"), provisioner.RedisPort),
+		fmt.Sprintf("%s:%d", llm, provisioner.ModelGatewayPort),
+	}
+	sort.Strings(want)
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("opened = %v, want %v", got, want)
+	}
+
+	// Not declared: nothing towards the gateway, whatever else is declared.
+	for name, services := range map[string]gentianov1alpha1.ServiceRequirements{
+		"nothing":  {},
+		"a cache":  {Cache: &gentianov1alpha1.CacheRequirement{Engine: gentianov1alpha1.CacheEngineRedis}},
+		"identity": {Identity: &gentianov1alpha1.IdentityRequirement{}},
+	} {
+		for _, line := range opened(t, netpolicy.KernelAccessNetworkPolicy("acme", "tenant-acme", "wiki", profileRequiring(services, nil), netpolicy.Config{ServicesNamespace: "kernel-edge"})) {
+			if strings.HasPrefix(line, llm+":") {
+				t.Errorf("an app that declared %s can reach the model gateway's namespace: %s", name, line)
+			}
+		}
+	}
+
+	// The annotation still opens a namespace whole, the gateway's included:
+	// it is the wider of the two, and a profile that declares the gateway no
+	// longer needs it.
+	annotated := profileRequiring(gentianov1alpha1.ServiceRequirements{LLM: &gentianov1alpha1.LLMRequirement{}},
+		map[string]string{gentianov1alpha1.AnnotationProfileKernelEgressNamespaces: llm})
+	if got := opened(t, netpolicy.KernelAccessNetworkPolicy("acme", "tenant-acme", "chat", annotated, netpolicy.Config{})); !reflect.DeepEqual(got, []string{llm + ":*"}) {
+		t.Errorf("opened = %v, want the namespace whole", got)
 	}
 }

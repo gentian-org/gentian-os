@@ -171,6 +171,9 @@ spec:
             {{- $chart     := dig "chart" nil $package }}
 
             {{- $kr := dig "requires" "services" dict $pSpec }}
+            {{- /* Whether the profile declares the model gateway. Present is the
+                 declaration: the requirement carries no field. */}}
+            {{- $llmDeclared := hasKey $kr "llm" }}
 
             {{- /* ── Load cluster-config ConfigMap ──────────────────────────────── */}}
             {{- /* Provides infra endpoints (e.g. node IP, SMTP host) for rendering. */}}
@@ -293,6 +296,21 @@ spec:
             {{- end }}
             {{- if $vm.cache.passwordKey }}
             {{- $esData = append $esData (dict "secretKey" "cache-password" "remoteRef" (dict "key" $cachePath "property" "password")) }}
+            {{- end }}
+            {{- end }}
+
+            {{- /* Model gateway. Mapped only for a profile that declares
+                 requires.services.llm: the record below is written by the
+                 operator for a declaring app and for no other, and an
+                 ExternalSecret naming a path that is never written fails on
+                 every refresh. */}}
+            {{- if and $vm.llm $llmDeclared }}
+            {{- $llmPath := printf "gentian-os/tenants/%s/apps/%s/llm" $tenant $app }}
+            {{- if $vm.llm.baseUrlKey }}
+            {{- $esData = append $esData (dict "secretKey" "llm-base-url" "remoteRef" (dict "key" $llmPath "property" "base-url")) }}
+            {{- end }}
+            {{- if $vm.llm.apiKeyKey }}
+            {{- $esData = append $esData (dict "secretKey" "llm-api-key"  "remoteRef" (dict "key" $llmPath "property" "api-key")) }}
             {{- end }}
             {{- end }}
 
@@ -512,6 +530,17 @@ spec:
             {{- if $vm.cache.passwordKey }}
             {{- $relSet = append $relSet (dict "name" $vm.cache.passwordKey
                 "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "cache-password"))) }}
+            {{- end }}
+            {{- end }}
+
+            {{- if and $vm.llm $llmDeclared }}
+            {{- if $vm.llm.baseUrlKey }}
+            {{- $relSet = append $relSet (dict "name" $vm.llm.baseUrlKey
+                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "llm-base-url"))) }}
+            {{- end }}
+            {{- if $vm.llm.apiKeyKey }}
+            {{- $relSet = append $relSet (dict "name" $vm.llm.apiKeyKey
+                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "llm-api-key"))) }}
             {{- end }}
             {{- end }}
 
@@ -1565,6 +1594,10 @@ spec:
             {{- if $vm.cache.portKey }}{{ $pijEnv = append $pijEnv (dict "name" "CACHE_PORT" "key" "cache-port") }}{{ end }}
             {{- if $vm.cache.userKey }}{{ $pijEnv = append $pijEnv (dict "name" "CACHE_USER" "key" "cache-user") }}{{ end }}
             {{- if $vm.cache.passwordKey }}{{ $pijEnv = append $pijEnv (dict "name" "CACHE_PASSWORD" "key" "cache-password") }}{{ end }}
+            {{- end }}
+            {{- if and $vm.llm $llmDeclared }}
+            {{- if $vm.llm.baseUrlKey }}{{ $pijEnv = append $pijEnv (dict "name" "LLM_BASE_URL" "key" "llm-base-url") }}{{ end }}
+            {{- if $vm.llm.apiKeyKey }}{{ $pijEnv = append $pijEnv (dict "name" "LLM_API_KEY" "key" "llm-api-key") }}{{ end }}
             {{- end }}
             {{- if $vm.smtp }}
             {{- if $vm.smtp.hostKey }}{{ $pijEnv = append $pijEnv (dict "name" "SMTP_HOST" "key" "smtp-host") }}{{ end }}

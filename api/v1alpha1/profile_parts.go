@@ -208,7 +208,28 @@ type ServiceRequirements struct {
 	// kernel MCP registry and wires OIDC authentication.
 	// +optional
 	MCP *MCPRequirement `json:"mcp,omitempty"`
+
+	// LLM declares that the component calls language models through the
+	// platform's model gateway. Only a component that declares it is given a
+	// key at the gateway, the address and the key, and a network path to the
+	// gateway; a component that does not is given none of the three.
+	// +optional
+	LLM *LLMRequirement `json:"llm,omitempty"`
 }
+
+// LLMRequirement declares that a component uses the platform's model gateway.
+// It carries nothing: being present is the declaration.
+//
+// The gateway speaks the OpenAI API. The component receives its base address
+// and a key of its own -- random, per tenant and component, never derived
+// from their names -- in the Secret llm-credentials-<component> of the
+// tenant's namespace (OPENAI_API_BASE, OPENAI_API_BASE_URL, OPENAI_API_KEY),
+// and, where its chart takes them as values, through valueMapping.llm.
+//
+// On a cluster that runs no model gateway the requirement cannot be met, and
+// the component waits and says so, as it does for a database that is not
+// there.
+type LLMRequirement struct{}
 
 // IdentityRequirement specifies OIDC or SAML needs.
 type IdentityRequirement struct {
@@ -554,6 +575,11 @@ type ValueMapping struct {
 	// +optional
 	Cache *CacheValueMapping `json:"cache,omitempty"`
 
+	// LLM maps the model gateway's address and the component's key to Helm
+	// keys, for a component that declares requires.services.llm.
+	// +optional
+	LLM *LLMValueMapping `json:"llm,omitempty"`
+
 	// SMTP maps mail submission values to Helm keys.
 	// +optional
 	SMTP *SMTPValueMapping `json:"smtp,omitempty"`
@@ -813,6 +839,17 @@ type CacheValueMapping struct {
 	// PasswordKey is the Helm value key for the cache password/ACL token.
 	// +optional
 	PasswordKey string `json:"passwordKey,omitempty"`
+}
+
+// LLMValueMapping maps the model gateway's values to Helm chart keys.
+type LLMValueMapping struct {
+	// BaseURLKey is the Helm value key for the gateway's OpenAI-compatible
+	// base address (it ends in /v1).
+	// +optional
+	BaseURLKey string `json:"baseUrlKey,omitempty"`
+	// APIKeyKey is the Helm value key for the key the component presents.
+	// +optional
+	APIKeyKey string `json:"apiKeyKey,omitempty"`
 }
 
 // SMTPValueMapping maps SMTP submission values to Helm chart keys.

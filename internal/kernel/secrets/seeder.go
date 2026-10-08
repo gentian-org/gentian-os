@@ -295,6 +295,58 @@ func (s *Seeder) SeedCache(ctx context.Context, tenant, app string, base CacheCr
 	}, nil
 }
 
+// --- Model gateway -----------------------------------------------------------
+
+// ModelAccessCategory is the category an app's model gateway record is kept
+// under, beside its database and its cache.
+const ModelAccessCategory = "llm"
+
+// ModelAccessCreds is the set of values written to …/llm.
+type ModelAccessCreds struct {
+	// BaseURL is the gateway's OpenAI-compatible address.
+	BaseURL string
+	// APIKey is the key the app presents.
+	APIKey string
+}
+
+// SeedModelAccess makes the key an app presents to the model gateway and
+// records it with the gateway's address. The key is generated as a database
+// password is: derived from the master for this tenant and app, or random
+// where there is no master, and write-once either way -- so an app
+// uninstalled and installed again holds the key it held, and nothing about
+// the key follows from the tenant's and the app's names. prefix is what the
+// gateway requires a key to begin with. The address is refreshed on every
+// pass, so a gateway that moves is followed.
+func (s *Seeder) SeedModelAccess(ctx context.Context, tenant, app, prefix, baseURL string) (ModelAccessCreds, error) {
+	salt := CategoryPath(tenant, app, ModelAccessCategory)
+	existing, _ := s.w.Get(ctx, salt)
+	key := ""
+	if existing != nil {
+		key = existing["api-key"]
+	}
+	if key == "" {
+		key = prefix + s.gen(salt, "api-key", 48)
+	}
+	want := map[string]string{"base-url": baseURL, "api-key": key}
+	var err error
+	if existing == nil {
+		err = s.w.PutOnce(ctx, salt, want)
+	} else if existing["base-url"] != baseURL || existing["api-key"] != key {
+		err = s.w.Put(ctx, salt, want)
+	}
+	if err != nil {
+		return ModelAccessCreds{}, fmt.Errorf("seed model access(%s/%s): %w", tenant, app, err)
+	}
+	// Read back: what the vault holds is what the app's ExternalSecret
+	// delivers, and so what has to be registered at the gateway. A key seeded
+	// by another pass in the meantime wins over the one made here.
+	got, err := s.w.Get(ctx, salt)
+	if err != nil || got["api-key"] == "" {
+		return ModelAccessCreds{}, fmt.Errorf("seed model access(%s/%s): the vault does not give the record back: %v", tenant, app, err)
+	}
+	return ModelAccessCreds{BaseURL: got["base-url"], APIKey: got["api-key"]}, nil
+}
+
 // --- SMTP --------------------------------------------------------------------
 
 // SMTPCreds is the set of values written to …/smtp.
@@ -338,7 +390,6 @@ func (s *Seeder) SeedIMAP(ctx context.Context, tenant, app string, base IMAPCred
 }
 
 // --- IMAP --------------------------------------------------------------------
-
 
 // --- Per-app internal secrets ------------------------------------------------
 

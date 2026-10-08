@@ -338,6 +338,15 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		}
 		mergeValues(values, databaseValues(profile, comp.Name+componentDatabaseSecretSuffix))
 	}
+	// The model gateway, for a component that declares it: nothing is
+	// installed while the cluster has none, or before the component's key is
+	// registered there and delivered. Asked for every delivery, because the
+	// requirement is met by the tenant's reconciler either way.
+	if reason, message, err := modelAccessHold(ctx, r.Client, comp, profile, tenant); err != nil {
+		return ctrl.Result{}, err
+	} else if reason != "" {
+		return r.status(ctx, comp, metav1.ConditionFalse, reason, message, componentRequeue)
+	}
 	// What the platform tells any component about itself, where its profile
 	// says its chart takes it. Nothing is keyed on which component this is.
 	mergeValues(values, r.platformValues(profile, tenant, zone))

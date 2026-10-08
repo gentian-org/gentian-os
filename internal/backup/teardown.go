@@ -22,6 +22,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/kernel"
 	"github.com/gentian-org/gentian-os/internal/layout"
 	"github.com/gentian-org/gentian-os/internal/meta"
+	"github.com/gentian-org/gentian-os/internal/modelgateway"
 )
 
 // One inventory, one order.
@@ -62,8 +63,8 @@ const (
 	// with its protocol mappers, in the tenant's realm. It is the realm's
 	// and not the client's, so it does not go when the client does.
 	KindSignInScope Kind = "signInScope"
-	// KindModelAccess is the key the app calls models with at the platform's
-	// model gateway, on a cluster that serves models.
+	// KindModelAccess is the key an app that declared the model gateway
+	// calls models with there, on a cluster that serves models.
 	KindModelAccess Kind = "modelAccess"
 	// KindSignInClient is the app's OIDC or SAML client in the tenant's
 	// realm, with what is part of it: its client role, its default-scope
@@ -188,8 +189,8 @@ var AppKinds = []KindRule{
 		FoundBy: "the tenant's record of what was provisioned",
 	},
 	{
-		Kind: KindModelAccess, MadeBy: "the tenant reconciler, at the model gateway, on a cluster that serves models",
-		Export: Omits, ExportNote: "a credential; registered again when the app is installed",
+		Kind: KindModelAccess, MadeBy: "the tenant reconciler, at the model gateway, for an app whose profile declares it (requires.services.llm), on a cluster that serves models",
+		Export: Omits, ExportNote: "a credential; the tenant restored into has its own, registered when the app is installed there",
 		Uninstall: Keeps, AppPurge: Destroys, TenantDelete: Destroys,
 		TenantDeleteNote: "and the tenant's team at the gateway",
 		FoundBy:          "the tenant's record of what was provisioned",
@@ -376,6 +377,9 @@ type AppInventory struct {
 	Bucket string
 	// CacheUser is the user in the shared cache. Empty without one.
 	CacheUser string
+	// ModelKey is the alias the app's key is registered under at the model
+	// gateway. Empty for an app whose profile does not declare the gateway.
+	ModelKey string
 	// Keys are the names the app's vault paths and access groups are kept
 	// under: the app's own, and "{app}-{extension}" per declared extension.
 	Keys []string
@@ -405,6 +409,9 @@ func InventoryOf(tenant *gentianov1alpha1.Tenant, app string, profile *gentianov
 	if inv.Stores.Redis {
 		inv.CacheUser = RedisACLUser(tenant.Name, app)
 	}
+	if DeclaresModelAccess(profile) {
+		inv.ModelKey = modelgateway.KeyAlias(tenant.Name, app)
+	}
 	inv.Releases = []string{AppRelease(app), DirectRelease(TenantNamespace(tenant), app)}
 	for _, ext := range SidecarNames(profile) {
 		inv.Keys = append(inv.Keys, app+"-"+ext)
@@ -414,6 +421,15 @@ func InventoryOf(tenant *gentianov1alpha1.Tenant, app string, profile *gentianov
 		inv.Chart = chart.Name
 	}
 	return inv
+}
+
+// DeclaresModelAccess reports whether a profile declares that it calls models
+// through the platform's gateway (requires.services.llm). It is no kernel
+// store -- nothing of it is copied and no Job destroys it -- so it is not a
+// field of Stores; it is a kind an app owns all the same, and the inventory
+// names it.
+func DeclaresModelAccess(profile *gentianov1alpha1.ComponentProfile) bool {
+	return profile != nil && profile.Services() != nil && profile.Services().LLM != nil
 }
 
 // --- making a store ---------------------------------------------------------

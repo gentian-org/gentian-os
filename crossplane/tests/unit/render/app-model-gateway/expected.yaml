@@ -1,0 +1,303 @@
+---
+apiVersion: gentianos.io/v1alpha1
+kind: XApp
+metadata:
+  name: render-demo-app-fixture
+status:
+  conditions:
+  - lastTransitionTime: "2024-01-01T00:00:00Z"
+    message: 'Unready resources: demo-app-entitlement-group, demo-app-externalsecret,
+      demo-app-keep-volumes, and 3 more'
+    reason: Creating
+    status: "False"
+    type: Ready
+---
+apiVersion: group.keycloak.crossplane.io/v1alpha1
+kind: Group
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: demo-app-entitlement-group
+  labels:
+    crossplane.io/composite: render-demo-app-fixture
+  name: gentian-tenant-demo-app-demo-app
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XApp
+    name: render-demo-app-fixture
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    name: gentian:tenant:demo:app:demo-app
+    realmId: demo
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: demo-app-externalsecret
+  labels:
+    crossplane.io/composite: render-demo-app-fixture
+  name: render-demo-app-fixture-es
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XApp
+    name: render-demo-app-fixture
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: external-secrets.io/v1
+      kind: ExternalSecret
+      metadata:
+        name: demo-app-sensitive-values
+        namespace: tenant-demo
+      spec:
+        data:
+        - remoteRef:
+            key: gentian-os/tenants/demo/apps/demo-app/llm
+            property: base-url
+          secretKey: llm-base-url
+        - remoteRef:
+            key: gentian-os/tenants/demo/apps/demo-app/llm
+            property: api-key
+          secretKey: llm-api-key
+        refreshInterval: 1h
+        secretStoreRef:
+          kind: ClusterSecretStore
+          name: openbao
+        target:
+          creationPolicy: Owner
+          deletionPolicy: Retain
+          name: demo-app-sensitive-values
+  providerConfigRef:
+    name: kubernetes
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: demo-app-keep-volumes
+  labels:
+    crossplane.io/composite: render-demo-app-fixture
+  name: render-demo-app-fixture-keep-volumes
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XApp
+    name: render-demo-app-fixture
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: v1
+      data:
+        patch.yaml: |
+          patches:
+            - target:
+                version: v1
+                kind: PersistentVolumeClaim
+              patch: |-
+                apiVersion: v1
+                kind: PersistentVolumeClaim
+                metadata:
+                  name: every-claim-of-the-release
+                  annotations:
+                    helm.sh/resource-policy: keep
+      kind: ConfigMap
+      metadata:
+        name: demo-app-release-keep-volumes
+        namespace: tenant-demo
+  providerConfigRef:
+    name: kubernetes
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: demo-app-post-install-cm
+  labels:
+    crossplane.io/composite: render-demo-app-fixture
+  name: render-demo-app-fixture-post-install-cm
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XApp
+    name: render-demo-app-fixture
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: v1
+      data:
+        run.sh: |
+          #!/bin/sh
+          set -eu
+          curl -sf -H "Authorization: Bearer ${LLM_API_KEY}" "${LLM_BASE_URL}/models"
+      kind: ConfigMap
+      metadata:
+        name: demo-app-post-install
+        namespace: tenant-demo
+  providerConfigRef:
+    name: kubernetes
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: demo-app-post-install-job
+  labels:
+    crossplane.io/composite: render-demo-app-fixture
+  name: render-demo-app-fixture-post-install-job
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XApp
+    name: render-demo-app-fixture
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: batch/v1
+      kind: Job
+      metadata:
+        labels:
+          app.kubernetes.io/managed-by: gentian-os
+          gentianos.io/app: demo-app
+          gentianos.io/tenant: demo
+        name: demo-app-post-install
+        namespace: tenant-demo
+      spec:
+        backoffLimit: 10
+        template:
+          metadata:
+            labels:
+              app.kubernetes.io/managed-by: gentian-os
+              gentianos.io/app: demo-app
+              gentianos.io/component: post-install
+              gentianos.io/tenant: demo
+          spec:
+            containers:
+            - command:
+              - /bin/sh
+              - /scripts/run.sh
+              env:
+              - name: LLM_BASE_URL
+                valueFrom:
+                  secretKeyRef:
+                    key: llm-base-url
+                    name: demo-app-sensitive-values
+              - name: LLM_API_KEY
+                valueFrom:
+                  secretKeyRef:
+                    key: llm-api-key
+                    name: demo-app-sensitive-values
+              image: curlimages/curl:8.10.1
+              name: post-install
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop:
+                  - ALL
+                seccompProfile:
+                  type: RuntimeDefault
+              volumeMounts:
+              - mountPath: /scripts
+                name: scripts
+            restartPolicy: OnFailure
+            securityContext:
+              seccompProfile:
+                type: RuntimeDefault
+            volumes:
+            - configMap:
+                name: demo-app-post-install
+              name: scripts
+        ttlSecondsAfterFinished: 600
+  providerConfigRef:
+    name: kubernetes
+---
+apiVersion: helm.crossplane.io/v1beta1
+kind: Release
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: demo-app-release
+    crossplane.io/external-name: demo-app-release
+  labels:
+    crossplane.io/composite: render-demo-app-fixture
+  name: render-demo-app-fixture-release
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XApp
+    name: render-demo-app-fixture
+    uid: ""
+spec:
+  forProvider:
+    chart:
+      name: demo-app
+      repository: oci://example.invalid/demo-app
+      version: 1.0.0
+    namespace: tenant-demo
+    patchesFrom:
+    - configMapKeyRef:
+        key: patch.yaml
+        name: demo-app-release-keep-volumes
+        namespace: tenant-demo
+        optional: false
+    set:
+    - name: demo-app.openai.baseUrl
+      valueFrom:
+        secretKeyRef:
+          key: llm-base-url
+          name: demo-app-sensitive-values
+          namespace: tenant-demo
+    - name: demo-app.openai.apiKey
+      valueFrom:
+        secretKeyRef:
+          key: llm-api-key
+          name: demo-app-sensitive-values
+          namespace: tenant-demo
+    skipCRDs: true
+    values:
+      environment:
+        DENO_CERT: /opt/gentian-trust-anchor/ca.crt
+        REQUESTS_CA_BUNDLE: /opt/gentian-trust-anchor/ca.crt
+        SSL_CERT_FILE: /opt/gentian-trust-anchor/ca.crt
+      extraEnvVars:
+      - name: REQUESTS_CA_BUNDLE
+        value: /opt/gentian-trust-anchor/ca.crt
+      - name: SSL_CERT_FILE
+        value: /opt/gentian-trust-anchor/ca.crt
+      - name: DENO_CERT
+        value: /opt/gentian-trust-anchor/ca.crt
+      extraVolumeMounts:
+      - mountPath: /opt/gentian-trust-anchor
+        name: kernel-trust-anchor
+        readOnly: true
+      extraVolumes:
+      - name: kernel-trust-anchor
+        secret:
+          secretName: gentian-trust-anchor-tls
+      global:
+        imagePullSecrets:
+        - registry-credentials
+      imagePullSecrets:
+      - registry-credentials
+      podLabels:
+        gentianos.io/app: demo-app
+        gentianos.io/tenant: demo
+    wait: true
+    waitTimeout: 10m
+  providerConfigRef:
+    name: kubernetes
+  rollbackLimit: 3

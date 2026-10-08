@@ -108,6 +108,9 @@ func tcpPort(p int32) networkingv1.NetworkPolicyPort {
 //     the cluster's mail mode and on names that resolve to load balancers,
 //     and is not narrowed here.
 //   - Identity: the edge and the identity provider, whole.
+//   - Models: the model gateway's namespace on the gateway's port. The
+//     gateway's database, its cache and the model servers are in the same
+//     namespace on other ports, and are not an app's to reach.
 //
 // A namespace the profile's annotation names is opened whole, as before, and
 // that is the wider of the two when it names one a store also opens.
@@ -152,6 +155,9 @@ func kernelEgressTargets(profile *gentianov1alpha1.ComponentProfile, cfg Config)
 		if kr.Mail != nil {
 			add(layout.System("mail"))
 			add(layout.System("mail-dmz"))
+		}
+		if kr.LLM != nil {
+			add(layout.System("llm"), provisioner.ModelGatewayPort)
 		}
 	}
 

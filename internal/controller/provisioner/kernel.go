@@ -24,6 +24,7 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/meta"
+	"github.com/gentian-org/gentian-os/internal/modelgateway"
 )
 
 // ErrDeleteJobPending indicates a cleanup Job has been created but not finished.
@@ -67,6 +68,19 @@ const (
 	ObjectStoragePort int32 = 9000
 	MemcachedPort     int32 = 11211
 )
+
+// ModelGatewayPort is the port the model gateway's pods listen on, in the
+// llm system namespace. It is not a store, and is held like one: an app that
+// declares requires.services.llm is handed an address on this port, its
+// network policy opens this port there and no other, and the gateway's own
+// NetworkPolicy (kernel/services/llm/manifests) admits it on the same number.
+const ModelGatewayPort = modelgateway.Port
+
+// MatchModelAccessProfile reports whether a profile declares that it calls
+// models through the platform's gateway.
+func MatchModelAccessProfile(profile *gentianov1alpha1.ComponentProfile) bool {
+	return profile != nil && profile.Services() != nil && profile.Services().LLM != nil
+}
 
 // DatabaseEngineOf is the engine a profile's database requirement names, or
 // "" when it declares no database. An engine left out is postgresql, which is
