@@ -375,7 +375,7 @@ spec:
     config:
       access.token.claim: "true"
       id.token.claim: "false"
-      included.client.audience: gentian-director
+      included.custom.audience: gentian-director
       introspection.token.claim: "true"
       userinfo.token.claim: "false"
     name: director-audience

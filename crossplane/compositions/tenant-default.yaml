@@ -673,6 +673,12 @@ spec:
                  audience mapper puts there -- so without this every relayed
                  call is refused on the audience.
 
+                 A custom audience, not a client audience: gentian-director
+                 names the platform's API and no Keycloak client is called
+                 that. Keycloak (26.8 on) drops an audience that names a client
+                 which is absent or disabled, and with included.client.audience
+                 the token arrived with no audience at all.
+
                  All five config keys, not the three that express the intent,
                  for the reason the openbao-audience mapper below gives: this
                  map is replaced wholesale on reconcile and Keycloak adds the
@@ -701,7 +707,7 @@ spec:
                 protocol: openid-connect
                 protocolMapper: oidc-audience-mapper
                 config:
-                  included.client.audience: gentian-director
+                  included.custom.audience: gentian-director
                   id.token.claim: "false"
                   access.token.claim: "true"
                   introspection.token.claim: "true"

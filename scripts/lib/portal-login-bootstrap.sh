@@ -1434,12 +1434,24 @@ spec:
                 echo "Created client gentian-cli"
               fi
               if [ -n "\${CLI_CLIENT_ID}" ]; then
-                if ! curl -sf -H "\${AUTH}" \\
+                # The audience is named as a custom audience, not as a client:
+                # no client called gentian-director exists in any realm, and
+                # Keycloak (26.8 on) leaves an audience out of the token when it
+                # names a client that is absent or disabled. A mapper written
+                # the earlier way is rewritten, so a re-run repairs it.
+                AUD_BODY='{"name":"director-audience","protocol":"openid-connect","protocolMapper":"oidc-audience-mapper","config":{"included.custom.audience":"gentian-director","id.token.claim":"false","access.token.claim":"true","introspection.token.claim":"true"}}'
+                AUD_MAPPER=\$(curl -sf -H "\${AUTH}" \\
                     "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients/\${CLI_CLIENT_ID}/protocol-mappers/models" \\
-                    | jq -e '.[] | select(.name=="director-audience")' >/dev/null 2>&1; then
+                    | jq -c '[.[] | select(.name=="director-audience")][0] // empty' 2>/dev/null || true)
+                if [ -z "\${AUD_MAPPER}" ]; then
                   curl -sf -X POST -H "\${AUTH}" -H "Content-Type: application/json" \\
                     "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients/\${CLI_CLIENT_ID}/protocol-mappers/models" \\
-                    -d '{"name":"director-audience","protocol":"openid-connect","protocolMapper":"oidc-audience-mapper","config":{"included.client.audience":"gentian-director","id.token.claim":"false","access.token.claim":"true","introspection.token.claim":"true"}}' >/dev/null
+                    -d "\${AUD_BODY}" >/dev/null
+                elif [ "\$(printf '%s' "\${AUD_MAPPER}" | jq -r '.config["included.custom.audience"] // empty')" != "gentian-director" ]; then
+                  AUD_MAPPER_ID=\$(printf '%s' "\${AUD_MAPPER}" | jq -r '.id')
+                  curl -sf -X PUT -H "\${AUTH}" -H "Content-Type: application/json" \\
+                    "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients/\${CLI_CLIENT_ID}/protocol-mappers/models/\${AUD_MAPPER_ID}" \\
+                    -d "\$(printf '%s' "\${AUD_BODY}" | jq -c --arg id "\${AUD_MAPPER_ID}" '. + {id: \$id}')" >/dev/null
                 fi
                 if [ -n "\${GROUPS_SCOPE_ID}" ] && [ "\${GROUPS_SCOPE_ID}" != "null" ]; then
                   curl -sf -X PUT -H "\${AUTH}" \\
