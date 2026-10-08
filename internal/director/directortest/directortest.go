@@ -77,7 +77,7 @@ const ClaimPath = "clusters/" + Cluster + "/kernel/claims/cluster.yaml"
 func Commit(t testing.TB, remote string, files map[string]string) {
 	t.Helper()
 	work := t.TempDir()
-	Git(t, "", "clone", remote, work)
+	Git(t, "", "clone", "--no-local", remote, work)
 	for path, body := range files {
 		full := filepath.Join(work, path)
 		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
@@ -136,10 +136,15 @@ func Remote(t testing.TB, tenants ...string) string {
 }
 
 // Clone returns a fresh checkout of remote — what one director replica owns.
+//
+// Cloned over git's transport, as a director clones its forge. Given a path,
+// git instead links the files of the remote's object directory one by one,
+// and that includes whatever a push arriving at that moment has half written:
+// the clone fails with "hardlink different from source".
 func Clone(t testing.TB, remote string) string {
 	t.Helper()
 	dir := filepath.Join(t.TempDir(), "checkout")
-	Git(t, "", "clone", remote, dir)
+	Git(t, "", "clone", "--no-local", remote, dir)
 	return dir
 }
 
