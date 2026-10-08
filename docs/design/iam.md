@@ -207,6 +207,59 @@ See [admin-console.md §6](admin-console.md#6-app-entitlements-and-provisioning-
 
 ---
 
+### 1.10 Keycloak version, features and upgrades
+
+**Version.** Keycloak 26.8.0, from the `keycloakx` chart 7.3.2. The chart is
+pinned in the `suze` Composition and XRD
+([suze.yaml](../../crossplane/compositions/suze.yaml)); the image tag in
+`keycloakVersion` ([values.yaml](../../kernel/services/keycloak-idp/manifests/values.yaml)),
+because the chart trails upstream; the event listener is compiled against the
+same version (`keycloak.version` in its `pom.xml`). The three move together.
+`provider-keycloak` stays at v2.19.0.
+
+**Features.** Nothing is switched on or off, so the release's defaults apply.
+What 26.8 enables that 26.0 did not is inert until something asks for it:
+
+| Feature | Stays off because |
+|---|---|
+| Standard token exchange, proof-of-possession (DPoP) tokens | per client; no client the platform creates sets `standard.token.exchange.enabled` or `dpop.bound.access.tokens` |
+| SCIM API, fine-grained admin permissions v2 | per realm (`scimApiEnabled`, `adminPermissionsEnabled`), false in every realm the platform creates |
+| JWT authorization grant, federated client authentication, Kubernetes service-account sign-in | need an identity provider or client authenticator configured for them; none is |
+| Passkeys, update-email, workflows, client secret rotation | per realm policy, required action or client policy; none is configured |
+| Recovery codes | **visible**: a new realm has the required action enabled, so the account console offers to set codes up; the browser flow does not accept them |
+
+**The API's audience is a custom audience.** `gentian-director` names the
+platform's API, and no Keycloak client has that name. An audience mapper must
+therefore use `included.custom.audience`: from 26.8 Keycloak leaves out an
+audience that names a client which is absent or disabled, and the token then
+carries no audience and every API call is refused.
+
+**A mailed link verifies an address only if it says so.** From 26.8 an
+admin-sent action link marks the address verified only when it names
+`VERIFY_EMAIL`. Invitations and mailed activations name it; an activation link
+that is shown instead of mailed does not, so that account's address stays
+unverified.
+
+**Token introspection checks the audience.** From 26.6 a client may introspect
+only tokens that name it in `aud`. Dovecot's XOAUTH2 check (`gentian-dovecot`
+introspecting other clients' tokens, see [mail.md](mail.md)) does not satisfy
+that yet; app passwords are unaffected.
+
+**Upgrading an existing cluster.** Keycloak migrates its database on first
+start of the new version, and the migration is one-way: 26.0 cannot run on a
+26.8 database, so going back means restoring the database.
+
+1. Back up the `keycloak` database (and take the tenant exports).
+2. Upgrade: sync the release. If the cluster's `Suze` claim sets
+   `keycloak.chartVersion`, change it there; the default is 7.3.2. Keycloak is
+   one replica, so sign-in is down while the pod restarts and migrates.
+3. Verify: the pod is Ready, a person can sign in, the console lists people,
+   and a tenant's Keycloak objects are Synced.
+
+Sessions are kept in the database and survive the restart. Re-run the installer
+step that configures the kernel realm once: it rewrites the CLI client's
+audience mapper. 26.5 dropped PostgreSQL 13; the kernel's PostgreSQL is newer.
+
 ## 2. Administration UI
 
 | Concern | Gentian surface |

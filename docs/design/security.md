@@ -180,6 +180,13 @@ changes only when the code does.
 | Rotation rolling app workloads (Reloader) | Partial | annotation on the operator Deployment and a few kernel services; no composition adds it, so no tenant app is rolled (gap G13) |
 | Admission guard against literal secrets in `Release.set` | **Target** | — |
 
+Keycloak runs with its release's default features and none added; what that
+leaves reachable, and why each newer capability stays inert, is listed in
+[iam.md §1.10](iam.md). The identity host's public paths are
+`/auth/realms/` and `/auth/resources/`, so a realm-level endpoint a new
+Keycloak release adds is public unless the realm keeps it off: check that list
+on every Keycloak upgrade.
+
 ### 3.1 Component roles
 
 | Component | Role | License |

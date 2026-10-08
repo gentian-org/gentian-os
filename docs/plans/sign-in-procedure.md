@@ -227,7 +227,8 @@ missing is an address that leads there without the Gateway. Decision 5 in
 section 16 proposes one.
 
 Two limits of the notice itself, from Keycloak's documentation and code for
-the version installed (26.0.7): Keycloak sends it when a person signs out,
+26.0.7, the version installed when this was read (the platform now runs
+26.8.0): Keycloak sends it when a person signs out,
 not when a session simply runs out; and it sends it once, without trying
 again if the app does not answer.
 
@@ -897,7 +898,7 @@ in.
   Keycloak itself gained a SCIM interface in version 26.6 as an experiment
   and supports it from 26.8; that interface lets others manage Keycloak's
   people and does not make Keycloak call apps. The cluster's Keycloak is
-  26.0.7.
+  26.8.0, and the interface is off in every realm the platform creates.
 
 - **LDAP** is the older directory protocol. Many apps can check a user name
   and password against an LDAP server, often in the free edition where
@@ -1626,8 +1627,8 @@ Standards:
 - NIST SP 800-63C-4, on federation:
   <https://pages.nist.gov/800-63-4/sp800-63c/introduction/>
 
-Keycloak 26.0.7 (the version the cluster's chart, `keycloakx` 7.0.1,
-installs):
+Keycloak 26.0.7 (the version these were read against; the cluster now runs
+26.8.0, installed by the `keycloakx` chart 7.3.2 with the image tag set):
 
 - Cookies and their `SameSite` setting:
   <https://github.com/keycloak/keycloak/blob/26.0.7/server-spi-private/src/main/java/org/keycloak/cookie/CookieType.java>
