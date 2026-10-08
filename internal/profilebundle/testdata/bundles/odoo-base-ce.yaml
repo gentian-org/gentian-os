@@ -87,7 +87,7 @@ spec:
         # so signing in no longer depends on a tenant pod being able to reach
         # the kernel gateway. ${TENANT_ID} is the realm, which matches the
         # public issuer's realm segment.
-          internalIssuer: "http://gentian-idp-keycloak-keycloakx-http.platform-kernel.svc.cluster.local:8080/auth/realms/${TENANT_ID}"
+          internalIssuer: "http://gentian-idp-keycloak-keycloakx-http.kernel-authentication.svc.cluster.local:8080/auth/realms/${TENANT_ID}"
       # The chart's own git-sync, running in Odoo's pod: an init container that
       # clones once before Odoo starts, and a sidecar that re-syncs on the
       # interval. Both are upstream git-sync at 999:999, writing the emptyDir

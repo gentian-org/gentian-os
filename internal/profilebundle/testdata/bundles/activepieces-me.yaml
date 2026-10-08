@@ -244,21 +244,28 @@ spec:
           tenantId: ${TENANT_ID}
           kernelDomain: ${KERNEL_DOMAIN}
           issuer: Activepieces
-        handlerScript: "const { Client } = require('pg');\nconst jwt = require('jsonwebtoken');\n\nasync function upsertUserAndProject(email, firstName, lastName) {\n    const client = new Client({\n        host: process.env.AP_POSTGRES_HOST,\n        port: parseInt(process.env.AP_POSTGRES_PORT || '5432'),\n        user: process.env.AP_POSTGRES_USERNAME,\n        password: process.env.AP_POSTGRES_PASSWORD || process.env.password,\n        database: process.env.AP_POSTGRES_DATABASE,\n    });\n    \n    await client.connect();\n    try {\n        const resUser = await client.query('SELECT id FROM \"user\" WHERE email = $1', [email]);\n        let userId;\n        \n        if (resUser.rows.length > 0) {\n            userId = resUser.rows[0].id;\n        } else {\n            userId = 'usr_' + Math.random().toString(36).substring(2, 15).substring(0, 17);\n            await client.query(\n                'INSERT INTO \"user\" (id, created, updated, email, \"firstName\", \"lastName\", password, status, verified, \"platformRole\", \"platformId\") VALUES ($1, now(), now(), $2, $3, $4, $5, $6, $7, $8, $9)',\n                [userId, email, firstName || 'SSO', lastName || 'User', '', 'ACTIVE', true, 'ADMIN', 'plaActivepiecesPlatf1']\n            );\n            console.log(`User created: ${userId} (${email})`);\n        }\n        \n        const resProj = await client.query('SELECT id FROM project WHERE \"ownerId\" = $1', [userId]);\n        let projectId;\n        \n        if (resProj.rows.length > 0) {\n            projectId = resProj.rows[0].id;\n        } else {\n            projectId = 'prj_' + Math.random().toString(36).substring(2, 15).substring(0, 17);\n            await client.query(\n                'INSERT INTO project (id, created, updated, \"ownerId\", \"displayName\", \"notifyStatus\", \"platformId\") VALUES ($1, now(), now(), $2, $3, $4, $5)',\n                [projectId, userId, 'Default Project', 'ALWAYS', 'plaActivepiecesPlatf1']\n            );\n            console.log(`Project created: ${projectId} for user ${userId}`);\n        }\n        \n        return { userId, projectId };\n    } finally {\n        await client.end();\n    }\n}\n\nfunction signJwt(userId, email, firstName, lastName, projectId) {\n    const payload = {\n        id: userId,\n        type: 'USER',\n        projectId: projectId,\n        platform: {\n            id: 'plaActivepiecesPlatf1'\n        }\n    };\n    \n    const secret = process.env.jwt;\n    return jwt.sign(payload, secret, { \n        algorithm: 'HS256',\n        issuer: 'activepieces',\n        expiresIn: '7d' \n    });\n}\n\nmodule.exports = {\n    onLogin: async (profile, req, res) => {\n        const { email, firstName, lastName } = profile;\n        const { userId, projectId } = await upsertUserAndProject(email, firstName, lastName);\n        const token = signJwt(userId, email, firstName, lastName, projectId);\n        \n        const userObj = {\n            id: userId,\n            email: email,\n            firstName: firstName || 'SSO',\n            lastName: lastName || 'User',\n            status: 'ACTIVE',\n            verified: true,\n            platformRole: 'ADMIN'\n        };\n        \n        res.writeHead(200, { \n            'Content-Type': 'text/html',\n            'Set-Cookie': [\n                `ap_token=${token}; Path=/; Secure; SameSite=Lax; Max-Age=604800`,\n                `ap_user=${encodeURIComponent(JSON.stringify(userObj))}; Path=/; Secure; SameSite=Lax; Max-Age=604800`,\n                `ap_logged_in=true; Path=/; Secure; SameSite=Lax; Max-Age=604800`\n            ]\n        });\n        res.end(`<!DOCTYPE html>\n<html>\n<head>\n    <title>Logging in...</title>\n</head>\n<body>\n    <script>\n        localStorage.setItem('token', '${token}');\n        localStorage.setItem('currentUser', '${JSON.stringify(userObj)}');\n        window.location.href = '/';\n    </script>\n</body>\n</html>`);\n    }\n};\n"
+        handlerScript: "const { Client } = require('pg');\nconst jwt = require('jsonwebtoken');\n\nasync function upsertUserAndProject(email, firstName, lastName) {\n    const client = new Client({\n        host: process.env.AP_POSTGRES_HOST,\n        port: parseInt(process.env.AP_POSTGRES_PORT || '5432'),\n        user: process.env.AP_POSTGRES_USERNAME || process.env.username,\n        password: process.env.AP_POSTGRES_PASSWORD || process.env.password,\n        database: process.env.AP_POSTGRES_DATABASE,\n    });\n    \n    await client.connect();\n    try {\n        const resUser = await client.query('SELECT id FROM \"user\" WHERE email = $1', [email]);\n        let userId;\n        \n        if (resUser.rows.length > 0) {\n            userId = resUser.rows[0].id;\n        } else {\n            userId = 'usr_' + Math.random().toString(36).substring(2, 15).substring(0, 17);\n            await client.query(\n                'INSERT INTO \"user\" (id, created, updated, email, \"firstName\", \"lastName\", password, status, verified, \"platformRole\", \"platformId\") VALUES ($1, now(), now(), $2, $3, $4, $5, $6, $7, $8, $9)',\n                [userId, email, firstName || 'SSO', lastName || 'User', '', 'ACTIVE', true, 'ADMIN', 'plaActivepiecesPlatf1']\n            );\n            console.log(`User created: ${userId} (${email})`);\n        }\n        \n        const resProj = await client.query('SELECT id FROM project WHERE \"ownerId\" = $1', [userId]);\n        let projectId;\n        \n        if (resProj.rows.length > 0) {\n            projectId = resProj.rows[0].id;\n        } else {\n            projectId = 'prj_' + Math.random().toString(36).substring(2, 15).substring(0, 17);\n            await client.query(\n                'INSERT INTO project (id, created, updated, \"ownerId\", \"displayName\", \"notifyStatus\", \"platformId\") VALUES ($1, now(), now(), $2, $3, $4, $5)',\n                [projectId, userId, 'Default Project', 'ALWAYS', 'plaActivepiecesPlatf1']\n            );\n            console.log(`Project created: ${projectId} for user ${userId}`);\n        }\n        \n        return { userId, projectId };\n    } finally {\n        await client.end();\n    }\n}\n\nfunction signJwt(userId, email, firstName, lastName, projectId) {\n    const payload = {\n        id: userId,\n        type: 'USER',\n        projectId: projectId,\n        platform: {\n            id: 'plaActivepiecesPlatf1'\n        }\n    };\n    \n    const secret = process.env.jwt;\n    return jwt.sign(payload, secret, { \n        algorithm: 'HS256',\n        issuer: 'activepieces',\n        expiresIn: '7d' \n    });\n}\n\nmodule.exports = {\n    onLogin: async (profile, req, res) => {\n        const { email, firstName, lastName } = profile;\n        const { userId, projectId } = await upsertUserAndProject(email, firstName, lastName);\n        const token = signJwt(userId, email, firstName, lastName, projectId);\n        \n        const userObj = {\n            id: userId,\n            email: email,\n            firstName: firstName || 'SSO',\n            lastName: lastName || 'User',\n            status: 'ACTIVE',\n            verified: true,\n            platformRole: 'ADMIN'\n        };\n        \n        res.writeHead(200, { \n            'Content-Type': 'text/html',\n            'Set-Cookie': [\n                `ap_token=${token}; Path=/; Secure; SameSite=Lax; Max-Age=604800`,\n                `ap_user=${encodeURIComponent(JSON.stringify(userObj))}; Path=/; Secure; SameSite=Lax; Max-Age=604800`,\n                `ap_logged_in=true; Path=/; Secure; SameSite=Lax; Max-Age=604800`\n            ]\n        });\n        res.end(`<!DOCTYPE html>\n<html>\n<head>\n    <title>Logging in...</title>\n</head>\n<body>\n    <script>\n        localStorage.setItem('token', '${token}');\n        localStorage.setItem('currentUser', '${JSON.stringify(userObj)}');\n        window.location.href = '/';\n    </script>\n</body>\n</html>`);\n    }\n};\n"
+      # The sidecar writes to the app's own database, and is told where that
+      # is the way the app is: by the objects the app's chart renders from the
+      # values the platform injects (valueMapping.database above). The
+      # ConfigMap carries AP_POSTGRES_HOST, _PORT and _DATABASE; the
+      # credentials Secret carries username and password, which the handler
+      # reads. Host, port, role and database were spelled out here instead,
+      # the host as a Service in a namespace the cluster no longer has.
         envFrom:
+          - configMapRef:
+              name: activepieces-me
           - secretRef:
               name: activepieces-me-postgresql-credentials
           - secretRef:
               name: activepieces-me-encryption-keys
+      # The realm's SAML descriptor, read in-cluster for the signing
+      # certificate. Stated because the image's built-in default names the
+      # namespace the identity provider ran in before the kernel was split up.
+      # requires.services.identity opens the path.
         extraEnvVars:
-          - name: AP_POSTGRES_HOST
-            value: postgres-rw.platform-kernel.svc.cluster.local
-          - name: AP_POSTGRES_PORT
-            value: '5432'
-          - name: AP_POSTGRES_USERNAME
-            value: ${TENANT_ID}_activepieces-me
-          - name: AP_POSTGRES_DATABASE
-            value: ${TENANT_ID}_activepieces_me
+          - name: SSO_IDP_DESCRIPTOR_URL
+            value: http://gentian-idp-keycloak-keycloakx-http.kernel-authentication.svc.cluster.local:8080/auth/realms/${TENANT_ID}/protocol/saml/descriptor
   # git-sync used to be declared here as a standalone Deployment writing a
   # ReadWriteMany PVC. It is now two containers in the app's own pod --
   # extraInitContainers/extraContainers in extraValues above. The sso sidecar
@@ -283,7 +290,7 @@ spec:
             ns = f.read().strip()
         tenant_id = ns.replace("tenant-", "")
         url = (
-            "http://gentian-idp-keycloak-keycloakx-http.platform-kernel.svc.cluster.local:8080"
+            "http://gentian-idp-keycloak-keycloakx-http.kernel-authentication.svc.cluster.local:8080"
             f"/auth/realms/{tenant_id}/protocol/saml/descriptor"
         )
         xml = urllib.request.urlopen(url).read().decode("utf-8")
@@ -295,16 +302,20 @@ spec:
         '
         . /tmp/env.sh
 
-        PSQL_HOST=postgres-rw.platform-kernel.svc.cluster.local
-        PSQL_DB="${TENANT_ID}_activepieces_me"
+        # Where the database is and what it is called come from the platform
+        # (DB_HOST, DB_PORT, DB_NAME: the values valueMapping.database maps),
+        # never from a Service name or a naming convention written here.
+        PSQL_HOST="$DB_HOST"
+        PSQL_PORT="$DB_PORT"
+        PSQL_DB="$DB_NAME"
 
         echo "Waiting for database..."
-        until pg_isready -h "$PSQL_HOST" -p 5432; do
+        until pg_isready -h "$PSQL_HOST" -p "$PSQL_PORT"; do
           sleep 2
         done
 
         # Activepieces owns its schema; only seed once its migrations have landed.
-        TABLES_COUNT=$(PGPASSWORD="$password" psql -h "$PSQL_HOST" -p 5432 -U "$username" \
+        TABLES_COUNT=$(PGPASSWORD="$password" psql -h "$PSQL_HOST" -p "$PSQL_PORT" -U "$username" \
           -d "$PSQL_DB" -tAc "SELECT count(*) FROM information_schema.tables \
           WHERE table_schema = 'public' AND table_name IN ('platform', 'project', 'user');")
         if [ "$TABLES_COUNT" -ne 3 ]; then
@@ -312,7 +323,7 @@ spec:
           exit 1
         fi
 
-        PLATFORM_COUNT=$(PGPASSWORD="$password" psql -h "$PSQL_HOST" -p 5432 -U "$username" \
+        PLATFORM_COUNT=$(PGPASSWORD="$password" psql -h "$PSQL_HOST" -p "$PSQL_PORT" -U "$username" \
           -d "$PSQL_DB" -tAc "SELECT count(*) FROM platform;")
         if [ "$PLATFORM_COUNT" -eq 0 ]; then
           echo "Seeding Activepieces database..."
@@ -324,7 +335,7 @@ spec:
             "VALUES ('plaActivepiecesPlatf1', now(), now(), 'usrActivepiecesAdmin1', 'Gentian', '#000000', '', '', '', '{}', 'ALLOWED', false, true, 'en', true, false, '{}', false, false, '{}'::jsonb, true, false, false, false, false, false, false, false, false, false, false, '{}');" \
             'INSERT INTO project (id, created, updated, "ownerId", "displayName", "notifyStatus", "platformId")' \
             "VALUES ('prjActivepiecesProje1', now(), now(), 'usrActivepiecesAdmin1', 'Default Project', 'ALWAYS', 'plaActivepiecesPlatf1');" \
-            | PGPASSWORD="$password" psql -v ON_ERROR_STOP=1 -h "$PSQL_HOST" -p 5432 -U "$username" -d "$PSQL_DB"
+            | PGPASSWORD="$password" psql -v ON_ERROR_STOP=1 -h "$PSQL_HOST" -p "$PSQL_PORT" -U "$username" -d "$PSQL_DB"
           echo "Database seeded successfully."
         else
           echo "Database already seeded."

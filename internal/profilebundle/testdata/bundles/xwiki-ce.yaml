@@ -29,8 +29,6 @@ metadata:
   name: xwiki-ce
   labels:
     gentianos.io/profile-name: xwiki-ce
-  annotations:
-    gentianos.io/kernel-egress-namespaces: envoy-gateway-system
 spec:
   classes:
     - app
@@ -201,8 +199,8 @@ spec:
     # Publish the gentian identifiers as pod ANNOTATIONS instead; the platform
     # Kyverno policy `gentian-promote-app-labels` copies them onto the pod LABELS
     # that the tenant kernel-access / app-internal NetworkPolicies select on
-    # (gentianos.io/app). Without this the pod gets no egress to platform-kernel
-    # (Postgres, Keycloak).
+    # (gentianos.io/app). Without this the pod gets none of the egress its
+    # requires.services declarations open (PostgreSQL, the identity provider).
       podAnnotations:
         secret.reloader.stakater.com/reload: xwiki-ce-sensitive-values
         gentianos.io/app: xwiki-ce

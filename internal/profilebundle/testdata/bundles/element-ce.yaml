@@ -5,7 +5,6 @@ metadata:
   labels:
     gentianos.io/profile-name: element-ce
   annotations:
-    gentianos.io/kernel-egress-namespaces: envoy-gateway-system
     gentianos.io/portal-auth-mode: matrix-bridge
 spec:
   classes:

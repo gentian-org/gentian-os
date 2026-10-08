@@ -90,7 +90,7 @@ spec:
           enabled: false
         extraEnvVars:
           - name: FS_ENV_OIDC_DISCOVERY_URI
-            value: "http://gentian-idp-keycloak-keycloakx-http.platform-kernel.svc.cluster.local:8080/auth/realms/${TENANT_ID}/.well-known/openid-configuration"
+            value: "http://gentian-idp-keycloak-keycloakx-http.kernel-authentication.svc.cluster.local:8080/auth/realms/${TENANT_ID}/.well-known/openid-configuration"
 
       exporter:
         enabled: true
