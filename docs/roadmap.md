@@ -677,6 +677,25 @@ does not exist yet that something cannot be the Composition.
   - `[ ]` Issue one credential per process, check-only for every reader.
   - `[ ]` Prove with a test that a reader's credential is refused a write.
 
+### 1.36 Narrow the App Store App's Internet Access to Named Sources (**)
+* **Target Domain**: Network Egress
+* **Context**: The App Store app has to reach the store's API, the store's
+  sign-in service and the servers its pictures come from. Those addresses are
+  only known when the app runs, and the platform's network rules cannot name
+  hosts, only address ranges. So the app's rule today admits any public
+  address on port 443, with the cluster's own and private ranges excluded. A
+  fault in the app could therefore be used to reach any public host.
+* **Proposed Solution**: The addresses the app may reach are requested ahead
+  of time and approved, as an app's other privileges are, and the rule admits
+  exactly those. This needs either host-based egress rules (which the plain
+  NetworkPolicy the platform uses does not have) or an egress proxy the app
+  must go through that admits a list of hosts.
+* **Backlog Items**:
+  - `[ ]` Decide the mechanism: host-based rules from the network layer, or an egress proxy with an allow-list.
+  - `[ ]` Let the store's address, its sign-in service and its picture servers be declared on the Cluster claim beside the store address, so the list is known before the app starts.
+  - `[ ]` Replace the any-public-address rule by the list, and prove with a test that another public host is refused.
+  - `[ ]` Apply the same mechanism to other components that reach the internet.
+
 ## 2. Platform, Infrastructure & Lifecycle
 
 ### 2.1 Keycloak Provider & Crossplane Consolidation (*)
