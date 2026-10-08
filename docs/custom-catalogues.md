@@ -149,8 +149,29 @@ Other files beside these (`listings/`, `packages/`, an `index.html`) are ignored
 
 ## 3. The worked example: how the default catalogue is produced
 
-The default catalogue, `gentian`, is `https://gentian-org.github.io/gentian-apps`. It is built from
-the [gentian-apps](https://github.com/gentian-org/gentian-apps) repository:
+The default catalogue, `gentian`, is built from the
+[gentian-apps](https://github.com/gentian-org/gentian-apps) repository, which publishes it at two
+addresses:
+
+| Address | Built from | Named on the claim of a cluster installed from |
+|---|---|---|
+| `https://gentian-org.github.io/gentian-apps` | its `main`: the released catalogue | a gentian-os release tag (`GENTIAN_OS_BRANCH=v0.5.0`), or `main` |
+| `https://gentian-org.github.io/gentian-apps/develop` | its `develop`: the catalogue under development | any other gentian-os branch |
+
+The installer chooses when step 0 writes a new Cluster claim, prints the choice, and writes the
+reason above the address. `GENTIAN_CATALOGUE_URL` in `install.env` names an address outright. A
+claim that exists is not rewritten, so a cluster keeps the catalogue it was installed with until
+somebody changes it:
+
+```bash
+kubectl gentian catalogues remove gentian
+kubectl gentian catalogues add gentian https://gentian-org.github.io/gentian-apps
+```
+
+or by editing `spec.catalogue.sources` in `clusters/<cluster>/kernel/claims/cluster.yaml` and
+committing. What is installed stays installed, at the digest it was installed at.
+
+How a catalogue is produced, with gentian-apps as the example:
 
 1. The repository keeps each app as a directory, `profiles/[<family>/]<name>/`, holding
    `profile.yaml`, optionally `listing.yaml`, and the sources of its companions: `composition.yaml`,

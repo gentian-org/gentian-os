@@ -1637,6 +1637,67 @@ _remove_retired_apps_repository_claim() {
     return 0
 }
 
+# gentian_catalogue_url
+#
+# The address a new Cluster claim names for the default catalogue, `gentian`.
+#
+# gentian-apps publishes two: the released catalogue, built from its main, and
+# the development one, built from its develop. Which a cluster reads follows
+# from which gentian-os it is installed from, the ref in GENTIAN_OS_BRANCH (or,
+# unset, this checkout's branch -- resolve_gentian_os_branch): a release tag or
+# main is released software and reads the released catalogue; any other branch
+# is software under development and reads the catalogue under development,
+# whose profiles may need what only that platform has. A ref that cannot be
+# read gets the released one. GENTIAN_CATALOGUE_URL, set, is the answer
+# whatever the ref.
+#
+# Asked when a claim is written and at no other time: an existing claim's
+# source is somebody's decision and is not rewritten.
+gentian_catalogue_url() {
+    if [[ -n "${GENTIAN_CATALOGUE_URL:-}" ]]; then
+        printf '%s\n' "${GENTIAN_CATALOGUE_URL}"
+        return 0
+    fi
+    case "$(_gentian_catalogue_ref)" in
+        v[0-9]*.[0-9]*.[0-9]* | main | "")
+            printf '%s\n' "https://gentian-org.github.io/gentian-apps" ;;
+        *)
+            printf '%s\n' "https://gentian-org.github.io/gentian-apps/develop" ;;
+    esac
+}
+
+# gentian_catalogue_reason
+#
+# One line saying why gentian_catalogue_url answers as it does: the comment
+# above the address in the claim, and what step 0 prints.
+gentian_catalogue_reason() {
+    local ref
+    if [[ -n "${GENTIAN_CATALOGUE_URL:-}" ]]; then
+        printf '%s\n' "Set by GENTIAN_CATALOGUE_URL when this claim was written."
+        return 0
+    fi
+    ref="$(_gentian_catalogue_ref)"
+    case "${ref}" in
+        v[0-9]*.[0-9]*.[0-9]* | main)
+            printf '%s\n' "The released catalogue: this cluster was installed from gentian-os ${ref}." ;;
+        "")
+            printf '%s\n' "The released catalogue: the gentian-os ref installed from could not be read." ;;
+        *)
+            printf '%s\n' "The development catalogue: this cluster was installed from the gentian-os branch ${ref}, not from a release." ;;
+    esac
+}
+
+# The gentian-os ref being installed, read without the network: the setting,
+# else this checkout's branch, else nothing.
+_gentian_catalogue_ref() {
+    local ref="${GENTIAN_OS_BRANCH:-}"
+    if [[ -z "${ref}" ]]; then
+        ref="$(git -C "${SCRIPT_DIR:-.}" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+        [[ "${ref}" != "HEAD" ]] || ref=""
+    fi
+    printf '%s\n' "${ref}"
+}
+
 # _claim_catalogue_section
 #
 # The claim's catalogue section: the App Store people are sent to, and the
@@ -1668,8 +1729,10 @@ _claim_catalogue_section() {
     printf '    sources:\n'
     printf '      - name: gentian\n'
     # The public catalogue of the gentian-apps repository, which is where the
-    # ce and pe profiles are published. GENTIAN_CATALOGUE_URL names another.
-    printf '        url: %s\n' "${GENTIAN_CATALOGUE_URL:-https://gentian-org.github.io/gentian-apps}"
+    # ce and pe profiles are published: the released one or the development
+    # one, by what is being installed (gentian_catalogue_url).
+    printf '        # %s\n' "$(gentian_catalogue_reason)"
+    printf '        url: %s\n' "$(gentian_catalogue_url)"
     printf '      # - name: in-house\n'
     printf '      #   url: https://git.example.com/profiles\n'
 }
@@ -1718,6 +1781,8 @@ ensure_claim_catalogue_section() {
     [[ -z "$(tail -c 1 "${claim}")" ]] || printf '\n' >> "${claim}"
     _claim_catalogue_section >> "${claim}"
     info "claims/cluster.yaml named no catalogue: the App Store default was added."
+    info "  Catalogue: $(gentian_catalogue_url)"
+    info "  $(gentian_catalogue_reason)"
     info "  To run without a store, set 'catalogue: {}' under spec."
 }
 
@@ -1912,6 +1977,8 @@ spec:
 $(_claim_cluster_fields)
 EOF
         info "Scaffolded ${kernel_dir}/claims/cluster.yaml"
+        info "  Catalogue: $(gentian_catalogue_url)"
+        info "  $(gentian_catalogue_reason)"
         generated=1
     fi
 

@@ -447,7 +447,9 @@ kubectl gentian apps list --tenant acme                       # what the tenant 
 `install` takes the entry from a catalogue the tenant sees and pins it to the
 digest that catalogue lists; see [docs/commands.md](docs/commands.md) §6 for
 `--from` and `--digest`. A new cluster has one catalogue, `gentian`, for every
-tenant. To offer your own apps, publish a catalogue and add it for the cluster
+tenant: the released one when the cluster is installed from a release, the
+development one (`…/gentian-apps/develop`) when it is installed from a branch
+([docs/custom-catalogues.md](docs/custom-catalogues.md) §3). To offer your own apps, publish a catalogue and add it for the cluster
 or for one tenant:
 
 ```bash
