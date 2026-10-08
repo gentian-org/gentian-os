@@ -157,6 +157,11 @@ func (r *TenantExportReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		if err := r.discardPassphrase(ctx, export); err != nil {
 			return ctrl.Result{}, err
 		}
+		// The staged copies too, again: an export can reach its end and the
+		// operator stop before the copies were removed.
+		if err := r.discardStagedSecrets(ctx, export); err != nil {
+			return ctrl.Result{}, err
+		}
 		return ctrl.Result{}, r.discardDestinationCredential(ctx, export)
 	}
 
@@ -257,6 +262,9 @@ func (r *TenantExportReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	if done, err := r.captureTenantWide(ctx, export, tenant, encryption); err != nil {
 		return ctrl.Result{}, err
 	} else if !done {
+		if why := tenantWideExhausted(export); why != "" {
+			return r.fail(ctx, export, "CaptureFailed", why)
+		}
 		return r.requeueExport(ctx, export, tenant)
 	}
 
@@ -302,13 +310,11 @@ func (r *TenantExportReconciler) captureApp(
 		return r.failApp(ctx, export, tenant, appName,
 			fmt.Sprintf("enumerate what to capture: %v", err))
 	}
-	for _, unit := range units {
-		if unit.Kind == "volume" {
-			if err := r.ensureVolumeUploadSecret(ctx, export, tenant.Name, encryption); err != nil {
-				return ctrl.Result{}, fmt.Errorf("stage volume credentials: %w", err)
-			}
-			break
-		}
+	if err := r.stageFor(ctx, export, units, encryption); err != nil {
+		// With the app paused: failing is what resumes it. A copy that cannot
+		// be staged now -- a name another run holds, a source that is gone --
+		// is not staged by waiting.
+		return r.failApp(ctx, export, tenant, appName, err.Error())
 	}
 	allDone := true
 	var pending []string
@@ -391,13 +397,18 @@ func (r *TenantExportReconciler) captureUnits(
 	stores := backup.ProfileStores(profile)
 	spec := profileBackupSpec(profile)
 	params := r.jobParams(tenant, appName, export, encryption)
+	staged := stagedSecretName(tenant.Name, export.Name)
+	// Each database unit beside its database, where that server's
+	// administrator Secret is.
+	pgParams := placeExportUnit(params, postgresNamespace, staged)
+	mariaParams := placeExportUnit(params, mariadbNamespace, staged)
 
 	var units []captureUnit
 	switch stores.Database {
 	case gentianov1alpha1.DatabaseEnginePostgreSQL:
 		db := backup.DatabaseName(tenant, appName)
-		p := params
-		p.Name = exportJobName(export.Name, appName, "pg")
+		p := pgParams
+		p.Name = exportJobName(tenant.Name, export.Name, appName, "pg")
 		units = append(units, captureUnit{
 			Kind: bundle.ArtefactPostgres, Name: db, Path: backup.PostgresArtefact(db),
 			JobName: p.Name, Job: backup.PostgresDumpJob(p, db),
@@ -408,16 +419,16 @@ func (r *TenantExportReconciler) captureUnits(
 		// now -- a purge goes by what the role owns, not by what the profile
 		// says today.
 		role := backup.PostgresRole(tenant.Name, appName)
-		p = params
-		p.Name = exportJobName(export.Name, appName, "pgo")
+		p = pgParams
+		p.Name = exportJobName(tenant.Name, export.Name, appName, "pgo")
 		units = append(units, captureUnit{
 			Kind: bundle.ArtefactPostgresOwned, Name: role, Path: backup.PostgresOwnedArtefact(db),
 			JobName: p.Name, Job: backup.PostgresOwnedDumpJob(p, role, db),
 		})
 	case gentianov1alpha1.DatabaseEngineMariaDB:
 		db := backup.DatabaseName(tenant, appName)
-		p := params
-		p.Name = exportJobName(export.Name, appName, "maria")
+		p := mariaParams
+		p.Name = exportJobName(tenant.Name, export.Name, appName, "maria")
 		units = append(units, captureUnit{
 			Kind: bundle.ArtefactMariaDB, Name: db, Path: backup.MariaDBArtefact(db),
 			JobName: p.Name, Job: backup.MariaDBDumpJob(p, db),
@@ -426,8 +437,8 @@ func (r *TenantExportReconciler) captureUnits(
 		// purge of the app drops with the provisioned one. Always asked for,
 		// as on PostgreSQL -- a purge goes by the names that are there, not
 		// by what the profile says today.
-		p = params
-		p.Name = exportJobName(export.Name, appName, "mariao")
+		p = mariaParams
+		p.Name = exportJobName(tenant.Name, export.Name, appName, "mariao")
 		units = append(units, captureUnit{
 			Kind: bundle.ArtefactMariaDBOwned, Name: db, Path: backup.MariaDBOwnedArtefact(db),
 			JobName: p.Name, Job: backup.MariaDBOwnedDumpJob(p, backup.MariaDBUser(tenant.Name, appName), db),
@@ -437,7 +448,7 @@ func (r *TenantExportReconciler) captureUnits(
 	if stores.S3 {
 		bucket := backup.S3Bucket(tenant, appName)
 		p := params
-		p.Name = exportJobName(export.Name, appName, "s3")
+		p.Name = exportJobName(tenant.Name, export.Name, appName, "s3")
 		units = append(units, captureUnit{
 			Kind: bundle.ArtefactS3, Name: bucket, Path: backup.S3Artefact(bucket),
 			JobName: p.Name, Job: backup.S3ArchiveJob(p, bucket),
@@ -447,21 +458,16 @@ func (r *TenantExportReconciler) captureUnits(
 	// Volume Jobs run in the tenant namespace: a PVC is only mountable from
 	// its own namespace, and the first live volume capture hung Pending
 	// forever in the kernel namespace, holding its app paused the whole time.
-	// Their credentials come from the staged copy (see ensureVolumeUploadSecret),
+	// Their credentials come from the staged copy (see ensureStagedSecret),
 	// which also carries the passphrase for a passphrase-mode export.
-	volParams := params
-	volParams.Namespace = backup.TenantNamespace(tenant)
-	volParams.UploadCredentialsSecret = volumeUploadSecretName(export.Name)
-	if volParams.Encryption.Mode == gentianov1alpha1.ExportEncryptionPassphrase {
-		volParams.Encryption.PassphraseSecret = volumeUploadSecretName(export.Name)
-	}
+	volParams := placeExportUnit(params, backup.TenantNamespace(tenant), staged)
 	claims, releases, err := r.appVolumesAndReleases(ctx, tenant, appName, profile, spec)
 	if err != nil {
 		return nil, err
 	}
 	for i, claim := range claims {
 		p := volParams
-		p.Name = exportJobName(export.Name, appName, fmt.Sprintf("vol%d", i))
+		p.Name = exportJobName(tenant.Name, export.Name, appName, fmt.Sprintf("vol%d", i))
 		// Where the claim already is. Empty when nothing holds it — an app
 		// paused by scaling down releases its volume, and then the scheduler
 		// may place this anywhere.
@@ -581,6 +587,17 @@ func (r *TenantExportReconciler) ensureCaptureJob(
 		return false, err
 	}
 
+	// A Job of this name that is not this export's is never taken for this
+	// export's work: its result is another run's. It is left alone and counted
+	// against the unit, so the export fails saying so instead of recording a
+	// capture it did not make.
+	if tenantName := tenantNameFromNamespace(export.Namespace); !runObjectIsOurs(existing.Labels, tenantName, export.Name) {
+		entry.LastFailure = fmt.Sprintf("a Job named %s in %s belongs to another run (tenant %q, run %q)",
+			existing.Name, existing.Namespace, existing.Labels[tenantLabel], existing.Labels[backup.ExportLabel])
+		entry.Attempts++
+		return false, nil
+	}
+
 	if jobIsComplete(existing) {
 		entry.CompletedUnits = append(entry.CompletedUnits, unit.JobName)
 		return true, nil
@@ -634,6 +651,71 @@ func (r *TenantExportReconciler) ensureCaptureJob(
 	return false, nil
 }
 
+// tenantWideUnits are the captures that are the tenant's and no app's: the
+// realm, taken in the identity namespace with the identity provider's
+// administrator Secret, and the desktop's database, taken beside the tenants'
+// PostgreSQL.
+//
+// The tenant that adopts the kernel realm keeps its desktop's database on the
+// kernel's own PostgreSQL, not the tenants', and nothing there holds an
+// administrator credential a capture could run with. Its database is not
+// captured, and the export and the bundle say so (desktopNotCaptured) rather
+// than dumping a database of that name from a server that does not have it.
+func (r *TenantExportReconciler) tenantWideUnits(
+	tenant *gentianov1alpha1.Tenant,
+	export *gentianov1alpha1.TenantExport,
+	encryption backup.Encryption,
+) []captureUnit {
+	params := r.jobParams(tenant, backupTenantComponent, export, encryption)
+	staged := stagedSecretName(tenant.Name, export.Name)
+
+	realmParams := placeExportUnit(params, identityNamespace, staged)
+	realmParams.Name = exportJobName(tenant.Name, export.Name, backupTenantComponent, "realm")
+	realm := keycloakRealmName(tenant)
+	units := []captureUnit{{
+		Kind: bundle.ArtefactIdentity, Name: realm, Path: backup.IdentityArtefact,
+		JobName: realmParams.Name, Job: backup.RealmExportJob(realmParams, realm),
+	}}
+
+	if r.desktopOnKernelStore(tenant) {
+		return units
+	}
+	shellParams := placeExportUnit(params, postgresNamespace, staged)
+	shellParams.Name = exportJobName(tenant.Name, export.Name, backupTenantComponent, "shell")
+	shellDB := databaseName(tenant, portalShellAppName)
+	return append(units, captureUnit{
+		Kind: bundle.ArtefactPostgres, Name: shellDB, Path: backup.PostgresArtefact(shellDB),
+		JobName: shellParams.Name, Job: backup.PostgresDumpJob(shellParams, shellDB),
+	})
+}
+
+// desktopOnKernelStore reports whether the tenant's desktop keeps its
+// database on the kernel's PostgreSQL: the tenant that adopts the kernel
+// realm does (component_desktop.go componentDatabaseNamespace).
+func (r *TenantExportReconciler) desktopOnKernelStore(tenant *gentianov1alpha1.Tenant) bool {
+	return r.Reconciler != nil && r.Reconciler.adoptsKernelRealm(tenant)
+}
+
+// desktopNotCaptured is what an export of such a tenant says.
+const desktopNotCaptured = "the desktop's database: this tenant's is on the kernel's PostgreSQL, which no export captures"
+
+// tenantWideExhausted answers why the tenant-wide captures are given up, once
+// they have failed or stalled as often as an app's may. Without a bound the
+// last stage of an export retried for ever and the export stayed Running.
+func tenantWideExhausted(export *gentianov1alpha1.TenantExport) string {
+	entry := appStatus(&export.Status.Apps, backupTenantComponent)
+	if entry.Attempts <= exportMaxAttempts {
+		return ""
+	}
+	why := fmt.Sprintf("the realm, the desktop's database or the manifest: capture did not succeed after %d attempts", entry.Attempts)
+	if entry.LastFailure != "" {
+		why += " — " + entry.LastFailure
+	}
+	entry.Phase = gentianov1alpha1.TenantExportPhaseFailed
+	entry.Message = why
+	return why
+}
+
 // captureTenantWide captures the realm and the portal shell database.
 func (r *TenantExportReconciler) captureTenantWide(
 	ctx context.Context,
@@ -641,23 +723,10 @@ func (r *TenantExportReconciler) captureTenantWide(
 	tenant *gentianov1alpha1.Tenant,
 	encryption backup.Encryption,
 ) (bool, error) {
-	params := r.jobParams(tenant, backupTenantComponent, export, encryption)
-
-	realmParams := params
-	realmParams.Name = exportJobName(export.Name, backupTenantComponent, "realm")
-	realm := keycloakRealmName(tenant)
-	units := []captureUnit{{
-		Kind: bundle.ArtefactIdentity, Name: realm, Path: backup.IdentityArtefact,
-		JobName: realmParams.Name, Job: backup.RealmExportJob(realmParams, realm),
-	}}
-
-	shellParams := params
-	shellParams.Name = exportJobName(export.Name, backupTenantComponent, "shell")
-	shellDB := databaseName(tenant, portalShellAppName)
-	units = append(units, captureUnit{
-		Kind: bundle.ArtefactPostgres, Name: shellDB, Path: backup.PostgresArtefact(shellDB),
-		JobName: shellParams.Name, Job: backup.PostgresDumpJob(shellParams, shellDB),
-	})
+	units := r.tenantWideUnits(tenant, export, encryption)
+	if err := r.stageFor(ctx, export, units, encryption); err != nil {
+		return false, err
+	}
 
 	allDone := true
 	for _, unit := range units {
@@ -752,29 +821,25 @@ func (r *TenantExportReconciler) complete(
 	tenant *gentianov1alpha1.Tenant,
 	encryption backup.Encryption,
 ) (ctrl.Result, error) {
-	params := r.jobParams(tenant, backupTenantComponent, export, encryption)
-	params.Name = exportJobName(export.Name, backupTenantComponent, "manifest")
-
-	info := backup.NewBundleInfo(tenant.Name, export.Name, timeOrNow(export.Status.StartedAt), encryption)
-	job, err := backup.ManifestJob(params, r.buildManifest(export, tenant), info)
+	unit, err := r.manifestUnit(export, tenant, encryption)
 	if err != nil {
 		return r.fail(ctx, export, "ManifestFailed", err.Error())
 	}
-	done, err := r.ensureCaptureJob(ctx, export, captureUnit{
-		Kind: "manifest", Name: "manifest.json", Path: "manifest.json",
-		JobName: params.Name, Job: job,
-	})
+	done, err := r.ensureCaptureJob(ctx, export, unit)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
 	if !done {
+		if why := tenantWideExhausted(export); why != "" {
+			return r.fail(ctx, export, "CaptureFailed", why)
+		}
 		return r.requeueExport(ctx, export, tenant)
 	}
 
 	if err := r.discardPassphrase(ctx, export); err != nil {
 		return ctrl.Result{}, err
 	}
-	if err := r.discardVolumeUploadSecret(ctx, export); err != nil {
+	if err := r.discardStagedSecrets(ctx, export); err != nil {
 		return ctrl.Result{}, err
 	}
 	export.Status.Phase = gentianov1alpha1.TenantExportPhaseReady
@@ -791,6 +856,26 @@ func (r *TenantExportReconciler) complete(
 	}
 	setExportCondition(export, conditionExportComplete, metav1.ConditionTrue, "Captured", captured)
 	return ctrl.Result{}, r.persist(ctx, export)
+}
+
+// manifestUnit is the Job that writes the manifest, beside the object store.
+func (r *TenantExportReconciler) manifestUnit(
+	export *gentianov1alpha1.TenantExport,
+	tenant *gentianov1alpha1.Tenant,
+	encryption backup.Encryption,
+) (captureUnit, error) {
+	params := r.jobParams(tenant, backupTenantComponent, export, encryption)
+	params.Name = exportJobName(tenant.Name, export.Name, backupTenantComponent, "manifest")
+
+	info := backup.NewBundleInfo(tenant.Name, export.Name, timeOrNow(export.Status.StartedAt), encryption)
+	job, err := backup.ManifestJob(params, r.buildManifest(export, tenant), info)
+	if err != nil {
+		return captureUnit{}, err
+	}
+	return captureUnit{
+		Kind: "manifest", Name: "manifest.json", Path: "manifest.json",
+		JobName: params.Name, Job: job,
+	}, nil
 }
 
 // appsWithBoundSecrets names the captured apps whose profile declares bound
@@ -894,7 +979,7 @@ func (r *TenantExportReconciler) finalize(
 	// and must not be able to block deletion.
 	_ = r.discardPassphrase(ctx, export)
 	_ = r.discardDestinationCredential(ctx, export)
-	_ = r.discardVolumeUploadSecret(ctx, export)
+	_ = r.discardStagedSecrets(ctx, export)
 
 	// Outstanding capture Jobs upload into the very prefix being deleted;
 	// stop them before the cleanup Job races them.
@@ -915,7 +1000,7 @@ func (r *TenantExportReconciler) finalize(
 	// hand, which matters for an erasure request. That is the right way round
 	// — retained data can still be deleted afterwards, and a bundle deleted
 	// during teardown is gone at the one moment it was most needed.
-	if torn, why := r.tenantTeardown(ctx, export, tenantName); torn {
+	if torn, why := r.tenantTeardown(ctx, export.Namespace, tenantName); torn {
 		if b := export.Status.Bundle; b != nil && b.Prefix != "" {
 			logger.Info("keeping bundle: the tenant is being torn down, and a backup must outlive it",
 				"export", export.Name, "bucket", b.Bucket, "prefix", b.Prefix, "reason", why)
@@ -945,11 +1030,10 @@ func (r *TenantExportReconciler) finalize(
 // deleted one.
 func (r *TenantExportReconciler) tenantTeardown(
 	ctx context.Context,
-	export *gentianov1alpha1.TenantExport,
-	tenantName string,
+	namespace, tenantName string,
 ) (bool, string) {
 	ns := &corev1.Namespace{}
-	switch err := r.Get(ctx, types.NamespacedName{Name: export.Namespace}, ns); {
+	switch err := r.Get(ctx, types.NamespacedName{Name: namespace}, ns); {
 	case apierrors.IsNotFound(err):
 		return true, "namespace is gone"
 	case err != nil:
@@ -971,19 +1055,22 @@ func (r *TenantExportReconciler) tenantTeardown(
 }
 
 // bundleDeleteJobName names the cleanup Job; deleteExportJobs spares it.
-func bundleDeleteJobName(exportName string) string {
-	return exportJobName(exportName, "bundle", "rm")
+func bundleDeleteJobName(tenantName, exportName string) string {
+	return exportJobName(tenantName, exportName, "bundle", "rm")
 }
 
-// deleteExportJobs removes every capture Job belonging to this export — in
-// the kernel namespace, and in the tenant namespace where volume Jobs run.
+// deleteExportJobs removes every capture Job belonging to this export, in
+// every namespace a unit runs in. By the tenant's label as well as the
+// export's: those namespaces are shared, and another tenant may have an
+// export of the same name.
 func (r *TenantExportReconciler) deleteExportJobs(ctx context.Context, export *gentianov1alpha1.TenantExport) error {
-	keep := bundleDeleteJobName(export.Name)
-	for _, ns := range []string{s3Namespace, export.Namespace} {
+	tenantName := tenantNameFromNamespace(export.Namespace)
+	keep := bundleDeleteJobName(tenantName, export.Name)
+	for _, ns := range runNamespaces(export.Namespace) {
 		jobs := &batchv1.JobList{}
 		if err := r.List(ctx, jobs,
 			client.InNamespace(ns),
-			client.MatchingLabels{backup.ExportLabel: export.Name}); err != nil {
+			client.MatchingLabels{backup.ExportLabel: export.Name, tenantLabel: tenantName}); err != nil {
 			return fmt.Errorf("list capture jobs for %s in %s: %w", export.Name, ns, err)
 		}
 		for i := range jobs.Items {
@@ -1015,7 +1102,7 @@ func (r *TenantExportReconciler) ensureBundleDeleted(
 		return true, nil
 	}
 
-	name := bundleDeleteJobName(export.Name)
+	name := bundleDeleteJobName(tenantName, export.Name)
 	existing := &batchv1.Job{}
 	err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: s3Namespace}, existing)
 	switch {
@@ -1098,7 +1185,7 @@ func (r *TenantExportReconciler) fail(
 	// failure being reported, but they are still attempted on the way out.
 	_ = r.discardPassphrase(ctx, export)
 	_ = r.discardDestinationCredential(ctx, export)
-	_ = r.discardVolumeUploadSecret(ctx, export)
+	_ = r.discardStagedSecrets(ctx, export)
 	export.Status.Phase = gentianov1alpha1.TenantExportPhaseFailed
 	export.Status.CompletedAt = ptrNow()
 	tenantExportTotal.WithLabelValues(

@@ -80,34 +80,9 @@ func (r *TenantExportReconciler) stageDestinationCredential(
 	// The capture Jobs read the endpoint from the policy for a policy
 	// destination and from a literal for this one, so only the keys travel.
 
-	copied := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      backup.ExportCredentialSecretName(export.Name),
-			Namespace: s3Namespace,
-			Labels: map[string]string{
-				tenantLabel:        tenantNameFromNamespace(export.Namespace),
-				managedByLabel:     managedByValue,
-				backup.ExportLabel: export.Name,
-			},
-		},
-		Type: corev1.SecretTypeOpaque,
-		Data: data,
-	}
-
-	existing := &corev1.Secret{}
-	getErr := r.Get(ctx, types.NamespacedName{
-		Name:      copied.Name,
-		Namespace: s3Namespace,
-	}, existing)
-	switch {
-	case apierrors.IsNotFound(getErr):
-		return r.Create(ctx, copied)
-	case getErr != nil:
-		return getErr
-	}
-
-	existing.Data = copied.Data
-	return r.Update(ctx, existing)
+	tenantName := tenantNameFromNamespace(export.Namespace)
+	return putRunSecret(ctx, r.Client, runSecret(backup.ExportCredentialSecretName(tenantName, export.Name), s3Namespace,
+		tenantName, export.Name, data))
 }
 
 // discardDestinationCredential removes the staged copy.
@@ -122,7 +97,7 @@ func (r *TenantExportReconciler) discardDestinationCredential(
 ) error {
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      backup.ExportCredentialSecretName(export.Name),
+			Name:      backup.ExportCredentialSecretName(tenantNameFromNamespace(export.Namespace), export.Name),
 			Namespace: s3Namespace,
 		},
 	}

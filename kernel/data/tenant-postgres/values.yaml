@@ -23,4 +23,3 @@ networkPolicy:
   namespaces:
     control: kernel-control
     data: kernel-data
-    s3: system-s3

@@ -151,7 +151,7 @@ func ApplyExportDestination(
 			// The Secret is staged beside the capture Jobs and discarded with
 			// the export.
 			eff.CredentialName = ""
-			eff.CredentialSecret = ExportCredentialSecretName(exportName)
+			eff.CredentialSecret = ExportCredentialSecretName(tenant.Name, exportName)
 		}
 		// credentialSource: managed keeps whatever the policy resolved, which
 		// is the workspace's own destination credential — already materialised
@@ -166,8 +166,11 @@ func ApplyExportDestination(
 // Jobs. Derived from the export rather than the requester's Secret name, so a
 // tenant cannot aim it at a Secret in the kernel namespace it does not own —
 // which is why the export's name is the argument and the reference is not.
-func ExportCredentialSecretName(exportName string) string {
-	return "tenant-export-destination-" + exportName
+//
+// The tenant's name is part of it: the namespace is shared by every tenant's
+// exports, and an export's name is unique in its tenant only.
+func ExportCredentialSecretName(tenantName, exportName string) string {
+	return "tenant-export-destination-" + tenantName + "-" + exportName
 }
 
 // ResolveEffective merges the cluster policy with a tenant's own.

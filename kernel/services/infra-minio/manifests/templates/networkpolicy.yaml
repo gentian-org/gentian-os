@@ -16,12 +16,20 @@
                         out everything that is not a tenant namespace or a
                         client named here; those keep out the apps that asked
                         for no bucket.
-    this namespace      the operator's bucket and destroy Jobs, and every
-                        capture and restore Job that mounts no claim, run
-                        beside the server (storage_reconciler.go,
+    this namespace      the operator's bucket and destroy Jobs, and the
+                        capture and restore of a bucket and of a bundle's
+                        manifest, run beside the server (storage_reconciler.go,
                         tenantexport_controller.go, backup/teardown.go). A pod
                         here can mount the root Secret, so naming pods would
                         keep nobody out.
+    capture and restore the units of an export and a restore that run where
+                        their own administrator's Secret is -- a database's
+                        beside PostgreSQL or MariaDB, the realm's in the
+                        identity namespace (tenantexport_placement.go) --
+                        and write to or read from the bundle here. Admitted
+                        by the label every such pod carries,
+                        gentianos.io/component=tenant-export, from those
+                        three namespaces alone; no other pod of them is.
     the operator        reads a bundle's manifest, streams a bundle to the
                         person downloading it and writes an imported one
                         (internal/bundlestore, applifecycle/bundle_*.go).
@@ -66,6 +74,14 @@ spec:
             matchLabels:
               app.kubernetes.io/name: gentian-os
               app.kubernetes.io/component: operator
+        {{- range $fn := list "postgresql" "mariadb" "authentication" }}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ index $np.namespaces $fn | quote }}
+          podSelector:
+            matchLabels:
+              gentianos.io/component: tenant-export
+        {{- end }}
       ports:
         - protocol: TCP
           port: {{ $np.ports.api }}

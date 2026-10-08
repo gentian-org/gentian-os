@@ -89,8 +89,12 @@ spec:
               value: 'ns.control.placeholder'
             - name: networkPolicy.namespaces.data
               value: 'ns.data.placeholder'
-            - name: networkPolicy.namespaces.s3
-              value: 'sys.s3.placeholder'
+            - name: networkPolicy.namespaces.postgresql
+              value: 'sys.postgresql.placeholder'
+            - name: networkPolicy.namespaces.mariadb
+              value: 'sys.mariadb.placeholder'
+            - name: networkPolicy.namespaces.authentication
+              value: 'ns.authentication.placeholder'
       destination:
         server: https://kubernetes.default.svc
         namespace: '{{.namespace}}'

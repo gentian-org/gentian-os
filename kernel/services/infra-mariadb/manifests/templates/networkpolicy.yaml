@@ -15,11 +15,11 @@
                         that one keeps out the apps that asked for no MariaDB.
     this namespace      the operator's setup and destroy Jobs run beside the
                         server (mariadb_reconciler.go, backup/teardown.go) and
-                        carry no pod label to select on. A pod here can mount
+                        carry no pod label to select on; so do mariadb-dump
+                        and the load of an export and a restore, which run
+                        here because the administrator's Secret is here
+                        (tenantexport_placement.go). A pod here can mount
                         the root Secret, so naming pods would keep nobody out.
-    capture and restore mariadb-dump and the restore run beside the object
-                        store (tenantexport_controller.go jobParams), labelled
-                        gentianos.io/component=tenant-export.
 
   The pod declares no other port. The kubelet's probes are exec probes.
 
@@ -52,12 +52,6 @@ spec:
             matchLabels:
               gentianos.io/tier: tenant
         - podSelector: {}
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: {{ $np.namespaces.s3 | quote }}
-          podSelector:
-            matchLabels:
-              gentianos.io/component: tenant-export
       ports:
         - protocol: TCP
           port: {{ $np.ports.mariadb }}

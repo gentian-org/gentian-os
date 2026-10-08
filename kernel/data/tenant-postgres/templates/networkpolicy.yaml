@@ -20,16 +20,16 @@
                         A tenant's DMZ is a different tier and is not admitted.
     this namespace      the operator's role and destroy Jobs run beside the
                         server (database_reconciler.go, backup/teardown.go)
-                        and carry no pod label to select on; the cluster's own
+                        and carry no pod label to select on; so do pg_dump
+                        and pg_restore of an export and a restore, which run
+                        here because the administrator's Secret is here
+                        (tenantexport_placement.go); the cluster's own
                         replicas and join Jobs stream from the primary. A pod
                         here can mount the superuser Secret, so naming pods
                         would keep nobody out.
     the operator        reads and writes the usage history and the notices in
                         a tenant's desktop database (internal/usage,
                         applifecycle/notifications.go).
-    capture and restore pg_dump and pg_restore run beside the object store
-                        (tenantexport_controller.go jobParams), labelled
-                        gentianos.io/component=tenant-export.
 
   The instance manager's port (status): CloudNativePG's operator, in the
   kernel's data namespace, asks every instance for its state there, and
@@ -81,12 +81,6 @@ spec:
             matchLabels:
               app.kubernetes.io/name: gentian-os
               app.kubernetes.io/component: operator
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: {{ $np.namespaces.s3 | quote }}
-          podSelector:
-            matchLabels:
-              gentianos.io/component: tenant-export
       ports:
         - protocol: TCP
           port: {{ $np.ports.postgresql }}

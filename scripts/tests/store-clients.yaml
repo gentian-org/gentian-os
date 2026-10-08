@@ -59,19 +59,19 @@ clients:
     built: postgres-destroy-job
     proof: internal/backup/teardown.go PostgresDestroyJob
   - store: postgresql
-    client: pg_dump of a tenant export
-    namespace: system-s3
+    client: pg_dump of a tenant export, which runs where the administrator's Secret is
+    namespace: system-postgresql
     podLabels: {gentianos.io/component: tenant-export}
     port: 5432
     built: export-postgres-dump
-    proof: internal/controller/tenantexport_controller.go jobParams, internal/backup/jobs.go PostgresDumpJob
+    proof: internal/controller/tenantexport_controller.go captureUnits, tenantexport_placement.go, internal/backup/jobs.go PostgresDumpJob
   - store: postgresql
-    client: pg_restore of a tenant restore
-    namespace: system-s3
+    client: pg_restore of a tenant restore, which runs where the administrator's Secret is
+    namespace: system-postgresql
     podLabels: {gentianos.io/component: tenant-export}
     port: 5432
     built: restore-postgres
-    proof: internal/controller/tenantrestore_controller.go jobParams, internal/backup/restore_jobs.go PostgresRestoreJob
+    proof: internal/controller/tenantrestore_controller.go restoreUnits, tenantexport_placement.go, internal/backup/restore_jobs.go PostgresRestoreJob
   - store: postgresql
     client: the operator, reading and writing a tenant's usage history and notices
     namespace: kernel-control
@@ -119,19 +119,19 @@ clients:
     built: mariadb-destroy-job
     proof: internal/backup/teardown.go MariaDBDestroyJob
   - store: mariadb
-    client: mariadb-dump of a tenant export
-    namespace: system-s3
+    client: mariadb-dump of a tenant export, which runs where the administrator's Secret is
+    namespace: system-mariadb
     podLabels: {gentianos.io/component: tenant-export}
     port: 3306
     built: export-mariadb-dump
-    proof: internal/controller/tenantexport_controller.go jobParams, internal/backup/jobs.go MariaDBDumpJob
+    proof: internal/controller/tenantexport_controller.go captureUnits, tenantexport_placement.go, internal/backup/jobs.go MariaDBDumpJob
   - store: mariadb
-    client: the load of a tenant restore
-    namespace: system-s3
+    client: the load of a tenant restore, which runs where the administrator's Secret is
+    namespace: system-mariadb
     podLabels: {gentianos.io/component: tenant-export}
     port: 3306
     built: restore-mariadb
-    proof: internal/controller/tenantrestore_controller.go jobParams, internal/backup/restore_jobs.go MariaDBRestoreJob
+    proof: internal/controller/tenantrestore_controller.go restoreUnits, tenantexport_placement.go, internal/backup/restore_jobs.go MariaDBRestoreJob
 
   # ── Redis (system-cache) ───────────────────────────────────────────────
   - store: cache
@@ -193,12 +193,71 @@ clients:
     built: s3-destroy-job
     proof: internal/backup/teardown.go ObjectStorageDestroyJob
   - store: s3
-    client: every capture and restore Job that mounts no claim, uploading to or fetching from the bundle
+    client: the capture of a bucket, reading it and uploading to the bundle
     namespace: system-s3
     podLabels: {gentianos.io/component: tenant-export}
     port: 9000
     built: export-s3-archive
-    proof: internal/controller/tenantexport_controller.go jobParams, internal/backup/jobs.go uploadJob
+    proof: internal/controller/tenantexport_controller.go captureUnits, internal/backup/jobs.go S3ArchiveJob
+  - store: s3
+    client: the load of a bucket in a tenant restore
+    namespace: system-s3
+    podLabels: {gentianos.io/component: tenant-export}
+    port: 9000
+    built: restore-s3
+    proof: internal/controller/tenantrestore_controller.go restoreUnits, internal/backup/restore_jobs.go S3RestoreJob
+  - store: s3
+    client: the Job that writes a bundle's manifest
+    namespace: system-s3
+    podLabels: {gentianos.io/component: tenant-export}
+    port: 9000
+    built: export-manifest
+    proof: internal/controller/tenantexport_controller.go manifestUnit, internal/backup/manifest.go ManifestJob
+  # The units that run beside another service, where that service's
+  # administrator Secret is, and reach the bundle from there with the copy
+  # staged for the run (internal/controller/tenantexport_placement.go).
+  - store: s3
+    client: pg_dump of a tenant export, uploading its dump to the bundle
+    namespace: system-postgresql
+    podLabels: {gentianos.io/component: tenant-export}
+    port: 9000
+    built: export-postgres-upload
+    proof: internal/backup/jobs.go uploadJob
+  - store: s3
+    client: pg_restore of a tenant restore, fetching its dump from the bundle
+    namespace: system-postgresql
+    podLabels: {gentianos.io/component: tenant-export}
+    port: 9000
+    built: restore-postgres-fetch
+    proof: internal/backup/restore_jobs.go fetchAndDecrypt
+  - store: s3
+    client: mariadb-dump of a tenant export, uploading its dump to the bundle
+    namespace: system-mariadb
+    podLabels: {gentianos.io/component: tenant-export}
+    port: 9000
+    built: export-mariadb-upload
+    proof: internal/backup/jobs.go uploadJob
+  - store: s3
+    client: the load of a tenant restore into MariaDB, fetching its dump from the bundle
+    namespace: system-mariadb
+    podLabels: {gentianos.io/component: tenant-export}
+    port: 9000
+    built: restore-mariadb-fetch
+    proof: internal/backup/restore_jobs.go fetchAndDecrypt
+  - store: s3
+    client: the realm export of a tenant export, uploading to the bundle
+    namespace: kernel-authentication
+    podLabels: {gentianos.io/component: tenant-export}
+    port: 9000
+    built: export-realm-upload
+    proof: internal/controller/tenantexport_controller.go tenantWideUnits, internal/backup/jobs.go RealmExportJob
+  - store: s3
+    client: the realm import of a tenant restore, fetching from the bundle
+    namespace: kernel-authentication
+    podLabels: {gentianos.io/component: tenant-export}
+    port: 9000
+    built: restore-realm-fetch
+    proof: internal/controller/tenantrestore_controller.go tenantWideRestoreUnits, internal/backup/restore_jobs.go RealmImportJob
   - store: s3
     client: the operator, reading a bundle's manifest, streaming a download and writing an import
     namespace: kernel-control
@@ -226,6 +285,16 @@ denied:
     client: a perimeter proxy in a tenant's DMZ
     namespace: {name: tenant-acme-dmz, labels: {gentianos.io/tier: tenant-dmz, gentianos.io/tenant: acme}}
     podLabels: {app.kubernetes.io/name: perimeter-proxy}
+    port: 5432
+  - store: postgresql
+    client: a capture pod beside the object store, where no database unit runs any more
+    namespace: system-s3
+    podLabels: {gentianos.io/component: tenant-export}
+    port: 5432
+  - store: postgresql
+    client: the realm unit of an export, which has no business with a database
+    namespace: kernel-authentication
+    podLabels: {gentianos.io/component: tenant-export}
     port: 5432
   - store: postgresql
     client: the object store's own pod, which is not a capture
@@ -263,6 +332,16 @@ denied:
     podLabels: {app.kubernetes.io/name: gentian-os, app.kubernetes.io/instance: gentian-os, app.kubernetes.io/component: operator}
     port: 3306
   - store: mariadb
+    client: a capture pod beside the object store, where no database unit runs any more
+    namespace: system-s3
+    podLabels: {gentianos.io/component: tenant-export}
+    port: 3306
+  - store: mariadb
+    client: a PostgreSQL unit of an export, which is not MariaDB's client
+    namespace: system-postgresql
+    podLabels: {gentianos.io/component: tenant-export}
+    port: 3306
+  - store: mariadb
     client: Crossplane and its providers
     namespace: kernel-provisioning
     podLabels: {}
@@ -292,6 +371,31 @@ denied:
     namespace: kernel-control
     podLabels: {app.kubernetes.io/name: gentian-os, app.kubernetes.io/instance: gentian-os, app.kubernetes.io/component: usher}
     port: 9000
+  - store: s3
+    client: Keycloak, which is not a capture
+    namespace: kernel-authentication
+    podLabels: {app.kubernetes.io/name: keycloakx}
+    port: 9000
+  - store: s3
+    client: the tenants' PostgreSQL itself, which is not a capture
+    namespace: system-postgresql
+    podLabels: {cnpg.io/cluster: postgres, cnpg.io/podRole: instance}
+    port: 9000
+  - store: s3
+    client: a setup Job beside MariaDB, which is not a capture
+    namespace: system-mariadb
+    podLabels: {}
+    port: 9000
+  - store: s3
+    client: a capture pod in a namespace no unit runs in
+    namespace: kernel-data
+    podLabels: {gentianos.io/component: tenant-export}
+    port: 9000
+  - store: s3
+    client: a capture pod of an export on the console port
+    namespace: system-postgresql
+    podLabels: {gentianos.io/component: tenant-export}
+    port: 9001
   - store: s3
     client: the edge, which routes nothing to the object store
     namespace: kernel-edge

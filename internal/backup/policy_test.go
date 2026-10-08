@@ -264,7 +264,7 @@ func TestExportDestinationChoosesTargetAndCredential(t *testing.T) {
 			t.Errorf("CredentialSecret = %q, want the workspace's own %q",
 				got.CredentialSecret, policy.CredentialSecret)
 		}
-		if got.CredentialSecret == ExportCredentialSecretName("manual-3") {
+		if got.CredentialSecret == ExportCredentialSecretName(tenant.Name, "manual-3") {
 			t.Error("managed source staged a copy; nothing should have been copied")
 		}
 	})
@@ -277,7 +277,7 @@ func TestExportDestinationChoosesTargetAndCredential(t *testing.T) {
 			CredentialSecretRef: "someone-elses-secret",
 		}, tenant, "manual-4")
 
-		want := ExportCredentialSecretName("manual-4")
+		want := ExportCredentialSecretName(tenant.Name, "manual-4")
 		if got.CredentialSecret != want {
 			t.Errorf("CredentialSecret = %q, want %q", got.CredentialSecret, want)
 		}

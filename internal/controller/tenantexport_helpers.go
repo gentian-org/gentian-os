@@ -12,6 +12,8 @@ package controller
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"strings"
 	"time"
@@ -61,21 +63,38 @@ func tenantNamespaceByName(ctx context.Context, c client.Reader, name string) (s
 	return backup.TenantNamespace(tenant), nil
 }
 
-// exportJobName builds a Job name that is unique per export, app and unit, and
-// short enough to survive Kubernetes' 63-character limit on the pod labels
-// derived from it. Long profile names are truncated from the middle of the
-// composite rather than the end, so the unit suffix always survives.
-func exportJobName(exportName, appName, unit string) string {
-	name := fmt.Sprintf("tx-%s-%s-%s", exportName, appName, unit)
+// exportJobName builds the name of a Job or staged Secret of one run: unique
+// per tenant, run, app and unit, and short enough to survive Kubernetes'
+// 63-character limit on the pod labels derived from it.
+//
+// The tenant is part of it because these objects are made in namespaces every
+// tenant's runs share (beside the object store, a database, the identity
+// provider), and a run's name is unique in its tenant only: two tenants with a
+// schedule of the same name make exports of the same name in the same minute.
+// Without the tenant, the second found the first's finished Job under its own
+// name and recorded the work as done, and its passphrase replaced the
+// first's. A name too long is cut and carries a digest of the whole, so that
+// two names differing only in what was cut stay different.
+func exportJobName(tenantName, exportName, appName, unit string) string {
+	name := fmt.Sprintf("tx-%s-%s-%s-%s", tenantName, exportName, appName, unit)
 	const max = 52
 	if len(name) <= max {
 		return name
 	}
-	keep := max - len(unit) - 1
+	sum := sha256.Sum256([]byte(tenantName + "\x00" + exportName + "\x00" + appName + "\x00" + unit))
+	tail := "-" + hex.EncodeToString(sum[:4]) + "-" + unit
+	keep := max - len(tail)
 	if keep < 1 {
 		keep = 1
 	}
-	return name[:keep] + "-" + unit
+	return strings.TrimRight(name[:keep], "-.") + tail
+}
+
+// runObjectIsOurs reports whether an object found under a run's name was made
+// for that run. Names carry the tenant, so anything else is a name two runs
+// share by accident; it is never taken for this run's work.
+func runObjectIsOurs(labels map[string]string, tenantName, runName string) bool {
+	return labels[tenantLabel] == tenantName && labels[backup.ExportLabel] == runName
 }
 
 // appStatus returns this app's status entry, creating it on first use so the

@@ -21,6 +21,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/yaml"
 
+	"github.com/gentian-org/gentian-os/api/bundle"
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/backup"
 	"github.com/gentian-org/gentian-os/internal/controller/provisioner"
@@ -116,16 +117,24 @@ func TestTheStoresClientsAreWhereTheirNetworkPoliciesExpectThem(t *testing.T) {
 	}
 
 	tenant := &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "acme"}}
-	export := &gentianov1alpha1.TenantExport{ObjectMeta: metav1.ObjectMeta{Name: "export-1", Namespace: tenant.NamespaceName()}}
-	export.Status.Bundle = &gentianov1alpha1.BundleRef{Bucket: "bundles", Prefix: "acme/export-1"}
-	restore := &gentianov1alpha1.TenantRestore{ObjectMeta: metav1.ObjectMeta{Name: "restore-1", Namespace: tenant.NamespaceName()}}
-	restore.Status.Bundle = &gentianov1alpha1.BundleRef{Bucket: "bundles", Prefix: "acme/export-1"}
-	exportParams := (&TenantExportReconciler{}).jobParams(tenant, "wiki", export, backup.Encryption{})
-	restoreParams := (&TenantRestoreReconciler{}).jobParams(tenant, "wiki", restore)
-	// Volume Jobs run where the claim is: captureUnits and restoreUnits move
-	// the shared parameters to the tenant's namespace, by this function.
-	exportVolume, restoreVolume := exportParams, restoreParams
-	exportVolume.Namespace, restoreVolume.Namespace = backup.TenantNamespace(tenant), backup.TenantNamespace(tenant)
+	// Every unit of an export and of a restore, made by the reconcilers' own
+	// code, so that where a unit runs is what the reconcilers decide and not
+	// what this test assumes: a tenant with wiki (PostgreSQL, a bucket, a
+	// volume) and shop (MariaDB).
+	world := newPlacementWorld(t, false)
+	exports := world.exportUnits(t, gentianov1alpha1.ExportEncryptionRecipient)
+	restores := world.restoreUnits(t, gentianov1alpha1.ExportEncryptionRecipient)
+	unit := func(units []captureUnit, kind string) func(*testing.T) builtClient {
+		return func(t *testing.T) builtClient {
+			for _, u := range units {
+				if u.Kind == kind {
+					return jobClient(u.Job)
+				}
+			}
+			t.Fatalf("no unit of kind %s is built", kind)
+			return builtClient{}
+		}
+	}
 
 	app := func(services gentianov1alpha1.ServiceRequirements, store string, port int32) func(*testing.T) builtClient {
 		return func(t *testing.T) builtClient {
@@ -160,21 +169,29 @@ func TestTheStoresClientsAreWhereTheirNetworkPoliciesExpectThem(t *testing.T) {
 			np := buildComponentNetworkPolicy(comp, r.componentEgressNamespaces(profile, tenant), nil)
 			return egressClient(t, np, layout.System("postgresql"), provisioner.PostgresPort)
 		},
-		"postgres-role-job":     job(makeRoleJob(tenant, tenant.NamespaceName(), "acme_wiki", "wiki", "", "", false)),
-		"postgres-destroy-job":  job(backup.PostgresDestroyJob(tenant, "wiki", backup.DestroyInTheBackground)),
-		"export-postgres-dump":  job(backup.PostgresDumpJob(exportParams, "acme_wiki")),
-		"restore-postgres":      job(backup.PostgresRestoreJob(restoreParams, backup.Decryption{}, backup.PostgresArtefact("acme_wiki"), "acme_wiki")),
-		"mariadb-setup-job":     job(makeMariaDBSetupJob(tenant, "shop", "", false)),
-		"mariadb-destroy-job":   job(backup.MariaDBDestroyJob(tenant, "shop", backup.DestroyInTheBackground)),
-		"export-mariadb-dump":   job(backup.MariaDBDumpJob(exportParams, "acme_shop")),
-		"restore-mariadb":       job(backup.MariaDBRestoreJob(restoreParams, backup.Decryption{}, backup.MariaDBArtefact("acme_shop"), "acme_shop")),
-		"redis-acl-job":         job(makeRedisACLJob(tenant, "wiki", "")),
-		"cache-destroy-job":     job(backup.CacheDestroyJob(tenant, "wiki", backup.DestroyInTheBackground)),
-		"s3-bucket-job":         job(makeS3BucketJob(tenant, "wiki", "", "")),
-		"s3-destroy-job":        job(backup.ObjectStorageDestroyJob(tenant, "wiki", backup.DestroyInTheBackground)),
-		"export-s3-archive":     job(backup.S3ArchiveJob(exportParams, "acme-wiki")),
-		"export-volume-archive": job(backup.VolumeArchiveJob(exportVolume, "data", nil)),
-		"restore-volume":        job(backup.VolumeRestoreJob(restoreVolume, backup.Decryption{}, backup.VolumeArtefact("data"), "data")),
+		"postgres-role-job":      job(makeRoleJob(tenant, tenant.NamespaceName(), "acme_wiki", "wiki", "", "", false)),
+		"postgres-destroy-job":   job(backup.PostgresDestroyJob(tenant, "wiki", backup.DestroyInTheBackground)),
+		"export-postgres-dump":   unit(exports, bundle.ArtefactPostgres),
+		"export-postgres-upload": unit(exports, bundle.ArtefactPostgresOwned),
+		"restore-postgres":       unit(restores, bundle.ArtefactPostgres),
+		"restore-postgres-fetch": unit(restores, bundle.ArtefactPostgresOwned),
+		"mariadb-setup-job":      job(makeMariaDBSetupJob(tenant, "shop", "", false)),
+		"mariadb-destroy-job":    job(backup.MariaDBDestroyJob(tenant, "shop", backup.DestroyInTheBackground)),
+		"export-mariadb-dump":    unit(exports, bundle.ArtefactMariaDB),
+		"export-mariadb-upload":  unit(exports, bundle.ArtefactMariaDBOwned),
+		"restore-mariadb":        unit(restores, bundle.ArtefactMariaDB),
+		"restore-mariadb-fetch":  unit(restores, bundle.ArtefactMariaDBOwned),
+		"redis-acl-job":          job(makeRedisACLJob(tenant, "wiki", "")),
+		"cache-destroy-job":      job(backup.CacheDestroyJob(tenant, "wiki", backup.DestroyInTheBackground)),
+		"s3-bucket-job":          job(makeS3BucketJob(tenant, "wiki", "", "")),
+		"s3-destroy-job":         job(backup.ObjectStorageDestroyJob(tenant, "wiki", backup.DestroyInTheBackground)),
+		"export-s3-archive":      unit(exports, bundle.ArtefactS3),
+		"restore-s3":             unit(restores, bundle.ArtefactS3),
+		"export-manifest":        unit(exports, "manifest"),
+		"export-volume-archive":  unit(exports, bundle.ArtefactVolume),
+		"restore-volume":         unit(restores, bundle.ArtefactVolume),
+		"export-realm-upload":    unit(exports, bundle.ArtefactIdentity),
+		"restore-realm-fetch":    unit(restores, bundle.ArtefactIdentity),
 	}
 
 	// The data port of each store: what an app is handed and what the

@@ -363,7 +363,8 @@ def check_wiring():
         params = app["params"]
         if params.get("networkPolicy.enabled") != "true":
             raise Failure(f"{store}: the ApplicationSet passes networkPolicy.enabled={params.get('networkPolicy.enabled')!r} by default")
-        for key, fn in (("control", "control"), ("data", "data"), ("s3", "s3")):
+        for key, fn in (("control", "control"), ("data", "data"), ("postgresql", "postgresql"),
+                        ("mariadb", "mariadb"), ("authentication", "authentication")):
             value = params.get(f"networkPolicy.namespaces.{key}")
             if namespaces.get(value, {}).get(FUNCTION) != fn:
                 raise Failure(f"{store}: networkPolicy.namespaces.{key} is {value!r}, which is not the {fn} namespace")

@@ -128,7 +128,7 @@ func TestPassphraseIsStagedBesideTheJobsAndThenDiscarded(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolveEncryption: %v", err)
 	}
-	if enc.PassphraseSecret != "tx-nightly-passphrase" {
+	if enc.PassphraseSecret != "tx-demo-nightly-passphrase" {
 		t.Errorf("staged secret = %q", enc.PassphraseSecret)
 	}
 
@@ -136,7 +136,7 @@ func TestPassphraseIsStagedBesideTheJobsAndThenDiscarded(t *testing.T) {
 	// copy has to exist there — with the same value.
 	staged := &corev1.Secret{}
 	if err := r.Get(ctx, types.NamespacedName{
-		Name: "tx-nightly-passphrase", Namespace: s3Namespace,
+		Name: "tx-demo-nightly-passphrase", Namespace: s3Namespace,
 	}, staged); err != nil {
 		t.Fatalf("passphrase was not staged: %v", err)
 	}
@@ -150,7 +150,7 @@ func TestPassphraseIsStagedBesideTheJobsAndThenDiscarded(t *testing.T) {
 		t.Fatalf("discardPassphrase: %v", err)
 	}
 	err = r.Get(ctx, types.NamespacedName{
-		Name: "tx-nightly-passphrase", Namespace: s3Namespace,
+		Name: "tx-demo-nightly-passphrase", Namespace: s3Namespace,
 	}, staged)
 	if !apierrors.IsNotFound(err) {
 		t.Errorf("passphrase survived the export: %v", err)

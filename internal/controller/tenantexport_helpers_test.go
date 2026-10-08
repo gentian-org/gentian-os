@@ -41,8 +41,8 @@ func TestTenantNameFromNamespace(t *testing.T) {
 func TestExportJobNamesStayUniqueWhenTruncated(t *testing.T) {
 	longApp := strings.Repeat("nextcloud-base-edition", 3)
 
-	pg := exportJobName("nightly-2026-08-18", longApp, "pg")
-	s3 := exportJobName("nightly-2026-08-18", longApp, "s3")
+	pg := exportJobName("acme", "nightly-2026-08-18", longApp, "pg")
+	s3 := exportJobName("acme", "nightly-2026-08-18", longApp, "s3")
 
 	if len(pg) > 52 || len(s3) > 52 {
 		t.Errorf("names too long: %d, %d", len(pg), len(s3))

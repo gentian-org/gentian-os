@@ -29,3 +29,8 @@ networkPolicy:
     api: 9000
   namespaces:
     control: kernel-control
+    # Where the units of an export and a restore run that are not beside the
+    # object store: beside each database, and in the identity namespace.
+    postgresql: system-postgresql
+    mariadb: system-mariadb
+    authentication: kernel-authentication

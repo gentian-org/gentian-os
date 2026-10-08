@@ -214,7 +214,7 @@ func TestARestoreRunsFromTheManifestAndReportsWhatItLeftOut(t *testing.T) {
 		"gentian-tenant-realmr": "identity/realm.tar.gz",
 		"gentian-tenant-shellr": "postgres/old_shell.pgc",
 	} {
-		job := jobs["tx-r1-"+suffix]
+		job := jobs["tx-demo-r1-"+suffix]
 		if job == nil {
 			t.Errorf("no Job %s among %v", suffix, names)
 			continue
@@ -225,20 +225,20 @@ func TestARestoreRunsFromTheManifestAndReportsWhatItLeftOut(t *testing.T) {
 		}
 	}
 	// Into this tenant's stores, not the ones the bundle was taken of.
-	if pg := jobs["tx-r1-wiki-pgr"]; pg != nil {
+	if pg := jobs["tx-demo-r1-wiki-pgr"]; pg != nil {
 		script := pg.Spec.Template.Spec.Containers[0].Args[0]
 		if !strings.Contains(script, "DB='demo_wiki'") || strings.Contains(script, "old_wiki") {
 			t.Errorf("the database is not restored into demo_wiki:\n%s", script)
 		}
 	}
 	// The bucket's user and policy are made before its objects are written.
-	if s3 := jobs["tx-r1-wiki-s3r"]; s3 != nil {
+	if s3 := jobs["tx-demo-r1-wiki-s3r"]; s3 != nil {
 		inits := s3.Spec.Template.Spec.InitContainers
 		if last := inits[len(inits)-1]; last.Name != "provision-bucket" || !strings.Contains(last.Command[2], `mc mb --ignore-existing "gentian/demo-wiki"`) {
 			t.Errorf("the bucket is not provisioned before it is filled: %+v", last.Name)
 		}
 	}
-	if vol := jobs["tx-r1-wiki-vr0"]; vol != nil && vol.Namespace != "tenant-demo" {
+	if vol := jobs["tx-demo-r1-wiki-vr0"]; vol != nil && vol.Namespace != "tenant-demo" {
 		t.Errorf("the volume Job runs in %s", vol.Namespace)
 	}
 

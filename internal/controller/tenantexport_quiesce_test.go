@@ -311,9 +311,9 @@ func TestDeletingAnExportResumesAppsCleansBundleThenReleases(t *testing.T) {
 	paused := deployment("notes", "notes", 0)
 	paused.Annotations = map[string]string{replicaMemoAnnotation: "1"}
 	captureJob := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{
-		Name:      "tx-export-x-notes-pg",
-		Namespace: s3Namespace,
-		Labels:    map[string]string{backup.ExportLabel: "export-x"},
+		Name:      "tx-demo-export-x-notes-pg",
+		Namespace: postgresNamespace,
+		Labels:    map[string]string{backup.ExportLabel: "export-x", tenantLabel: "demo"},
 	}}
 	// A live namespace and tenant: this is someone deleting one backup, which
 	// is the only case that may remove a bundle.
@@ -339,11 +339,11 @@ func TestDeletingAnExportResumesAppsCleansBundleThenReleases(t *testing.T) {
 	if got := *getDeployment(t, c, "notes").Spec.Replicas; got != 1 {
 		t.Fatalf("replicas = %d, want resumed 1", got)
 	}
-	if err := c.Get(ctx, types.NamespacedName{Name: captureJob.Name, Namespace: s3Namespace}, &batchv1.Job{}); err == nil {
+	if err := c.Get(ctx, types.NamespacedName{Name: captureJob.Name, Namespace: captureJob.Namespace}, &batchv1.Job{}); err == nil {
 		t.Fatal("capture Job survived deletion; it would upload into the prefix being removed")
 	}
 	cleanup := &batchv1.Job{}
-	cleanupName := bundleDeleteJobName("export-x")
+	cleanupName := bundleDeleteJobName("demo", "export-x")
 	if err := c.Get(ctx, types.NamespacedName{Name: cleanupName, Namespace: s3Namespace}, cleanup); err != nil {
 		t.Fatalf("cleanup Job not created: %v", err)
 	}
@@ -382,7 +382,7 @@ func TestCompletedUnitIsNotRerunAfterItsJobDisappears(t *testing.T) {
 		t.Fatalf("add gentian scheme: %v", err)
 	}
 
-	const jobName = "tx-export-x-notes-pg"
+	const jobName = "tx-demo-export-x-notes-pg"
 	export := &gentianov1alpha1.TenantExport{
 		ObjectMeta: metav1.ObjectMeta{Name: "export-x", Namespace: "tenant-demo"},
 		Status: gentianov1alpha1.TenantExportStatus{
@@ -457,7 +457,7 @@ func TestVolumeUnitsRunInTheTenantNamespaceWithStagedCredentials(t *testing.T) {
 
 	enc := backup.Encryption{
 		Mode:             gentianov1alpha1.ExportEncryptionPassphrase,
-		PassphraseSecret: "tx-nightly-passphrase",
+		PassphraseSecret: "tx-demo-nightly-passphrase",
 		PassphraseKey:    "passphrase",
 	}
 	units, err := r.captureUnits(context.Background(), tenant, "nextcloud-base-ce", profile, export, enc)
@@ -480,7 +480,7 @@ func TestVolumeUnitsRunInTheTenantNamespaceWithStagedCredentials(t *testing.T) {
 	if volume.Job.Namespace != "tenant-demo" {
 		t.Fatalf("volume Job namespace = %q, want tenant-demo", volume.Job.Namespace)
 	}
-	staged := volumeUploadSecretName(export.Name)
+	staged := stagedSecretName("demo", export.Name)
 	var minioFromStaged, passphraseFromStaged bool
 	containers := append(append([]corev1.Container{},
 		volume.Job.Spec.Template.Spec.InitContainers...),
@@ -856,7 +856,7 @@ func TestTenantTeardownKeepsTheBundle(t *testing.T) {
 
 			// No cleanup Job: the bundle's objects stay in the bucket.
 			if err := c.Get(ctx, types.NamespacedName{
-				Name: bundleDeleteJobName("keep-me"), Namespace: s3Namespace,
+				Name: bundleDeleteJobName("demo", "keep-me"), Namespace: s3Namespace,
 			}, &batchv1.Job{}); !apierrors.IsNotFound(err) {
 				t.Fatalf("a cleanup Job was created during teardown: %v", err)
 			}
@@ -1199,14 +1199,14 @@ func TestVolumeUploadStagesTheDestinationsKeysNotThePlatforms(t *testing.T) {
 		WithObjects(platform, destination, export).Build()
 	r := &TenantExportReconciler{Client: c, Scheme: s}
 
-	if err := r.ensureVolumeUploadSecret(context.Background(), export, "demo",
+	if err := r.ensureStagedSecret(context.Background(), export, "tenant-demo",
 		backup.Encryption{Mode: gentianov1alpha1.ExportEncryptionRecipient}); err != nil {
-		t.Fatalf("ensureVolumeUploadSecret: %v", err)
+		t.Fatalf("ensureStagedSecret: %v", err)
 	}
 
 	staged := &corev1.Secret{}
 	if err := c.Get(context.Background(), types.NamespacedName{
-		Name: volumeUploadSecretName("export-x"), Namespace: "tenant-demo"}, staged); err != nil {
+		Name: stagedSecretName("demo", "export-x"), Namespace: "tenant-demo"}, staged); err != nil {
 		t.Fatalf("get staged secret: %v", err)
 	}
 
@@ -1249,13 +1249,13 @@ func TestVolumeUploadStillStagesPlatformKeysForAPlatformBundle(t *testing.T) {
 	c := fake.NewClientBuilder().WithScheme(s).WithObjects(platform, export).Build()
 	r := &TenantExportReconciler{Client: c, Scheme: s}
 
-	if err := r.ensureVolumeUploadSecret(context.Background(), export, "demo",
+	if err := r.ensureStagedSecret(context.Background(), export, "tenant-demo",
 		backup.Encryption{Mode: gentianov1alpha1.ExportEncryptionRecipient}); err != nil {
-		t.Fatalf("ensureVolumeUploadSecret: %v", err)
+		t.Fatalf("ensureStagedSecret: %v", err)
 	}
 	staged := &corev1.Secret{}
 	if err := c.Get(context.Background(), types.NamespacedName{
-		Name: volumeUploadSecretName("export-y"), Namespace: "tenant-demo"}, staged); err != nil {
+		Name: stagedSecretName("demo", "export-y"), Namespace: "tenant-demo"}, staged); err != nil {
 		t.Fatalf("get staged secret: %v", err)
 	}
 	if string(staged.Data["accessKey"]) != "platform-key" {
@@ -1285,8 +1285,10 @@ func TestTheTenantWideEntryIsReadyWhenItsJobsAre(t *testing.T) {
 	}
 	tenant := &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "demo"}}
 
+	minio := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: backup.MinIOAdminSecret, Namespace: s3Namespace},
+		Data: map[string][]byte{"endpoint": []byte("http://minio:9000"), "accessKey": []byte("a"), "secretKey": []byte("s")}}
 	c := fake.NewClientBuilder().WithScheme(s).
-		WithObjects(export, tenant).WithStatusSubresource(export).Build()
+		WithObjects(export, tenant, minio).WithStatusSubresource(export).Build()
 	r := &TenantExportReconciler{Client: c, Scheme: s,
 		Reconciler: &TenantReconciler{Client: c, Scheme: s}}
 
@@ -1353,7 +1355,8 @@ func TestTheFailureReasonIsTakenWhileThePodStillExists(t *testing.T) {
 	// A Job that has not failed yet — it is retrying — with a pod whose upload
 	// container has already died. This is the window that used to be missed.
 	job := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{
-		Name: "tx-e-nextcloud-vol0", Namespace: s3Namespace}}
+		Name: "tx-e-nextcloud-vol0", Namespace: s3Namespace,
+		Labels: map[string]string{tenantLabel: "demo", backup.ExportLabel: "e"}}}
 	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
 		Name: "tx-e-nextcloud-vol0-abc", Namespace: s3Namespace,
 		Labels: map[string]string{"job-name": "tx-e-nextcloud-vol0"},

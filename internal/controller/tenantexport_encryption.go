@@ -109,8 +109,8 @@ func splitRecipients(raw string) []string {
 }
 
 // passphraseSecretName is the copy placed beside the capture Jobs.
-func passphraseSecretName(exportName string) string {
-	return "tx-" + exportName + "-passphrase"
+func passphraseSecretName(tenantName, exportName string) string {
+	return "tx-" + tenantName + "-" + exportName + "-passphrase"
 }
 
 // resolveEncryption works out how this export's bundle is protected, and
@@ -147,7 +147,7 @@ func (r *TenantExportReconciler) resolveEncryption(
 		if err := r.stagePassphrase(ctx, export, spec); err != nil {
 			return enc, err
 		}
-		enc.PassphraseSecret = passphraseSecretName(export.Name)
+		enc.PassphraseSecret = passphraseSecretName(tenantNameFromNamespace(export.Namespace), export.Name)
 		enc.PassphraseKey = spec.PassphraseKey()
 	}
 
@@ -188,34 +188,9 @@ func (r *TenantExportReconciler) stagePassphrase(
 			spec.PassphraseSecretRef.Name, key)
 	}
 
-	copied := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      passphraseSecretName(export.Name),
-			Namespace: s3Namespace,
-			Labels: map[string]string{
-				tenantLabel:        tenantNameFromNamespace(export.Namespace),
-				managedByLabel:     managedByValue,
-				backup.ExportLabel: export.Name,
-			},
-		},
-		Type: corev1.SecretTypeOpaque,
-		Data: map[string][]byte{key: value},
-	}
-
-	existing := &corev1.Secret{}
-	getErr := r.Get(ctx, types.NamespacedName{
-		Name:      copied.Name,
-		Namespace: s3Namespace,
-	}, existing)
-	switch {
-	case apierrors.IsNotFound(getErr):
-		return r.Create(ctx, copied)
-	case getErr != nil:
-		return getErr
-	}
-
-	existing.Data = copied.Data
-	return r.Update(ctx, existing)
+	tenantName := tenantNameFromNamespace(export.Namespace)
+	return putRunSecret(ctx, r.Client, runSecret(passphraseSecretName(tenantName, export.Name), s3Namespace,
+		tenantName, export.Name, map[string][]byte{key: value}))
 }
 
 // discardPassphrase removes the staged copy.
@@ -229,7 +204,7 @@ func (r *TenantExportReconciler) discardPassphrase(
 ) error {
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      passphraseSecretName(export.Name),
+			Name:      passphraseSecretName(tenantNameFromNamespace(export.Namespace), export.Name),
 			Namespace: s3Namespace,
 		},
 	}
