@@ -23,6 +23,8 @@ import (
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/hostnames"
+	"github.com/gentian-org/gentian-os/internal/profilebundle"
 )
 
 // Where everything answers, per tenancy mode. One table, because it is one
@@ -303,24 +305,29 @@ func TestTheBareDomainIsOnThePerimeterWithTheClustersCertificate(t *testing.T) {
 }
 
 // A component of the user tenant of a single-tenancy cluster may not take a
-// name that is the kernel's; desktop and admin are its own; and on a
-// multi-tenancy cluster, or in the platform tenant, nothing is refused.
+// name that is the kernel's; in a tenant with a domain of its own, or in the
+// platform tenant, those are not the kernel's hosts and are not refused.
 func TestAKernelsHostLabelIsRefusedOnTheClustersDomain(t *testing.T) {
 	const kd = "k.example"
 	profileWith := func(sub string) *gentianov1alpha1.ComponentProfile {
 		p := &gentianov1alpha1.ComponentProfile{}
+		p.Annotations = map[string]string{profilebundle.OriginAnnotation: "cluster/main"}
 		p.Spec.Expose = []gentianov1alpha1.ExposureSpec{{Name: "web", Surface: gentianov1alpha1.SurfaceGateway, SubDomain: sub}}
 		return p
 	}
 	single := zoneNamesOf(singleUserTenantFixture(), kd, "single", "kernel")
-	for _, label := range append([]string{"x.platform", "a.b.id"}, kernelReservedHostLabels...) {
+	labels := []string{"x.platform", "a.b.id"}
+	for _, r := range hostnames.KernelLabels() {
+		labels = append(labels, r.Label)
+	}
+	for _, label := range labels {
 		comp := componentFor("thing", "tenant-user")
 		refusal := reservedHostRefusal(comp, profileWith(label), single, kd)
 		if refusal == "" {
 			t.Errorf("%s.%s was not refused for the user tenant of a single-tenancy cluster", label, kd)
 			continue
 		}
-		for _, want := range []string{label + "." + kd, "tenancy mode is single", "platform", "id"} {
+		for _, want := range []string{label + "." + kd, "tenancy mode is single", "platform", "id", "Nothing is installed or routed"} {
 			if !strings.Contains(refusal, want) {
 				t.Errorf("the refusal of %q does not say %q: %s", label, want, refusal)
 			}
@@ -330,34 +337,237 @@ func TestAKernelsHostLabelIsRefusedOnTheClustersDomain(t *testing.T) {
 	if reservedHostRefusal(componentFor("llm", "tenant-user"), profileWith(""), single, kd) == "" {
 		t.Error("a component named llm was not refused")
 	}
-	// Its own names, and any other, are fine.
-	for _, label := range []string{"desktop", "admin", "console", "cloud", "identity", "platformer"} {
+	// Any other name is fine.
+	for _, label := range []string{"cloud", "identity", "platformer", "operations"} {
 		if refusal := reservedHostRefusal(componentFor("thing", "tenant-user"), profileWith(label), single, kd); refusal != "" {
 			t.Errorf("%s was refused: %s", label, refusal)
 		}
 	}
 	// An addon's entry is served by its base, on the base's host.
-	addon := profileWith("id")
+	addon := profileWith("llm")
 	addon.Spec.Expose[0].Backend.Component = "nextcloud"
 	if refusal := reservedHostRefusal(componentFor("calendar", "tenant-user"), addon, single, kd); refusal != "" {
 		t.Errorf("an entry another component serves was refused: %s", refusal)
 	}
 	// Not asked anywhere else: a tenant with a domain of its own cannot reach
 	// the kernel's names, and the platform tenant's are below platform.
+	custom := acmeTenantFixture()
+	custom.Status.Domain = "acme.example"
+	singleCustom := singleUserTenantFixture()
+	singleCustom.Status.Domain = "user.example"
 	for _, zone := range []zoneNames{
 		zoneNamesOf(acmeTenantFixture(), kd, "multi", "kernel"),
+		zoneNamesOf(custom, kd, "multi", "kernel"),
 		zoneNamesOf(singleUserTenantFixture(), kd, "multi", "kernel"),
+		zoneNamesOf(singleCustom, kd, "single", "kernel"),
 		zoneNamesOf(platformTenantFixture(), kd, "single", "kernel"),
 		zoneNamesOf(platformTenantFixture(), kd, "multi", "kernel"),
 	} {
-		if refusal := reservedHostRefusal(componentFor("thing", "tenant-x"), profileWith("id"), zone, kd); refusal != "" {
-			t.Errorf("zone %+v: refused: %s", zone, refusal)
+		for _, label := range []string{"llm", "mail", "www", "argocd"} {
+			if refusal := reservedHostRefusal(componentFor("thing", "tenant-x"), profileWith(label), zone, kd); refusal != "" {
+				t.Errorf("zone %+v: %s refused: %s", zone, label, refusal)
+			}
 		}
 	}
-	// The list this refuses, pinned: a name added to the kernel's routes
-	// belongs here too.
-	if got := strings.Join(kernelReservedHostLabels, ","); got != "argocd,corp,headlamp,id,imap,llm,mail,mail-egress,platform,www" {
-		t.Errorf("reserved labels = %s", got)
+}
+
+// An app may not take an address name the platform keeps in a tenant -- the
+// desktop's, the administration console's, the App Store's, the desktop's
+// former one, a sign-in page's -- in any tenant, under any domain. This was
+// once the opposite for console, which an app could take.
+func TestAnAppMayNotTakeThePlatformsAddressNamesInAnyTenant(t *testing.T) {
+	const kd = "k.example"
+	app := func(sub string) *gentianov1alpha1.ComponentProfile {
+		p := &gentianov1alpha1.ComponentProfile{}
+		p.Name = "thing"
+		p.Annotations = map[string]string{profilebundle.OriginAnnotation: "cluster/main"}
+		p.Spec.TrustTier = gentianov1alpha1.TrustTierPlatform
+		p.Spec.Expose = []gentianov1alpha1.ExposureSpec{{Name: "web", Surface: gentianov1alpha1.SurfaceGateway, SubDomain: sub}}
+		return p
+	}
+	custom := acmeTenantFixture()
+	custom.Status.Domain = "acme.example"
+	zones := map[string]zoneNames{
+		"acme.k.example":     zoneNamesOf(acmeTenantFixture(), kd, "multi", "kernel"),
+		"acme.example":       zoneNamesOf(custom, kd, "multi", "kernel"),
+		"k.example":          zoneNamesOf(singleUserTenantFixture(), kd, "single", "kernel"),
+		"platform.k.example": zoneNamesOf(platformTenantFixture(), kd, "multi", "kernel"),
+	}
+	for domain, zone := range zones {
+		if zone.domain != domain {
+			t.Fatalf("zone %s is at %s", domain, zone.domain)
+		}
+		for _, r := range hostnames.PlatformLabels() {
+			refusal := reservedHostRefusal(componentFor("thing", "tenant-x"), app(r.Label), zone, kd)
+			if refusal == "" {
+				t.Errorf("%s: an app was admitted to %s", domain, r.Label)
+				continue
+			}
+			if !strings.Contains(refusal, r.Label+"."+domain) || !strings.Contains(refusal, "Nothing is installed or routed") {
+				t.Errorf("%s: the refusal of %s: %s", domain, r.Label, refusal)
+			}
+		}
+		for _, label := range []string{"console", "desktop", "admin"} {
+			if reservedHostRefusal(componentFor(label, "tenant-x"), app(""), zone, kd) == "" {
+				t.Errorf("%s: an app named %s was admitted", domain, label)
+			}
+		}
+	}
+}
+
+// The components the platform ships hold their own addresses in every zone
+// -- rendered from the chart, so that a label changed there and not in the
+// list holds every tenant's desktop in a test and not on a cluster -- and
+// none holds another's. A profile of the same name a catalogue brought is
+// not the platform's.
+func TestThePlatformsOwnComponentsHoldTheirAddresses(t *testing.T) {
+	const kd = "k.example"
+	custom := acmeTenantFixture()
+	custom.Status.Domain = "acme.example"
+	zones := []zoneNames{
+		zoneNamesOf(acmeTenantFixture(), kd, "multi", "kernel"),
+		zoneNamesOf(custom, kd, "multi", "kernel"),
+		zoneNamesOf(singleUserTenantFixture(), kd, "single", "kernel"),
+		zoneNamesOf(platformTenantFixture(), kd, "multi", "kernel"),
+		zoneNamesOf(platformTenantFixture(), kd, "single", "kernel"),
+	}
+	shipped := map[string]*gentianov1alpha1.ComponentProfile{
+		"desktop": renderShippedProfile(t, "componentprofile-desktop.yaml",
+			"desktop.enabled=true", "desktop.chart.version=0.1.0"),
+		"admin-console": renderShippedProfile(t, "componentprofile-admin-console.yaml",
+			"adminConsole.enabled=true", "adminConsole.chart.version=0.1.0"),
+		"app-store": shippedAppStoreProfile(t),
+		"concierge": renderShippedProfile(t, "componentprofile-concierge.yaml",
+			"concierge.enabled=true", "concierge.chart.version=0.1.0"),
+	}
+	held := map[string]string{}
+	for _, r := range hostnames.PlatformLabels() {
+		if r.Owner != "" {
+			held[r.Owner] = r.Label
+			if shipped[r.Owner] == nil {
+				t.Errorf("%s is held by %s, which the chart does not ship", r.Label, r.Owner)
+			}
+		}
+	}
+	for name, profile := range shipped {
+		if profile.Name != name {
+			t.Fatalf("the chart's %s is named %s", name, profile.Name)
+		}
+		if !hostnames.PlatformShipped(profile) {
+			t.Errorf("the chart renders %s with a catalogue's annotations: %v", name, profile.Annotations)
+		}
+		// Every label it asks for is the one the list gives it.
+		for i := range profile.Spec.Expose {
+			e := &profile.Spec.Expose[i]
+			if e.Apex {
+				continue
+			}
+			if e.SubDomain != held[name] {
+				t.Errorf("%s entry %s is at %q and the list gives it %q", name, e.Name, e.SubDomain, held[name])
+			}
+		}
+		for _, zone := range zones {
+			if refusal := reservedHostRefusal(componentFor(name, "tenant-x"), profile, zone, kd); refusal != "" {
+				t.Errorf("%s is refused its own address under %s: %s", name, zone.domain, refusal)
+			}
+			// The same profile from a catalogue is an app called that.
+			if held[name] == "" {
+				continue
+			}
+			brought := profile.DeepCopy()
+			brought.Annotations = map[string]string{profilebundle.OriginAnnotation: "tenant/acme/ours"}
+			if reservedHostRefusal(componentFor(name, "tenant-x"), brought, zone, kd) == "" {
+				t.Errorf("a %s from a catalogue was admitted to %s under %s", name, held[name], zone.domain)
+			}
+			// And it does not hold another's.
+			for other, label := range held {
+				if other == name {
+					continue
+				}
+				moved := profile.DeepCopy()
+				for i := range moved.Spec.Expose {
+					moved.Spec.Expose[i].SubDomain = label
+				}
+				if reservedHostRefusal(componentFor(name, "tenant-x"), moved, zone, kd) == "" {
+					t.Errorf("%s was admitted to %s, which is %s's", name, label, other)
+				}
+			}
+		}
+	}
+}
+
+// The reconciler holds a component that asks for a reserved name, whole,
+// before anything is written for it, and says so once.
+func TestAComponentAskingForAReservedAddressIsHeld(t *testing.T) {
+	profile := materialised(t, wikiBundle)
+	profile.Annotations[profilebundle.OriginAnnotation] = "cluster/main"
+	profile.Spec.Expose = []gentianov1alpha1.ExposureSpec{
+		{Name: "web", Surface: gentianov1alpha1.SurfaceGateway, AuthMode: gentianov1alpha1.AuthModeOIDC, SubDomain: "wiki",
+			Backend: gentianov1alpha1.BackendRef{Service: "wiki", Port: 8080}},
+		{Name: "manage", Surface: gentianov1alpha1.SurfaceGateway, AuthMode: gentianov1alpha1.AuthModeOIDC, SubDomain: "admin",
+			Backend: gentianov1alpha1.BackendRef{Service: "wiki", Port: 8080}},
+	}
+	h := startDigestHarness(t, profile, "")
+	got := h.reconcile()
+	ready := componentReadyCondition(got)
+	if ready == nil || ready.Status != "False" || ready.Reason != "HostReserved" {
+		t.Fatalf("condition = %+v, want HostReserved", ready)
+	}
+	for _, want := range []string{`exposure "manage"`, "admin.acme.k.example", "administration console", "admin-console", "Nothing is installed or routed"} {
+		if !strings.Contains(ready.Message, want) {
+			t.Errorf("the condition does not say %q: %s", want, ready.Message)
+		}
+	}
+	// Whole: not the permitted entry either, and no release.
+	if h.releasedVersion() != "" || h.networkPolicyWritten() {
+		t.Fatalf("something was written for a held component: release %q, network policy %v",
+			h.releasedVersion(), h.networkPolicyWritten())
+	}
+	routes := &gatewayv1.HTTPRouteList{}
+	if err := h.c.List(context.Background(), routes); err != nil {
+		t.Fatal(err)
+	}
+	if len(routes.Items) != 0 {
+		t.Fatalf("%d route(s) were written for a held component", len(routes.Items))
+	}
+	if e := h.events(); len(e) != 1 || !strings.Contains(e[0], "Warning HostReserved") {
+		t.Fatalf("events = %v, want one warning", e)
+	}
+	h.reconcile()
+	if e := h.events(); len(e) != 0 {
+		t.Fatalf("the refusal was repeated: %v", e)
+	}
+	// With the entry somewhere it may be, the component is rolled out.
+	h.editProfile(func(p *gentianov1alpha1.ComponentProfile) { p.Spec.Expose[1].SubDomain = "wiki-manage" })
+	if ready := componentReadyCondition(h.reconcile()); ready == nil || ready.Reason == "HostReserved" {
+		t.Fatalf("still held after the entry moved: %+v", ready)
+	}
+}
+
+// A perimeter surface gets no listener at a reserved name: an exact-hostname
+// listener would take the desktop's host off the authenticated Gateway.
+func TestAReservedAddressGetsNoPerimeterListener(t *testing.T) {
+	const kd = "k.example"
+	site := func(sub string) map[string]*gentianov1alpha1.ComponentProfile {
+		p := &gentianov1alpha1.ComponentProfile{}
+		p.Name = "website"
+		p.Annotations = map[string]string{profilebundle.OriginAnnotation: "cluster/main"}
+		p.Spec.Expose = []gentianov1alpha1.ExposureSpec{{Name: "site", Surface: gentianov1alpha1.SurfacePerimeter, SubDomain: sub}}
+		return map[string]*gentianov1alpha1.ComponentProfile{"website": p}
+	}
+	enabled := &gentianov1alpha1.TenantExposure{Install: "website", ExposureName: "site"}
+	zone := zoneNamesOf(acmeTenantFixture(), kd, "multi", "kernel")
+	if host := publishedHost(enabled, site("www"), zone, kd); host != "www.acme.k.example" {
+		t.Fatalf("a tenant's website at www = %q", host)
+	}
+	for _, label := range []string{"desktop", "admin", "login", "console"} {
+		if host := publishedHost(enabled, site(label), zone, kd); host != "" {
+			t.Errorf("a perimeter surface at %s got the listener %s", label, host)
+		}
+	}
+	single := zoneNamesOf(singleUserTenantFixture(), kd, "single", "kernel")
+	if host := publishedHost(enabled, site("www"), single, kd); host != "" {
+		t.Errorf("www on the cluster's domain got the listener %s", host)
 	}
 }
 

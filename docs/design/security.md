@@ -237,6 +237,33 @@ fix (`__Host-` cookie names) is not available as configuration in Envoy
 Gateway 1.9.2 or Keycloak. Detail and options:
 [networking.md §8.7](../plans/networking.md#87-a-website-on-the-clusters-main-address).
 
+### 2.11 No app at an address people trust as the platform's
+
+People recognise the platform by its addresses: the desktop at
+`desktop.<their domain>`, the administration console at `admin.`, sign-in at
+`id.`. A profile states the label its component answers on, and a profile
+from a catalogue is written by whoever publishes the catalogue. Without a
+rule, an app whose profile says `subDomain: desktop` would claim the
+desktop's host; the Gateway resolves two routes on one host by age, without
+an error, so a tenant's people could be shown a look-alike desktop or
+sign-in page under the address they trust.
+
+| Control | State |
+| --- | --- |
+| One list of address names the platform keeps, with the reason for each ([routing.md §3.1](routing.md)) | Built (`internal/hostnames`); a test holds the documents to it |
+| A reserved name is admitted only for the platform's own component for it, and only for that component's own label | Built |
+| "The platform's own" is not what a profile says of itself: it is the profile's name together with no catalogue having brought it. The director records the origin of everything it materialises, refuses a profile that states an origin itself, and refuses any catalogue's profile under a name the platform ships | Built |
+| The director refuses an install, an add-on or an import that would take a reserved name (`422`), before anything is committed | Built |
+| The operator refuses again where the component would be published: held whole (`HostReserved`), before any policy, release, route or perimeter listener is written | Built |
+| Applies under every domain a tenant can have, a custom domain included | Built |
+| Names that only resemble a reserved one (`desktop1`, `desk-top`, `my-login`) | **Not built**, deliberately: no rule for it is well defined |
+| An app's page imitating the platform's look under its own, permitted address | **Not covered.** The address is what is protected |
+
+Whoever can write to the deployments repository or apply objects to the
+cluster directly is not constrained by this: that is the cluster owner's
+authority, and a ComponentProfile written there with no origin is taken for
+what its name says.
+
 ---
 
 ## 3. Architecture

@@ -36,6 +36,7 @@ import (
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/hostnames"
 )
 
 // +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=gateways;gateways/status;httproutes;httproutes/status,verbs=get;list;watch;create;update;patch;delete
@@ -325,7 +326,7 @@ func perimeterTenantListeners(kernelDomain, tenancyMode, kernelRealm string, ten
 		}
 		zone := zoneNamesOf(tenant, kernelDomain, tenancyMode, kernelRealm)
 		for j := range tenant.Spec.Exposures {
-			host := publishedHost(&tenant.Spec.Exposures[j], profiles, zone)
+			host := publishedHost(&tenant.Spec.Exposures[j], profiles, zone, kernelDomain)
 			if host == "" {
 				continue
 			}
@@ -377,9 +378,17 @@ func perimeterTenantListeners(kernelDomain, tenancyMode, kernelRealm string, ten
 // behind it serves nothing -- the proxy and the route are what the operator
 // takes down at expiry -- and keeping it means a renewal does not have to
 // wait for the Gateway to be reprogrammed before the link works again.
-func publishedHost(e *gentianov1alpha1.TenantExposure, profiles map[string]*gentianov1alpha1.ComponentProfile, zone zoneNames) string {
+//
+// A component held for an address name the platform keeps (HostReserved)
+// gets no listener either. An exact-hostname listener is preferred over the
+// zone's wildcard, so one for desktop.<tenant> here would take the desktop's
+// host off the authenticated Gateway although nothing is routed behind it.
+func publishedHost(e *gentianov1alpha1.TenantExposure, profiles map[string]*gentianov1alpha1.ComponentProfile, zone zoneNames, kernelDomain string) string {
 	profile := profiles[e.Install]
 	if profile == nil {
+		return ""
+	}
+	if hostnames.Check(e.Install, profile, reservedHostZone(zone, kernelDomain)) != nil {
 		return ""
 	}
 	for i := range profile.Spec.Expose {

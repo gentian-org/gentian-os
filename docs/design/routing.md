@@ -177,6 +177,84 @@ hostname-less kernel listener, whose certificate covers
 Gateway listeners consume these certificate secrets directly, reading tenant
 secrets across namespaces under the tenant's ReferenceGrant.
 
+### 3.1 Address names an app cannot take
+
+The label of a host is the profile's to state (`subDomain`, or the
+component's name), and a catalogue's profile is not written by the platform.
+Two routes that claim one host are resolved by the Gateway by age, with no
+error anywhere. So the names the platform depends on are refused to
+everything but the platform's own component for each. One list
+(`internal/hostnames`), two tiers.
+
+**Kept in every tenant**, on every cluster, under the tenant's domain
+whatever it is -- `<tenant>.<kernelDomain>`, `<kernelDomain>` for the user
+tenant of a single-tenancy cluster, or a custom domain:
+
+<!-- reserved-names:platform:begin -->
+| Label | Who may hold it | Why it is kept |
+| --- | --- | --- |
+| `desktop` | `desktop` | the tenant's desktop |
+| `admin` | `admin-console` | the tenant's administration console |
+| `store` | `app-store` | the App Store app |
+| `console` | nothing | the desktop's former address, which people may still type |
+| `platform` | nothing | reads as the platform administrator's desktop, platform.<cluster> |
+| `id` | nothing | reads as the identity provider, id.<cluster> |
+| `auth` | nothing | a name a sign-in page would have |
+| `login` | nothing | a name a sign-in page would have |
+| `signin` | nothing | a name a sign-in page would have |
+| `sign-in` | nothing | a name a sign-in page would have |
+| `sso` | nothing | a name a sign-in page would have |
+| `account` | nothing | a name a page for one's account and password would have |
+| `accounts` | nothing | a name a page for one's account and password would have |
+<!-- reserved-names:platform:end -->
+
+**The kernel's own hosts**, refused where a tenant's domain is the cluster's
+-- the user tenant of a single-tenancy cluster -- to every component, the
+platform's included:
+
+<!-- reserved-names:kernel:begin -->
+| Label | What answers there |
+| --- | --- |
+| `argocd` | the GitOps console |
+| `corp` | a name the tunnel ingress publishes for the cluster |
+| `headlamp` | the cluster console |
+| `id` | the identity provider |
+| `imap` | the cluster's mail host for reading mail |
+| `llm` | the model gateway |
+| `mail` | the cluster's mail host |
+| `mail-egress` | the address the cluster's mail leaves from |
+| `platform` | the platform administrator's desktop, and the platform tenant's zone below it |
+| `www` | an alias of the cluster's main address |
+<!-- reserved-names:kernel:end -->
+
+In a tenant with a domain of its own these are not the kernel's hosts, and
+`mail`, `www` or `llm` there is an app's business. The two that would help
+deceive people under any domain (`id`, `platform`) are in the first table.
+
+- **Matching.** The label itself, in any case, and anything below it
+  (`x.admin`). Nothing else: there is no look-alike matching (`desktop1`,
+  `desk-top`). An apex entry has no label and its own rule (§5). An add-on's
+  entry served by its base has the base's host.
+- **Who the platform's own component is.** The profile named in the table,
+  and only when no catalogue brought it: the director records an origin and
+  a bundle on every profile it materialises
+  (`gentianos.io/catalogue-origin`, `gentianos.io/profile-bundle`), refuses a
+  catalogue's profile that states either itself, and refuses to materialise
+  any catalogue's profile under a name the platform ships. `trustTier:
+  platform` is not asked: it is a field any catalogue can write. And the
+  label has to be that component's own: the desktop holds `desktop`, not
+  `admin`.
+- **Where it is refused.** The director refuses the install, the add-on
+  selection or the import with `422` and the reason, before anything is
+  committed. The operator refuses again where the component would be
+  published: the Component is held whole with the condition `HostReserved`
+  and a warning event, before any policy, release, route or listener is
+  written for it. Both ask `hostnames.Check`.
+- **What is not on the list.** `operations`: the Operations Console is a
+  catalogue component, and reserving its label would refuse it. `www` and
+  `api` in a tenant with its own domain, and every name that is an app's
+  business (`mail`, `chat`, `files`, `docs`, `wiki`).
+
 ---
 
 ## 3a. The Cloudflare API token

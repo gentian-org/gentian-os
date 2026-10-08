@@ -97,7 +97,8 @@ or apex route of its own: the cluster's certificate (`<KERNEL_DOMAIN>` and
 `*.<KERNEL_DOMAIN>`) and catch-all listener serve it. The names the kernel
 answers on at that level -- `id`, `platform`, `www`, `argocd`, `headlamp`,
 `llm`, `mail`, `imap`, `mail-egress`, `corp` -- are refused to its components
-and apps (`HostReserved`).
+and apps (`HostReserved`). The names the platform keeps in every tenant are
+refused to apps there as everywhere ([routing.md §3.1](routing.md)).
 
 Its mail domain is the cluster's too, which the kernel realm's people already
 have addresses in. The mail stack keys on the address, not on the realm:

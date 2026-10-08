@@ -309,8 +309,12 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 
 	zone := r.zoneOf(tenant)
-	// A host that is the kernel's own, asked for by the user tenant of a
-	// single-tenancy cluster: refused here, before anything is written.
+	// An address name the platform depends on -- the desktop's, the
+	// administration console's, a sign-in page's, or one of the kernel's own
+	// hosts where the tenant is at their level: refused here, before
+	// anything is written. The director refuses the install for the same
+	// reason; this is asked again because a Component can be written by
+	// other means, and a profile can change under an installed one.
 	if refusal := reservedHostRefusal(comp, profile, zone.zoneNames, r.KernelDomain); refusal != "" {
 		if r.Recorder != nil && !componentReports(comp, "HostReserved", refusal) {
 			r.Recorder.Event(comp, corev1.EventTypeWarning, "HostReserved", refusal)

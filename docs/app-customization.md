@@ -494,6 +494,16 @@ Declaring it publishes nothing. The tenant's perimeter approver publishes it
 date. It then answers at `<subDomain or component name>.<tenant's domain>`,
 from a proxy that passes no cookies either way.
 
+**Address names an app cannot take.** No entry of an app or an add-on, on
+either surface, may use one of the platform's names as its `subDomain` (or as
+the component's name, where it states none): `desktop`, `admin`, `store`,
+`console`, `platform`, `id`, `auth`, `login`, `signin`, `sign-in`, `sso`,
+`account`, `accounts` -- and on a single-tenancy cluster also `argocd`,
+`corp`, `headlamp`, `imap`, `llm`, `mail`, `mail-egress`, `www`. The install
+is refused (`422`, naming the entry and the label), and a Component that
+exists anyway is held with `HostReserved`
+([design/routing.md §3.1](design/routing.md)).
+
 "For the main address" is the same entry with `apex: true` (and no
 `subDomain`). It asks for the cluster's bare domain and needs all of this:
 

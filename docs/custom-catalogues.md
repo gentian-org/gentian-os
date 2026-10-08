@@ -251,6 +251,25 @@ cluster-scoped: one name is one profile for every tenant of a cluster. A profile
 catalogue is refused when its name is already taken by a profile from anywhere else (§7), so a name
 like `notes` will collide sooner or later and `acme-notes` will not.
 
+**Some address names cannot be taken.** An app answers at `<subDomain>.<the tenant's domain>`, or at
+its own name where an entry states no `subDomain`. These names are the platform's in every tenant,
+and no entry of an app or an add-on may use one, or anything below one (`x.admin`): `desktop`,
+`admin`, `store`, `console`, `platform`, `id`, `auth`, `login`, `signin`, `sign-in`, `sso`,
+`account`, `accounts`. On a single-tenancy cluster, where the tenant's hosts are directly under the
+cluster's domain, the kernel's own are refused as well: `argocd`, `corp`, `headlamp`, `imap`, `llm`,
+`mail`, `mail-egress`, `www`. The install is refused with `422`:
+
+```text
+app acme-notes cannot be installed: exposure "web" would answer on admin.<the tenant's domain>,
+and admin is an address name the platform keeps in every tenant (the tenant's administration
+console): only the platform's own component for it, admin-console, may take it. Give the exposure
+another subDomain. ...
+```
+
+A Component that reaches a cluster some other way is held with the condition `HostReserved` and the
+same sentence, and nothing of it is installed or routed. Stating `trustTier: platform` changes
+nothing. The list and the reasons: [design/routing.md §3.1](design/routing.md).
+
 **An app that creates databases of its own** (`spec.requires.services.database.allowDynamicDatabaseCreation`)
 has to name them the platform's way on MariaDB, where every tenant's databases are on one server:
 the name of the database it was given, an underscore, then anything — `<database>_reports`. It can
@@ -572,6 +591,8 @@ that composes an app, is named `app-<profile>`, is not `app-default` and is on t
   or a component the platform ships (`desktop`, `concierge`, `admin-console`). The refusal says the
   name is taken and to publish it as `<tenant>-<name>`. A cluster catalogue's entry is refused the
   same way when a tenant's catalogue already holds the name.
+- **An address name the platform depends on is not an app's to take** (§4.1). The director refuses
+  the install or the add-on (`422`); the operator holds the Component (`HostReserved`).
 - **A tenant's own profile is installable only in that tenant.** The director refuses anybody else,
   and the operator refuses to roll out a Component in another tenant from it
   (`ProfileOfAnotherTenant`).

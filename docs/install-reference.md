@@ -244,6 +244,9 @@ On a single-tenancy cluster these names directly under the cluster's domain
 are the platform's own, and a component or app of the user tenant that would
 answer on one is refused (`HostReserved` on its status): `id`, `platform`,
 `www`, `argocd`, `headlamp`, `llm`, `mail`, `imap`, `mail-egress`, `corp`.
+Under either tenancy mode the platform's own address names in a tenant
+(`desktop`, `admin`, `store`, and the names a sign-in page would have) are
+refused to apps the same way ([design/routing.md §3.1](design/routing.md)).
 
 The platform tenant's admin console is two labels under the cluster's domain,
 so it has a wildcard certificate of its own, `*.platform.<kernel-domain>`,

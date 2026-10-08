@@ -299,16 +299,14 @@ func TestTheAppStoreIsToldEveryFactItsChartReads(t *testing.T) {
 	}
 
 	// The user tenant of a single-tenancy cluster is directly under the
-	// cluster's domain, and store is not a name the kernel keeps there.
+	// cluster's domain, where store is the App Store app's own name as in
+	// every tenant.
 	single := appStoreValues(t, "single", gentianov1alpha1.SingleUserTenantName, true, clusterClaim("https://store.example.org"))
 	if single["host"] != "store.k.example" {
 		t.Fatalf("single-tenancy host = %v", single["host"])
 	}
 	if tenant := single["platform"].(map[string]interface{})["tenant"]; tenant != gentianov1alpha1.SingleUserTenantName {
 		t.Fatalf("single-tenancy tenant = %v", tenant)
-	}
-	if reserved := reservedHostLabel("store"); reserved != "" {
-		t.Fatalf("store is reserved under the cluster's domain as %s", reserved)
 	}
 	r := &ComponentReconciler{KernelDomain: "k.example", KernelRealm: "kernel", TenancyMode: "single"}
 	userZone := r.zoneOf(tileFixtureTenant(gentianov1alpha1.SingleUserTenantName)).zoneNames

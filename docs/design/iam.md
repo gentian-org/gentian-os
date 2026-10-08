@@ -62,7 +62,8 @@ its own. How many there may be, and where their hosts are, is the cluster's
 The desktop's address was `console.<tenant>.<KERNEL_DOMAIN>` (`console.<KERNEL_DOMAIN>`
 on a single-tenancy cluster, `console.<custom domain>` on a tenant's own domain)
 until 2026-10-08. Nothing answers on the old name: a cluster is installed
-fresh, so there is no alias, and `console` is an ordinary label an app may take.
+fresh, so there is no alias. No app may take `console` either: people may
+still type it, so it is kept free ([routing.md §3.1](routing.md)).
 
 On a single-tenancy cluster the user tenant has no domain of its own: its base
 domain is the cluster's. Two things follow.
@@ -81,6 +82,9 @@ domain is the cluster's. Two things follow.
   or an app of the user tenant whose host label is one of them is refused,
   with a `HostReserved` condition that lists them, and nothing of it is
   installed or routed.
+  The platform's own names in a tenant (`desktop`, `admin`, `store`, and the
+  names a sign-in page would have) are refused to apps under either tenancy
+  mode ([routing.md §3.1](routing.md)).
 
 Under `multi` a tenant named `user` is an ordinary tenant, at
 `<label>.user.<KERNEL_DOMAIN>`.
