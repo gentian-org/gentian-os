@@ -75,6 +75,12 @@ spec:
               value: 'mail.relay.placeholder'
             - name: egressHost
               value: 'mail.egress.placeholder'
+            # Each chart carries the NetworkPolicy that says who may connect
+            # to its server, synced with the values the server is installed
+            # from. The switch is the stores' (kernel/appsets/values.yaml
+            # storeNetworkPolicies): one setting turns all of them off.
+            - name: networkPolicy.enabled
+              value: 'store.networkpolicies.placeholder'
       destination:
         server: https://kubernetes.default.svc
         namespace: 'sys.mail.placeholder'

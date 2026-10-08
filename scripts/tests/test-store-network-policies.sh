@@ -50,8 +50,10 @@ done
 check "the namespaces, the operator's labels, the tenant label and the CloudNativePG pin are what the policies assume" wiring
 check "storeNetworkPolicies=false: no store carries a policy; on, each carries one" off
 
-# The servers that are not shared stores: the kernel's own PostgreSQL. Same
-# assertions, from the `servers` section of the same file.
+# The servers that are not shared stores: the kernel's own PostgreSQL and the
+# mail servers. Same assertions, from the `servers` section of the same file;
+# a mail server also has ports that face the internet, which are open to any
+# source and recorded as such.
 check_server() {
     local what="$1"
     shift
@@ -64,17 +66,17 @@ check_server() {
 }
 
 echo ""
-echo "The kernel's own PostgreSQL"
+echo "The kernel's own PostgreSQL and the mail servers"
 echo ""
-for server in kernel-postgres; do
+for server in kernel-postgres dovecot postfix; do
     check_server "${server}: selects the server's pods and no other; every port they serve is listed or recorded as closed" \
         shape "${server}"
     check_server "${server}: every client of the table is admitted, everything it says to refuse is refused" \
         clients "${server}"
 done
-check_server "namespaces, labels, hosts, ports and sync waves are what the policy assumes" wiring
-check_server "storeNetworkPolicies=false: kernel-postgres admits everything; on, it admits its clients" off
-check_server "more instances change nothing the policy selects on" modes
+check_server "namespaces, labels, hosts, ports and sync waves are what the policies assume; the installer's check runs where it is admitted" wiring
+check_server "storeNetworkPolicies=false: kernel-postgres admits everything, the mail servers carry no policy; on, each carries one" off
+check_server "a cluster that relays mail has no mail policy; without a certificate or an MX no rule is left for the port" modes
 
 echo ""
 if [[ "${fail}" -gt 0 ]]; then

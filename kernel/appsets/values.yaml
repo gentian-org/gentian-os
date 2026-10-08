@@ -30,4 +30,5 @@ llmExternalProviders: "false"
 # (templates/networkpolicy.yaml in each engine's chart). On unless a cluster
 # says otherwise; "false" removes all four and leaves credentials as the only
 # check on a connection. From the bootstrap chart's value of the same name.
+# The mail servers' charts take the same switch for theirs.
 storeNetworkPolicies: "true"

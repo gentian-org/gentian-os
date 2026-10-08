@@ -21,12 +21,19 @@ _verify_kernel_services_enabled() {
     [[ "${VERIFY_KERNEL_SERVICES:-1}" == "1" ]]
 }
 
-# Run a one-shot Pod; delete it afterward. Returns the container exit code.
+# Run a one-shot Pod in the given namespace; delete it afterward. Returns the
+# container exit code.
+#
+# The namespace is the caller's to say, and it is the one of the server being
+# probed: a server's NetworkPolicy admits a probe from beside it, by the
+# gentianos.io/purpose=verify label below, and from nowhere else. The pod used
+# to run in `default`, which no server's policy admits. VERIFY_POD_NAMESPACE
+# still overrides it.
 _run_ephemeral_pod() {
-    local image="$1"
-    shift
+    local ns="${VERIFY_POD_NAMESPACE:-$1}"
+    local image="$2"
+    shift 2
     local name="gentian-verify-$$-${RANDOM}"
-    local ns="${VERIFY_POD_NAMESPACE:-default}"
     local phase exit_code=1 create_err
 
     # The pod spec is generated rather than left to `kubectl run`, because a bare
@@ -105,9 +112,10 @@ print(json.dumps({
 }
 
 _verify_tcp_from_cluster() {
-    local host="$1"
-    local port="$2"
-    _run_ephemeral_pod "busybox:1.36" \
+    local ns="$1"
+    local host="$2"
+    local port="$3"
+    _run_ephemeral_pod "${ns}" "busybox:1.36" \
         sh -c "nc -z -w 5 ${host} ${port}"
 }
 
@@ -154,7 +162,7 @@ verify_dovecot_installation() {
     local fqdn="${svc}.${ns}.svc.cluster.local"
     for port in 143 24; do
         info "Probing Dovecot TCP ${fqdn}:${port} from cluster..."
-        if ! _verify_tcp_from_cluster "${fqdn}" "${port}"; then
+        if ! _verify_tcp_from_cluster "${ns}" "${fqdn}" "${port}"; then
             error "Dovecot TCP check failed on port ${port}."
             error "  kubectl get pods,svc -n ${ns} -l app.kubernetes.io/name=dovecot"
             return 1

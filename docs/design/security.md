@@ -136,7 +136,7 @@ Closed, deliberately: PostgreSQL's metrics port (9187) and MinIO's console (9001
 
 What this does not cover:
 
-- **Mail and the model gateway** (`system-mail`, `system-mail-dmz`, `system-llm`) have no ingress policy. Any pod of a namespace without an egress policy can open a connection to them, and their credentials are the only check. The kernel's own PostgreSQL has one; see §2.8.
+- **The model gateway** (`system-llm`) has no ingress policy. Any pod of a namespace without an egress policy can open a connection to it, and its credentials are the only check. The kernel's own PostgreSQL and the mail servers have one each; what those leave open is in §2.8.
 - **Kernel and system namespaces deny no egress.** A pod in one of them is kept from a store by the store's policy alone, and from everything else by nothing (gap G28).
 - **A tenant's DMZ namespace has no default deny.** Its proxies carry their own egress policy; the stores do not admit that tier.
 - **A CNI that does not enforce NetworkPolicy** makes all of this a description. The kubelet's probes are unaffected either way: traffic from a pod's own node is not subject to a NetworkPolicy.
@@ -145,9 +145,9 @@ The clients are written down once, in `scripts/tests/store-clients.yaml`. `make 
 
 One switch turns the four off: `storeNetworkPolicies` on the bootstrap chart, which the installer sets from `STORE_NETWORK_POLICIES` (default `true`). Off leaves credentials as the only check on a connection.
 
-### 2.8 Who may reach the kernel's PostgreSQL
+### 2.8 Who may reach the kernel's PostgreSQL and the mail servers
 
-One more server carries a NetworkPolicy of the same kind, in its own chart and synced before the server it selects (sync wave -1). The same switch turns it off.
+Three more servers carry a NetworkPolicy of the same kind, each in its own chart and synced before the server it selects (sync wave -1). The same switch turns them off.
 
 **`kernel-postgres`, in `kernel-data`** (`kernel/data/kernel-postgres/templates/networkpolicy.yaml`, policy `kernel-postgres-ingress`). It holds Keycloak's database, OpenFGA's, the registrar's record and the desktop's database of the tenant that adopts the kernel realm.
 
@@ -163,7 +163,26 @@ Closed: the metrics port (9187). Not admitted: Argo CD, Crossplane and its provi
 - **CloudNativePG's operator is selected by no policy.** It runs in `kernel-data` beside the cluster, and its webhook is called by the API server from a host address; its ports are as open as they were.
 - **Switched off, this one policy is kept and admits everything** rather than being removed: the Application that syncs the chart does not prune, so a policy that merely stopped being rendered would stay in force.
 
-Its clients are in the `servers` section of `scripts/tests/store-clients.yaml`, each marked proven or inferred; `make test-store-network-policies` holds the policy to it (`scripts/tests/server_network_policies.py`) and a Go test holds it to the operator's code (`internal/controller/server_clients_test.go`).
+**Dovecot and Postfix, in `system-mail`** (`templates/networkpolicy.yaml` in `kernel/services/dovecot/manifests` and `kernel/services/postfix/manifests`, policies `dovecot-ingress` and `postfix-ingress`). They exist only on a cluster whose `mail.serviceMode` is `system`; a cluster that relays its mail runs neither and has neither policy. Both run in `system-mail`: Postfix has not been split into `system-mail-dmz`, which holds no pod, and the DKIM signer runs inside Postfix's container.
+
+| Server | Port | Admitted |
+| --- | --- | --- |
+| Dovecot | 24 (LMTP) | Postfix's pods, in the same namespace; the installer's check of the Deployment, which runs its probe there labelled `gentianos.io/purpose=verify` |
+| | 12345 (authentication service) | Postfix's pods |
+| | 993 (IMAPS) | any source. Rendered only when Dovecot has a certificate |
+| | 143 (IMAP) | any source |
+| Postfix | 25 | any source. Rendered only when the MX load balancer is |
+| | 587 (submission) | any source |
+
+What this closes is the two ports that were never meant for anybody but Postfix: LMTP takes mail for any hosted domain with no credential, and the authentication service answers whether a password is good without the limits Postfix puts in front of it. On Postfix's pods it closes every port but the two listed.
+
+What stays open, and why:
+
+- **25, 587 and 993 face the internet**, through load balancers that deliver a connection from an address that is no pod's.
+- **Apps and Keycloak reach 587 and 993 under the public names** (`mail.<kernelDomain>`, `imap.<kernelDomain>`), because the certificate is checked against the name dialled. Whether such a connection still carries its pod's address when it arrives depends on the cluster's proxy mode, so a rule naming tenant namespaces could refuse the apps it was written for. These ports are not narrowed; the credential is the check.
+- **143 is left as it was.** The operator hands it to nobody, and which pods use it by the Service's name cannot be read from this repository. It asks for the same credential as 993 and refuses it outside TLS.
+
+The clients of all three are in the `servers` section of `scripts/tests/store-clients.yaml`, each marked proven or inferred; `make test-store-network-policies` holds the policies to it (`scripts/tests/server_network_policies.py`) and a Go test holds it to the operator's code (`internal/controller/server_clients_test.go`).
 
 ---
 
@@ -184,7 +203,7 @@ changes only when the code does.
 | The session's tokens stop at the edge: a backend gets its own cookies, the identity headers, and a bearer only where its exposure says `forwardToken` | Implemented | `internal/bouncer/cookies.go` rewrites the `Cookie` header without the edge's cookies on every allowed request of a session route; the names come from the route table ([routing.md §4.1](routing.md)) |
 | Tenant namespace + NetworkPolicy default-deny egress | Implemented | `internal/kernel/netpolicy/` — tenant namespaces only |
 | Per-app egress to the stores a profile declares | Implemented, mail and identity not narrowed | `internal/kernel/netpolicy/kernel.go`, policy `kernel-access-<app>`; see §2.6 |
-| NetworkPolicy in kernel, system and shared namespaces | **Partial**: ingress to six servers, no egress anywhere | One policy in the operator chart, on the operator's pods: its app-lifecycle port admits the director's and the usher's pods only, and its other ports stay open. One on each shared store -- PostgreSQL, MariaDB, Redis, MinIO -- admitting tenant namespaces and the platform's named clients (§2.7). One on the kernel's own PostgreSQL (§2.8). Mail, the model gateway, CloudNativePG's operator and every other kernel pod are selected by no policy, and no kernel or system namespace denies egress (gap G28) |
+| NetworkPolicy in kernel, system and shared namespaces | **Partial**: ingress to eight servers, no egress anywhere | One policy in the operator chart, on the operator's pods: its app-lifecycle port admits the director's and the usher's pods only, and its other ports stay open. One on each shared store -- PostgreSQL, MariaDB, Redis, MinIO -- admitting tenant namespaces and the platform's named clients (§2.7). One on the kernel's own PostgreSQL, and one each on Dovecot and Postfix, whose internet-facing ports stay open (§2.8). The model gateway, CloudNativePG's operator and every other kernel pod are selected by no policy, and no kernel or system namespace denies egress (gap G28) |
 | Approval path for profile-declared egress | **Target** | `security.egress` reaches the NetworkPolicy uninspected; `PlatformSecurityPolicy` allowlists MAC waivers only (gap G27) |
 | Pod-security admission (privileged, host ns, non-root, hostPath, caps, priv-esc) | Implemented | `kernel/security/kyverno/policies/` |
 | Gateway rate limit | **Target** | `BackendTrafficPolicy` carries timeouts only |

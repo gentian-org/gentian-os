@@ -254,12 +254,19 @@ which port, and what stays closed, is
 The kernel's own PostgreSQL carries the same kind of policy: Keycloak's and
 OpenFGA's namespaces, the registrar and the operator by label, tenant
 namespaces for the desktop of the tenant that adopts the kernel realm, and
-its own namespace. The table is in
+its own namespace. So do the two mail servers, both of which run in
+`system-mail` today -- Postfix is not yet split into `system-mail-dmz`,
+which holds no pod. Dovecot's delivery port and its authentication service
+admit Postfix alone; the ports that face the internet (25, 587, 993) and
+plain IMAP (143) admit any source, because a connection through a load
+balancer arrives from no pod, and apps reach the same ports under the
+public names. The table is in
 [security.md §2.8](../design/security.md).
 
-Still open at L5: `system-mail`, `system-mail-dmz` and `system-llm` admit
-any source, and no kernel or system namespace denies egress -- a pod there
-is stopped at a server by that server's policy and nowhere else by anything.
+Still open at L5: `system-llm` admits any source, the app-facing mail ports
+are not narrowed to the apps that declared mail, and no kernel or system
+namespace denies egress -- a pod there is stopped at a server by that
+server's policy and nowhere else by anything.
 
 ## 3. Route classes
 

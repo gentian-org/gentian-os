@@ -70,3 +70,16 @@ imapIngress:
     # connections are dropped.
     loadbalancer.openstack.org/enable-health-monitor: "true"
     loadbalancer.openstack.org/keep-floatingip: "true"
+
+# Who may open a connection to Dovecot's pods (templates/networkpolicy.yaml).
+# On by default; needs a CNI that enforces NetworkPolicy, and has no effect on
+# one that does not. Off removes the policy. The mail ApplicationSet passes
+# `enabled`, from the same switch as the shared stores' policies.
+networkPolicy:
+  enabled: true
+  # The ports dovecot.conf listens on and the Deployment declares.
+  ports:
+    imap: 143
+    imaps: 993
+    lmtp: 24
+    sasl: 12345

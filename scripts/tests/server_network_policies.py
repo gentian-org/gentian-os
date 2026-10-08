@@ -1,26 +1,29 @@
 #!/usr/bin/env python3
 # =============================================================================
 # scripts/tests/server_network_policies.py — the NetworkPolicies on the
-# servers that are not shared stores: the kernel's own PostgreSQL. Run by
-# test-store-network-policies.sh beside the stores'.
+# servers that are not shared stores: the kernel's own PostgreSQL and the two
+# mail servers. Run by test-store-network-policies.sh beside the stores'.
 #
 # Rendered with helm and no cluster, from what a cluster would run: the
-# bootstrap chart's kernel-postgres Application (for the parameters Argo CD
-# passes), the server's chart (for its policy), and the clients from the
+# bootstrap chart's kernel-postgres Application and the mail ApplicationSet
+# (for the parameters Argo CD passes), each server's chart (for its policy
+# and, where the chart builds them, its pods), and the clients from the
 # `servers` section of scripts/tests/store-clients.yaml.
 #
 #   server_network_policies.py shape <server>     the policy against the server
 #   server_network_policies.py clients <server>   the policy against the clients
 #   server_network_policies.py wiring             what the policies lean on
 #   server_network_policies.py off                the switch
-#   server_network_policies.py modes              what a value may change
+#   server_network_policies.py modes              what a mail mode leaves out
 #
-# <server> is kernel-postgres.
+# <server> is kernel-postgres, dovecot or postfix.
 #
-# A rule with ports and no `from` admits everybody. It is refused here unless
-# every port of it is recorded in OPEN with the reason, and nothing is: a
-# server with a port that faces the internet would be the one to add it.
+# Unlike a store, a mail server has ports that face the internet, and those
+# are admitted by a rule with ports and no `from`. Such a rule is refused
+# here unless every port of it is recorded in OPEN with the reason; so a rule
+# that loses its `from` by mistake still fails.
 # =============================================================================
+import re
 import sys
 import tempfile
 
@@ -32,7 +35,7 @@ from store_network_policies import (
     namespace_of, policies_of,
 )
 
-SERVERS = ("kernel-postgres",)
+SERVERS = ("kernel-postgres", "dovecot", "postfix")
 
 # Ports a server's pods serve that its policy lists nowhere, and why.
 CLOSED = {
@@ -41,8 +44,27 @@ CLOSED = {
 
 # Ports admitted from any source, and why no source can be named. A port is
 # here or behind a `from`; a rule may not be open by accident.
-OPEN = {}
+OPEN = {
+    "dovecot": {
+        993: "published to the internet on the IMAPS load balancer, and dialled by apps under its public name",
+        143: "the same service without the load balancer; its in-cluster clients cannot be read from this repository",
+    },
+    "postfix": {
+        25: "inbound mail from the internet, through the MX load balancer",
+        587: "submission: published on the MX load balancer, and dialled by apps and Keycloak under its public name",
+    },
+}
 
+# Postfix's pods are built by an upstream chart that is not vendored here, so
+# they cannot be rendered. What this file leans on instead is what the
+# repository itself says about them: the Release that installs the chart
+# (name, version and release name) and the Service of this chart that has to
+# select those pods for inbound mail to work at all. `wiring` fails when the
+# chart version moves, which is the moment to read its templates again:
+# bokysan/mail 5.1.0 labels its pods app.kubernetes.io/name=<chart name> and
+# app.kubernetes.io/instance=<release>, and declares one port, `smtp`, at
+# service.port.
+POSTFIX_CHART = ("mail", "5.1.0")
 BOOTSTRAP = ["boot", "kernel/bootstrap/chart", "-f", "kernel/platforms.yaml",
              "--set-string", "appsets.enabled=true", "--set-string", "kernelDomain=k.example", "--set-string", "cluster=c",
              "--set-string", "versions.headlamp.chart=0.0.0", "--set-string", "versions.headlamp.repo=https://example.invalid"]
@@ -72,9 +94,9 @@ def application_set(name, *extra):
     return found[0] if len(found) == 1 else None
 
 
-def deployed(*extra):
+def deployed(*extra, mail="system"):
     """What Argo CD deploys for each server: the chart's path, the namespace
-    and the Helm parameters."""
+    and the Helm parameters. Mail is rendered in the one mode that runs it."""
     out = {}
     app = bootstrap_application("kernel-postgres", *extra)
     source = app["spec"]["source"]
@@ -83,6 +105,32 @@ def deployed(*extra):
         "params": {p["name"]: p["value"] for p in source["helm"]["parameters"]},
         "prune": app["spec"]["syncPolicy"]["automated"]["prune"],
     }
+    out.update(mail_applications(mail, *extra))
+    return out
+
+
+def mail_applications(mode, *extra):
+    """The Applications of the mail ApplicationSet, which exists in one mail
+    mode only."""
+    out = {}
+    mailset = application_set("gentian-mail", "--set-string", f"mailServiceMode={mode}", *extra)
+    if mailset is None:
+        return out
+    spec = mailset["spec"]
+    stage, apps = None, None
+    for generator in spec["generators"][0]["matrix"]["generators"]:
+        items = generator["list"]["elements"]
+        if "env" in items[0]:
+            stage = items[0]["env"]
+        else:
+            apps = [i["app"] for i in items]
+    template = spec["template"]["spec"]
+    for name in apps:
+        params = {p["name"]: p["value"].replace("{{.env}}", stage) for p in template["source"]["helm"]["parameters"]}
+        out[name] = {
+            "path": template["source"]["path"].replace("{{.app}}", name), "namespace": template["destination"]["namespace"],
+            "params": params, "prune": template["syncPolicy"]["automated"]["prune"], "stage": stage,
+        }
     return out
 
 
@@ -100,6 +148,52 @@ def the_policy(server, apps, *extra):
     return found[0]
 
 
+def pods_of(docs):
+    out = []
+    for d in docs:
+        if d.get("kind") not in ("Deployment", "StatefulSet", "DaemonSet", "Job"):
+            continue
+        template = d["spec"]["template"]
+        ports = {}
+        for c in template["spec"].get("initContainers", []) + template["spec"]["containers"]:
+            for p in c.get("ports") or []:
+                if p.get("protocol", "TCP") != "TCP":
+                    raise Failure(f"{d['metadata']['name']} declares a port that is not TCP: {p}")
+                ports[p.get("name", str(p["containerPort"]))] = p["containerPort"]
+        out.append({"name": d["metadata"]["name"], "labels": template["metadata"].get("labels") or {}, "ports": ports})
+    return out
+
+
+def postfix_pod(docs):
+    """Postfix's pod as this repository states it: the labels the MX Service
+    selects on -- held to the Release's chart and release names -- and the
+    ports that Service and the chart's values send connections to."""
+    releases = [d for d in docs if d.get("kind") == "Release"]
+    if len(releases) != 1:
+        raise Failure("the Postfix chart does not render exactly one Release")
+    chart = releases[0]["spec"]["forProvider"]["chart"]
+    if (chart["name"], chart["version"]) != POSTFIX_CHART:
+        raise Failure(f"the Release installs {chart['name']} {chart['version']}, not {POSTFIX_CHART}: read that chart's pod "
+                      "labels and ports, then move the pin in this file")
+    release = releases[0]["metadata"]["annotations"]["crossplane.io/external-name"]
+    labels = {"app.kubernetes.io/name": chart["name"], "app.kubernetes.io/instance": release}
+    values = {}
+    for d in docs:
+        if d.get("kind") == "ConfigMap" and d["metadata"]["name"] == "postfix-base-values":
+            values = yaml.safe_load(d["data"]["values.yaml"])
+    if not values:
+        raise Failure("the Postfix chart renders no postfix-base-values")
+    ports = {"submission": values["service"]["port"]}
+    for s in (d for d in docs if d.get("kind") == "Service"):
+        if s["spec"]["selector"] != labels:
+            raise Failure(f"Service {s['metadata']['name']} selects {s['spec']['selector']}, the Release's pods carry {labels}")
+        for p in s["spec"]["ports"]:
+            if p["targetPort"] != p["port"]:
+                raise Failure(f"Service {s['metadata']['name']} port {p['port']} reaches the pod on {p['targetPort']}")
+            ports[p["name"]] = p["port"]
+    return {"name": release, "labels": labels, "ports": ports}
+
+
 def engine(server, apps, *extra):
     """The server's pods (labels and ports) and the other pods beside it."""
     docs = render(apps[server], *extra)
@@ -113,7 +207,17 @@ def engine(server, apps, *extra):
             "others": [{"name": name + "-1-initdb", "labels": cnpg_job_labels(name)},
                        {"name": "CloudNativePG's operator", "labels": CNPG_OPERATOR_LABELS}],
         }
-    raise Failure(f"no engine is known for {server}")
+    return mail_engine(server, apps, *extra)
+
+
+def mail_engine(server, apps, *extra):
+    other = "postfix" if server == "dovecot" else "dovecot"
+    dovecot = pods_of(render(apps["dovecot"], *(extra if server == "dovecot" else ())))
+    postfix = postfix_pod(render(apps["postfix"], *(extra if server == "postfix" else ())))
+    if len(dovecot) != 1:
+        raise Failure("the Dovecot chart does not render exactly one workload")
+    both = {"dovecot": dovecot[0], "postfix": postfix}
+    return {"servers": [both[server]], "others": [both[other], {"name": "the installer's check", "labels": {"gentianos.io/purpose": "verify"}}]}
 
 
 def rules(policy, server):
@@ -280,6 +384,7 @@ def check_wiring():
         return namespaces.get(name, {}).get(FUNCTION)
 
     wiring_kernel_postgres(apps, wanted, fn)
+    wiring_mail(apps, wanted, fn)
 
 
 def wiring_kernel_postgres(apps, wanted, fn):
@@ -369,6 +474,53 @@ def wiring_kernel_postgres(apps, wanted, fn):
 
 
 
+def wiring_mail(apps, wanted, fn):
+    for server in ("dovecot", "postfix"):
+        app = apps[server]
+        if fn(app["namespace"]) != "mail" or app["params"].get("servicesNamespace") != app["namespace"]:
+            raise Failure(f"{server} is deployed into {app['namespace']} with servicesNamespace={app['params'].get('servicesNamespace')!r}")
+        if app["params"].get("networkPolicy.enabled") != "true":
+            raise Failure(f"{server}: the ApplicationSet passes networkPolicy.enabled={app['params'].get('networkPolicy.enabled')!r} by default")
+        by_hand = policies_of(helm("server", app["path"], "--set", f"servicesNamespace={app['namespace']}", "--set", f"env={app['stage']}"))
+        if [p["spec"] for p in by_hand] != [the_policy(server, apps)["spec"]]:
+            raise Failure(f"{server}: the chart's own defaults render a different policy from the one the ApplicationSet's parameters do")
+        for c in wanted[server]:
+            if not c.get("external") and isinstance(c["namespace"], str) and c["podLabels"].get("app.kubernetes.io/name") in ("mail", "dovecot") \
+                    and c["namespace"] != app["namespace"]:
+                raise Failure(f"{c['client']}: the table puts a mail server's pod in {c['namespace']}")
+    # Postfix reaches Dovecot where the policy admits it: by the Service of
+    # the same namespace, on the two ports the rule names.
+    postfix_docs = render(apps["postfix"])
+    settings = yaml.safe_load([d for d in postfix_docs if d.get("kind") == "ConfigMap"
+                               and d["metadata"]["name"] == "postfix-base-values"][0]["data"]["values.yaml"])["config"]["postfix"]
+    dovecot_docs = render(apps["dovecot"])
+    dovecot = pods_of(dovecot_docs)[0]
+    service = f"dovecot-{apps['dovecot']['stage']}.{apps['dovecot']['namespace']}.svc.cluster.local"
+    if settings["virtual_transport"] != f"lmtp:[{service}]:{dovecot['ports']['lmtp']}":
+        raise Failure(f"Postfix delivers to {settings['virtual_transport']}")
+    if settings["smtpd_sasl_path"] != f"inet:{service}:{dovecot['ports']['sasl']}":
+        raise Failure(f"Postfix authenticates against {settings['smtpd_sasl_path']}")
+    for s in (d for d in dovecot_docs if d.get("kind") == "Service"):
+        for p in s["spec"]["ports"]:
+            if dovecot["ports"].get(p["targetPort"]) != p["port"]:
+                raise Failure(f"Service {s['metadata']['name']} port {p['port']} reaches the pod on {dovecot['ports'].get(p['targetPort'])}")
+    pf = postfix_pod(postfix_docs)
+    for c in wanted["dovecot"]:
+        if c["client"].startswith("Postfix") and c["podLabels"] != pf["labels"]:
+            raise Failure(f"{c['client']}: the table says {c['podLabels']}, Postfix's pods carry {pf['labels']}")
+    # The ports the conf file listens on are the ones the Deployment declares.
+    conf = [d for d in dovecot_docs if d.get("kind") == "ConfigMap" and "dovecot.conf" in (d.get("data") or {})][0]["data"]["dovecot.conf"]
+    listening = {int(n) for n in re.findall(r"^\s*port = (\d+)\s*$", conf, re.M)} - {0}
+    if listening != set(dovecot["ports"].values()):
+        raise Failure(f"dovecot.conf listens on {sorted(listening)}, the Deployment declares {sorted(dovecot['ports'].values())}")
+    # The installer's check runs beside the server it probes, with the label
+    # the rule admits.
+    verify = (ROOT / "scripts/lib/verify-kernel-services.sh").read_text()
+    if '"gentianos.io/purpose": "verify"' not in verify or '_verify_tcp_from_cluster "${ns}" "${fqdn}" "${port}"' not in verify \
+            or 'local ns="${VERIFY_POD_NAMESPACE:-$1}"' not in verify:
+        raise Failure("verify_dovecot_installation no longer runs its probe, labelled gentianos.io/purpose=verify, in the namespace it checks")
+
+
 def check_off():
     # The bootstrap chart hands the switch to the kernel-postgres Application...
     for passed, want in ((None, "true"), ("true", "true"), ("false", "false")):
@@ -386,12 +538,48 @@ def check_off():
     if spec.get("ingress") != [{}] or spec.get("policyTypes") != ["Ingress"]:
         raise Failure(f"switched off, kernel-postgres's policy does not admit everything: {spec.get('ingress')}")
     the_policy("kernel-postgres", deployed())
+    off_mail()
+
+
+def off_mail():
+    # The mail charts are pruned, and render none.
+    for extra in (["--set-string", "storeNetworkPolicies=false"], ["--set", "storeNetworkPolicies=false"]):
+        apps = deployed(*extra)
+        for server in ("dovecot", "postfix"):
+            if apps[server]["params"].get("networkPolicy.enabled") != "false":
+                raise Failure(f"{server}: switched off with {extra[0]}, the ApplicationSet still passes "
+                              f"networkPolicy.enabled={apps[server]['params'].get('networkPolicy.enabled')!r}")
+            if apps[server]["prune"] is not True:
+                raise Failure(f"{server}: its Application does not prune, so a policy no longer rendered would stay")
+            if policies_of(render(apps[server])):
+                raise Failure(f"{server}: a NetworkPolicy is rendered with the switch off")
+    apps = deployed()
+    for server in ("dovecot", "postfix"):
+        the_policy(server, apps)
 
 
 def check_modes():
     apps = deployed()
     # More than one instance changes nothing the policy selects on.
     check_shape("kernel-postgres", apps, "--set", "instances=3")
+    modes_mail(apps)
+
+
+def modes_mail(apps):
+    # A cluster that relays its mail runs no mail server, and so no policy.
+    for mode in ("external", "none"):
+        if mail_applications(mode):
+            raise Failure(f"mail.serviceMode={mode}: the mail ApplicationSet is still rendered")
+    # Dovecot without a certificate serves no IMAPS, and the policy lists none.
+    check_shape("dovecot", apps, "--set", "tls.secretName=")
+    if 993 in set().union(*(p for p, _ in rules(the_policy("dovecot", apps, "--set", "tls.secretName="), "dovecot"))):
+        raise Failure("Dovecot without a certificate still lists 993")
+    # Postfix without the MX load balancer has nothing that reaches 25.
+    check_shape("postfix", apps, "--set", "smtpIngress.enabled=false")
+    if 25 in set().union(*(p for p, _ in rules(the_policy("postfix", apps, "--set", "smtpIngress.enabled=false"), "postfix"))):
+        raise Failure("Postfix without the MX load balancer still lists 25")
+    # Submission stays, published or not: apps and Keycloak use it either way.
+    check_shape("postfix", apps, "--set", "submissionIngress.enabled=false")
 
 
 def main():

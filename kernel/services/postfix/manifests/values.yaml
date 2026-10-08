@@ -193,3 +193,16 @@ tls:
 # Storage for the DKIM keys. A handful of 2048-bit keys; the size is almost
 # irrelevant, the persistence is not.
 dkimKeyStorageSize: 128Mi
+
+# Who may open a connection to Postfix's pods (templates/networkpolicy.yaml).
+# On by default; needs a CNI that enforces NetworkPolicy, and has no effect on
+# one that does not. Off removes the policy. The mail ApplicationSet passes
+# `enabled`, from the same switch as the shared stores' policies.
+networkPolicy:
+  enabled: true
+  # The MX port of master.cf, which service-smtp.yaml publishes, and the
+  # submission port the upstream chart's Service is given (service.port in
+  # templates/configmap.yaml).
+  ports:
+    smtp: 25
+    submission: 587
