@@ -74,11 +74,11 @@ spec:
 
               chart and composition together are the one legal pair, because they answer
               different halves of one question: the chart is WHAT is installed, and the
-              composition is WHAT ELSE is created beside it. Three catalogue entries are
-              like this -- Odoo, Element and OpenProject each render their chart through a
-              Composition that also emits a portal bridge, an SSO sidecar or a stable
-              service alias. Refusing the pair sent that fact into an annotation, where
-              nothing validated it.
+              composition is WHAT ELSE is created beside it. Two catalogue entries are
+              like this -- Odoo and Element each render their chart through a
+              Composition that also emits an SSO sidecar or a stable service alias.
+              Refusing the pair sent that fact into an annotation, where nothing
+              validated it.
 
               Every other pairing is still refused, and composition alone is still a
               delivery of its own: a component the Composition creates entirely.

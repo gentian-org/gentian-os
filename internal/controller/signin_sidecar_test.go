@@ -598,7 +598,7 @@ func TestTheSignInSidecarImageIsOneBuild(t *testing.T) {
 	}
 }
 
-// The two profiles of the catalogue that declare a sign-in sidecar, as
+// The profiles of the catalogue that declare a sign-in sidecar, as
 // gentian-apps publishes them (internal/profilebundle/testdata/bundles), are
 // served: each brings its handler, names its own secrets and stands on its
 // own entry. A catalogue and a platform that disagreed about the declaration
@@ -606,9 +606,15 @@ func TestTheSignInSidecarImageIsOneBuild(t *testing.T) {
 func TestTheCataloguesSidecarProfilesAreServed(t *testing.T) {
 	r := &ComponentReconciler{KernelDomain: "k.example", KernelRealm: "kernel", TenancyMode: "multi"}
 	tenant := acmeTenantFixture()
-	for name, want := range map[string]struct{ host, appURL string }{
-		"activepieces-me": {"auto.acme.k.example", "http://activepieces-me.tenant-acme.svc.cluster.local:8080"},
-		"docmost-ce":      {"docs.acme.k.example", "http://docmost-ce.tenant-acme.svc.cluster.local:3000"},
+	for name, want := range map[string]struct {
+		host, appURL string
+		secrets      int
+	}{
+		"activepieces-me": {"auto.acme.k.example", "http://activepieces-me.tenant-acme.svc.cluster.local:8080", 1},
+		"docmost-ce":      {"docs.acme.k.example", "http://docmost-ce.tenant-acme.svc.cluster.local:3000", 1},
+		// Its key and the password of its own service account: its handler
+		// has the app make the account and the session itself.
+		"openproject-ce": {"projects.acme.k.example", "http://openproject-ce.tenant-acme.svc.cluster.local:8080", 2},
 	} {
 		raw, err := os.ReadFile(filepath.Join("..", "profilebundle", "testdata", "bundles", name+".yaml"))
 		if err != nil {
@@ -626,8 +632,8 @@ func TestTheCataloguesSidecarProfilesAreServed(t *testing.T) {
 		if sidecar.host != want.host || sidecar.appURL != want.appURL {
 			t.Errorf("%s: host %v, appURL %v; want %s and %s", name, sidecar.host, sidecar.appURL, want.host, want.appURL)
 		}
-		if !sidecar.database || sidecar.databaseNamespace != layout.System("postgresql") || len(sidecar.secrets) != 1 {
-			t.Errorf("%s: its handler is not given its database and its one secret: %+v", name, sidecar)
+		if !sidecar.database || sidecar.databaseNamespace != layout.System("postgresql") || len(sidecar.secrets) != want.secrets {
+			t.Errorf("%s: its handler is not given its database and its %d secret(s): %+v", name, want.secrets, sidecar)
 		}
 		// The app's own sign-in is refused at the front door, and the page
 		// the handler ends on is not one that leads back to the sign-in.
@@ -636,6 +642,22 @@ func TestTheCataloguesSidecarProfilesAreServed(t *testing.T) {
 		}
 		if len(sidecar.entryPaths) == 0 {
 			t.Errorf("%s: no page of the app leads to the sign-in", name)
+		}
+		// A path that leads to the sign-in is not also refused: the front
+		// door refuses before the Gateway redirects, so the person would
+		// never arrive.
+		for _, entry := range sidecar.entryPaths {
+			for _, denied := range sidecar.exposure.DenyPaths {
+				if entry == denied || strings.HasPrefix(entry, strings.TrimSuffix(denied, "/")+"/") {
+					t.Errorf("%s: %s leads to the sign-in and is refused under %s", name, entry, denied)
+				}
+			}
+		}
+		// A bundle that declares the sidecar is rendered by the platform's
+		// Composition, which is the one that registers the sidecar at the
+		// realm.
+		if got := appComposition(comp, profile); got != "" {
+			t.Errorf("%s: rendered by %s, which registers no sidecar", name, got)
 		}
 		// The same from a tenant's own catalogue is not served.
 		profile.Annotations[profilebundle.OriginAnnotation] = profilebundle.TenantOrigin("acme", "own")

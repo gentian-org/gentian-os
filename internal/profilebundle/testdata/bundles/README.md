@@ -7,7 +7,8 @@ copied here unchanged so that these tests need no other repository.
 Built from gentian-apps commit `f52a204` (branch `develop`), as published at
 `https://gentian-org.github.io/gentian-apps/develop` -- except `activepieces-me`
 and `docmost-ce`, which are from commit `26b260a` of the same branch, the first
-to declare the sign-in sidecar.
+to declare the sign-in sidecar, and `openproject-ce`, from commit `9985a61`,
+where it declares the sidecar too and no longer brings a Composition.
 
 They are fixtures for what the two repositories have to agree on: each must be
 a bundle the director accepts and the operator verifies
@@ -24,5 +25,5 @@ copy the affected files again; do not edit them here.
 | `nextcloud-base-od` | an OIDCPackCatalog |
 | `nextcloud-calendar-ce` | nothing: an add-on, a bundle of its own in the same format |
 | `odoo-base-ce` | a Composition |
-| `openproject-ce` | a Composition, a ConfigMap, an OIDCPackCatalog |
+| `openproject-ce` | a ConfigMap (the sign-in handler), a Customization |
 | `xwiki-ce` | an OIDCPackCatalog |

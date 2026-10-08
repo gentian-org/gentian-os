@@ -994,6 +994,15 @@ Where it is described: how it works and when to use it,
 section 16 are not changed by this: which apps may use it remains a decision
 per app.
 
+Added 2026-10-09: OpenProject uses it too, by the owner's decision for that
+app (decision 7). Section 14.3 describes it as it was. What is true now: no
+second sign-in and no password; the profile's own composition, the old bridge
+and the OIDC settings that had no effect are gone; password sign-in is
+switched off in OpenProject itself, which is what lets `/login` lead to the
+platform's sign-in; and the handler signs nothing -- OpenProject makes its
+own session from a one-time token. The second factor is no longer switched
+off, and is not asked for either: it belonged to the password form.
+
 ## 9. Case 5: no sign-in in the app
 
 **When it applies**

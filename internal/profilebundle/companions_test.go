@@ -309,7 +309,7 @@ func TestTheBuiltBundlesAreAcceptedAndVerify(t *testing.T) {
 		"nextcloud-base-od":     "OIDCPackCatalog nextcloud-base-od-oidc",
 		"nextcloud-calendar-ce": "",
 		"odoo-base-ce":          "Composition app-odoo-base-ce",
-		"openproject-ce":        "Composition app-openproject-ce, ConfigMap openproject-ce.portal-bridge, OIDCPackCatalog openproject-ce-oidc",
+		"openproject-ce":        "ConfigMap openproject-ce.sign-in-handler, Customization openproject-ce.sign-in-sidecar",
 		"xwiki-ce":              "OIDCPackCatalog xwiki-ce-oidc",
 	}
 	files, err := filepath.Glob(filepath.Join("testdata", "bundles", "*.yaml"))

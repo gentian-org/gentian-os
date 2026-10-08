@@ -354,6 +354,14 @@ A profile states no address, no client name and no Secret. They follow from wher
 and what the app owns, so a profile cannot point a sign-in somewhere else or at somebody else's
 data.
 
+An entry path cannot also be under `denyPaths`. The bouncer refuses a denied path before the
+Gateway redirects, and for every method, so the person would never reach the sign-in. Where an
+app's own form posts to the address of its page -- OpenProject's `/login` -- the page is the entry
+path, and what is posted there is the app's to refuse: its password sign-in is switched off in the
+app. A profile that declares the sidecar is rendered by the platform's Composition, which is the
+one that registers it at the realm; a bundle that brings a Composition of its own would have to
+compose the client itself.
+
 **Which handler runs.** A handler is handed the app's signing key and its database: it can become
 anybody in the app. So it runs only where it is known to be the reviewed file:
 
