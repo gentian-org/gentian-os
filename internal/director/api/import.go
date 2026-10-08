@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
@@ -65,10 +66,16 @@ type ImportStatus struct {
 	Notes       []string          `json:"notes,omitempty"`
 }
 
-var (
-	importPoll = 10 * time.Second
-	importWait = 2 * time.Hour
-)
+// importWait is how long one watcher of an import waits, for the tenant and
+// then for the restore; importPoll, how often it asks. Atomic because a
+// watcher outlives the request that started it.
+const importWait = 2 * time.Hour
+
+var importPoll = func() *atomic.Int64 {
+	var d atomic.Int64
+	d.Store(int64(10 * time.Second))
+	return &d
+}()
 
 type importRequest struct {
 	Bundle     gentianov1alpha1.BundleRef `json:"bundle"`
@@ -355,7 +362,7 @@ func (s *Server) finishImport(pending gitops.PendingImport, key json.RawMessage,
 				fail("the tenant was not provisioned within " + importWait.String() + ", last: " + s.importMessage(name) +
 					". The tenant is committed and empty; ask for the import again to go on waiting, or start a restore by hand once it is provisioned")
 				return
-			case <-time.After(importPoll):
+			case <-time.After(time.Duration(importPoll.Load())):
 			}
 		}
 		status, body, err := s.cfg.Lifecycle.Do(ctx, "/v1/tenants/"+url.PathEscape(name)+"/actions/restore", actor,
@@ -421,7 +428,7 @@ func (s *Server) finishImport(pending gitops.PendingImport, key json.RawMessage,
 		case <-ctx.Done():
 			fail("the restore did not finish within " + importWait.String())
 			return
-		case <-time.After(importPoll):
+		case <-time.After(time.Duration(importPoll.Load())):
 		}
 	}
 }

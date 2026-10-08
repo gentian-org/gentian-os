@@ -567,7 +567,11 @@ func (r *TenantRestoreReconciler) restoreTenantWide(
 	entry := appStatus(&restore.Status.Apps, backupTenantComponent)
 	units := r.tenantWideRestoreUnits(tenant, restore, d)
 	if err := r.stageFor(ctx, restore, units, d); err != nil {
-		return false, err
+		// Counted, like a step that failed: what cannot be staged now is not
+		// staged by waiting, and the restore must end.
+		entry.LastFailure = err.Error()
+		entry.Attempts++
+		return false, nil
 	}
 
 	allDone := true
@@ -1021,23 +1025,46 @@ func (r *TenantRestoreReconciler) finalize(
 	}
 	_ = r.discardStagedRestoreSecrets(ctx, restore)
 
-	// A restore that goes because its tenant does has nothing to resume: the
-	// workloads are going too, and waiting on them would hold the namespace.
-	torn := false
-	if r.Reconciler != nil {
-		torn, _ = r.Reconciler.tenantTeardown(ctx, restore.Namespace, tenantName)
+	if !restore.IsTerminal() && restore.Status.StartedAt != nil {
+		logger.Info("restore deleted while it ran: its Jobs were stopped and the apps it paused are resumed",
+			"restore", restore.Name, "tenant", tenantName, "state", restoreStateText(restore, currentRestoreApp(restore)))
 	}
-	if !torn {
-		if !restore.IsTerminal() && restore.Status.StartedAt != nil {
-			logger.Info("restore deleted while it ran: its Jobs were stopped and the apps it paused are resumed",
-				"restore", restore.Name, "tenant", tenantName, "state", restoreStateText(restore, currentRestoreApp(restore)))
-		}
-		if err := r.resumeAll(ctx, restore, tenantName); err != nil {
+	// Resume, always. Only a restore whose tenant is itself going is let go
+	// with an app it could not resume: the workloads are going too, and
+	// holding the restore would hold the namespace. Whether the tenant is
+	// going has to be known for that -- not being able to ask is not a yes.
+	if err := r.resumeAll(ctx, restore, tenantName); err != nil {
+		going, askErr := r.tenantGoing(ctx, restore.Namespace, tenantName)
+		if askErr != nil || !going {
 			return ctrl.Result{}, err
 		}
+		logger.Info("an app this restore paused could not be resumed; the tenant is going, so the restore is not held for it",
+			"restore", restore.Name, "tenant", tenantName, "error", err.Error())
 	}
 	controllerutil.RemoveFinalizer(restore, restoreFinalizer)
 	return ctrl.Result{}, r.Update(ctx, restore)
+}
+
+// tenantGoing reports whether the tenant, or its namespace, is gone or being
+// deleted. An answer that could not be had is an error.
+func (r *TenantRestoreReconciler) tenantGoing(ctx context.Context, namespace, tenantName string) (bool, error) {
+	ns := &corev1.Namespace{}
+	switch err := r.Get(ctx, types.NamespacedName{Name: namespace}, ns); {
+	case apierrors.IsNotFound(err):
+		return true, nil
+	case err != nil:
+		return false, err
+	case ns.DeletionTimestamp != nil:
+		return true, nil
+	}
+	tenant := &gentianov1alpha1.Tenant{}
+	switch err := r.Get(ctx, types.NamespacedName{Name: tenantName}, tenant); {
+	case apierrors.IsNotFound(err):
+		return true, nil
+	case err != nil:
+		return false, err
+	}
+	return tenant.DeletionTimestamp != nil, nil
 }
 
 // currentRestoreApp is the app a running restore is at: the first planned one

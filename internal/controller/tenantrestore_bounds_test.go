@@ -192,13 +192,22 @@ func TestDeletingARunningRestoreResumesTheAppAndStopsItsJobs(t *testing.T) {
 	}
 }
 
-// A restore that goes because its tenant does is not held: there is nothing
-// to resume, and holding it would hold the namespace.
+// A restore that goes because its tenant does is not held, even when what it
+// paused cannot be resumed: the workloads are going too, and holding it would
+// hold the namespace. A restore of a tenant that stays is held until the app
+// runs again.
 func TestARestoreIsNotHeldWhenItsTenantIsGoing(t *testing.T) {
 	w := newRestoreWorld(t, nil)
 	pausedWiki(t, w)
 	ctx := context.Background()
-	// No Namespace object: the tenant's namespace is gone or going.
+	// The tenant is gone, and its namespace with it.
+	tenant := &gentianov1alpha1.Tenant{}
+	if err := w.c.Get(ctx, types.NamespacedName{Name: "demo"}, tenant); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.c.Delete(ctx, tenant); err != nil {
+		t.Fatal(err)
+	}
 	if err := w.c.Delete(ctx, w.restore(t)); err != nil {
 		t.Fatal(err)
 	}

@@ -725,7 +725,12 @@ func (r *TenantExportReconciler) captureTenantWide(
 ) (bool, error) {
 	units := r.tenantWideUnits(tenant, export, encryption)
 	if err := r.stageFor(ctx, export, units, encryption); err != nil {
-		return false, err
+		// Counted, like a capture that failed: what cannot be staged now is
+		// not staged by waiting, and the export must end.
+		entry := appStatus(&export.Status.Apps, backupTenantComponent)
+		entry.LastFailure = err.Error()
+		entry.Attempts++
+		return false, nil
 	}
 
 	allDone := true

@@ -435,6 +435,13 @@ func TestAnImportSurvivesARestartOfTheDirector(t *testing.T) {
 	if _, err := gitShow(h.remote, "clusters/"+dt.Cluster+"/tenants/imported/"+gitops.ImportFile); err == nil {
 		t.Error("the record of a finished import is still in git")
 	}
+	// The first director is still running in this process, which it is not
+	// after a real restart, and still waits for its tenant: let it see one, so
+	// that its watcher ends before the test does.
+	never.mu.Lock()
+	never.declared = true
+	never.mu.Unlock()
+	waitImport(t, h, alice, "imported", "ready", "failed")
 }
 
 // The director restarts while the restore runs. Nothing is needed from

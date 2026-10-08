@@ -21,9 +21,8 @@ func SetPurgePoll(d time.Duration) (restore func()) {
 
 // SetImportPoll shortens the import watcher's interval for a test.
 func SetImportPoll(d time.Duration) (restore func()) {
-	old := importPoll
-	importPoll = d
-	return func() { importPoll = old }
+	old := importPoll.Swap(int64(d))
+	return func() { importPoll.Store(old) }
 }
 
 // SetResiduePoll shortens the wait between two requests to delete a profile
