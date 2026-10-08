@@ -696,6 +696,30 @@ does not exist yet that something cannot be the Composition.
   - `[ ]` Replace the any-public-address rule by the list, and prove with a test that another public host is refused.
   - `[ ]` Apply the same mechanism to other components that reach the internet.
 
+### 1.37 Sign-In Addresses on a Domain That Never Serves Tenant Content (***)
+* **Target Domain**: Identity & Routing
+* **Context**: On a single-tenancy cluster the user tenant may publish a
+  website on the cluster's main address. Any page on that address can set a
+  cookie for the whole domain, and browsers send it to the identity provider,
+  the desktop and the consoles, which live under the same domain. A script on
+  the website cannot read a session, but it can stop a person from signing in
+  until they clear their cookies, and it can plant its author's own session
+  so the person works in the author's account without noticing ("cookie
+  tossing"). The cookie names of the front door cannot be given the `__Host-`
+  prefix in the pinned Envoy Gateway. Today the approver is warned and must
+  acknowledge that the site runs only scripts the organisation controls
+  ([security.md §2.10](design/security.md)); the platform cannot check it.
+* **Proposed Solution**: Move the sign-in addresses -- the identity provider,
+  the desktop and the consoles -- to a separate domain that never serves
+  tenant content. A page on the tenant's domain can then set no cookie the
+  sign-in addresses receive, and the rule for main-address websites is no
+  longer needed. This is the complete fix.
+* **Backlog Items**:
+  - `[ ]` Decide the separate domain: where it is declared, how it gets its certificate and DNS, and what a cluster with one domain does.
+  - `[ ]` Move the identity provider, the desktop and the consoles to it, with redirects from the old addresses.
+  - `[ ]` Prove with a test that a cookie set from the main address is not sent to any sign-in address.
+  - `[ ]` Remove the acknowledgement for main-address websites once the above holds, and say so in the documents.
+
 ## 2. Platform, Infrastructure & Lifecycle
 
 ### 2.1 Keycloak Provider & Crossplane Consolidation (*)

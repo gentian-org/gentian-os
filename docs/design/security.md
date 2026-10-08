@@ -225,17 +225,47 @@ It is the most visible page of the cluster and nobody is signed in on it.
 | Served from the tenant's DMZ by a proxy that passes no cookie, token or identity header in, and no `Set-Cookie` out | Built |
 | `/branding/`, `/sign-in`, `/.well-known/acme-challenge/` and `/.well-known/pki-validation/` stay the platform's | Built, twice: route precedence at the Gateway, and `404` in the website's proxy |
 | `https://<kernelDomain>/sign-in` always leads to sign-in | Built |
+| The approver is told what a script on the website can do to sign-in, and acknowledges the rule below; who and when is recorded with the entry | Built: the director refuses the request without it (`400`) |
 | A script on the website cannot disturb sign-in on the other addresses | **Not built.** See below |
 
-**The remaining risk.** A script in a page on the bare domain can plant a
-cookie for the whole domain. It cannot read or forge anybody's session. It
-can stop a visitor from signing in until they clear their cookies, and it can
-leave a visitor signed in to an account the page's author chose. The same is
-true today of every app host on a single-tenancy cluster; a public website
-makes it more likely, because of third-party scripts and more editors. The
-fix (`__Host-` cookie names) is not available as configuration in Envoy
-Gateway 1.9.2 or Keycloak. Detail and options:
+**The finding.** Any page served on the bare domain can set a cookie for the
+whole domain, and the browser then sends it to `desktop.`, `admin.`,
+`platform.` and `id.<kernelDomain>` as well. A script in such a page cannot
+read or forge anybody's session. It can do two things:
+
+- stop a person from signing in, until they clear their cookies;
+- plant a session of the script author's own, so that the person works in
+  the author's account without noticing, and what they do or type there ends
+  up with the author.
+
+The same is true of every app host on a single-tenancy cluster; a public
+website makes it more likely, because websites load scripts from other
+parties and have more editors. Cookie names with the `__Host-` prefix would
+close it, and are not available as configuration in Envoy Gateway 1.9.2 or
+Keycloak. Detail and options:
 [networking.md §8.7](../plans/networking.md#87-a-website-on-the-clusters-main-address).
+
+**The rule.** A website goes on the main address only if the organisation
+itself controls every script it runs: no third-party scripts (analytics,
+embeds, widgets, anything loaded from another host) and no pages uploaded by
+users.
+
+**Why the platform cannot enforce it.** The platform sees a backend and the
+paths it serves, not what the pages load or who may edit them, and both
+change after approval without anything passing the platform. So the rule is
+the approver's to keep. The director answers a request for the main address
+with the warning and publishes only once the approver sends
+`"acknowledgeMainAddressRule": true`, on the first publication and on every
+review. The entry then records who acknowledged and when
+(`apexAcknowledgedBy`, `apexAcknowledgedAt`), in the exposure registry in
+git. An entry approved before this was asked has neither and stays
+published; its next review is asked.
+
+**What remains possible.** The acknowledgement is a person's word, not a
+control. A site that breaks the rule, or one whose own scripts are replaced
+by an attacker, can still do both things above to anybody who visits it. The
+complete fix is to move the sign-in addresses to a domain that never serves
+tenant content ([roadmap 1.37](../roadmap.md)).
 
 ### 2.11 No app at an address people trust as the platform's
 

@@ -599,6 +599,21 @@ main address stays the sign-in form.
 3. The cluster's mode is `single`, the tenant is the user tenant on the
    cluster's own domain and is Ready, and no other surface holds the address.
 
+*The rule, and the acknowledgement.* A website goes on the main address only
+if the organisation itself controls every script it runs: no third-party
+scripts, no pages uploaded by users. A script on the bare domain can set
+cookies that the browser also sends to `desktop.`, `admin.`, `platform.` and
+`id.<kernelDomain>`; it cannot read a session, but it can stop people from
+signing in and can sign a person in to an account its author chose
+([security.md §2.10](security.md)). The platform cannot check what a site
+loads, so the approver is told and says so: the director refuses a request
+with `apex: true` (`400`, with the warning) until it also carries
+`"acknowledgeMainAddressRule": true`, on the first publication and on every
+review. The registry entry records who acknowledged and when
+(`apexAcknowledgedBy`, `apexAcknowledgedAt`). The operator publishes by
+`apex` alone, so an entry approved before the acknowledgement was asked
+keeps serving and is asked at its next review.
+
 One surface holds the main address at a time. The director refuses a second
 request with `409` and names the holder. If two entries reach the cluster
 anyway, the one published first keeps the address. The component's

@@ -532,12 +532,33 @@ exists anyway is held with `HostReserved`
 `subDomain`). It asks for the cluster's bare domain and needs all of this:
 
 - the cluster's tenancy mode is `single` and the tenant is its user tenant;
-- the approver sends `{"apex": true}` with the request -- an entry that says
-  `apex` is not published at all without it;
+- the approver sends `{"apex": true, "acknowledgeMainAddressRule": true}`
+  with the request -- an entry that says `apex` is not published at all
+  without `apex`, and the director refuses `apex` without the acknowledgement
+  (`400`, with the warning below);
 - no other surface holds the main address;
 - the entry declares no path inside `/branding/`, `/sign-in`,
   `/.well-known/acme-challenge/` or `/.well-known/pki-validation/`. Those stay
   the platform's.
+
+**Before you approve a website for the main address.** A script in a page on
+the main address can set cookies that browsers also send to the desktop, the
+consoles and sign-in. It cannot read anybody's session. It can stop people
+from signing in until they clear their cookies, and it can sign a person in
+to an account the script's author chose, without the person noticing. The
+platform cannot check what a website loads, so the rule is yours to keep:
+
+- only a site whose scripts your organisation itself controls;
+- no third-party scripts (analytics, embeds, widgets, anything loaded from
+  another host);
+- no pages uploaded by users.
+
+`"acknowledgeMainAddressRule": true` says you were told this and the site
+meets it. It is asked on the first publication and on every review, and your
+name and the time are recorded with the entry in the exposure registry
+(`apexAcknowledgedBy`, `apexAcknowledgedAt`). A website approved before this
+was asked stays published and is asked at its next review
+([design/security.md §2.10](design/security.md)).
 
 The component's `MainAddress` condition says whether it is there and, if not,
 why. A profile that should also work on a multi-tenancy cluster declares a
