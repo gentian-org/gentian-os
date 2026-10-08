@@ -32,6 +32,13 @@ import (
 type liveTenants struct {
 	mu     sync.Mutex
 	policy map[string]string
+	asked  int
+}
+
+func (l *liveTenants) timesAsked() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.asked
 }
 
 func (l *liveTenants) set(tenant, policy string) {
@@ -43,6 +50,7 @@ func (l *liveTenants) set(tenant, policy string) {
 func (l *liveTenants) Get(_ context.Context, path string, _ url.Values) (int, []byte, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	l.asked++
 	name := strings.TrimPrefix(path, "/v1/tenants/")
 	p, ok := l.policy[name]
 	if !ok {
@@ -99,6 +107,44 @@ func TestAPurgeWaitsForTheClusterBeforeRemovingTheTenant(t *testing.T) {
 			t.Fatal("the tenant was not removed after the cluster took in Delete")
 		}
 		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// What waits beside the requests does not outlive the server. Close ends the
+// wait of a purge the cluster has not taken in and returns when it has ended:
+// nothing asks the operator or touches the checkout afterwards. The purge is
+// not lost by it -- the manifest still says Delete, which is where the next
+// start finds it.
+func TestClosingTheServerEndsAPurgeThatIsStillWaiting(t *testing.T) {
+	defer api.SetPurgePoll(10 * time.Millisecond)()
+	live := &liveTenants{policy: map[string]string{"demo": "Retain"}}
+	srv, h := secondDirector(t, startWith(t, nil), live)
+	alice := h.token(t, "gentian", "alice")
+	manifest := "clusters/" + dt.Cluster + "/tenants/demo/tenant.yaml"
+
+	if code, body := h.do(t, "POST", "/v1/clusters/"+dt.Cluster+"/tenants/demo/actions/purge", alice, ""); code != http.StatusAccepted {
+		t.Fatalf("purge = %d %v, want 202", code, body)
+	}
+	for deadline := time.Now().Add(5 * time.Second); live.timesAsked() < 2; time.Sleep(5 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("the purge never asked the cluster")
+		}
+	}
+
+	closed := make(chan struct{})
+	go func() { srv.Close(); close(closed) }()
+	select {
+	case <-closed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Close did not return: the watcher is still waiting")
+	}
+	asked := live.timesAsked()
+	time.Sleep(50 * time.Millisecond)
+	if again := live.timesAsked(); again != asked {
+		t.Fatalf("the cluster was asked %d more times after Close returned", again-asked)
+	}
+	if !strings.Contains(dt.RemoteFile(t, h.remote, manifest), "deletionPolicy: Delete") {
+		t.Fatal("the request for the purge is no longer in git")
 	}
 }
 

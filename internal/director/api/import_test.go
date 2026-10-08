@@ -377,6 +377,7 @@ func secondDirector(t *testing.T, h *harness, lc api.Lifecycle) (*api.Server, *h
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(srv.Close)
 	next := &harness{Server: httptest.NewServer(srv), issuer: h.issuer, remote: h.remote, asked: decisions}
 	t.Cleanup(next.Close)
 	return srv, next

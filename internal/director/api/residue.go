@@ -407,13 +407,16 @@ func (s *Server) finishRetirementLater(name, actor string, target residueTarget)
 	if _, busy := s.retiring.LoadOrStore(name, struct{}{}); busy {
 		return
 	}
-	go func() {
+	s.watch(func(background context.Context) {
 		defer s.retiring.Delete(name)
-		ctx, cancel := context.WithTimeout(context.Background(), residueWait)
+		ctx, cancel := context.WithTimeout(background, residueWait)
 		defer cancel()
 		for {
 			select {
 			case <-ctx.Done():
+				if background.Err() != nil {
+					return
+				}
 				s.cfg.Log.Warn("an unused profile left git and is still on the cluster; it stays on the residue list",
 					"profile", name)
 				return
@@ -421,6 +424,8 @@ func (s *Server) finishRetirementLater(name, actor string, target residueTarget)
 			}
 			status, answer, err := s.askRemoval(ctx, actor, operatorRemoval{residueTarget: target})
 			switch {
+			case background.Err() != nil:
+				return
 			case err != nil:
 				s.cfg.Log.Warn("asking the operator to delete an unused profile", "profile", name, "error", err.Error())
 			case status >= 200 && status <= 299:
@@ -433,5 +438,5 @@ func (s *Server) finishRetirementLater(name, actor string, target residueTarget)
 				return
 			}
 		}
-	}()
+	})
 }

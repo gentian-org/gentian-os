@@ -97,15 +97,15 @@ func (s *Server) finishPurgeLater(tenant string, meta gitops.Meta) {
 	if _, busy := s.purging.LoadOrStore(tenant, struct{}{}); busy {
 		return
 	}
-	go func() {
+	s.watch(func(background context.Context) {
 		defer s.purging.Delete(tenant)
-		ctx, cancel := context.WithTimeout(context.Background(), purgeWait)
+		ctx, cancel := context.WithTimeout(background, purgeWait)
 		defer cancel()
-		if err := s.finishPurge(ctx, tenant, meta); err != nil {
+		if err := s.finishPurge(ctx, tenant, meta); err != nil && background.Err() == nil {
 			s.cfg.Log.Error("the purge did not finish", "tenant", tenant,
 				"request_id", meta.RequestID, "error", err.Error())
 		}
-	}()
+	})
 }
 
 func (s *Server) finishPurge(ctx context.Context, tenant string, meta gitops.Meta) error {
@@ -124,7 +124,9 @@ func (s *Server) finishPurge(ctx context.Context, tenant string, meta gitops.Met
 		case <-time.After(purgePoll):
 		}
 	}
-	res, err := s.cfg.Repo.RetireTenant(ctx, tenant, meta)
+	// Not interrupted by the server closing: a commit is made whole or not
+	// begun, and git has its own bound.
+	res, err := s.cfg.Repo.RetireTenant(context.WithoutCancel(ctx), tenant, meta)
 	if errors.Is(err, gitops.ErrTenantNotFound) {
 		return nil
 	}

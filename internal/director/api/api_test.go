@@ -182,6 +182,10 @@ func startSeeded(t *testing.T, lc api.Lifecycle, seed func(remote string), opts 
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Registered first so that it runs last of the two: the watchers are
+	// stopped once the last request is answered, and before the checkout
+	// they write to is removed.
+	t.Cleanup(srv.Close)
 	h := &harness{Server: httptest.NewServer(srv), issuer: is, remote: remote, asked: decisions}
 	t.Cleanup(h.Close)
 	return h
@@ -537,6 +541,7 @@ func TestAnUnreachableDecisionPointDenies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer srv.Close()
 	ts := httptest.NewServer(srv)
 	defer ts.Close()
 	req, _ := http.NewRequest("POST", ts.URL+"/v1/tenants/demo/apps/element", nil)

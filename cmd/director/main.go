@@ -317,5 +317,14 @@ func run(log *slog.Logger) error {
 	if err := srv.Shutdown(shutdown); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
+	// The requests are answered; now what runs beside them. A watcher that is
+	// in the middle of a commit is given the rest of the same half minute.
+	closed := make(chan struct{})
+	go func() { handler.Close(); close(closed) }()
+	select {
+	case <-closed:
+	case <-shutdown.Done():
+		log.Warn("the director stopped while a watcher was still writing to the repository")
+	}
 	return nil
 }

@@ -249,10 +249,10 @@ func (s *Server) watchImport(pending gitops.PendingImport, key json.RawMessage, 
 		return false
 	}
 	s.imports.Store(pending.Tenant, *st)
-	go func() {
+	s.watch(func(background context.Context) {
 		defer s.importing.Delete(pending.Tenant)
-		s.finishImport(pending, key, actor)
-	}()
+		s.finishImport(background, pending, key, actor)
+	})
 	return true
 }
 
@@ -320,9 +320,13 @@ const awaitingKey = "the tenant is made and empty. The director restarted while 
 
 // finishImport waits for the operator, then starts the restore and watches
 // it to its end. key is nil for an import picked up after a restart.
-func (s *Server) finishImport(pending gitops.PendingImport, key json.RawMessage, actor string) {
+//
+// background ends when the server is closed. The import has not failed then:
+// its record is in git and the next start goes on with it, so nothing is
+// said about it here.
+func (s *Server) finishImport(background context.Context, pending gitops.PendingImport, key json.RawMessage, actor string) {
 	name := pending.Tenant
-	ctx, cancel := context.WithTimeout(context.Background(), importWait)
+	ctx, cancel := context.WithTimeout(background, importWait)
 	defer cancel()
 	fail := func(msg string) {
 		s.setImport(name, func(st *ImportStatus) { st.Phase = "failed"; st.Message = msg })
@@ -359,6 +363,9 @@ func (s *Server) finishImport(pending gitops.PendingImport, key json.RawMessage,
 			}
 			select {
 			case <-ctx.Done():
+				if background.Err() != nil {
+					return
+				}
 				fail("the tenant was not provisioned within " + importWait.String() + ", last: " + s.importMessage(name) +
 					". The tenant is committed and empty; ask for the import again to go on waiting, or start a restore by hand once it is provisioned")
 				return
@@ -367,6 +374,9 @@ func (s *Server) finishImport(pending gitops.PendingImport, key json.RawMessage,
 		}
 		status, body, err := s.cfg.Lifecycle.Do(ctx, "/v1/tenants/"+url.PathEscape(name)+"/actions/restore", actor,
 			map[string]any{"bundle": pending.Bundle, "decryption": key, "name": pending.Restore})
+		if background.Err() != nil {
+			return
+		}
 		if err != nil || status/100 != 2 {
 			// Unless it is there after all: another replica of this director
 			// was asked to go on with the same import and started it first.
@@ -426,6 +436,9 @@ func (s *Server) finishImport(pending gitops.PendingImport, key json.RawMessage,
 		}
 		select {
 		case <-ctx.Done():
+			if background.Err() != nil {
+				return
+			}
 			fail("the restore did not finish within " + importWait.String())
 			return
 		case <-time.After(time.Duration(importPoll.Load())):

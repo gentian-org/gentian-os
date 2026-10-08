@@ -172,6 +172,11 @@ type Server struct {
 	// retiring holds the unused profiles whose deletion from the cluster is
 	// being waited for, so a repeated request starts no second watcher.
 	retiring sync.Map
+	// background is the context every watcher waits under, stop ends it and
+	// watchers counts them: what Close needs to end them and know they ended.
+	background context.Context
+	stop       context.CancelFunc
+	watchers   sync.WaitGroup
 }
 
 // New returns a Server with every route registered.
@@ -183,8 +188,32 @@ func New(cfg Config) (*Server, error) {
 		cfg.Log = slog.Default()
 	}
 	s := &Server{cfg: cfg, mux: http.NewServeMux()}
+	s.background, s.stop = context.WithCancel(context.Background())
 	s.routes()
 	return s, nil
+}
+
+// watch runs fn beside the requests, as something Close ends and waits for.
+// The context it is given ends when the server is closed.
+func (s *Server) watch(fn func(ctx context.Context)) {
+	s.watchers.Add(1)
+	go func() {
+		defer s.watchers.Done()
+		fn(s.background)
+	}()
+}
+
+// Close ends what the server does beside answering requests -- the watchers
+// of a purge, an import and a profile's deletion -- and returns when they
+// have ended. Call it once the last request has been answered.
+//
+// A watcher that is waiting stops waiting. One that is writing to the
+// repository finishes that write first: git is not interrupted half-way
+// through a commit. What a watcher had left to do is in git, and the next
+// start picks it up from there (ResumePurges, ResumeImports).
+func (s *Server) Close() {
+	s.stop()
+	s.watchers.Wait()
 }
 
 // ServeHTTP implements http.Handler.
