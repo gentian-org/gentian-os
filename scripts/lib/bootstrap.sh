@@ -2579,7 +2579,7 @@ _scaffold_default_profiles() {
         info "Default profiles skipped (--disable-api-extensions)."
         return 0
     fi
-    list="${GENTIAN_DEFAULT_PROFILES-${GENTIAN_STORE_CATALOGUE_URL:-https://store.gentian.org/catalogue}/profiles/operations-console.yaml}"
+    list="${GENTIAN_DEFAULT_PROFILES-${GENTIAN_STORE_CATALOGUE_URL:-https://catalogue.aluvian.io}/profiles/operations-console.yaml}"
     [[ -n "${list}" ]] || return 0
     mkdir -p "${dir}"
     tmp="$(mktemp)"
