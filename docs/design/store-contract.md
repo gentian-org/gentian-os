@@ -406,11 +406,15 @@ it is placed again when both hold. The operator watches the claim, so a
 change there takes effect when Argo CD has applied it; the reporting setting
 is the operator's own and changes with its rollout. The usher's answer
 (`appStore` beside the tiles) is the same verdict, written by the operator,
-and gives the reason when there is none: `licence-report-disabled` or
-`no-store-configured`.
+and gives the reason when there is none: `licence-report-disabled`,
+`no-store-configured` or `store-address-is-own-host`.
 
 It answers at `store.<the tenant's base domain>`, behind the tenant's
-session. Its routes and its tile ask the same question, `can_install_app` on
+session. A store's API must therefore not be given an address a cluster's
+own App Store app could have — `store.<a domain a cluster is installed
+under>` — which is why the installer's default is `store-service.…`; a
+cluster whose claim names the host of one of its own tenants' App Store app
+offers no store and says `store-address-is-own-host`. Its routes and its tile ask the same question, `can_install_app` on
 the tenant: a member who knows the address is refused at the edge. `/api`,
 `/oauth/callback`, `/healthz` and `/readyz` reach its API with the person's
 token forwarded; everything else reaches its pages. The profile tells it

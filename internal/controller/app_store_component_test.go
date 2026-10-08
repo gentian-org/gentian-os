@@ -788,3 +788,90 @@ func TestOnlyTheStoreAddressOfTheClaimIsAnEvent(t *testing.T) {
 		t.Error("the claim appearing or going is not an event")
 	}
 }
+
+// A store address whose host is the App Store app's own, for any tenant of
+// this cluster, is not a store: the cluster offers none, says why, places the
+// app on no tenant and tells no component the address. The same address on a
+// cluster where no tenant answers there is a store like any other.
+func TestAStoreAddressThatIsTheAppsOwnHostIsNoStore(t *testing.T) {
+	scheme := appStoreScheme(t)
+	ctx := context.Background()
+	user := tileFixtureTenant(gentianov1alpha1.SingleUserTenantName)
+	own := tileFixtureTenant("globex")
+	own.Status.Domain = "acme.example"
+	for name, c := range map[string]struct {
+		mode    string
+		tenants []*gentianov1alpha1.Tenant
+		store   string
+		reason  string
+	}{
+		"single tenancy, the cluster's domain":  {"single", []*gentianov1alpha1.Tenant{user}, "https://store.k.example", tilecatalogue.AppStoreReasonOwnHost},
+		"with a path, a port and capitals":      {"single", []*gentianov1alpha1.Tenant{user}, "https://Store.K.example:8443/api", tilecatalogue.AppStoreReasonOwnHost},
+		"a tenant under the cluster's domain":   {"multi", []*gentianov1alpha1.Tenant{acmeTenantFixture()}, "https://store.acme.k.example", tilecatalogue.AppStoreReasonOwnHost},
+		"one tenant of several, its own domain": {"multi", []*gentianov1alpha1.Tenant{acmeTenantFixture(), own}, "https://store.acme.example", tilecatalogue.AppStoreReasonOwnHost},
+		"multi tenancy, the cluster's domain":   {"multi", []*gentianov1alpha1.Tenant{acmeTenantFixture()}, "https://store.k.example", ""},
+		"another name under the same domain":    {"single", []*gentianov1alpha1.Tenant{user}, "https://store-service.k.example", ""},
+		"a store elsewhere":                     {"single", []*gentianov1alpha1.Tenant{user}, "https://store.example.org", ""},
+	} {
+		objs := []client.Object{clusterClaim(c.store), shippedAppStoreProfile(t), platformTenantFixture()}
+		for _, tenant := range c.tenants {
+			objs = append(objs, tenant.DeepCopy())
+		}
+		cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objs...).Build()
+		names := clusterNames{kernelDomain: "k.example", tenancyMode: c.mode, kernelRealm: "kernel"}
+		offer, err := readStoreOffer(ctx, cl, true, names)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if offer.reason != c.reason || offer.offered() != (c.reason == "") {
+			t.Errorf("%s: offered=%v reason=%q, want reason %q", name, offer.offered(), offer.reason, c.reason)
+		}
+		if c.reason != "" && offer.url != "" {
+			t.Errorf("%s: a component would be told %q", name, offer.url)
+		}
+
+		// The tenant reconciler places by that verdict, on every tenant.
+		tr := &TenantReconciler{Client: cl, Scheme: scheme, KernelRealm: "kernel", KernelDomain: "k.example",
+			TenancyMode: c.mode, LicenceReporting: true}
+		for _, tenant := range c.tenants {
+			if err := tr.ensureDefaultComponents(ctx, tenant); err != nil {
+				t.Fatalf("%s: %v", name, err)
+			}
+			err := cl.Get(ctx, types.NamespacedName{Name: "app-store", Namespace: tenantNamespaceName(tenant)}, &gentianov1alpha1.Component{})
+			if have := err == nil; have != (c.reason == "") {
+				t.Errorf("%s: App Store component on %s present = %v", name, tenant.Name, have)
+			}
+		}
+
+		// And the projection writes it beside the tiles, for the usher.
+		pr := &TileProjectionReconciler{Client: cl, Cluster: "demo-cluster", KernelRealm: "kernel",
+			KernelDomain: "k.example", TenancyMode: c.mode, LicenceReporting: true}
+		if _, err := pr.Reconcile(ctx, ctrl.Request{}); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		cm := &corev1.ConfigMap{}
+		if err := cl.Get(ctx, types.NamespacedName{Name: tilecatalogue.ConfigMapName, Namespace: layout.Namespace(layout.Control)}, cm); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		catalogue, err := tilecatalogue.Parse([]byte(cm.Data[tilecatalogue.Key]))
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		want := tilecatalogue.AppStore{Offered: c.reason == "", Reason: c.reason}
+		if catalogue.AppStore == nil || *catalogue.AppStore != want {
+			t.Errorf("%s: appStore = %+v, want %+v", name, catalogue.AppStore, want)
+		}
+	}
+
+	// A tenant's domain is the one thing about it that can change the verdict.
+	p := tenantDomainChanged(clusterNames{kernelDomain: "k.example", tenancyMode: "multi"})
+	moved := acmeTenantFixture()
+	moved.Status.Domain = "acme.example"
+	relabelled := acmeTenantFixture()
+	relabelled.Labels = map[string]string{"a": "b"}
+	if !p.Update(event.UpdateEvent{ObjectOld: acmeTenantFixture(), ObjectNew: moved}) ||
+		p.Update(event.UpdateEvent{ObjectOld: acmeTenantFixture(), ObjectNew: relabelled}) ||
+		!p.Create(event.CreateEvent{Object: moved}) || !p.Delete(event.DeleteEvent{Object: moved}) {
+		t.Error("tenantDomainChanged lets through something other than a tenant appearing, going or changing its domain")
+	}
+}

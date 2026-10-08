@@ -556,6 +556,9 @@ func (r *TenantReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	if r.WatchClusterClaim {
 		ctrlBuilder = ctrlBuilder.Watches(clusterClaimObject(), handler.EnqueueRequestsFromMapFunc(mapAllTenants),
 			builder.WithPredicates(storeAddressChanged()))
+		// The verdict also turns on every tenant's domain (store_offer.go).
+		ctrlBuilder = ctrlBuilder.Watches(&gentianov1alpha1.Tenant{}, handler.EnqueueRequestsFromMapFunc(mapAllTenants),
+			builder.WithPredicates(tenantDomainChanged(r.clusterNames())))
 	}
 
 	return ctrlBuilder.Complete(r.guarded())

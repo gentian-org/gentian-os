@@ -12,6 +12,7 @@ package controller
 
 import (
 	"context"
+	"net/url"
 	"regexp"
 	"sort"
 	"strings"
@@ -33,18 +34,20 @@ import (
 
 // Whether this cluster offers an App Store is one answer, given in one place.
 //
-// Two things have to hold: the cluster reports what it runs (an app installed
-// through a store is what the licence report lists), and the Cluster claim
-// names a store (spec.catalogue.storeUrl). Three readers follow from it and
+// Three things have to hold: the cluster reports what it runs (an app
+// installed through a store is what the licence report lists), the Cluster
+// claim names a store (spec.catalogue.storeUrl), and that address is not a
+// host this cluster serves the App Store app on. Three readers follow from it and
 // must not disagree: the tenant reconciler, which places a Component of every
 // profile declaring defaultWhereStoreOffered and takes it away again; the
 // component reconciler, which tells such a component where the store is and
 // opens its way there; and the tile projection, which writes the verdict
 // beside the tiles for the usher to hand to whoever asks.
 //
-// The first half is the operator's own setting (LICENCE_REPORT_ENABLED, as the
-// chart renders it) and the second is read from the claim itself, where the
-// director reads it from too.
+// The first is the operator's own setting (LICENCE_REPORT_ENABLED, as the
+// chart renders it), the second is read from the claim itself, where the
+// director reads it from too, and the third from the tenants and the profiles
+// that ask where the store is.
 
 // storeOffer is the verdict: where the store is, or why none is offered.
 type storeOffer struct {
@@ -79,7 +82,7 @@ func normaliseStoreAddress(raw string) string {
 // An error is an error and not "no store": a claim that could not be read
 // says nothing, and the callers that would take something away on a "no"
 // leave things as they are instead.
-func readStoreOffer(ctx context.Context, c client.Reader, licenceReporting bool) (storeOffer, error) {
+func readStoreOffer(ctx context.Context, c client.Reader, licenceReporting bool, names clusterNames) (storeOffer, error) {
 	if !licenceReporting {
 		// Said without reading the claim: with reporting off there is no
 		// store whatever the claim names.
@@ -97,11 +100,72 @@ func readStoreOffer(ctx context.Context, c client.Reader, licenceReporting bool)
 	sort.Slice(list.Items, func(a, b int) bool { return list.Items[a].GetName() < list.Items[b].GetName() })
 	for i := range list.Items {
 		raw, _, _ := unstructured.NestedString(list.Items[i].Object, "spec", "catalogue", "storeUrl")
-		if url := normaliseStoreAddress(raw); url != "" {
-			return storeOffer{url: url}, nil
+		address := normaliseStoreAddress(raw)
+		if address == "" {
+			continue
 		}
+		own, err := storeAddressIsOwnHost(ctx, c, address, names)
+		if err != nil {
+			return storeOffer{}, err
+		}
+		if own {
+			return storeOffer{reason: tilecatalogue.AppStoreReasonOwnHost}, nil
+		}
+		return storeOffer{url: address}, nil
 	}
 	return storeOffer{reason: tilecatalogue.AppStoreReasonNoStore}, nil
+}
+
+// clusterNames is what a tenant's hosts are derived from on this cluster: the
+// three settings zoneNamesOf takes, as each reconciler holds them.
+type clusterNames struct {
+	kernelDomain, tenancyMode, kernelRealm string
+}
+
+// storeAddressIsOwnHost reports a store address whose host is one this
+// cluster serves a component on that asked where the store is: the App Store
+// app's own host, for any tenant.
+//
+// Such an address is not a store. The name resolves to this cluster's edge,
+// so the app told to call it would be calling itself, and on a cluster
+// installed under the store's own domain the two would be one name. It is
+// refused for the whole cluster, not for the one tenant, because the verdict
+// is the cluster's.
+func storeAddressIsOwnHost(ctx context.Context, c client.Reader, address string, names clusterNames) (bool, error) {
+	parsed, err := url.Parse(address)
+	if err != nil || parsed.Hostname() == "" {
+		return false, nil
+	}
+	host := strings.ToLower(parsed.Hostname())
+	profiles := &gentianov1alpha1.ComponentProfileList{}
+	if err := c.List(ctx, profiles); err != nil {
+		return false, err
+	}
+	var asking []*gentianov1alpha1.ComponentProfile
+	for i := range profiles.Items {
+		if wantsStore(&profiles.Items[i]) {
+			asking = append(asking, &profiles.Items[i])
+		}
+	}
+	if len(asking) == 0 {
+		return false, nil
+	}
+	tenants := &gentianov1alpha1.TenantList{}
+	if err := c.List(ctx, tenants); err != nil {
+		return false, err
+	}
+	for i := range tenants.Items {
+		zone := zoneNamesOf(&tenants.Items[i], names.kernelDomain, names.tenancyMode, names.kernelRealm)
+		for _, profile := range asking {
+			// A component placed by the platform is named after its profile.
+			comp := &gentianov1alpha1.Component{}
+			comp.Name = profile.Name
+			if own := componentOwnHost(comp, profile, zone); own != "" && strings.ToLower(own) == host {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
 }
 
 // wantsStore reports whether a profile asked to be told where the store is.
@@ -159,7 +223,7 @@ func (r *ComponentReconciler) storeEgress(ctx context.Context, profile *gentiano
 	if !wantsStore(profile) {
 		return nil, nil
 	}
-	offer, err := readStoreOffer(ctx, r.Client, r.LicenceReporting)
+	offer, err := readStoreOffer(ctx, r.Client, r.LicenceReporting, r.clusterNames())
 	if err != nil {
 		return nil, err
 	}
@@ -185,7 +249,7 @@ func (r *ComponentReconciler) placementValues(ctx context.Context, comp *gentian
 	if m.StoreURLKey != "" {
 		url := ""
 		if wantsStore(profile) {
-			offer, err := readStoreOffer(ctx, r.Client, r.LicenceReporting)
+			offer, err := readStoreOffer(ctx, r.Client, r.LicenceReporting, r.clusterNames())
 			if err != nil {
 				return nil, err
 			}
@@ -194,6 +258,18 @@ func (r *ComponentReconciler) placementValues(ctx context.Context, comp *gentian
 		setPath(out, m.StoreURLKey, url)
 	}
 	return out, nil
+}
+
+func (r *ComponentReconciler) clusterNames() clusterNames {
+	return clusterNames{kernelDomain: r.KernelDomain, tenancyMode: r.TenancyMode, kernelRealm: r.KernelRealm}
+}
+
+func (r *TenantReconciler) clusterNames() clusterNames {
+	return clusterNames{kernelDomain: r.KernelDomain, tenancyMode: r.TenancyMode, kernelRealm: r.KernelRealm}
+}
+
+func (r *TileProjectionReconciler) clusterNames() clusterNames {
+	return clusterNames{kernelDomain: r.KernelDomain, tenancyMode: r.TenancyMode, kernelRealm: r.KernelRealm}
 }
 
 // componentOwnHost is where a component's first own gateway entry answers in
@@ -240,6 +316,26 @@ func storeAddressChanged() predicate.Predicate {
 		DeleteFunc:  func(event.DeleteEvent) bool { return true },
 		GenericFunc: func(event.GenericEvent) bool { return false },
 		UpdateFunc:  func(e event.UpdateEvent) bool { return named(e.ObjectOld) != named(e.ObjectNew) },
+	}
+}
+
+// tenantDomainChanged lets a tenant event through only when it can change the
+// verdict: a tenant appearing or going, or its domain changing. A store
+// address that is one tenant's App Store host is no store for any of them, so
+// this is the one thing about a tenant that concerns the others.
+func tenantDomainChanged(names clusterNames) predicate.Predicate {
+	domain := func(obj client.Object) string {
+		tenant, ok := obj.(*gentianov1alpha1.Tenant)
+		if !ok {
+			return ""
+		}
+		return tenant.EffectiveDomain(names.kernelDomain, names.tenancyMode)
+	}
+	return predicate.Funcs{
+		CreateFunc:  func(event.CreateEvent) bool { return true },
+		DeleteFunc:  func(event.DeleteEvent) bool { return true },
+		GenericFunc: func(event.GenericEvent) bool { return false },
+		UpdateFunc:  func(e event.UpdateEvent) bool { return domain(e.ObjectOld) != domain(e.ObjectNew) },
 	}
 }
 

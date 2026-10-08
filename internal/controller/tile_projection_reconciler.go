@@ -208,7 +208,7 @@ func (r *TileProjectionReconciler) Reconcile(ctx context.Context, _ ctrl.Request
 	// places the App Store app on tenants (store_offer.go). A cluster with no
 	// claim kind at all has no claim naming a store; any other failure to
 	// read is retried rather than written down as "no store".
-	offer, err := readStoreOffer(ctx, r.Client, r.LicenceReporting)
+	offer, err := readStoreOffer(ctx, r.Client, r.LicenceReporting, r.clusterNames())
 	switch {
 	case err == nil:
 	case meta.IsNoMatchError(err) || errors.IsNotFound(err):

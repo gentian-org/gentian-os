@@ -1556,6 +1556,9 @@ func (r *ComponentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	if r.WatchClusterClaim {
 		b = b.Watches(clusterClaimObject(), componentsToldTheStore(mgr.GetClient()),
 			builder.WithPredicates(storeAddressChanged()))
+		// The verdict also turns on every tenant's domain (store_offer.go).
+		b = b.Watches(&gentianov1alpha1.Tenant{}, componentsToldTheStore(mgr.GetClient()),
+			builder.WithPredicates(tenantDomainChanged(r.clusterNames())))
 	}
 	return b.Complete(r.guarded())
 }

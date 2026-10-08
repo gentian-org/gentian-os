@@ -211,7 +211,7 @@ servers:
   - url: "{storeUrl}"
     description: >-
       The address a cluster names for its store (`spec.catalogue.storeUrl` on the Cluster claim).
-      A cluster installed with the installer's defaults names `https://store.aluvian.io`;
+      A cluster installed with the installer's defaults names `https://store-service.aluvian.io`;
       that default is provisional.
     variables:
       storeUrl:

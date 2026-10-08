@@ -533,7 +533,7 @@ func (r *TenantReconciler) ensureDefaultComponents(ctx context.Context, tenant *
 			(profile.Spec.DefaultForPlatform && r.adoptsKernelRealm(tenant))
 		if !wanted && profile.Spec.DefaultWhereStoreOffered {
 			if !offerRead {
-				offer, offerErr = readStoreOffer(ctx, r.Client, r.LicenceReporting)
+				offer, offerErr = readStoreOffer(ctx, r.Client, r.LicenceReporting, r.clusterNames())
 				offerRead = true
 				if offerErr != nil {
 					log.FromContext(ctx).Info("whether the cluster offers an App Store could not be read; "+

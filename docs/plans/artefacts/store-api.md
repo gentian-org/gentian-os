@@ -82,7 +82,7 @@ callback, the OAuth redirect in §3, is a redirect of the person's browser.
 (`spec.catalogue.storeUrl` on its Cluster claim), with no trailing slash.
 Every path below is appended to it: `https://store.example` + `/v1/apps`.
 A cluster installed with the installer's defaults names
-`https://store.aluvian.io`; that default is provisional.
+`https://store-service.aluvian.io`; that default is provisional.
 
 **Open reads and signed-in calls.** The API has two halves, and the line
 between them is whether a call concerns a tenant.

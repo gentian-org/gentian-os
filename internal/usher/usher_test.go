@@ -243,6 +243,7 @@ func TestTheAppStoreIsWithheldWhereTheClusterOffersNone(t *testing.T) {
 	}{
 		"reporting, a store named":           {true, offered, map[string]any{"available": true}},
 		"reporting, no store named":          {true, noStore, map[string]any{"available": false, "reason": "no-store-configured"}},
+		"reporting, the store is this host":  {true, &tilecatalogue.AppStore{Reason: tilecatalogue.AppStoreReasonOwnHost}, map[string]any{"available": false, "reason": "store-address-is-own-host"}},
 		"reporting, the operator said none":  {true, nil, map[string]any{"available": false, "reason": "no-store-configured"}},
 		"the operator says reporting is off": {true, noReport, map[string]any{"available": false, "reason": "licence-report-disabled"}},
 		"not reporting, a store named":       {false, offered, map[string]any{"available": false, "reason": "licence-report-disabled"}},

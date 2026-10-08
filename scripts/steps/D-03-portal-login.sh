@@ -217,8 +217,9 @@ apply() {
 # the tiles (appStore in the gentian-tiles ConfigMap). The operator places the
 # app by that same verdict, so this says what the cluster does rather than
 # what the installer expects of it. Never a failure and never waited for: a
-# cluster with licence reporting off, or whose claim names no store, has no
-# App Store app and is complete without one.
+# cluster with licence reporting off, or whose claim names no store or one
+# that is the app's own address, has no App Store app and is complete without
+# one.
 _d03_report_app_store() {
     local verdict
     verdict="$(kubectl get configmap gentian-tiles -n "${GENTIAN_SYSTEM_NAMESPACE}" \
@@ -230,6 +231,8 @@ _d03_report_app_store() {
             info "App Store app: not placed -- licence reporting is off on this cluster." ;;
         *"reason: no-store-configured"*)
             info "App Store app: not placed -- claims/cluster.yaml names no App Store (spec.catalogue.storeUrl)." ;;
+        *"reason: store-address-is-own-host"*)
+            warn "App Store app: not placed -- spec.catalogue.storeUrl in claims/cluster.yaml names the App Store app's own address on this cluster (store.<a tenant's domain>), which is not a store's API." ;;
         *)
             info "App Store app: the operator has not said yet whether this cluster offers an App Store; it is placed once it does." ;;
     esac

@@ -260,8 +260,9 @@ type appStoreOut struct {
 	Available bool `json:"available"`
 	// Reason says why not, for a console to put into words: the App Store
 	// needs licence reporting, which is turned off on this cluster
-	// (licence-report-disabled), or the cluster names no store
-	// (no-store-configured).
+	// (licence-report-disabled), the cluster names no store
+	// (no-store-configured), or the address it names is the App Store app's
+	// own host on this cluster (store-address-is-own-host).
 	Reason string `json:"reason,omitempty"`
 }
 

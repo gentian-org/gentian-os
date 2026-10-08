@@ -433,7 +433,10 @@ here. The App Store is a tile on the tenant's desktop, shown to the people
 who may install apps there, at `store.<the tenant's domain>`. A tenant has it
 while the cluster reports its licences and its Cluster claim names a store
 (`spec.catalogue.storeUrl`), both of which an installation does by default;
-the platform tenant never has it.
+the platform tenant never has it. The store named there is the store's API,
+`https://store-service.aluvian.io` by default, and must not be an address a
+cluster's own App Store app could have (`store.<a domain a cluster is
+installed under>`).
 
 ```bash
 kubectl gentian apps list --tenant acme --available           # what the tenant's catalogues offer

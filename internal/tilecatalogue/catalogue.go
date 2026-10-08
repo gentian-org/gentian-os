@@ -103,7 +103,7 @@ type Catalogue struct {
 // what the usher answers and whether the app is there cannot differ.
 type AppStore struct {
 	// Offered is whether licence reporting is on and the Cluster claim names
-	// a store.
+	// a store that is not one of this cluster's own hosts.
 	Offered bool `json:"offered"`
 	// Reason says why not, as one of the AppStoreReason words.
 	Reason string `json:"reason,omitempty"`
@@ -117,6 +117,10 @@ const (
 	// AppStoreReasonNoStore: the Cluster claim names no store
 	// (spec.catalogue.storeUrl), or names one that is not an https address.
 	AppStoreReasonNoStore = "no-store-configured"
+	// AppStoreReasonOwnHost: the address the Cluster claim names has the host
+	// this cluster serves a tenant's App Store app on (store.<the tenant's
+	// domain>), so what answers there is the app and not a store.
+	AppStoreReasonOwnHost = "store-address-is-own-host"
 )
 
 // header explains the projected file to whoever opens the ConfigMap, which is

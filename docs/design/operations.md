@@ -237,7 +237,7 @@ answer (`GET /v1/tenants/{tenant}/tiles`) carries
 operator places the App Store app on no tenant and removes it where it was,
 and no App Store tile is shown; the installer also leaves
 `catalogue.storeUrl` out of a new Cluster claim. (A cluster that reports and
-names no store has none either, and answers `"reason": "no-store-configured"`.) Everything else runs as before, and apps are
+names no store has none either, and answers `"reason": "no-store-configured"`; one whose claim names its own App Store app's address answers `"reason": "store-address-is-own-host"`.) Everything else runs as before, and apps are
 installed by command.
 
 **For whoever receives it.** The request above is also written down as a
