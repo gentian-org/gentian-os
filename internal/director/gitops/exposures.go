@@ -71,11 +71,23 @@ type Exposure struct {
 	// domain: the approver's own word, which the profile's entry must match.
 	// One surface holds the main address at a time.
 	Apex bool `json:"apex,omitempty"`
+	// ApexAcknowledgedBy and ApexAcknowledgedAt are who acknowledged the rule
+	// for a website on the main address -- only a site whose scripts the
+	// organisation itself controls -- and when. The approver's, from the
+	// caller's token, on every publication and every review of an apex
+	// entry. Empty on an entry approved before the rule was asked.
+	ApexAcknowledgedBy string `json:"apexAcknowledgedBy,omitempty"`
+	ApexAcknowledgedAt string `json:"apexAcknowledgedAt,omitempty"`
 }
 
 // ErrMainAddressHeld is a second surface asked for the cluster's main
 // address while another holds it.
 var ErrMainAddressHeld = errors.New("the cluster's main address is already held")
+
+// ErrMainAddressNotAcknowledged is a surface asked for the cluster's main
+// address without the approver's acknowledgement of the rule for it.
+var ErrMainAddressNotAcknowledged = errors.New(
+	"a website on the cluster's main address needs the approver's acknowledgement of the rule for it")
 
 // live reports an entry that has not expired.
 func (e Exposure) live(now time.Time) bool {
@@ -160,6 +172,12 @@ func (g *GitOps) PublishExposure(ctx context.Context, tenant string, e Exposure,
 		}
 	}
 
+	if e.Apex && e.ApexAcknowledgedBy == "" {
+		// The API asks first and explains; this is the same rule where the
+		// entry is written, so no caller of this package can skip it.
+		return Result{}, ErrMainAddressNotAcknowledged
+	}
+
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	have, err := g.tenantExposures(ctx, tenant)
@@ -182,6 +200,14 @@ func (g *GitOps) PublishExposure(ctx context.Context, tenant string, e Exposure,
 	replaced := false
 	now := time.Now().UTC().Format(time.RFC3339)
 	e.LastReviewedBy, e.LastReviewedAt = e.Owner, now
+	// The acknowledgement is dated here, like the review, and is never carried
+	// over from the old entry: what is recorded is always somebody who was
+	// told, for this publication or this review. Only an apex entry has one.
+	if e.Apex {
+		e.ApexAcknowledgedAt = now
+	} else {
+		e.ApexAcknowledgedBy, e.ApexAcknowledgedAt = "", ""
+	}
 	verb := "Publish"
 	for _, h := range have {
 		if h.Key() == e.Key() {
@@ -270,6 +296,12 @@ func renderExposures(tenant string, exposures []Exposure) string {
 		if e.Apex {
 			b.WriteString("      # For the cluster's main address: the bare domain.\n")
 			b.WriteString("      apex: true\n")
+		}
+		if e.ApexAcknowledgedBy != "" {
+			b.WriteString("      # Who acknowledged the rule for the main address (only a site whose\n")
+			b.WriteString("      # scripts the organisation itself controls), and when.\n")
+			b.WriteString("      apexAcknowledgedBy: " + e.ApexAcknowledgedBy + "\n")
+			b.WriteString("      apexAcknowledgedAt: " + e.ApexAcknowledgedAt + "\n")
 		}
 		if e.ExpiresAt != "" {
 			b.WriteString("      expiresAt: " + e.ExpiresAt + "\n")

@@ -170,7 +170,10 @@ func TestAnApproverNeedNotBeAnAdministrator(t *testing.T) {
 
 const (
 	userSitePath = "/v1/tenants/user/exposures/website/site"
-	mainAddress  = `{"apex":true,"reason":"our public website"}`
+	mainAddress  = `{"apex":true,"acknowledgeMainAddressRule":true,"reason":"our public website"}`
+	// unacknowledged is the same request from an approver who has not been
+	// told the rule for the main address yet.
+	unacknowledged = `{"apex":true,"reason":"our public website"}`
 )
 
 // On a single-tenancy cluster the user tenant's perimeter approver may ask
@@ -205,6 +208,12 @@ func TestTheUserTenantPublishesAWebsiteOnTheMainAddress(t *testing.T) {
 	entry, _ := live[0].(map[string]any)
 	if entry["apex"] != true || entry["owner"] != "uma" || entry["reviewAt"] == "" || entry["publishedAt"] == "" {
 		t.Fatalf("the registry entry = %v; it must say apex, the owner and the dates", entry)
+	}
+	if entry["apexAcknowledgedBy"] != "uma" || entry["apexAcknowledgedAt"] == nil || entry["apexAcknowledgedAt"] == "" {
+		t.Fatalf("the registry entry = %v; it must say who acknowledged the rule for the main address, and when", entry)
+	}
+	if !strings.Contains(patch, "apexAcknowledgedBy: uma") || !strings.Contains(patch, "apexAcknowledgedAt: ") {
+		t.Fatalf("the Tenant patch does not record the acknowledgement:\n%s", patch)
 	}
 
 	// One surface at a time: a second is refused, and told who holds it.
@@ -266,6 +275,62 @@ func TestTheMainAddressIsRefusedEverywhereElse(t *testing.T) {
 		// Without apex the same request is an ordinary surface, as before.
 		if code, body := h.do(t, "PUT", tc.path, tok, `{"reason":"a public page"}`); code != http.StatusAccepted {
 			t.Errorf("%s: an ordinary surface: %d %v", tc.what, code, body)
+		}
+	}
+}
+
+// A website on the main address is published only by an approver who was told
+// what a script there can do and said the site is one whose scripts the
+// organisation controls. Without that word the answer is the warning, naming
+// the field, and nothing is committed -- on a first publication and on a
+// review alike.
+func TestTheMainAddressNeedsTheApproversAcknowledgement(t *testing.T) {
+	h := startTenancy(t, &residueOperator{}, "single", nil)
+	uma := h.token(t, "tenant-user", "uma")
+
+	refused := func(when, tok, payload string) {
+		t.Helper()
+		before := h.tip(t)
+		code, body := h.do(t, "PUT", userSitePath, tok, payload)
+		msg, _ := body["error"].(string)
+		if code != http.StatusBadRequest {
+			t.Fatalf("%s: %d %v, want 400", when, code, body)
+		}
+		for _, want := range []string{
+			`"acknowledgeMainAddressRule": true`, "cookies", "signing in",
+			"an account its author chose", "no third-party scripts", "no pages uploaded by users",
+			"Nothing was changed",
+		} {
+			if !strings.Contains(msg, want) {
+				t.Fatalf("%s: the refusal does not say %q:\n%s", when, want, msg)
+			}
+		}
+		if h.tip(t) != before {
+			t.Fatalf("%s: the refused request committed anyway", when)
+		}
+	}
+	refused("no acknowledgement", uma, unacknowledged)
+	refused("an acknowledgement of false", uma, `{"apex":true,"acknowledgeMainAddressRule":false}`)
+
+	if code, body := h.do(t, "PUT", userSitePath, uma, mainAddress); code != http.StatusAccepted {
+		t.Fatalf("PUT = %d %v", code, body)
+	}
+	// A review is asked again: the entry's old acknowledgement is not the
+	// reviewer's.
+	refused("a review without one", uma, unacknowledged)
+
+	// An ordinary surface is not asked, and records none even when sent one.
+	if code, body := h.do(t, "PUT", "/v1/tenants/user/exposures/nextcloud/shares", uma,
+		`{"acknowledgeMainAddressRule":true,"reason":"shared calendars"}`); code != http.StatusAccepted {
+		t.Fatalf("an ordinary surface: %d %v", code, body)
+	}
+	_, body := h.do(t, "GET", "/v1/tenants/user/exposures", uma, "")
+	live, _ := body["live"].([]any)
+	for _, l := range live {
+		entry, _ := l.(map[string]any)
+		_, has := entry["apexAcknowledgedBy"]
+		if apex := entry["apex"] == true; apex != has {
+			t.Fatalf("entry %v: an acknowledgement belongs to the main address's entry and to no other", entry)
 		}
 	}
 }

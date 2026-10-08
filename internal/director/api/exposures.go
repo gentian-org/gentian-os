@@ -54,6 +54,12 @@ type publishExposureRequest struct {
 	// time. The profile's entry has to be one declared for it (apex: true);
 	// the operator checks that and says so on the Component.
 	Apex bool `json:"apex,omitempty"`
+	// AcknowledgeMainAddressRule is the approver saying they were told what
+	// a script on the main address can do to people's sign-in, and that the
+	// site is one whose scripts their organisation controls. Required with
+	// apex, on a first publication and on every review; refused without
+	// (mainAddressWarning). It means nothing on any other surface.
+	AcknowledgeMainAddressRule bool `json:"acknowledgeMainAddressRule,omitempty"`
 }
 
 // tenantExposures answers what this tenant publishes: the registry.
@@ -125,6 +131,12 @@ func (s *Server) publishExposure(w http.ResponseWriter, r *http.Request, c call)
 			s.fail(w, r, http.StatusConflict, mainAddressRefused)
 			return
 		}
+		// Asked after the mode, so nobody is told to acknowledge a rule for
+		// something this cluster would refuse anyway.
+		if !body.AcknowledgeMainAddressRule {
+			s.fail(w, r, http.StatusBadRequest, mainAddressWarning)
+			return
+		}
 	}
 
 	now := time.Now()
@@ -176,11 +188,19 @@ func (s *Server) publishExposure(w http.ResponseWriter, r *http.Request, c call)
 		Reason:    strings.TrimSpace(body.Reason),
 		Apex:      body.Apex,
 	}
+	if body.Apex {
+		// Who acknowledged is the caller, from the token like the owner.
+		e.ApexAcknowledgedBy = c.meta.Subject
+	}
 	res, err := s.cfg.Repo.PublishExposure(r.Context(), r.PathValue("t"), e, c.meta)
 	if err != nil && errors.Is(err, gitops.ErrInvalidName) {
 		// A name that is not a name is the caller's mistake, and the message
 		// names the value rather than arriving as a rejected commit.
 		s.fail(w, r, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err != nil && errors.Is(err, gitops.ErrMainAddressNotAcknowledged) {
+		s.fail(w, r, http.StatusBadRequest, mainAddressWarning)
 		return
 	}
 	if err != nil && errors.Is(err, gitops.ErrMainAddressHeld) {
@@ -195,6 +215,23 @@ func (s *Server) publishExposure(w http.ResponseWriter, r *http.Request, c call)
 // tenant of a single-tenancy cluster.
 const mainAddressRefused = "a website on the cluster's main address is for the user tenant of a single-tenancy cluster only. " +
 	"On a multi-tenancy cluster the main address is the sign-in form, and the platform tenant's own page is published at install. " +
+	"Nothing was changed"
+
+// mainAddressWarning is the answer to apex: true without the acknowledgement:
+// what the approver has to know before a website goes on the main address,
+// and the field that says they do. The platform cannot check what a website
+// loads, so the rule is the approver's to keep, and they are told it here, at
+// the one place a website gets onto the address.
+const mainAddressWarning = "a website on the cluster's main address needs your acknowledgement (\"acknowledgeMainAddressRule\": true). " +
+	"Any script that runs in a page on the main address can set cookies for the whole domain, " +
+	"and browsers send those cookies to the desktop, the consoles and sign-in as well. " +
+	"Such a script cannot read anybody's session. " +
+	"It can stop people from signing in until they clear their cookies, " +
+	"and it can sign a person in to an account its author chose, without the person noticing, so that what they do there ends up in that account. " +
+	"The platform cannot check what a website loads. " +
+	"The rule: publish here only a site whose scripts your organisation itself controls -- " +
+	"no third-party scripts (analytics, embeds, widgets, anything loaded from another host) and no pages uploaded by users. " +
+	"If that is true of this site, send the request again with \"acknowledgeMainAddressRule\": true; your name and the time are recorded with the entry. " +
 	"Nothing was changed"
 
 // withdrawExposure takes one down.

@@ -239,6 +239,20 @@ type TenantExposure struct {
 	// tenant of a single-tenancy cluster and for one surface at a time.
 	// +optional
 	Apex bool `json:"apex,omitempty"`
+
+	// ApexAcknowledgedBy is the subject that acknowledged the rule for a
+	// website on the main address, and ApexAcknowledgedAt when: only a site
+	// whose scripts the organisation itself controls. A script on the bare
+	// domain can set cookies the browser sends to the sign-in addresses, and
+	// the platform cannot check what a site loads, so the approver is told
+	// and says so. Set by the director from the caller's token, on an apex
+	// entry only. It is a record: the operator publishes by Apex, and an
+	// entry approved before the rule was asked carries neither.
+	// +optional
+	// +kubebuilder:validation:MaxLength=256
+	ApexAcknowledgedBy string `json:"apexAcknowledgedBy,omitempty"`
+	// +optional
+	ApexAcknowledgedAt *metav1.Time `json:"apexAcknowledgedAt,omitempty"`
 }
 
 // Enablement is this entry as the Component carries it.

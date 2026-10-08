@@ -398,6 +398,21 @@ spec:
                         neither alone publishes anything. It is honoured for the one user
                         tenant of a single-tenancy cluster and for one surface at a time.
                       type: boolean
+                    apexAcknowledgedAt:
+                      format: date-time
+                      type: string
+                    apexAcknowledgedBy:
+                      description: |-
+                        ApexAcknowledgedBy is the subject that acknowledged the rule for a
+                        website on the main address, and ApexAcknowledgedAt when: only a site
+                        whose scripts the organisation itself controls. A script on the bare
+                        domain can set cookies the browser sends to the sign-in addresses, and
+                        the platform cannot check what a site loads, so the approver is told
+                        and says so. Set by the director from the caller's token, on an apex
+                        entry only. It is a record: the operator publishes by Apex, and an
+                        entry approved before the rule was asked carries neither.
+                      maxLength: 256
+                      type: string
                     expiresAt:
                       description: |-
                         ExpiresAt is when it stops answering, for a surface published for a
