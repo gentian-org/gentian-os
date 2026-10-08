@@ -384,6 +384,13 @@ asked for (`tenancyMode` on the Cluster claim).
 | `console.<kernel-domain>` | leads to that page | the user tenant's desktop |
 | The **platform admin** | `admin@<kernel-domain>` at `https://platform.<kernel-domain>/`; admin console at `admin.platform.<kernel-domain>` | the same |
 
+**On a single-tenancy cluster your website can live at the main address.**
+Install an app that offers a public website for it, then publish that surface
+for the main address (the user admin approves it, like every public surface).
+`https://<kernel-domain>/` and `www.` then show the website. Sign-in is at
+`https://console.<kernel-domain>/`, and `https://<kernel-domain>/sign-in`
+always leads there.
+
 **On a single-tenancy cluster there is nothing to create.** A second tenant
 is refused, with a message that names the mode — in the console, by the CLI
 and by the cluster itself. The user admin installs apps for the tenant `user`

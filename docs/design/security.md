@@ -211,6 +211,32 @@ The clients are the `store: llm` rows of `scripts/tests/store-clients.yaml`, eac
 
 Not covered: **real vLLM instances.** Their chart (`kernel/services/llm/chart`) names the v4 namespace and nothing in this repository installs it on the current layout, so there is no pod for a policy to select. A cluster that runs one in `system-llm` gets no policy for it from here.
 
+### 2.10 A tenant's website on the cluster's main address
+
+On a single-tenancy cluster the user tenant may publish a public website on
+the cluster's bare domain ([routing.md §5](routing.md#5-redirects-and-url-control)).
+It is the most visible page of the cluster and nobody is signed in on it.
+
+| Control | State |
+| --- | --- |
+| Only the user tenant of a `single` cluster, one surface at a time | Built: the director refuses anything else (`409`), and the operator publishes nothing for it |
+| Two people say so: the profile's author (`apex: true` on the entry) and the tenant's perimeter approver (`apex: true` on the request, `can_expose`) | Built |
+| Recorded with owner, publish date and review date, like every published surface | Built (the exposure registry) |
+| Served from the tenant's DMZ by a proxy that passes no cookie, token or identity header in, and no `Set-Cookie` out | Built |
+| `/branding/`, `/sign-in`, `/.well-known/acme-challenge/` and `/.well-known/pki-validation/` stay the platform's | Built, twice: route precedence at the Gateway, and `404` in the website's proxy |
+| `https://<kernelDomain>/sign-in` always leads to sign-in | Built |
+| A script on the website cannot disturb sign-in on the other addresses | **Not built.** See below |
+
+**The remaining risk.** A script in a page on the bare domain can plant a
+cookie for the whole domain. It cannot read or forge anybody's session. It
+can stop a visitor from signing in until they clear their cookies, and it can
+leave a visitor signed in to an account the page's author chose. The same is
+true today of every app host on a single-tenancy cluster; a public website
+makes it more likely, because of third-party scripts and more editors. The
+fix (`__Host-` cookie names) is not available as configuration in Envoy
+Gateway 1.9.2 or Keycloak. Detail and options:
+[networking.md §8.7](../plans/networking.md#87-a-website-on-the-clusters-main-address).
+
 ---
 
 ## 3. Architecture

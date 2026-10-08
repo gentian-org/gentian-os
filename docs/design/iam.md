@@ -55,7 +55,7 @@ its own. How many there may be, and where their hosts are, is the cluster's
 | Its admin console, its apps | `admin.<tenant>.<KERNEL_DOMAIN>`, `<app>.<tenant>.<KERNEL_DOMAIN>` | `admin.<KERNEL_DOMAIN>`, `<app>.<KERNEL_DOMAIN>` |
 | Its realm | `<tenant>` | `user` |
 | Its administrator | the **tenant admin**, `admin@<tenant>.<KERNEL_DOMAIN>` | the **user admin**, `user-admin@<KERNEL_DOMAIN>` |
-| The bare domain, `www` | the concierge's address form | the user tenant's desktop |
+| The bare domain, `www` | the concierge's address form | the user tenant's desktop; or its public website, if it put one there ([routing.md §5](routing.md#5-redirects-and-url-control)) -- `<KERNEL_DOMAIN>/sign-in` then still leads to the desktop |
 | `console.<KERNEL_DOMAIN>` | sent to the bare domain, like `www` | the user tenant's desktop |
 | The platform admin | `admin@<KERNEL_DOMAIN>`, kernel realm, at `platform.<KERNEL_DOMAIN>` | the same |
 

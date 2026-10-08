@@ -490,6 +490,81 @@ tenancy mode. What a visitor gets there is the mode's
 | `console.<kernelDomain>` | `302` to the bare domain (`kernel-console-redirect`) | the user tenant's desktop itself, routed by its component |
 | `platform.<kernelDomain>` | the platform admin's desktop | the same |
 
+**A website on the main address (single-tenancy only).** The user tenant may
+put a public website on the bare domain. The main address then behaves like
+this:
+
+| Address | no website | website approved, its proxy not up yet | website serving |
+|---|---|---|---|
+| `<kernelDomain>/` | `302` to the desktop | `302` to the desktop | the website |
+| `<kernelDomain>/<any other path>` | the concierge (`404`) | the website's route (answers once the proxy is up) | the website |
+| `<kernelDomain>/sign-in` and below | `302` to the desktop | the same | the same |
+| `<kernelDomain>/branding/` | the concierge | the same | the same |
+| `<kernelDomain>/.well-known/acme-challenge/`, `/.well-known/pki-validation/` | the concierge (`404`) | the same | the same |
+| `www.<kernelDomain>` | `302` to the desktop | `302` to the desktop | `302` to the bare domain, path kept |
+| `console.`, `admin.`, `platform.`, `id.<kernelDomain>` | unchanged | unchanged | unchanged |
+
+The bare domain is the website's one name; `www` redirects to it, as `www`
+redirects everywhere on this platform. Sign-in does not move: the desktop is
+at `console.<kernelDomain>`, and `https://<kernelDomain>/sign-in` always leads
+there, whatever the website does. A multi-tenancy cluster is not affected: its
+main address stays the sign-in form.
+
+*Who may.* Three things must all be true (`main_address.go`):
+
+1. The profile's entry is a perimeter one with `apex: true`. The author says
+   the surface is a website for a bare domain.
+2. The tenant's perimeter approver published it **and** said `apex: true` on
+   the request (`can_expose`, the same relation as every published surface).
+   The entry is in the exposure registry with its owner, publish date and
+   review date, marked `apex: true`.
+3. The cluster's mode is `single`, the tenant is the user tenant on the
+   cluster's own domain and is Ready, and no other surface holds the address.
+
+One surface holds the main address at a time. The director refuses a second
+request with `409` and names the holder. If two entries reach the cluster
+anyway, the one published first keeps the address. The component's
+`MainAddress` condition says which case applies (`Published`, `NotRequested`,
+`MultiTenancy`, `NotTheUserTenant`, `OwnDomain`, `Expired`, `ReservedPath`,
+`TenantNotReady`, `HeldByAnother`, `NotAMainAddressEntry`).
+
+*The platform's paths.* The website can never answer these:
+
+| Path | Why the platform keeps it |
+|---|---|
+| `/branding/` | the consoles load the cluster's brand from here |
+| `/sign-in` and everything below | must always lead to sign-in |
+| `/.well-known/acme-challenge/` | answering it proves control of the domain to a certificate authority; a website that could answer it could get a certificate for the cluster's address |
+| `/.well-known/pki-validation/` | the same, for authorities that use this path |
+
+Everything else under `/.well-known/` is the website's (a Matrix delegation,
+`security.txt`). `/oauth2/` is not on this host: no session lives here.
+
+They are kept twice. At the Gateway each reserved path is a longer match than
+the website's route, so it wins (Envoy Gateway orders Exact, then regular
+expression, then prefix, longer first). And the website's own proxy answers
+`404` for them, so even a moment of mixed routes cannot hand them over. A
+profile that declares a path inside a reserved one is not published at all
+(`ReservedPath`).
+
+*How the routes change.* Three writers ask one function, `mainAddressHolder`,
+so they agree:
+
+- The website's component writes its route in `tenant-user-dmz`, on the
+  perimeter Gateway's listener for the bare domain. No `ReferenceGrant` is
+  needed: the route's backend is its own proxy in the same namespace.
+- The concierge's route steps back from the whole host to the platform's
+  paths (`/branding/` and the two `/.well-known/` paths). Otherwise two routes
+  would match `/` equally and their age would decide.
+- The kernel's redirect drops the front page and keeps `/sign-in`, once the
+  website's proxy has a pod that answers. Until then the front page still
+  leads to the desktop, so the main address never shows an error while a
+  website is coming up.
+
+Withdrawing the exposure (or its expiry) undoes all three on the next
+reconcile after Argo CD applies the commit: usually within a minute or two.
+The main address is then what it was.
+
 On a single-tenancy cluster the redirect of the bare domain is two routes for
 the two listeners the name can arrive on. `kernel-apex-perimeter-redirect`
 attaches to the perimeter's listener for the bare domain and matches only `/`

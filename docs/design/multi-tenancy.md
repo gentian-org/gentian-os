@@ -69,10 +69,17 @@ the sign-in side and the table of addresses):
    custom domain. The install creates none; the platform admin does, in the
    admin console or with `kubectl gentian tenants create`. The bare domain,
    `www` and `console.<KERNEL_DOMAIN>` lead to the concierge's address form.
+   No tenant can put a website on the main address here: it belongs to all
+   of them. A tenant publishes its website under its own hosts, or on a
+   domain of its own (a custom domain).
 4. **`single`: exactly one user tenant, named `user`, on the cluster's own
    addresses.** Its desktop is `console.<KERNEL_DOMAIN>`, its admin console
    `admin.<KERNEL_DOMAIN>`, its apps `<app>.<KERNEL_DOMAIN>`, and the bare
-   domain and `www` lead to its desktop. Its realm is its own, `user`. A
+   domain and `www` lead to its desktop -- or show its public website, if it
+   has put one on the main address
+   ([routing.md §5](routing.md#5-redirects-and-url-control)).
+   `<KERNEL_DOMAIN>/sign-in` leads to the desktop either way. Its realm is
+   its own, `user`. A
    second user tenant is refused in three places that share one rule
    (`internal/tenancy`): the admission webhook, the tenant reconciler and the
    director, each with a message naming the mode. The install creates the

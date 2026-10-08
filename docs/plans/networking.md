@@ -406,7 +406,7 @@ design cannot do for it.
 | **Inbound webhook** (payment provider, git host) | a perimeter path with `authMode: signature`; the proxy verifies the HMAC before the app sees the body | the proxy, then the app | replay protection is the app's unless the proxy keeps nonces |
 | **Automation or agent calling an app API** | `authMode: bearer` on the authenticated edge: JWT verified, no redirect; ext-auth `can_use`; the token is an exchanged one carrying `act` | L2 for reach, L4 for the ceiling | none new |
 | **Agent using tools over MCP** | the MCP gateway, itself an authenticated-edge route with `bearer` | L4 per tool call | none new |
-| **Someone types the cluster's bare domain** | Multi-tenancy: `<kernel>` → the concierge, a perimeter surface of the platform tenant (`tenant-platform-dmz`, `authMode: none`), which asks for an address and forwards to that address's desktop; `www.<kernel>` and `console.<kernel>` redirect to it. Single-tenancy: the edge redirects `<kernel>/` and `www.<kernel>` to the user tenant's desktop, `console.<kernel>` (or its custom domain), once that tenant is Ready; the concierge stays published underneath for `/branding/` | nobody: neither the page nor the redirect holds a session or asks the server anything | which of the two it is is the cluster's tenancy mode, not a count of tenants; before the user tenant of a single-tenancy cluster is Ready the bare domain shows the form |
+| **Someone types the cluster's bare domain** | Multi-tenancy: `<kernel>` → the concierge, a perimeter surface of the platform tenant (`tenant-platform-dmz`, `authMode: none`), which asks for an address and forwards to that address's desktop; `www.<kernel>` and `console.<kernel>` redirect to it. Single-tenancy: the edge redirects `<kernel>/` and `www.<kernel>` to the user tenant's desktop, `console.<kernel>` (or its custom domain), once that tenant is Ready; the concierge stays published underneath for `/branding/`. If the user tenant put a website on the main address (§8.7), the bare domain shows it, `www` leads to it, and `<kernel>/sign-in` still leads to the desktop | nobody: neither the page nor the redirect holds a session or asks the server anything | which of the two it is is the cluster's tenancy mode, not a count of tenants; before the user tenant of a single-tenancy cluster is Ready the bare domain shows the form |
 | **Tenant admin in the console** | `desktop.<t>.<kernel>` → desktop BFF → director with the user's token | L1 the session, the director its own check | the BFF is a relay; it decides nothing |
 | **Platform admin** | `platform.<kernel>` → the platform tenant's desktop BFF in `tenant-platform`, kernel-realm session; writes through the director | same | kernel and tenant realms are different sessions by design; a platform admin acting inside a tenant does so through the director, never through that tenant's zone |
 | **App-to-app inside a tenant** (Nextcloud ↔ Collabora, OpenProject ↔ Nextcloud) | never through the edge: Service-to-Service under NetworkPolicy from `integrations`, credentials from the binding | L5 and the binding | none |
@@ -664,3 +664,72 @@ history of who kept a surface open is as complete as the history of who
 opened it. A cluster with no expiry policy loses nothing but this bound —
 an opaque surface is then exposed for as long as someone remembers to turn
 it off, which is the state every platform without the policy is in today.
+### 8.7 A website on the cluster's main address
+
+On a single-tenancy cluster the user tenant may publish a website on the
+bare domain. It is an ordinary perimeter surface with one more word on it,
+`apex: true`, said twice: by the profile's author on the entry, and by the
+perimeter approver on the enablement. Routes, the table of addresses and the
+conditions are in [routing.md §5](../design/routing.md#5-redirects-and-url-control).
+This section is what it means for the perimeter. All of it is built.
+
+**What it is.** A proxy in `tenant-user-dmz`, like every perimeter surface,
+and a route on the perimeter Gateway's listener for the bare domain. No
+session, no identity headers, no token. The proxy removes `Cookie` and
+`Authorization` from every request and `Set-Cookie` from every answer, as it
+does for every perimeter surface. For this surface it also answers `404` on
+the platform's paths and adds `X-Content-Type-Options: nosniff`. It adds no
+other header: a content security policy is the website's own business.
+
+**The platform's paths.** `/branding/`, `/sign-in`,
+`/.well-known/acme-challenge/` and `/.well-known/pki-validation/` stay the
+platform's. The last two matter because of how certificates are issued:
+port 80 redirects to https, and a certificate authority follows that
+redirect. A website that answered a challenge path could obtain a
+certificate for the cluster's address from any authority. The rest of
+`/.well-known/` is the website's.
+
+**Who approves.** The tenant's perimeter approver (`can_expose`), as for
+every surface. Nothing weaker was added and nothing stronger: the cluster's
+platform admin is not asked. Only the user tenant of a `single` cluster can
+ask, for one surface at a time. On a `multi` cluster the main address belongs
+to all tenants and stays the sign-in form; a tenant there publishes under its
+own hosts or on a domain of its own.
+
+**Cookies: what is safe and what is not.** The platform's session cookies
+are set per host and without a `Domain`. The bare domain has none, the
+website's server receives none, and it cannot set any through its answers.
+
+One thing remains, and the proxy cannot stop it. A script running in a page
+on `<kernel>` can set a cookie for the whole domain (`Domain=<kernel>`). The
+browser then sends that cookie to `console.`, `admin.`, `platform.` and
+`id.<kernel>` too, next to the real one. The Gateway reads the first cookie
+of a name it finds (Envoy 1.39's OAuth2 filter). What follows from that:
+
+| Can the website's page... | Answer |
+|---|---|
+| read somebody's session, or forge one | **No.** The cookies are encrypted and signed with a key the page does not have, and the signature covers the host. |
+| stop a visitor from signing in | **Yes.** A cookie with the right name and a wrong value makes the Gateway reject the session. It lasts until the visitor clears their cookies or the planted cookie expires. |
+| sign a visitor in to an account the page's author chose | **Yes.** The author can plant the cookies of a session of their own. The visitor then works in that account without having chosen it. Their own account is not exposed, but what they type goes to the wrong one. |
+
+This is not new with the website. Every host under the cluster's domain that
+serves pages a tenant writes can do the same, and on a single-tenancy cluster
+every app is such a host. What the website adds is exposure: it is public,
+it often has more editors, and public websites commonly load scripts from
+third parties.
+
+What would close it is the `__Host-` cookie name prefix: browsers refuse a
+`Domain` on such a cookie, so a planted one is never sent. It is not a
+configuration change today and was not built:
+
+- Envoy Gateway 1.9.2 lets a policy name two of the seven cookies (the access
+  and ID token). The other five have fixed names (`OauthHMAC-`,
+  `OauthExpires-`, `RefreshToken-`, `OauthNonce-`, `CodeVerifier-`), and two
+  of those are set with a path other than `/`, which the prefix forbids.
+- Keycloak's cookie names on `id.<kernel>` are fixed in its source.
+
+The choices for an owner who does not accept the risk: keep the website off
+the cluster's domain (a domain of its own), or allow on the main address only
+a website whose scripts the organisation controls. A website can protect its
+visitors itself with a strict content security policy and no third-party
+scripts.

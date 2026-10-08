@@ -476,6 +476,40 @@ Gentian individuals, so an external maintainer can hold a role later without a s
 
 ---
 
+### 2.10 A public website surface, and the main address
+
+A profile publishes pages without sign-in by declaring a perimeter entry:
+
+```yaml
+expose:
+  - name: site
+    surface: perimeter
+    authMode: none        # written out: nobody signs in to read it
+    paths: ["/"]          # only what is listed is published
+    backend: {service: website, port: 8080}
+```
+
+Declaring it publishes nothing. The tenant's perimeter approver publishes it
+(`PUT /v1/tenants/{t}/exposures/{install}/{name}`), with an owner and a review
+date. It then answers at `<subDomain or component name>.<tenant's domain>`,
+from a proxy that passes no cookies either way.
+
+"For the main address" is the same entry with `apex: true` (and no
+`subDomain`). It asks for the cluster's bare domain and needs all of this:
+
+- the cluster's tenancy mode is `single` and the tenant is its user tenant;
+- the approver sends `{"apex": true}` with the request -- an entry that says
+  `apex` is not published at all without it;
+- no other surface holds the main address;
+- the entry declares no path inside `/branding/`, `/sign-in`,
+  `/.well-known/acme-challenge/` or `/.well-known/pki-validation/`. Those stay
+  the platform's.
+
+The component's `MainAddress` condition says whether it is there and, if not,
+why. A profile that should also work on a multi-tenancy cluster declares a
+second entry without `apex`. A fixture profile is in
+`internal/controller/testdata/main-address/website-profile.yaml`.
+
 ## 3. The second axis — scope (blast radius)
 
 Rung and scope are **independent**. Minimise both.
