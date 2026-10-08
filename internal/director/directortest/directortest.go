@@ -97,8 +97,9 @@ func Remote(t testing.TB, tenants ...string) string {
 	t.Helper()
 	remote := filepath.Join(t.TempDir(), "remote.git")
 	Git(t, "", "init", "--bare", "--initial-branch=main", remote)
-	// No background maintenance on the remote: a detached `git gc --auto`
-	// still writing when the test ends is what makes TempDir cleanup fail.
+	// No maintenance on the remote at all: it is started there by whoever
+	// pushes, and a detached `git gc --auto` still writing when the test ends
+	// is what makes TempDir cleanup fail.
 	Git(t, "", "--git-dir", remote, "config", "gc.auto", "0")
 	Git(t, "", "--git-dir", remote, "config", "receive.autogc", "false")
 	seed := t.TempDir()
@@ -143,9 +144,13 @@ func Clone(t testing.TB, remote string) string {
 }
 
 // Git runs git and fails the test on error, returning trimmed output.
+//
+// Housekeeping stays in the foreground, as it does for the director's own
+// git: a repack git detached is still writing into a directory the test is
+// about to remove, and the removal fails with "directory not empty".
 func Git(t testing.TB, dir string, args ...string) string {
 	t.Helper()
-	cmd := exec.Command("git", args...)
+	cmd := exec.Command("git", append([]string{"-c", "maintenance.autoDetach=false", "-c", "gc.autoDetach=false"}, args...)...)
 	if dir != "" {
 		cmd.Dir = dir
 	}

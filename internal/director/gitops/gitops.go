@@ -189,11 +189,28 @@ func (g *GitOps) requirePath() error {
 // not release either.
 const gitTimeout = 5 * time.Minute
 
+// inForeground keeps git's housekeeping inside the command that set it off.
+//
+// A fetch, a commit and a merge each end by asking whether the repository
+// wants repacking, and when it does git does the work in a process it
+// detaches and does not wait for. The command has returned and something is
+// still writing under .git: the next reset or clean runs beside it, nothing
+// that waits for the director's git waits for that, and the process is an
+// orphan of a director that reaps nobody. How often is up to git -- 2.55
+// repacks from a hundred loose objects where earlier versions wanted
+// thousands, so there it happens within a few writes.
+//
+// The checkout still gets its housekeeping, which a clone that lives as long
+// as the director needs. It is done before the command returns, under the
+// lock and the timeout the command already has. maintenance.autoDetach is
+// the setting since git 2.47 and gc.autoDetach the one before it.
+var inForeground = []string{"-c", "maintenance.autoDetach=false", "-c", "gc.autoDetach=false"}
+
 // gitCmd builds a git invocation bounded by both the caller's context and
 // gitTimeout, whichever ends first.
 func (g *GitOps) gitCmd(ctx context.Context, args ...string) (*exec.Cmd, context.CancelFunc) {
 	cctx, cancel := context.WithTimeout(ctx, gitTimeout)
-	return exec.CommandContext(cctx, "git", args...), cancel
+	return exec.CommandContext(cctx, "git", append(append([]string{}, inForeground...), args...)...), cancel
 }
 
 // readFreshness is how stale the checkout may be when answering a read.
