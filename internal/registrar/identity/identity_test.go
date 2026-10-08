@@ -737,6 +737,11 @@ func TestActivationWithoutAnAddressReturnsTheLink(t *testing.T) {
 	if len(f.callsTo(http.MethodPut, "/execute-actions-email")) != 0 {
 		t.Fatal("nothing should be mailed without an address")
 	}
+	// A link that is shown has reached no address, so it must not be one
+	// Keycloak takes as proof of an address.
+	if strings.Contains(links[0].body, "VERIFY_EMAIL") {
+		t.Fatalf("a shown link must not verify an address: %+v", links)
+	}
 }
 
 // Given an address, it becomes the recovery address and the link is mailed
@@ -762,6 +767,14 @@ func TestActivationWithAnAddressMailsIt(t *testing.T) {
 	mails := f.callsTo(http.MethodPut, "/execute-actions-email")
 	if len(mails) != 1 || strings.Contains(mails[0].body, "CONFIGURE_TOTP") {
 		t.Fatalf("an enrolled factor is not asked for again: %+v", mails)
+	}
+	// Keycloak records the address as verified only when the mailed link
+	// names VERIFY_EMAIL; without it the administrator stays "pending".
+	if !strings.Contains(mails[0].body, "VERIFY_EMAIL") || !strings.Contains(mails[0].body, "UPDATE_PASSWORD") {
+		t.Fatalf("the mailed link must verify the address it was sent to: %+v", mails)
+	}
+	if strings.Contains(puts[0].body, "VERIFY_EMAIL") {
+		t.Fatalf("VERIFY_EMAIL belongs to the mailed link, not to the account: %+v", puts)
 	}
 }
 

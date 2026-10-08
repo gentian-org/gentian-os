@@ -717,7 +717,14 @@ func (c *Client) ActivateAccount(ctx context.Context, r Realm, id, email string,
 	// address stays on the account for later resets either way.
 	mailError := ""
 	if mailTo != "" {
-		err := c.call(ctx, r, http.MethodPut, "/users/"+url.PathEscape(id)+"/execute-actions-email", q, actions, nil)
+		// VERIFY_EMAIL rides in the mailed link only. Following a link that
+		// arrived at the address is what proves the address, and Keycloak
+		// (26.8 on) records that only when the link names the action; before,
+		// any such link did. It adds no step: the link itself satisfies it.
+		// It is not put on the account or in a link that is shown instead,
+		// because nothing has reached the address then.
+		mailed := append([]string{"VERIFY_EMAIL"}, actions...)
+		err := c.call(ctx, r, http.MethodPut, "/users/"+url.PathEscape(id)+"/execute-actions-email", q, mailed, nil)
 		if err == nil {
 			return Activation{Mailed: true, Email: mailTo, Actions: actions}, nil
 		}

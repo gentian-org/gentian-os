@@ -1889,14 +1889,19 @@ issue_admin_activation() {
         email=""
     fi
     if [[ -n "${email}" ]]; then
-        local cur upd
+        local cur upd mailed_actions
+        # VERIFY_EMAIL in the mailed link only: following a link that arrived
+        # at the address is what proves the address, and Keycloak (26.8 on)
+        # records that only when the link names the action. It adds no step.
+        # The link shown below does not carry it: nothing reached the address.
+        mailed_actions="$(jq -c '["VERIFY_EMAIL"] + .' <<<"${actions}")"
         cur="$(curl -sS --max-time 15 -H "${auth}" "${base}/admin/realms/${realm}/users/${uid}")"
         upd="$(printf '%s' "${cur}" | jq --arg e "${email}" '.email = $e | .attributes["gentian.inviteEmail"] = [$e]')"
         if curl -sf --max-time 15 -X PUT -H "${auth}" -H "Content-Type: application/json" \
                 "${base}/admin/realms/${realm}/users/${uid}" -d "${upd}" >/dev/null &&
            curl -sf --max-time 30 -X PUT -H "${auth}" -H "Content-Type: application/json" \
                 "${base}/admin/realms/${realm}/users/${uid}/execute-actions-email?client_id=${client}${redirect:+&redirect_uri=$(jq -rn --arg r "${redirect}" '$r|@uri')}" \
-                -d "${actions}" >/dev/null; then
+                -d "${mailed_actions}" >/dev/null; then
             success "  Activation link mailed to ${email}: it sets ${username}'s password$( [[ "${actions}" == *TOTP* ]] && echo ' and second factor')."
             return 0
         fi
