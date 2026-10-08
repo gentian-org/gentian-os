@@ -96,7 +96,7 @@ func (e *ErrProfileNameTaken) Error() string {
 // a catalogue entry of the same name would have Argo CD and Helm each
 // applying their own profile over the other's. A test holds this list to the
 // chart.
-var platformProfiles = map[string]bool{"admin-console": true, "concierge": true, "desktop": true}
+var platformProfiles = map[string]bool{"admin-console": true, "app-store": true, "concierge": true, "desktop": true}
 
 // PlatformProfile reports whether name is a profile the platform ships.
 func PlatformProfile(name string) bool { return platformProfiles[name] }
