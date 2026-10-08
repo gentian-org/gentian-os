@@ -25,6 +25,7 @@ import (
 
 	"sigs.k8s.io/yaml"
 
+	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/profilebundle"
 )
 
@@ -133,6 +134,67 @@ func (g *GitOps) ProfileOnCluster(ctx context.Context, name string) (Materialise
 		return MaterialisedProfile{}, err
 	}
 	return g.materialised(name)
+}
+
+// ErrProfileUnreadable is a profile in the cluster's catalogue directory
+// that does not read as a ComponentProfile, so that nothing can be said of
+// what installing it would do.
+var ErrProfileUnreadable = errors.New("catalogue: the profile on this cluster cannot be read")
+
+// ProfileDefinition reads a profile of the cluster's catalogue directory as
+// the cluster holds it: the document, with what its bundle patch puts on it
+// (where it came from, and the bundle itself). Nil when the directory holds
+// no profile of this name.
+//
+// For what an install by name has to be asked before it is committed -- the
+// director does not read the cluster, and this directory is what the cluster
+// was given.
+func (g *GitOps) ProfileDefinition(ctx context.Context, name string) (*gentianov1alpha1.ComponentProfile, error) {
+	if !ValidName(name) {
+		return nil, fmt.Errorf("%w: profile %q", ErrInvalidName, name)
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if err := g.ensureRepoRead(ctx); err != nil {
+		return nil, err
+	}
+	dir := filepath.Join(g.path, "clusters", g.cluster, CatalogueDir)
+	body, err := os.ReadFile(filepath.Join(dir, name+".yaml"))
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	profile, err := profilebundle.ReadProfile(body)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %s: %v", ErrProfileUnreadable, name, err)
+	}
+	if profile.Name != name {
+		return nil, fmt.Errorf("%w: %s.yaml holds a profile named %q", ErrProfileUnreadable, name, profile.Name)
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, BundleFile(name)))
+	if os.IsNotExist(err) {
+		return profile, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var patch struct {
+		Metadata struct {
+			Annotations map[string]string `json:"annotations"`
+		} `json:"metadata"`
+	}
+	if err := yaml.Unmarshal(raw, &patch); err != nil {
+		return nil, fmt.Errorf("%w: the bundle of %s does not parse: %v", ErrProfileUnreadable, name, err)
+	}
+	if profile.Annotations == nil {
+		profile.Annotations = map[string]string{}
+	}
+	for key, value := range patch.Metadata.Annotations {
+		profile.Annotations[key] = value
+	}
+	return profile, nil
 }
 
 // materialised reads one profile's presence and origin from the checkout.

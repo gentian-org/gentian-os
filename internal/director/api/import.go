@@ -500,6 +500,14 @@ func (s *Server) importProfiles(ctx context.Context, tenant string, spec *gentia
 		sourceNames = append(sourceNames, src.Name)
 	}
 
+	// No app and no add-on on an address name the platform depends on: the
+	// rule an install is under (reserved_addresses.go), asked of every
+	// definition the tenant would be given, fetched or already here.
+	zone, err := s.reservedAddressZone(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	type fetched struct {
 		source  visibleSource
 		profile *catalogue.Profile
@@ -520,6 +528,14 @@ func (s *Server) importProfiles(ctx context.Context, tenant string, spec *gentia
 		if w.digest == "" {
 			if !here {
 				missing = append(missing, w.what+" (the bundle records no build of it, and no profile of that name is on this cluster for this tenant)")
+				continue
+			}
+			why, err := s.onClusterTakesReservedAddress(ctx, w.name, zone)
+			if err != nil {
+				return nil, err
+			}
+			if why != "" {
+				missing = append(missing, w.what+" ("+why+")")
 			}
 			continue
 		}
@@ -529,6 +545,13 @@ func (s *Server) importProfiles(ctx context.Context, tenant string, spec *gentia
 			continue
 		}
 		if here && have.Digest == digest {
+			why, err := s.onClusterTakesReservedAddress(ctx, w.name, zone)
+			if err != nil {
+				return nil, err
+			}
+			if why != "" {
+				missing = append(missing, w.what+" ("+why+")")
+			}
 			continue
 		}
 		if s.cfg.Catalogue == nil || len(sources) == 0 {
@@ -562,6 +585,10 @@ func (s *Server) importProfiles(ctx context.Context, tenant string, spec *gentia
 		if got == nil {
 			missing = append(missing, fmt.Sprintf("%s at %s (none of this cluster's catalogues serves that build: %s)",
 				w.what, profilebundle.Short(digest), strings.Join(sourceNames, ", ")))
+			continue
+		}
+		if why := fetchedTakesReservedAddress(got.profile.Definition, got.source.origin(tenant), zone); why != "" {
+			missing = append(missing, w.what+" ("+why+")")
 			continue
 		}
 		toCommit = append(toCommit, *got)

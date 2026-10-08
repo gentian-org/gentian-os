@@ -95,6 +95,25 @@ func Declared(body []byte) ([]Ref, error) {
 	return out, nil
 }
 
+// ReadProfile reads the profile of a bundle file -- its first document -- as
+// the operator would read it from the cluster: with the defaults the API
+// server applies, into the type every reconciler reads a profile through.
+// For asking, before a bundle is installed, what the profile would do there.
+// It holds the file to no rule but that one: Check does the rest.
+func ReadProfile(body []byte) (*gentianov1alpha1.ComponentProfile, error) {
+	docs, err := documents(body)
+	if err != nil {
+		return nil, err
+	}
+	if len(docs) == 0 {
+		return nil, fmt.Errorf("it holds no document")
+	}
+	if head := headOf(docs[0]); head.kind != "ComponentProfile" {
+		return nil, fmt.Errorf("its first document is a %s, not a ComponentProfile", orNothing(head.kind))
+	}
+	return decode(docs[0])
+}
+
 // PlatformComposition reports whether name is the Composition that renders
 // every app that brings none: the platform's, and never a bundle's.
 func PlatformComposition(name string) bool { return name == defaultComposition }

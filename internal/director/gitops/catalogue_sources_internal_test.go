@@ -21,6 +21,8 @@ import (
 	"testing"
 
 	"sigs.k8s.io/yaml"
+
+	"github.com/gentian-org/gentian-os/internal/hostnames"
 )
 
 // A tenant's manifest is edited as text, so that the comments in it and
@@ -375,5 +377,30 @@ func TestWhichOriginMayTakeAName(t *testing.T) {
 		if errors.As(err, &taken) != c.taken {
 			t.Errorf("%s from %s over %+v: %v, want taken=%v", c.name, c.origin, c.have, err, c.taken)
 		}
+	}
+}
+
+// A reserved address name is held by a profile the platform ships, and by
+// nothing a catalogue can bring: every owner on the list is a name the
+// director refuses to materialise from any catalogue.
+func TestEveryHolderOfAReservedAddressIsAPlatformProfile(t *testing.T) {
+	holders := 0
+	for _, r := range hostnames.PlatformLabels() {
+		if r.Owner == "" {
+			continue
+		}
+		holders++
+		if !PlatformProfile(r.Owner) {
+			t.Errorf("%s is held by %s, which is not a profile the platform ships: a catalogue could publish it", r.Label, r.Owner)
+		}
+		for _, origin := range []string{"cluster/main", "tenant/acme/ours"} {
+			var taken *ErrProfileNameTaken
+			if err := nameTaken(r.Owner, origin, MaterialisedProfile{}); !errors.As(err, &taken) || !taken.Platform {
+				t.Errorf("a profile named %s from %s would be materialised: %v", r.Owner, origin, err)
+			}
+		}
+	}
+	if holders == 0 {
+		t.Fatal("no reserved address name has a holder")
 	}
 }

@@ -80,6 +80,7 @@ type Repository interface {
 	SetTenantSecurityPolicy(ctx context.Context, tenant string, policy gitops.SecurityPolicy, meta gitops.Meta) (gitops.Result, error)
 	MaterialiseProfile(ctx context.Context, name, digest string, body []byte, origin string, meta gitops.Meta) (gitops.Result, error)
 	ProfileOnCluster(ctx context.Context, name string) (gitops.MaterialisedProfile, error)
+	ProfileDefinition(ctx context.Context, name string) (*gentianov1alpha1.ComponentProfile, error)
 	CatalogueDeclares(ctx context.Context, kind, name string) (string, error)
 	RetireProfile(ctx context.Context, name string, meta gitops.Meta) (gitops.Result, error)
 	Catalogue(ctx context.Context) (gitops.CatalogueSettings, error)
@@ -835,8 +836,25 @@ func (s *Server) install(w http.ResponseWriter, r *http.Request, c call) {
 	// who an installed app is for. The profile has to be there -- nothing
 	// puts profiles on a cluster ahead of an install any more -- and it has
 	// to be one this tenant may have.
+	//
+	// And it may not take an address name the platform depends on
+	// (internal/hostnames): asked of the bundle once it is fetched and
+	// before it is committed, or of the profile the cluster already holds.
+	zone, err := s.reservedAddressZone(ctx)
+	if err != nil {
+		s.repoError(w, r, err)
+		return
+	}
 	if source != nil {
-		res, ok := s.materialise(w, r, c, tenant, *source, entry, body.Digest)
+		fetched, ok := s.fetchEntry(w, r, *source, entry, body.Digest)
+		if !ok {
+			return
+		}
+		if why := fetchedTakesReservedAddress(fetched.Definition, source.origin(tenant), zone); why != "" {
+			s.refuseReservedAddress(w, r, tenant, "app "+profile, why)
+			return
+		}
+		res, ok := s.commitEntry(w, r, c, tenant, *source, fetched)
 		if !ok {
 			return
 		}
@@ -844,8 +862,19 @@ func (s *Server) install(w http.ResponseWriter, r *http.Request, c call) {
 			s.cfg.Log.InfoContext(ctx, "materialised a catalogue entry",
 				"request_id", reqID(ctx), "coordinate", body.Coordinate, "origin", source.origin(tenant), "commit", res.Commit)
 		}
-	} else if !s.onClusterFor(w, r, tenant, profile, "") {
-		return
+	} else {
+		if !s.onClusterFor(w, r, tenant, profile, "") {
+			return
+		}
+		why, err := s.onClusterTakesReservedAddress(ctx, profile, zone)
+		if err != nil {
+			s.repoError(w, r, err)
+			return
+		}
+		if why != "" {
+			s.refuseReservedAddress(w, r, tenant, "app "+profile, why)
+			return
+		}
 	}
 
 	res, err := s.cfg.Repo.InstallFrom(ctx, tenant, profile, body.Digest, catalogueName, body.DefaultGrant, c.meta)
@@ -985,8 +1014,8 @@ func (s *Server) declaredSources(ctx context.Context, tenant string) string {
 	return "This tenant's catalogues: " + strings.Join(names, ", ") + "."
 }
 
-// materialise fetches the entry a coordinate names and commits it, so the
-// cluster has the profile the tenant's manifest is about to name.
+// fetchEntry reads one bundle from its source and checks it against the
+// digest. It writes nothing.
 //
 // The digest comes with the REQUEST. The bytes come from the SOURCE, which is
 // not trusted: if they do not hash to that digest the request is refused and
@@ -995,18 +1024,6 @@ func (s *Server) declaredSources(ctx context.Context, tenant string) string {
 //
 // The caller has settled, with pinOrigin, that the tenant sees the catalogue
 // and that a digest was stated.
-func (s *Server) materialise(
-	w http.ResponseWriter, r *http.Request, c call, tenant string, source visibleSource, name, digest string,
-) (gitops.Result, bool) {
-	profile, ok := s.fetchEntry(w, r, source, name, digest)
-	if !ok {
-		return gitops.Result{}, false
-	}
-	return s.commitEntry(w, r, c, tenant, source, profile)
-}
-
-// fetchEntry reads one bundle from its source and checks it against the
-// digest. It writes nothing.
 func (s *Server) fetchEntry(
 	w http.ResponseWriter, r *http.Request, source visibleSource, name, digest string,
 ) (*catalogue.Profile, bool) {
@@ -1255,8 +1272,25 @@ func (s *Server) setAddons(w http.ResponseWriter, r *http.Request, c call) {
 	// already hold. Nothing puts profiles on a cluster ahead of an install,
 	// so a name that matches none is refused here: written to the manifest
 	// it would be a selection every screen shows and nothing acts on.
+	//
+	// And an add-on is under the rule an app is under: no entry of its own
+	// on an address name the platform depends on.
+	zone, err := s.reservedAddressZone(ctx)
+	if err != nil {
+		s.repoError(w, r, err)
+		return
+	}
 	for _, name := range bare {
 		if !s.onClusterFor(w, r, tenant, name, profile) {
+			return
+		}
+		why, err := s.onClusterTakesReservedAddress(ctx, name, zone)
+		if err != nil {
+			s.repoError(w, r, err)
+			return
+		}
+		if why != "" {
+			s.refuseReservedAddress(w, r, tenant, "add-on "+name, why)
 			return
 		}
 	}
@@ -1297,6 +1331,10 @@ func (s *Server) setAddons(w http.ResponseWriter, r *http.Request, c call) {
 		for i, entry := range pinned {
 			bundle, ok := s.fetchEntry(w, r, sources[i], entry.Name, entry.Digest)
 			if !ok {
+				return
+			}
+			if why := fetchedTakesReservedAddress(bundle.Definition, sources[i].origin(tenant), zone); why != "" {
+				s.refuseReservedAddress(w, r, tenant, "add-on "+entry.Name, why)
 				return
 			}
 			bundles = append(bundles, bundle)

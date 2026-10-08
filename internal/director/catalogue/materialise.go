@@ -43,6 +43,7 @@ import (
 	"net/url"
 	"strings"
 
+	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/profilebundle"
 )
 
@@ -117,6 +118,10 @@ type Profile struct {
 	// Companions names what the bundle holds beside the profile, each as
 	// "<Kind> <name>". Empty for a profile that travels alone.
 	Companions []string
+	// Definition is the profile as the cluster would read it once applied:
+	// what is asked before the bundle is committed, such as which addresses
+	// it would take. Read from Body; Body is what is committed.
+	Definition *gentianov1alpha1.ComponentProfile
 }
 
 // Fetch reads one entry from its source and refuses anything that is not
@@ -192,7 +197,15 @@ func (f *Fetcher) Fetch(ctx context.Context, src Source, name, digest string) (*
 	for _, c := range bundle.Companions {
 		companions = append(companions, c.String())
 	}
-	return &Profile{Name: bundle.Name, Body: body, Digest: "sha256:" + got, Companions: companions}, nil
+	// And read as the cluster will read it. A profile that does not read as
+	// one is refused here rather than committed and found out at rollout:
+	// nothing could be said of what it would do.
+	definition, err := profilebundle.ReadProfile(body)
+	if err != nil {
+		return nil, fmt.Errorf("catalogue: %s: %w: its profile cannot be read as a ComponentProfile: %v",
+			coordinate, profilebundle.ErrRefused, err)
+	}
+	return &Profile{Name: bundle.Name, Body: body, Digest: "sha256:" + got, Companions: companions, Definition: definition}, nil
 }
 
 // CanonicalDigest returns a digest in the one spelling that is recorded,
