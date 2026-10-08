@@ -1244,6 +1244,24 @@ spec:
                           properties:
                             imap:
                               description: IMAP requests inbound mail (IMAP) credentials.
+                              properties:
+                                tokenSignIn:
+                                  description: |-
+                                    TokenSignIn declares that the app opens a person's mailbox with that
+                                    person's sign-in token (SASL XOAUTH2) instead of an app password.
+
+                                    It is a grant, which is why it is said and never implied by imap: the
+                                    mail server accepts a token only from the sign-in client of an app
+                                    whose profile declares this. The app's client is given the optional
+                                    client scope "mailbox" in the tenant's realm; a token the app obtained
+                                    by asking for that scope names the mail server in its audience and is
+                                    accepted for the mailbox of the person it was issued to, and no other
+                                    token of the app, and no token of any other app, is.
+
+                                    It needs requires.services.identity.oidc, the client the scope is given
+                                    to. Served where the cluster runs its own mail server and the tenant
+                                    has mailboxes on it in a realm of its own; elsewhere it does nothing.
+                                  type: boolean
                               type: object
                             smtp:
                               description: SMTP requests outbound mail (SMTP submission)
@@ -2718,6 +2736,24 @@ spec:
                         properties:
                           imap:
                             description: IMAP requests inbound mail (IMAP) credentials.
+                            properties:
+                              tokenSignIn:
+                                description: |-
+                                  TokenSignIn declares that the app opens a person's mailbox with that
+                                  person's sign-in token (SASL XOAUTH2) instead of an app password.
+
+                                  It is a grant, which is why it is said and never implied by imap: the
+                                  mail server accepts a token only from the sign-in client of an app
+                                  whose profile declares this. The app's client is given the optional
+                                  client scope "mailbox" in the tenant's realm; a token the app obtained
+                                  by asking for that scope names the mail server in its audience and is
+                                  accepted for the mailbox of the person it was issued to, and no other
+                                  token of the app, and no token of any other app, is.
+
+                                  It needs requires.services.identity.oidc, the client the scope is given
+                                  to. Served where the cluster runs its own mail server and the tenant
+                                  has mailboxes on it in a realm of its own; elsewhere it does nothing.
+                                type: boolean
                             type: object
                           smtp:
                             description: SMTP requests outbound mail (SMTP submission)
@@ -2914,6 +2950,12 @@ spec:
               rule: '!has(self.__package__.valueMapping) || !has(self.__package__.valueMapping.platform)
                 || !has(self.__package__.valueMapping.platform.storeUrlKey) || self.__package__.valueMapping.platform.storeUrlKey.size()
                 == 0 || self.trustTier == ''platform'''
+            - message: 'requires.services.mail.imap.tokenSignIn needs requires.services.identity.oidc:
+                the sign-in client whose tokens the mail server is to accept'
+              rule: '!has(self.requires) || !has(self.requires.services) || !has(self.requires.services.mail)
+                || !has(self.requires.services.mail.imap) || !has(self.requires.services.mail.imap.tokenSignIn)
+                || !self.requires.services.mail.imap.tokenSignIn || (has(self.requires.services.identity)
+                && has(self.requires.services.identity.oidc))'
             - message: 'a component the platform places on tenants declares requires.services.llm
                 only at trustTier platform: it is given a key at the model gateway
                 without a tenant having installed it'

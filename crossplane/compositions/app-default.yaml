@@ -1071,6 +1071,64 @@ spec:
                 name: keycloak
             {{- end }}
 
+            {{- /* ── the mail server accepts this app's sign-in tokens ──────────
+                 requires.services.mail.imap.tokenSignIn: the app opens a
+                 person's mailbox with that person's token. What grants it is
+                 the realm's client scope "mailbox" (tenant-default composes
+                 it and says how it works) as an OPTIONAL scope of this app's
+                 own client: the app's tokens name the mail server only when
+                 it asked for "mailbox" at that sign-in.
+
+                 Two things have to say so. The profile, read here, is the
+                 declaration; the claim's mailboxTokenSignIn is the operator's
+                 answer that this cluster and tenant serve it (own mail
+                 server, mailboxes, a realm of the tenant's own -- the scope
+                 exists nowhere else). Either alone grants nothing.
+
+                 The list is replaced wholesale on reconcile, as the default
+                 scopes above are, so it names the five optional scopes
+                 Keycloak gives every client as well as the one this is about;
+                 naming only "mailbox" would take offline_access from the
+                 client.
+
+                 An app that stops declaring keeps this object, without
+                 "mailbox": that is what takes the scope off its client.
+                 Dropping the object would not -- it is Orphan, because
+                 deleting it detaches the listed scopes from a client that
+                 an uninstall has already removed, and that fails. So it is
+                 rendered for as long as it has been observed. */}}
+            {{- $mailboxDeclared := dig "mail" "imap" "tokenSignIn" false $kr }}
+            {{- $mailboxServed := and $mailboxDeclared (default false $spec.mailboxTokenSignIn) }}
+            {{- $optionalScopesObserved := hasKey (default dict $observed.resources) (printf "%s-keycloak-optional-scopes" $app) }}
+            {{- if or $mailboxServed $optionalScopesObserved }}
+            ---
+            apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+            kind: ClientOptionalScopes
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-keycloak-optional-scopes
+              name: {{ $tenant }}-{{ $app }}-keycloak-optional-scopes
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $realm }}
+                clientIdRef:
+                  name: {{ $tenant }}-{{ $app }}-keycloak-client
+                  policy:
+                    resolve: Always
+                optionalScopes:
+                  - address
+                  - microprofile-jwt
+                  - offline_access
+                  - organization
+                  - phone
+                  {{- if $mailboxServed }}
+                  - mailbox
+                  {{- end }}
+              providerConfigRef:
+                name: keycloak
+            {{- end }}
+
             {{- /* ── the client scope the pack describes, and its mappers ───────
                  Observed, not managed, for now. The OIDC pack Job still creates
                  both; this is the read-back that proves the provider resolves

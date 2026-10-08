@@ -189,7 +189,7 @@ func TestAComposedComponentWritesItsClaim(t *testing.T) {
 	r := &ComponentReconciler{Client: c, Scheme: scheme, KernelDomain: "k.example", KernelRealm: "kernel"}
 	zone := edgeZone{zoneNames: zoneNames{domain: "acme.k.example"}}
 
-	ready, _, err := r.ensureAppClaim(ctx, comp, tenant, zone, pullSecrets{}, "")
+	ready, _, err := r.ensureAppClaim(ctx, comp, tenant, zone, pullSecrets{}, "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -217,7 +217,7 @@ func TestAComposedComponentWritesItsClaim(t *testing.T) {
 	named.Spec.Isolation = &gentianov1alpha1.TenantIsolation{KeycloakRealm: "acme-people"}
 	other := comp.DeepCopy()
 	other.Name, other.UID = "wiki", "uid-wiki"
-	if _, _, err := r.ensureAppClaim(ctx, other, named, zone, pullSecrets{}, ""); err != nil {
+	if _, _, err := r.ensureAppClaim(ctx, other, named, zone, pullSecrets{}, "", false); err != nil {
 		t.Fatal(err)
 	}
 	otherClaim := &unstructured.Unstructured{}
@@ -252,7 +252,7 @@ func TestAComposedComponentWritesItsClaim(t *testing.T) {
 	if err := c.Update(ctx, claim); err != nil {
 		t.Fatal(err)
 	}
-	ready, _, err = r.ensureAppClaim(ctx, comp, tenant, zone, pullSecrets{}, "")
+	ready, _, err = r.ensureAppClaim(ctx, comp, tenant, zone, pullSecrets{}, "", false)
 	if err != nil || !ready {
 		t.Fatalf("ready = %v, err = %v", ready, err)
 	}
@@ -260,7 +260,7 @@ func TestAComposedComponentWritesItsClaim(t *testing.T) {
 	// The addon is deactivated and the configuration dropped: the claim
 	// follows, losing the fields rather than keeping the last value.
 	comp.Spec.Addons, comp.Spec.Config = nil, nil
-	if _, _, err := r.ensureAppClaim(ctx, comp, tenant, zone, pullSecrets{}, ""); err != nil {
+	if _, _, err := r.ensureAppClaim(ctx, comp, tenant, zone, pullSecrets{}, "", false); err != nil {
 		t.Fatal(err)
 	}
 	if err := c.Get(ctx, types.NamespacedName{Name: comp.Name, Namespace: comp.Namespace}, claim); err != nil {
@@ -298,7 +298,7 @@ func TestAClaimSomethingElseControlsIsNotTaken(t *testing.T) {
 
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(held).Build()
 	r := &ComponentReconciler{Client: c, Scheme: scheme}
-	ready, message, err := r.ensureAppClaim(ctx, comp, tenant, edgeZone{zoneNames: zoneNames{domain: "acme.k.example"}}, pullSecrets{}, "")
+	ready, message, err := r.ensureAppClaim(ctx, comp, tenant, edgeZone{zoneNames: zoneNames{domain: "acme.k.example"}}, pullSecrets{}, "", false)
 	if err != nil || ready || !strings.Contains(message, "XTenant acme-x") {
 		t.Fatalf("ready=%v message=%q err=%v", ready, message, err)
 	}

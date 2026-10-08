@@ -401,7 +401,8 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	switch {
 	case composed:
 		var err error
-		releaseReady, releaseMessage, err = r.ensureAppClaim(ctx, comp, tenant, zone, pull, appComposition(comp, profile))
+		releaseReady, releaseMessage, err = r.ensureAppClaim(ctx, comp, tenant, zone, pull, appComposition(comp, profile),
+			r.mailboxTokenSignIn(ctx, tenant, profile))
 		if err != nil {
 			return ctrl.Result{}, err
 		}

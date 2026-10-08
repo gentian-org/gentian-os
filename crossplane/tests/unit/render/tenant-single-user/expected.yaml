@@ -7,7 +7,7 @@ status:
   conditions:
   - lastTransitionTime: "2024-01-01T00:00:00Z"
     message: 'Unready resources: keycloak-broker-client, keycloak-broker-client-id,
-      keycloak-dovecot-oidc-client, and 19 more'
+      keycloak-dovecot-oidc-client, and 20 more'
     reason: Creating
     status: "False"
     type: Ready
@@ -668,6 +668,32 @@ spec:
     identityProviderMapper: oidc-user-attribute-idp-mapper
     name: gentian_username
     realm: user
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+kind: ClientScope
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-mailbox-scope
+    crossplane.io/external-name: mailbox
+  labels:
+    crossplane.io/composite: user
+  name: user-mailbox-scope
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: user
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    description: Open the signed-in person's mailbox on the mail server
+    includeInTokenScope: true
+    name: mailbox
+    realmId: user
   providerConfigRef:
     name: keycloak
 ---

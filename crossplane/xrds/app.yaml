@@ -51,6 +51,18 @@ spec:
                     are made. Set by the operator from the Tenant
                     (spec.isolation.keycloakRealm, else the tenant's name).
                     When omitted, the realm is the one named after the tenant.
+                mailboxTokenSignIn:
+                  type: boolean
+                  description: >
+                    Whether the mail server accepts this app's sign-in tokens
+                    for its people's mailboxes. Set by the operator, and only
+                    where all of this holds: the profile declares
+                    requires.services.mail.imap.tokenSignIn, the cluster runs
+                    its own mail server, and the tenant has mailboxes on it in
+                    a realm of its own. The app's sign-in client is then given
+                    the realm's optional client scope "mailbox". The
+                    Composition reads the profile's declaration as well, so
+                    this alone grants nothing.
                 domain:
                   type: string
                   description: >

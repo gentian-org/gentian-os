@@ -464,9 +464,26 @@ type MailRequirement struct {
 // go without changing every profile.
 type SMTPRequirement struct{}
 
-// IMAPRequirement declares that an app reads mail. It carries nothing, for the
-// same reason as SMTPRequirement.
-type IMAPRequirement struct{}
+// IMAPRequirement declares that an app reads mail. The mail server's address
+// is the cluster's, for the same reason as in SMTPRequirement.
+type IMAPRequirement struct {
+	// TokenSignIn declares that the app opens a person's mailbox with that
+	// person's sign-in token (SASL XOAUTH2) instead of an app password.
+	//
+	// It is a grant, which is why it is said and never implied by imap: the
+	// mail server accepts a token only from the sign-in client of an app
+	// whose profile declares this. The app's client is given the optional
+	// client scope "mailbox" in the tenant's realm; a token the app obtained
+	// by asking for that scope names the mail server in its audience and is
+	// accepted for the mailbox of the person it was issued to, and no other
+	// token of the app, and no token of any other app, is.
+	//
+	// It needs requires.services.identity.oidc, the client the scope is given
+	// to. Served where the cluster runs its own mail server and the tenant
+	// has mailboxes on it in a realm of its own; elsewhere it does nothing.
+	// +optional
+	TokenSignIn bool `json:"tokenSignIn,omitempty"`
+}
 
 // MCPRequirement describes a Model Context Protocol server endpoint.
 type MCPRequirement struct {

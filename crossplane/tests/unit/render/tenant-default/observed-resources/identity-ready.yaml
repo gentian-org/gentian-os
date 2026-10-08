@@ -103,3 +103,19 @@ status:
     status: "True"
   - type: Synced
     status: "True"
+---
+# The mailbox scope, observed: its id is what the audience mapper is made on.
+apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+kind: ClientScope
+metadata:
+  name: render-fixture-mailbox-scope
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-mailbox-scope
+status:
+  atProvider:
+    id: 00000000-0000-4000-8000-00000000a11b
+  conditions:
+  - type: Ready
+    status: "True"
+  - type: Synced
+    status: "True"

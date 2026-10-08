@@ -7,7 +7,7 @@ status:
   conditions:
   - lastTransitionTime: "2024-01-01T00:00:00Z"
     message: 'Unready resources: keycloak-broker-client, keycloak-broker-client-id,
-      keycloak-dovecot-oidc-client, and 19 more'
+      keycloak-dovecot-oidc-client, and 20 more'
     reason: Creating
     status: "False"
     type: Ready
@@ -665,6 +665,64 @@ spec:
     identityProviderMapper: oidc-user-attribute-idp-mapper
     name: gentian_username
     realm: render-fixture
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+kind: ClientScope
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-mailbox-scope
+    crossplane.io/external-name: mailbox
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-mailbox-scope
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    description: Open the signed-in person's mailbox on the mail server
+    includeInTokenScope: true
+    name: mailbox
+    realmId: render-fixture
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: client.keycloak.crossplane.io/v1alpha1
+kind: ProtocolMapper
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-mailbox-scope-audience
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-mailbox-scope-audience
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    clientScopeId: 00000000-0000-4000-8000-00000000a11b
+    config:
+      access.token.claim: "true"
+      id.token.claim: "false"
+      included.client.audience: gentian-dovecot
+      introspection.token.claim: "true"
+      userinfo.token.claim: "false"
+    name: mailbox-audience
+    protocol: openid-connect
+    protocolMapper: oidc-audience-mapper
+    realmId: render-fixture
   providerConfigRef:
     name: keycloak
 ---

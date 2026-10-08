@@ -850,6 +850,84 @@ spec:
                   key: oidc_client_secret
               providerConfigRef:
                 name: keycloak
+
+            {{- /* Which tokens open a mailbox: the scope "mailbox".
+
+                 Keycloak (26.6 on) answers a token introspection "active"
+                 only when the token's audience names the client that asks.
+                 Dovecot asks as gentian-dovecot, and no token names it unless
+                 something puts it there. This scope is that something, and
+                 the only one: its one mapper adds gentian-dovecot to the
+                 audience of an ACCESS token, and nothing else in the realm
+                 does. gentian-dovecot carries no attribute that switches the
+                 audience check off for it, which would have it accept every
+                 token of the realm again
+                 (TestNothingSwitchesTheIntrospectionAudienceCheckOff).
+
+                 The scope is given to no client here. app-default gives it,
+                 as an OPTIONAL scope, to the sign-in client of an app whose
+                 profile declares requires.services.mail.imap.tokenSignIn. So
+                 a token names the mail server only when such an app asked
+                 for "mailbox" at that sign-in; Keycloak refuses the request
+                 of a client that does not have the scope (invalid_scope).
+                 Dovecot checks the scope as well as Keycloak the audience
+                 (scope = mailbox in each realm's oauth2 settings).
+
+                 A client audience, not a custom one, and on purpose the
+                 opposite of director-audience above: gentian-dovecot IS a
+                 client of this realm, and Keycloak leaving the audience out
+                 when that client is disabled or gone is the behaviour wanted
+                 here -- no mail server client, no mailbox tokens.
+
+                 includeInTokenScope is what puts the name in the token's
+                 scope claim, which is what Dovecot reads. */}}
+            ---
+            apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+            kind: ClientScope
+            metadata:
+              name: {{ $tenant }}-mailbox-scope
+              annotations:
+                crossplane.io/external-name: mailbox
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-mailbox-scope
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $realm }}
+                name: mailbox
+                description: Open the signed-in person's mailbox on the mail server
+                includeInTokenScope: true
+              providerConfigRef:
+                name: keycloak
+            {{- /* The scope's observed id rather than a ref, as for the groups
+                 scope below: the scope is found by its name, and the API path
+                 of a mapper needs the UUID. Not rendered until the scope has
+                 been observed once. */}}
+            {{- $mailboxScopeID := dig "resources" "keycloak-mailbox-scope" "resource" "status" "atProvider" "id" "" $observed }}
+            {{- if $mailboxScopeID }}
+            ---
+            apiVersion: client.keycloak.crossplane.io/v1alpha1
+            kind: ProtocolMapper
+            metadata:
+              name: {{ $tenant }}-mailbox-scope-audience
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-mailbox-scope-audience
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $realm }}
+                clientScopeId: {{ $mailboxScopeID }}
+                name: mailbox-audience
+                protocol: openid-connect
+                protocolMapper: oidc-audience-mapper
+                config:
+                  included.client.audience: gentian-dovecot
+                  id.token.claim: "false"
+                  access.token.claim: "true"
+                  introspection.token.claim: "true"
+                  userinfo.token.claim: "false"
+              providerConfigRef:
+                name: keycloak
+            {{- end }}
             {{- end }}
 
             {{- end }}
