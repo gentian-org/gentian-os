@@ -139,9 +139,23 @@ apply() {
     info "Administration console chart: ${admin_console_chart_version}"
     concierge_chart_version="$(_d02_component_chart_version gentian-org/charts/concierge "0.1.0-${PORTAL_IMAGE_TAG:-develop}")" || return 1
     info "Concierge chart: ${concierge_chart_version}"
+    # The App Store app's chart, resolved the same way and pinned by the same
+    # render. Unlike the three above it is not something an install fails
+    # for: a tenant has the app only where the cluster offers an App Store,
+    # and a cluster that does not is a complete one. Unresolved, the profile
+    # keeps the version it has (_v5_keep_chart_version), or the branch's
+    # moving one on a cluster that never had it.
+    local app_store_chart_version=""
+    if app_store_chart_version="$(_d02_component_chart_version gentian-org/charts/app-store "0.1.0-${PORTAL_IMAGE_TAG:-develop}" 2>/dev/null)"; then
+        info "App Store chart: ${app_store_chart_version}"
+    else
+        app_store_chart_version=""
+        warn "App Store chart 0.1.0-${PORTAL_IMAGE_TAG:-develop} names no immutable version on ghcr.io; its profile keeps the version it has. The install continues."
+    fi
     DESKTOP_CHART_VERSION="${desktop_chart_version}" \
         ADMIN_CONSOLE_CHART_VERSION="${admin_console_chart_version}" \
         CONCIERGE_CHART_VERSION="${concierge_chart_version}" \
+        APP_STORE_CHART_VERSION="${app_store_chart_version}" \
         V5_APPSETS=true V5_OPERATOR=true V5_HEADLAMP_OIDC=true \
         _v5_render | kubectl apply -f - >/dev/null
 
@@ -191,6 +205,35 @@ apply() {
     # release had been refused, and the first sign was a 500 at the admin console's address.
     _d03_wait_component desktop "${desktop_chart_version}" "platform.${KERNEL_DOMAIN}" || return 1
     _d03_wait_component admin-console "${admin_console_chart_version}" "admin.platform.${KERNEL_DOMAIN}" || return 1
+
+    # Said, and not waited for: the App Store app is a tenant's, never the
+    # platform tenant's, and only where the cluster offers a store.
+    _d03_report_app_store
+}
+
+# _d03_report_app_store — one line on whether tenants get the App Store app.
+#
+# The verdict is the operator's, read where it writes it for the usher: beside
+# the tiles (appStore in the gentian-tiles ConfigMap). The operator places the
+# app by that same verdict, so this says what the cluster does rather than
+# what the installer expects of it. Never a failure and never waited for: a
+# cluster with licence reporting off, or whose claim names no store, has no
+# App Store app and is complete without one.
+_d03_report_app_store() {
+    local verdict
+    verdict="$(kubectl get configmap gentian-tiles -n "${GENTIAN_SYSTEM_NAMESPACE}" \
+        -o jsonpath='{.data.tiles\.yaml}' 2>/dev/null | grep -A 2 '^appStore:' || true)"
+    case "${verdict}" in
+        *"offered: true"*)
+            info "App Store app: placed on every tenant but the platform's, at store.<the tenant's domain>, for the people who may install apps." ;;
+        *"reason: licence-report-disabled"*)
+            info "App Store app: not placed -- licence reporting is off on this cluster." ;;
+        *"reason: no-store-configured"*)
+            info "App Store app: not placed -- claims/cluster.yaml names no App Store (spec.catalogue.storeUrl)." ;;
+        *)
+            info "App Store app: the operator has not said yet whether this cluster offers an App Store; it is placed once it does." ;;
+    esac
+    return 0
 }
 
 # _d03_wait_component <component> <chart-version> <host> — a platform-tenant

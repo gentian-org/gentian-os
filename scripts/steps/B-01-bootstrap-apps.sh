@@ -156,6 +156,8 @@ _v5_render() {
         --set-string "adminConsole.chartVersion=$(_v5_keep_chart_version admin-console "${ADMIN_CONSOLE_CHART_VERSION:-}")" \
         --set-string "concierge.chartBranch=${PORTAL_IMAGE_TAG:-develop}" \
         --set-string "concierge.chartVersion=$(_v5_keep_chart_version concierge "${CONCIERGE_CHART_VERSION:-}")" \
+        --set-string "appStore.chartBranch=${PORTAL_IMAGE_TAG:-develop}" \
+        --set-string "appStore.chartVersion=$(_v5_keep_chart_version app-store "${APP_STORE_CHART_VERSION:-}")" \
         --set-string "llmEnabled=${LLM_SUPPORT:-false}" \
         --set-string "tenancyMode=${TENANCY_MODE:-multi}" \
         --set-string "acmeStaging=${acme_staging}" \

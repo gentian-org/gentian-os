@@ -126,6 +126,13 @@ spec:
           enabled: true
           chart:
             version: {{ .Values.concierge.chartVersion | default (printf "0.1.0-%s" (.Values.concierge.chartBranch | default "develop")) | quote }}
+        # The App Store app's profile, pinned like the consoles. A tenant gets
+        # the component only while the cluster offers an App Store: licence
+        # reporting is on and the Cluster claim names a store.
+        appStore:
+          enabled: true
+          chart:
+            version: {{ .Values.appStore.chartVersion | default (printf "0.1.0-%s" (.Values.appStore.chartBranch | default "develop")) | quote }}
         # The public half of the key Keycloak's event listener signs with.
         # Without it nothing accepts a membership statement, so OpenFGA never
         # learns who is in which group and every permission that follows from

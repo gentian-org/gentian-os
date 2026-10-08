@@ -95,6 +95,12 @@ adminConsole:
 concierge:
   chartBranch: develop
   chartVersion: ""
+# The App Store app's chart, from the same repository and branch, pinned the
+# same way. The profile is always shipped; whether a tenant gets the component
+# is the operator's to decide (licence reporting on, and a store named).
+appStore:
+  chartBranch: develop
+  chartVersion: ""
 
 operator:
   enabled: false
