@@ -1614,7 +1614,7 @@ spec:
                     properties:
                       baseUrl:
                         description: BaseURL is the external service origin (e.g.
-                          https://corp.gentian.org).
+                          https://service.example).
                         minLength: 1
                         pattern: ^https?://.+
                         type: string
