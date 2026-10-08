@@ -38,6 +38,10 @@ type Options struct {
 	// answers, because what is deleted there is decided on the answer. Nil
 	// reads through the service's client.
 	LiveReader client.Reader
+	// TenancyMode is whether the cluster carries one user tenant or many, as
+	// the operator runs: what decides whether a tenant's administrator may
+	// remove what an app's bundle left behind. Empty is multi.
+	TenancyMode string
 }
 
 // Result is returned from lifecycle operations.

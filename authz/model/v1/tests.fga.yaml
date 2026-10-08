@@ -21,6 +21,8 @@ tuples:
   - {user: user:nina,   relation: member, object: group:gentian/tenant/demo/app/nextcloud/admins}
   - {user: user:tina,   relation: member, object: group:gentian/tenant/solo/admins}
   - {user: user:olaf,   relation: member, object: group:gentian/tenant/other/members}
+  - {user: user:uma,    relation: member, object: group:gentian/tenant/user/admins}
+  - {user: user:ulf,    relation: member, object: group:gentian/tenant/user/members}
 
   # --- cluster roles, from the Cluster claim
   - {user: group:gentian/platform/admin#member,             relation: admin,             object: cluster:main}
@@ -41,6 +43,12 @@ tuples:
   # --- tenant solo administers itself: cluster stays, operated_by was removed
   - {user: cluster:main, relation: cluster, object: tenant:solo}
   - {user: group:gentian/tenant/solo/admins#member, relation: admin, object: tenant:solo}
+
+  # --- tenant user: the name of the one user tenant of a single-tenancy cluster, operated by the platform
+  - {user: cluster:main, relation: cluster,     object: tenant:user}
+  - {user: cluster:main, relation: operated_by, object: tenant:user}
+  - {user: group:gentian/tenant/user/admins#member,  relation: admin,  object: tenant:user}
+  - {user: group:gentian/tenant/user/members#member, relation: member, object: tenant:user}
 
   # --- one installed app
   - {user: tenant:demo, relation: tenant, object: app:demo/nextcloud}
@@ -77,6 +85,9 @@ tests:
       - {user: user:tom, object: tenant:demo, assertions: {can_install_app: true, can_set_plan: true, can_set_policy: true, can_grant: true, can_manage_users: true, can_approve_privilege: true, can_view: true, can_enter: true, can_administer: true}}
       - {user: user:mia, object: tenant:demo, assertions: {can_install_app: false, can_manage_users: false, can_grant: false, can_administer: false, can_view: true, can_enter: true}}
       - {user: user:olaf, object: tenant:demo, assertions: {can_view: false, can_enter: false, can_install_app: false}}
+      - {user: user:uma, object: tenant:user, assertions: {can_install_app: true, can_view: true, can_administer: true}}
+      - {user: user:ulf, object: tenant:user, assertions: {can_install_app: false, can_view: true}}
+      - {user: user:tom, object: tenant:user, assertions: {can_install_app: false, can_view: false}}
 
   - name: platform admin reaches a tenant only through operated_by
     check:

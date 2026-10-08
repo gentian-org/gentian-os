@@ -538,7 +538,7 @@ func main() {
 	}
 
 	if os.Getenv("APP_LIFECYCLE_ENABLED") != "false" {
-		lifecycle, err := applifecycle.NewRunnableFromEnv(mgr)
+		lifecycle, err := applifecycle.NewRunnableFromEnv(mgr, tenancyMode)
 		if err != nil {
 			setupLog.Error(err, "unable to create app lifecycle server")
 			os.Exit(1)

@@ -490,6 +490,26 @@ The answer says what was deleted, or why nothing was. From the console's side th
 `POST /v1/clusters/<cluster>/actions/remove-catalogue-residue` at the director (whoever may
 configure it).
 
+**A tenant's administrator sees the leftovers of the apps the tenant has, and removes them only on a
+cluster with one user tenant.** A profile is on a cluster once, under one name, for every tenant
+that installed the app, and so is what its bundle brought.
+
+- *The read* is `GET /v1/tenants/<tenant>/apps/<profile>/residue` at the usher, for whoever may
+  view the tenant. It answers only for a profile the tenant has, as an app or as an add-on that is
+  switched on, and is not found for any other — it is no way to read the cluster's catalogue. It
+  holds the `dropped` and `orphaned` objects that name the profile or, for an app, one of its
+  add-ons, in the shape of the cluster's list; never an `unowned` object or an unused profile, and
+  nothing about another tenant or another profile. `removableBy` says who may remove them:
+  `tenant` when the cluster's tenancy mode is `single` and this is its one user tenant, `platform`
+  everywhere else.
+- *The removal* is `POST /v1/tenants/<tenant>/apps/<profile>/actions/remove-residue` at the
+  director, for whoever may install apps in the tenant, with the name typed again. On a cluster
+  with more than one user tenant it answers 403: "These pieces are shared by every tenant that
+  uses this app. Ask the platform admin to remove them." Otherwise it is the removal of a
+  companion described above, with one more condition the operator checks when it works the list
+  out again: the object is `dropped` or `orphaned`, names this profile, and the tenant has the
+  profile. Anything else is refused and nothing is deleted.
+
 The operator may delete a `Composition` for this, a right it did not have. It uses it only for one
 that composes an app, is named `app-<profile>`, is not `app-default` and is on the list when asked.
 

@@ -398,7 +398,7 @@ Its routes, by group. Every write is a commit unless marked as a command.
 | Backup policy | Set or clear a tenant's backup policy; set the cluster's. |
 | Platform security | Read and replace the list of exceptions to the cluster's default security rules, as git declares it. |
 | Records | Read the history of changes to a tenant or the cluster (from the commits); read who holds which right on a tenant or the cluster (from OpenFGA); answer which permissions the caller holds (`…/me`). |
-| Commands relayed to the operator | Take a backup; delete a backup; upload or inspect a backup bundle; restore (as part of an import); send a notice to a tenant's people; purge the data of an uninstalled app; give an installed app to everybody who is a member now; remove one object the catalogue left behind. |
+| Commands relayed to the operator | Take a backup; delete a backup; upload or inspect a backup bundle; restore (as part of an import); send a notice to a tenant's people; purge the data of an uninstalled app; give an installed app to everybody who is a member now; remove one object the catalogue left behind, for the cluster or, on a cluster with one user tenant, for that tenant and one of its apps. |
 | One live read | Download a backup bundle. This is the only read of live state the director serves. |
 
 When an app is installed from a catalogue, the director fetches the app's
@@ -417,6 +417,14 @@ profile's files after checking every tenant's file in git and asking the
 operator whether any tenant still holds data for it, and then has the
 operator delete the object (section 4.2,
 [residue.go](../../internal/director/api/residue.go)).
+
+What a newer build of an app left behind is on the cluster once, for every
+tenant that installed the app. So the permission on a tenant does not decide
+its removal alone: the director also reads the cluster's tenancy mode from
+git, and has the operator remove such an object for a tenant's administrator
+only where the mode is `single` and the tenant is the one user tenant such a
+cluster carries. Everywhere else it answers 403 and says to ask the
+platform's administrator.
 
 **What it must never do**
 
@@ -509,11 +517,12 @@ two kinds of route
 | `notify` | Publishes one notice to a tenant's people. |
 | `purge-app` | Destroys what an uninstalled app left behind: database, object storage, cache user, files, stored credentials, access group. |
 | `provision-app` | Puts the tenant's current members into an app's group. |
-| `remove-catalogue-residue` | Deletes one named object that the catalogue left behind, and only if it is on the list below when the command arrives. |
+| `remove-catalogue-residue` | Deletes one named object that the catalogue left behind, and only if it is on the list below when the command arrives. Given a tenant and a profile, it deletes less: only an object a newer build of that profile left behind, only if the tenant has the profile, and only on a cluster whose one user tenant this is. |
 
 *Reads*, for the usher and the director:
 
 - per tenant: the state of its apps; which uninstalled apps still hold data;
+  what newer builds of one of its apps left behind;
   its resource ceiling, the plans it may move to, its usage and usage report;
   its backups and one backup; its backup policy and schedules; its
   integrations; its notices;
@@ -535,6 +544,15 @@ if it is on it, and refuses anything else with the reason. It also refuses an
 object Argo CD still finds declared in the directory, because that would be
 applied again; a profile is deleted only once Argo CD reports it gone from
 the directory ([residue.go](../../internal/applifecycle/residue.go)).
+
+A tenant is shown the part of that list that is about an app it has: the
+objects a newer build of the app, or of an add-on switched on inside it, no
+longer holds. The read answers for no other profile, and says nothing about
+another tenant. It also says who may remove them, from the tenancy mode the
+operator runs under: the tenant's administrator where this is the cluster's
+only user tenant, the platform's everywhere else. The command checks the same
+again when it is given a tenant
+([residue_app.go](../../internal/applifecycle/residue_app.go)).
 
 Four further reads are for the director only, because its own work depends
 on them: a tenant's installed apps, a tenant's state (needed while purging
@@ -730,7 +748,7 @@ and asks OpenFGA before it answers.
 | Read | Permission |
 | --- | --- |
 | A tenant's tiles: the things this person may open, and whether the App Store is offered on this cluster | `can_enter` on the tenant; each tile is then checked separately |
-| The state of a tenant's apps; which uninstalled apps still hold data | `can_view` on the tenant |
+| The state of a tenant's apps; which uninstalled apps still hold data; what newer builds of one of its apps left behind | `can_view` on the tenant |
 | A tenant's resources, the plans it may move to, its usage and usage report | `can_view` on the tenant |
 | A tenant's backups and one backup, its backup policy and schedules | `can_view` on the tenant |
 | A tenant's integrations and notices | `can_view` on the tenant |
@@ -893,7 +911,7 @@ and 4.2 say how a group becomes a relation.
 | Usher | a tenant | `can_view` | every read of a tenant's live state |
 | Usher | the cluster | `can_audit` | every read of the cluster's live state |
 | Director | a tenant | `can_view` | reading what git declares for the tenant; downloading a backup |
-| Director | a tenant | `can_install_app` | install, uninstall, add-ons, the tenant's own catalogues, purging an app |
+| Director | a tenant | `can_install_app` | install, uninstall, add-ons, the tenant's own catalogues, purging an app, removing what a newer build of an app left behind (only on a cluster with one user tenant) |
 | Director | a tenant | `can_grant` | what an app may consume; giving an app to every member |
 | Director | a tenant | `can_set_plan` | the resource plan |
 | Director | a tenant | `can_set_policy` | backup policy, sign-in security policy, languages |

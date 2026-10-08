@@ -159,7 +159,7 @@ func startWith(t *testing.T, lc api.Lifecycle, opts ...func(*api.Config)) *harne
 // director clones it.
 func startSeeded(t *testing.T, lc api.Lifecycle, seed func(remote string), opts ...func(*api.Config)) *harness {
 	t.Helper()
-	is := dt.NewIssuer(t, "gentian", "tenant-demo", "tenant-solo")
+	is := dt.NewIssuer(t, "gentian", "tenant-demo", "tenant-solo", "tenant-user")
 	v, err := authn.NewVerifier(authn.Config{IssuerBase: is.URL, Audience: audience})
 	if err != nil {
 		t.Fatal(err)
@@ -585,6 +585,14 @@ var facts = dt.Table{
 	"user:tina can_install_app tenant:solo":      true,
 	"user:tina can_view tenant:solo":             true,
 	"user:tom can_approve_privilege tenant:demo": true,
+	// Tenant user carries the name of the one user tenant of a
+	// single-tenancy cluster. uma administers it, ulf is a member, and the
+	// platform operates it as it does demo.
+	"user:uma can_install_app tenant:user":   true,
+	"user:uma can_view tenant:user":          true,
+	"user:ulf can_view tenant:user":          true,
+	"user:alice can_install_app tenant:user": true,
+	"user:alice can_view tenant:user":        true,
 	// Declaring where software comes from is asked as can_write_credential,
 	// the relation the custodian asked when it kept the repositories. Tenant
 	// solo administers itself, so alice holds it on demo and not on solo.

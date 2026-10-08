@@ -75,3 +75,21 @@ func EnforceSingle(tenancyMode, kernelRealm string, tenant *gentianov1alpha1.Ten
 	}
 	return SingleRefusal(tenant.Name)
 }
+
+// SharedPieces is what a tenant's administrator is told about a piece of an
+// app's bundle on a cluster that carries more than one user tenant: there is
+// one of it for the whole cluster, so it is not one tenant's to delete.
+const SharedPieces = "These pieces are shared by every tenant that uses this app. Ask the platform admin to remove them."
+
+// SoleUserTenant reports whether the tenant of this name is the only user
+// tenant its cluster can carry: the user tenant of a single-tenancy cluster.
+// What an app's bundle brought is the cluster's and not a tenant's, and only
+// such a tenant shares it with no other.
+//
+// Asked by the operator of the mode it runs under and by the director of the
+// mode git declares, of the name alone for the reason SingleRefusal gives:
+// both must come to the same answer without counting anything.
+func SoleUserTenant(tenancyMode, name string) bool {
+	return gentianov1alpha1.NormalizeTenancyMode(tenancyMode) == gentianov1alpha1.TenancyModeSingle &&
+		name == gentianov1alpha1.SingleUserTenantName
+}

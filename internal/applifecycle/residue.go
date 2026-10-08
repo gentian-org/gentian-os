@@ -213,7 +213,7 @@ func (s *Service) live() client.Reader {
 
 // CatalogueResidue lists what the catalogue left behind.
 func (s *Service) CatalogueResidue(ctx context.Context) (*CatalogueResidue, error) {
-	view, err := s.residue(ctx)
+	view, err := s.residue(ctx, true)
 	if err != nil {
 		return nil, err
 	}
@@ -227,8 +227,17 @@ func (s *Service) CatalogueResidue(ctx context.Context) (*CatalogueResidue, erro
 	return out, nil
 }
 
-// residue works the list out.
-func (s *Service) residue(ctx context.Context) (*residueView, error) {
+// unreadableBundle says what the list is missing for a profile whose bundle
+// cannot be read.
+func unreadableBundle(profile string, err error) string {
+	return fmt.Sprintf(
+		"the bundle of ComponentProfile %s cannot be read, so what it owns is not known and nothing that names it is listed: %v",
+		profile, err)
+}
+
+// residue works the list out. The profiles nobody uses are part of it only
+// when asked for: saying so takes reading what every tenant retains.
+func (s *Service) residue(ctx context.Context, withUnused bool) (*residueView, error) {
 	view := &residueView{
 		namespace: catalogueNamespace(),
 		profiles:  map[string]*profileState{}, owned: map[string]string{}, inUse: map[string]bool{},
@@ -247,9 +256,7 @@ func (s *Service) residue(ctx context.Context) (*residueView, error) {
 		state.bundle, state.unreadable = profilebundle.Carried(p)
 		view.profiles[p.Name] = state
 		if state.unreadable != nil {
-			view.incomplete = append(view.incomplete, fmt.Sprintf(
-				"the bundle of ComponentProfile %s cannot be read, so what it owns is not known and nothing that names it is listed: %v",
-				p.Name, state.unreadable))
+			view.incomplete = append(view.incomplete, unreadableBundle(p.Name, state.unreadable))
 			continue
 		}
 		if state.bundle == nil {
@@ -303,11 +310,13 @@ func (s *Service) residue(ctx context.Context) (*residueView, error) {
 		view.items = append(view.items, packs...)
 	}
 
-	unused, err := s.unusedProfiles(ctx, reader, view)
-	if err != nil {
-		return nil, err
+	if withUnused {
+		unused, err := s.unusedProfiles(ctx, reader, view)
+		if err != nil {
+			return nil, err
+		}
+		view.items = append(view.items, unused...)
 	}
-	view.items = append(view.items, unused...)
 
 	sort.SliceStable(view.items, func(a, b int) bool {
 		x, y := view.items[a].item, view.items[b].item
@@ -634,6 +643,13 @@ type RemoveResidueResult struct {
 // its version, so anything that touched it in between makes the API server
 // refuse.
 func (s *Service) RemoveResidue(ctx context.Context, kind, name, namespace, actor string) (*RemoveResidueResult, error) {
+	return s.removeResidue(ctx, kind, name, namespace, actor, nil)
+}
+
+// removeResidue is the one removal there is. With a scope it removes for a
+// tenant's administrator, which is the same removal with more refused
+// (residue_app.go).
+func (s *Service) removeResidue(ctx context.Context, kind, name, namespace, actor string, scope *ResidueScope) (*RemoveResidueResult, error) {
 	removable := kind == profilebundle.KindProfile
 	namespaced := false
 	for _, k := range profilebundle.CompanionKinds() {
@@ -660,7 +676,12 @@ func (s *Service) RemoveResidue(ctx context.Context, kind, name, namespace, acto
 	s.residueMu.Lock()
 	defer s.residueMu.Unlock()
 
-	view, err := s.residue(ctx)
+	if scope != nil {
+		if err := s.admitsScope(ctx, scope, kind, name); err != nil {
+			return nil, err
+		}
+	}
+	view, err := s.residue(ctx, true)
 	if err != nil {
 		return nil, err
 	}
@@ -669,6 +690,12 @@ func (s *Service) RemoveResidue(ctx context.Context, kind, name, namespace, acto
 		if item := view.items[i].item; item.Kind == kind && item.Name == name {
 			target = &view.items[i]
 		}
+	}
+	if scope != nil && (target == nil || !scope.holds(target.item)) {
+		// Said without the reason the cluster's administrator is given: why
+		// an object is not this app's leftover can name another profile.
+		return nil, fmt.Errorf("%w: the %s %s is not something a newer build of %s left behind, as this cluster lists it "+
+			"now. Nothing was deleted; ask for the list again", ErrNotResidue, kind, name, scope.Profile)
 	}
 	if target == nil {
 		return nil, fmt.Errorf("%w: %s. Nothing was deleted", ErrNotResidue, s.whyNot(ctx, view, kind, name))

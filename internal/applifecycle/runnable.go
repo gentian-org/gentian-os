@@ -26,8 +26,10 @@ type Runnable struct {
 	Server *HTTPServer
 }
 
-// NewRunnableFromEnv builds the lifecycle HTTP server from operator environment.
-func NewRunnableFromEnv(mgr manager.Manager) (*Runnable, error) {
+// NewRunnableFromEnv builds the lifecycle HTTP server from operator
+// environment, and from the tenancy mode the operator took from the Cluster
+// claim: the one value here that the environment may have wrong.
+func NewRunnableFromEnv(mgr manager.Manager, tenancyMode string) (*Runnable, error) {
 	addr := os.Getenv("APP_LIFECYCLE_BIND_ADDRESS")
 	if addr == "" {
 		addr = ":8082"
@@ -41,6 +43,7 @@ func NewRunnableFromEnv(mgr manager.Manager) (*Runnable, error) {
 		LicenceReport:     licencereport.SettingsFromEnv(),
 		Vault:             vaultFromEnv(),
 		LiveReader:        mgr.GetAPIReader(),
+		TenancyMode:       tenancyMode,
 	})
 	if err != nil {
 		return nil, err

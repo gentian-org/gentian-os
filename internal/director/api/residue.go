@@ -23,6 +23,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
 	"github.com/gentian-org/gentian-os/internal/director/lifecycle"
 	"github.com/gentian-org/gentian-os/internal/profilebundle"
+	"github.com/gentian-org/gentian-os/internal/tenancy"
 )
 
 // Removing what the catalogue left behind.
@@ -52,13 +53,22 @@ import (
 // yet". A director that restarts in between forgets to; the profile is then
 // still on the list, and asking again finishes it.
 
+//
+// A tenant's administrator has a narrower way in, for the leftovers of an
+// app the tenant has (removeAppResidue). It is the same command to the
+// operator with the tenant and the app named in it, and exists only on a
+// cluster whose one user tenant is theirs.
+
 const (
 	residuePath       = "/v1/catalogue/residue"
 	removeResiduePath = "/v1/actions/remove-catalogue-residue"
 	// refusedStillDeclared is the operator's refusal that ends by itself:
 	// Argo CD has not taken the removal in yet (applifecycle).
 	refusedStillDeclared = "still-declared"
-	classUnusedProfile   = "unused-profile"
+	// refusedShared is the refusal of a tenant's removal on a cluster where
+	// the pieces are every tenant's.
+	refusedShared      = "shared"
+	classUnusedProfile = "unused-profile"
 )
 
 // residueWait is for how long the operator is asked again to delete a
@@ -88,6 +98,20 @@ type residueTarget struct {
 	Kind      string `json:"kind"`
 	Name      string `json:"name"`
 	Namespace string `json:"namespace,omitempty"`
+}
+
+// appScope is the tenant and the app a tenant's removal is asked for. The
+// operator removes for it only a leftover of that app, which the tenant has.
+type appScope struct {
+	Tenant  string `json:"tenant"`
+	Profile string `json:"profile"`
+}
+
+// operatorRemoval is what the operator is asked: one object, and for a
+// tenant's removal on whose behalf.
+type operatorRemoval struct {
+	residueTarget
+	*appScope
 }
 
 // operatorAnswer is what the operator says to a removal.
@@ -131,19 +155,96 @@ func (s *Server) removeCatalogueResidue(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	if companion {
-		s.removeCompanion(w, r, c, target)
+		s.removeCompanion(w, r, c, target, nil)
 		return
 	}
 	s.removeUnusedProfile(w, r, c, target)
 }
 
-// removeCompanion has the operator delete one object no bundle owns.
-func (s *Server) removeCompanion(w http.ResponseWriter, r *http.Request, c call, target residueTarget) {
+// removeAppResidue removes one leftover of an app for the administrator of
+// a tenant that has it.
+//
+// What an app's bundle brought is on the cluster once, for every tenant that
+// installed the app, so the relation on the tenant is not the whole check.
+// It is asked first -- can_install_app, as uninstalling and purging the app
+// are -- and then the cluster's tenancy mode is read from git: only where it
+// is single, and this is the one user tenant such a cluster carries, are the
+// pieces this tenant's alone. Everywhere else the answer is 403 with the
+// sentence the console shows, before the name is asked for again: nobody is
+// made to type a name to be refused.
+//
+// Then it is the cluster's removal of a companion, with the tenant and the
+// app passed along. The operator works its list out again and deletes the
+// object only if it is on it as something a newer build of this app left
+// behind, and only if the tenant has the app; it refuses under its own
+// tenancy mode too. An object no bundle owns and a profile nobody uses are
+// not reachable from here.
+func (s *Server) removeAppResidue(w http.ResponseWriter, r *http.Request, c call) {
+	scope := &appScope{Tenant: r.PathValue("t"), Profile: r.PathValue("p")}
+	if !gitops.ValidName(scope.Profile) {
+		s.fail(w, r, http.StatusBadRequest, "invalid name")
+		return
+	}
+	settings, err := s.cfg.Repo.ClusterSettingValues(r.Context())
+	if err != nil && !errors.Is(err, gitops.ErrNoClusterClaim) {
+		s.repoError(w, r, err)
+		return
+	}
+	// No claim is no word that the cluster is single, and so it is not.
+	if !tenancy.SoleUserTenant(settings["tenancyMode"], scope.Tenant) {
+		s.json(w, http.StatusForbidden, map[string]any{
+			"error": tenancy.SharedPieces, "reason": refusedShared, "removableBy": "platform",
+			"request_id": reqID(r.Context()),
+		})
+		return
+	}
+	var body struct {
+		residueTarget
+		Confirm string `json:"confirm"`
+	}
+	usage := `body must be {"kind": "Composition|OIDCPackCatalog|ConfigMap|Customization", ` +
+		`"name": "<name>", "namespace": "<optional>", "confirm": "<the name again>"}`
+	if err := decode(r, &body); err != nil {
+		s.fail(w, r, http.StatusBadRequest, usage)
+		return
+	}
+	// A companion and nothing else: a profile is the cluster's to retire.
+	if !residueKinds[body.Kind] || !objectName.MatchString(body.Name) ||
+		(body.Namespace != "" && !gitops.ValidName(body.Namespace)) {
+		s.fail(w, r, http.StatusBadRequest, usage)
+		return
+	}
+	if body.Confirm != body.Name {
+		s.json(w, http.StatusPreconditionRequired, map[string]any{
+			"error": fmt.Sprintf("removing the %s %s deletes it from the cluster, and nothing puts it back "+
+				"but installing a build that brings it; a build of %s older than the one installed that needed it "+
+				"would no longer find it", body.Kind, body.Name, scope.Profile),
+			"confirmField":   "confirm",
+			"confirmWith":    body.Name,
+			"dangerous":      true,
+			"requiresRetype": true,
+			"request_id":     reqID(r.Context()),
+		})
+		return
+	}
+	s.removeCompanion(w, r, c, body.residueTarget, scope)
+}
+
+// removeCompanion has the operator delete one object no bundle owns: for the
+// cluster when scope is nil, and otherwise for the tenant and the app named.
+func (s *Server) removeCompanion(w http.ResponseWriter, r *http.Request, c call, target residueTarget, scope *appScope) {
 	// What git says first. A bundle file in the catalogue directory that
 	// declares the object owns it, whether or not the cluster has caught up.
 	owner, err := s.cfg.Repo.CatalogueDeclares(r.Context(), target.Kind, target.Name)
 	if err != nil {
 		s.repoError(w, r, err)
+		return
+	}
+	if owner != "" && scope != nil && owner != scope.Profile {
+		// Whose it is, is not a tenant's to be told.
+		s.refuseResidue(w, r, "still-declared", fmt.Sprintf(
+			"the %s %s is declared by a bundle in the deployments repository, so it is not residue. Nothing was deleted",
+			target.Kind, target.Name))
 		return
 	}
 	if owner != "" {
@@ -152,7 +253,7 @@ func (s *Server) removeCompanion(w http.ResponseWriter, r *http.Request, c call,
 			target.Kind, target.Name, owner))
 		return
 	}
-	status, answer, err := s.askRemoval(r.Context(), c.meta.ActorName(), target)
+	status, answer, err := s.askRemoval(r.Context(), c.meta.ActorName(), operatorRemoval{target, scope})
 	if err != nil {
 		s.lifecycleError(w, r, err)
 		return
@@ -202,7 +303,7 @@ func (s *Server) removeUnusedProfile(w http.ResponseWriter, r *http.Request, c c
 		committed = "Its files were removed from the deployments repository. "
 	}
 
-	status, answer, err := s.askRemoval(ctx, c.meta.ActorName(), target)
+	status, answer, err := s.askRemoval(ctx, c.meta.ActorName(), operatorRemoval{residueTarget: target})
 	switch {
 	case err == nil && status >= 200 && status <= 299:
 		out["status"], out["deleted"], out["message"] = answer.Status, answer.Deleted, committed+answer.Message
@@ -264,7 +365,7 @@ func (s *Server) listedAsUnused(ctx context.Context, name string) (string, error
 }
 
 // askRemoval puts one removal to the operator.
-func (s *Server) askRemoval(ctx context.Context, actor string, target residueTarget) (int, operatorAnswer, error) {
+func (s *Server) askRemoval(ctx context.Context, actor string, target operatorRemoval) (int, operatorAnswer, error) {
 	status, body, err := s.cfg.Lifecycle.Do(ctx, removeResiduePath, actor, target)
 	if err != nil {
 		return 0, operatorAnswer{}, err
@@ -278,6 +379,14 @@ func (s *Server) askRemoval(ctx context.Context, actor string, target residueTar
 
 // relayRefusal passes the operator's refusal on, with which refusal it was.
 func (s *Server) relayRefusal(w http.ResponseWriter, r *http.Request, status int, answer operatorAnswer) {
+	if status == http.StatusForbidden && answer.Reason == refusedShared {
+		// The operator runs under a tenancy mode that is not the one git
+		// declares. Its word is the cluster's, and it deleted nothing.
+		s.json(w, http.StatusForbidden, map[string]any{
+			"error": answer.Detail, "reason": refusedShared, "removableBy": "platform", "request_id": reqID(r.Context()),
+		})
+		return
+	}
 	if status != http.StatusConflict {
 		s.fail(w, r, status, answer.Detail)
 		return
@@ -310,7 +419,7 @@ func (s *Server) finishRetirementLater(name, actor string, target residueTarget)
 				return
 			case <-time.After(time.Duration(residuePoll.Load())):
 			}
-			status, answer, err := s.askRemoval(ctx, actor, target)
+			status, answer, err := s.askRemoval(ctx, actor, operatorRemoval{residueTarget: target})
 			switch {
 			case err != nil:
 				s.cfg.Log.Warn("asking the operator to delete an unused profile", "profile", name, "error", err.Error())

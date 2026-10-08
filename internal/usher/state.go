@@ -49,6 +49,15 @@ func (s *Server) stateRoutes() {
 	// which kinds of data each one has left. Uninstalling keeps an app's
 	// data, and this is the only place that says so afterwards.
 	s.guarded("GET /v1/tenants/{t}/apps/retained", "can_view", tenantObject, s.relay("/apps/retained"))
+	// What newer builds of one app left behind on the cluster: the pieces
+	// its bundle, or an add-on's, brought once and brings no longer. The
+	// pieces are the cluster's, and the read is the tenant's all the same:
+	// the operator answers it only for an app this tenant has, with the part
+	// of the cluster's list that names that app, and says in the answer who
+	// may remove them -- this tenant's administrator where the tenant is the
+	// cluster's only one, the platform's otherwise. Removing is the
+	// director's command either way.
+	s.guarded("GET /v1/tenants/{t}/apps/{p}/residue", "can_view", tenantObject, s.appResidue)
 
 	// A tenant's resources: the ceiling the cluster enforces, what is under
 	// it, the plans it may move to, and its history.
@@ -113,6 +122,10 @@ func (s *Server) relayCluster(path string) func(http.ResponseWriter, *http.Reque
 	return func(w http.ResponseWriter, r *http.Request, _ call) {
 		s.relayed(w, r, path)
 	}
+}
+
+func (s *Server) appResidue(w http.ResponseWriter, r *http.Request, c call) {
+	s.relayed(w, r, tenantPath(c, "/apps/"+url.PathEscape(r.PathValue("p"))+"/residue"))
 }
 
 func (s *Server) tenantBackup(w http.ResponseWriter, r *http.Request, c call) {

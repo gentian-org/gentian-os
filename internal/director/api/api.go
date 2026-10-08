@@ -527,6 +527,14 @@ func (s *Server) routes() {
 		// an app to people, which is can_grant's.
 		s.guarded("POST /v1/tenants/{t}/actions/purge-app", "can_install_app", tenantObject, s.purgeApp)
 		s.guarded("POST /v1/tenants/{t}/actions/provision-app", "can_grant", tenantObject, s.provisionApp)
+		// Removing one piece a newer build of an app left on the cluster,
+		// for the administrator of a tenant that has the app. Whoever may
+		// install's, as uninstalling and purging are -- and not that alone:
+		// the pieces are the cluster's, so the handler refuses unless this
+		// is the only user tenant the cluster carries. The cluster's own
+		// administrator removes them at
+		// /v1/clusters/{c}/actions/remove-catalogue-residue.
+		s.action("POST /v1/tenants/{t}/apps/{p}/actions/remove-residue", "can_install_app", tenantObject, s.removeAppResidue)
 
 		// Choosing a plan is can_set_plan, model v1's own verb for it, and it
 		// is a commit: the operator learns the plan from git like everything
