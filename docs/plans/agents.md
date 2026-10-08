@@ -108,7 +108,7 @@ not allowed.
 
 | Piece | State today |
 | --- | --- |
-| **Keycloak** | Version 26.0.7 (Helm chart `keycloakx` 7.0.1, [suze.yaml](../../crossplane/compositions/suze.yaml)). No optional feature is on. **The upgrade to 26.8 is decided**; this document is written against 26.8. Appendix A says what 26.8 supports. |
+| **Keycloak** | Version 26.8.0 (Helm chart `keycloakx` 7.3.2, [suze.yaml](../../crossplane/compositions/suze.yaml)). No optional feature is switched on by the platform. This document is written against 26.8; Appendix A says what it supports. |
 | **A person's token** | Lasts five minutes; the Gateway renews it against a session of twelve hours. It exists at the front door and at the desktop's and consoles' backends. **No app ever receives it** (rule AD-13 in [architectural-decisions.md](architectural-decisions.md)). An engine is an app, so an engine never holds a person's token. |
 | **The front door** | The Gateway keeps the session. The bouncer asks OpenFGA one question per address and sets headers that name the person. |
 | **OpenFGA** | Knows people, groups, tenants, apps and grants between apps ([model.fga](../../authz/model/v1/model.fga)). It has no notion of an agent. |
@@ -1516,7 +1516,7 @@ Two points deserve plain words.
 
 | # | Precondition | Why | State |
 | --- | --- | --- | --- |
-| 1 | **Keycloak is at 26.8.** | 26.0.7 has no token exchange and no way to obtain a token for a person who is away. | Decided, not done. Eight minor versions are crossed; Appendix A lists the changes to watch. |
+| 1 | **Keycloak is at 26.8.** | 26.0.7 had no token exchange and no way to obtain a token for a person who is away. | Done in the repository; not yet run on a cluster. |
 | 2 | **The chaperone's and the notary's key to OpenFGA cannot write.** | Today one shared key reads and writes everything, in every store. The chaperone handles content chosen by graphs and language models, next to adapter code from many authors. A break-in there must not be a break-in at the authority on rights. | Open. OpenFGA's own per-client access control is still experimental in its latest release (Appendix B), so [roadmap §1.35](../roadmap.md) cannot be done with it yet. Until then: a small relay in front of OpenFGA that holds the key and offers only questions, and a network rule that admits only the operator and the relay to OpenFGA itself. This closes the same weakness for the existing readers. |
 | 3 | **Nothing on the agent side is valid at the platform's own services.** | A person's token is accepted by five platform services today. | By construction for the pass: its own issuer, its own audience, refused everywhere but the chaperone. The notary's routes for the desktop would be a sixth place that accepts the shared audience; a separate audience per service ([roadmap §1.34](../roadmap.md)) should come first. |
 | 4 | **A removed or disabled account stops its agents.** | A person who has left must not keep acting through a graph. | Partly given. Keycloak issues no token for a disabled account, which covers apps reached with Keycloak tokens. For apps reached with stored tokens or headers, the operator must learn of a disabled account and remove the person's relations; whether the event listener reports "disabled" was not found. |
