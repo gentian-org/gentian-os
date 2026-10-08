@@ -141,6 +141,8 @@ mailEgressHost: ""
 # MinIO -- each get the NetworkPolicy that says who may connect to them. On by
 # default. "false" removes all four, and a connection is then checked by its
 # credentials alone. The installer passes STORE_NETWORK_POLICIES.
+# The same switch covers the policy on the kernel's own PostgreSQL
+# (kernel-postgres, whose policy is kept and admits everything when off).
 storeNetworkPolicies: "true"
 
 # The long key ids Argo CD accepts commits from on the deployments repository

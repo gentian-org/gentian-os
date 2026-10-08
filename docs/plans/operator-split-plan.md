@@ -995,7 +995,9 @@ gives.
    registrar. Each relies on verifying the caller's token. The four shared
    stores have a policy each, which admits the operator by name and none of
    the other four ([security.md §2.7](../design/security.md)); the kernel's
-   own PostgreSQL, which holds the registrar's record, has none. A policy
+   own PostgreSQL, which holds the registrar's record, has one too, which
+   admits the registrar and the operator by name and none of the other
+   three ([security.md §2.8](../design/security.md)). A policy
    also only works where the cluster's network enforces such policies.
 
 7. **Whoever can start a pod as the director is the director.** The operator

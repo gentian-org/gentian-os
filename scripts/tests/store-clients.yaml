@@ -411,3 +411,188 @@ denied:
     namespace: kernel-control
     podLabels: {app.kubernetes.io/name: gentian-os, app.kubernetes.io/instance: gentian-os, app.kubernetes.io/component: operator}
     port: 9001
+
+# ── Servers that are not shared stores ───────────────────────────────────
+#
+# The kernel's own PostgreSQL (kernel-postgres, in kernel-data). It carries a
+# NetworkPolicy of its own chart, and these are its clients, held the same
+# two ways:
+#
+#   scripts/tests/server_network_policies.py   (make test-store-network-policies)
+#   internal/controller/server_clients_test.go
+#
+# `evidence` says how far the row is carried by this repository: `proven`
+# when the namespace, the port and whatever a rule selects the client by are
+# read from a chart, a script or the operator's code here; `inferred` when
+# part of it rests on upstream software that is not vendored, named in
+# `proof`. A rule may lean on nothing that is only inferred, bar the pinned
+# CloudNativePG labels the stores' policies lean on too.
+servers:
+  clients:
+    # ── kernel-postgres (kernel-data) ───────────────────────────────────
+    - server: kernel-postgres
+      client: Keycloak, whose database is here
+      namespace: kernel-authentication
+      podLabels: {app.kubernetes.io/name: keycloakx, app.kubernetes.io/instance: gentian-idp-keycloak}
+      port: 5432
+      built: none
+      evidence: proven
+      proof: >-
+        kernel/appsets/raw/09-identity.yaml (dbHost, and the namespace the values land in),
+        kernel/services/keycloak-idp/manifests/templates/configmap.yaml database.hostname and .port;
+        the pod labels are upstream keycloakx 7.3.2's and no rule selects on them
+    - server: kernel-postgres
+      client: OpenFGA, and the migration that runs as its init container
+      namespace: kernel-authorization
+      podLabels: {app.kubernetes.io/name: openfga, app.kubernetes.io/instance: gentian-openfga}
+      port: 5432
+      built: none
+      evidence: proven
+      proof: >-
+        kernel/appsets/raw/09-identity.yaml, kernel/services/openfga/manifests/templates/externalsecret.yaml datastore.uri,
+        configmap.yaml migrationType initContainer; the pod labels are upstream openfga 0.3.10's and no rule selects on them
+    - server: kernel-postgres
+      client: the registrar, which records who was allowed to ask for an identity change
+      namespace: kernel-control
+      podLabels: {app.kubernetes.io/name: gentian-os, app.kubernetes.io/instance: gentian-os, app.kubernetes.io/component: registrar}
+      port: 5432
+      built: none
+      evidence: proven
+      proof: charts/gentian-os/templates/externalsecret-registrar-database.yaml, registrar.yaml REGISTRAR_DATABASE_URL, internal/registrar/record
+    - server: kernel-postgres
+      client: the operator, reading and writing the usage history and notices of the tenant that adopts the kernel realm
+      namespace: kernel-control
+      podLabels: {app.kubernetes.io/name: gentian-os, app.kubernetes.io/instance: gentian-os, app.kubernetes.io/component: operator}
+      port: 5432
+      built: none
+      evidence: proven
+      proof: >-
+        internal/usage/sampler.go StoreForTenant (the desktop-database Secret of the tenant's namespace),
+        internal/applifecycle/notifications.go notificationConn; that Secret names this server for the tenant
+        that adopts the kernel realm (internal/controller/component_desktop.go ensureDatabaseRequirement)
+    - server: kernel-postgres
+      client: the desktop of the tenant that adopts the kernel realm
+      namespace: {name: tenant-platform, labels: {gentianos.io/tier: tenant, gentianos.io/tenant: platform}}
+      podLabels: {app.kubernetes.io/instance: tenant-platform-desktop}
+      port: 5432
+      built: kernel-realm-desktop-database
+      evidence: proven
+      proof: internal/controller/component_desktop.go componentDatabaseNamespace, component_network_policy.go
+    - server: kernel-postgres
+      client: a replica or a join Job of the cluster itself, streaming from the primary
+      namespace: kernel-data
+      podLabels: {cnpg.io/cluster: kernel-postgres, cnpg.io/jobRole: join}
+      port: 5432
+      built: none
+      evidence: inferred
+      proof: >-
+        CloudNativePG 1.25.0 pkg/specs/jobs.go (upstream; instances is 1 in kernel/data/kernel-postgres/values.yaml,
+        so this is for a cluster that raises it)
+    - server: kernel-postgres
+      client: CloudNativePG's operator, asking an instance for its status
+      namespace: kernel-data
+      podLabels: {app.kubernetes.io/name: cloudnative-pg, app.kubernetes.io/instance: cnpg}
+      port: 8000
+      built: none
+      evidence: inferred
+      proof: >-
+        kernel/bootstrap/chart/templates/cnpg.yaml (the namespace); the labels are chart cloudnative-pg 0.23.0's
+        and the port CloudNativePG 1.25.0's pkg/management/url StatusPort, both upstream
+
+  # What must NOT get in.
+  denied:
+    - server: kernel-postgres
+      client: the director, which keeps nothing in a database
+      namespace: kernel-control
+      podLabels: {app.kubernetes.io/name: gentian-os, app.kubernetes.io/instance: gentian-os, app.kubernetes.io/component: director}
+      port: 5432
+    - server: kernel-postgres
+      client: the usher
+      namespace: kernel-control
+      podLabels: {app.kubernetes.io/name: gentian-os, app.kubernetes.io/instance: gentian-os, app.kubernetes.io/component: usher}
+      port: 5432
+    - server: kernel-postgres
+      client: the custodian
+      namespace: kernel-control
+      podLabels: {app.kubernetes.io/name: gentian-os, app.kubernetes.io/instance: gentian-os, app.kubernetes.io/component: custodian}
+      port: 5432
+    - server: kernel-postgres
+      client: a pod of the control namespace that is none of the operator's programs
+      namespace: kernel-control
+      podLabels: {}
+      port: 5432
+    - server: kernel-postgres
+      client: Argo CD
+      namespace: kernel-gitops
+      podLabels: {}
+      port: 5432
+    - server: kernel-postgres
+      client: Crossplane and its providers, none of which speaks to a database
+      namespace: kernel-provisioning
+      podLabels: {}
+      port: 5432
+    - server: kernel-postgres
+      client: the vault and External Secrets
+      namespace: kernel-secrets
+      podLabels: {}
+      port: 5432
+    - server: kernel-postgres
+      client: the edge
+      namespace: kernel-edge
+      podLabels: {}
+      port: 5432
+    - server: kernel-postgres
+      client: the tenants' PostgreSQL
+      namespace: system-postgresql
+      podLabels: {cnpg.io/cluster: postgres, cnpg.io/podRole: instance}
+      port: 5432
+    - server: kernel-postgres
+      client: the model gateway, whose database is its own
+      namespace: system-llm
+      podLabels: {}
+      port: 5432
+    - server: kernel-postgres
+      client: a mail server
+      namespace: system-mail
+      podLabels: {app.kubernetes.io/name: dovecot}
+      port: 5432
+    - server: kernel-postgres
+      client: a perimeter proxy in a tenant's DMZ
+      namespace: {name: tenant-platform-dmz, labels: {gentianos.io/tier: tenant-dmz, gentianos.io/tenant: platform}}
+      podLabels: {app.kubernetes.io/name: perimeter-proxy}
+      port: 5432
+    - server: kernel-postgres
+      client: a pod of a namespace outside the layout
+      namespace: {name: default, labels: {}}
+      podLabels: {}
+      port: 5432
+    - server: kernel-postgres
+      client: Keycloak on the instance manager's port
+      namespace: kernel-authentication
+      podLabels: {app.kubernetes.io/name: keycloakx}
+      port: 8000
+    - server: kernel-postgres
+      client: the operator on the instance manager's port
+      namespace: kernel-control
+      podLabels: {app.kubernetes.io/name: gentian-os, app.kubernetes.io/instance: gentian-os, app.kubernetes.io/component: operator}
+      port: 8000
+    - server: kernel-postgres
+      client: a tenant's desktop on the instance manager's port
+      namespace: *tenant
+      podLabels: {app.kubernetes.io/instance: tenant-acme-desktop}
+      port: 8000
+    - server: kernel-postgres
+      client: an instance of the cluster on another's instance manager
+      namespace: kernel-data
+      podLabels: {cnpg.io/cluster: kernel-postgres, cnpg.io/podRole: instance}
+      port: 8000
+    - server: kernel-postgres
+      client: CloudNativePG's operator of another namespace, were there one
+      namespace: system-postgresql
+      podLabels: {app.kubernetes.io/name: cloudnative-pg}
+      port: 8000
+    - server: kernel-postgres
+      client: the registrar on the metrics port
+      namespace: kernel-control
+      podLabels: {app.kubernetes.io/name: gentian-os, app.kubernetes.io/instance: gentian-os, app.kubernetes.io/component: registrar}
+      port: 9187

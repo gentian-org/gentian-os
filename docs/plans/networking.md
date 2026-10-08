@@ -251,10 +251,15 @@ keeps out the apps that declared no such store. The table of who reaches
 which port, and what stays closed, is
 [security.md §2.7](../design/security.md).
 
-Still open at L5: `system-mail`, `system-mail-dmz`, `system-llm` and
-`kernel-data` admit any source, and no kernel or system namespace denies
-egress -- a pod there is stopped at a store by the store's policy and
-nowhere else by anything.
+The kernel's own PostgreSQL carries the same kind of policy: Keycloak's and
+OpenFGA's namespaces, the registrar and the operator by label, tenant
+namespaces for the desktop of the tenant that adopts the kernel realm, and
+its own namespace. The table is in
+[security.md §2.8](../design/security.md).
+
+Still open at L5: `system-mail`, `system-mail-dmz` and `system-llm` admit
+any source, and no kernel or system namespace denies egress -- a pod there
+is stopped at a server by that server's policy and nowhere else by anything.
 
 ## 3. Route classes
 

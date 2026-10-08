@@ -37,3 +37,21 @@ databases:
     database: portal_shell
     role: portal_shell_user
     passwordKey: portal_shell_user_password
+
+# Who may open a connection to the server's pods (templates/networkpolicy.yaml).
+# On by default; needs a CNI that enforces NetworkPolicy, and has no effect on
+# one that does not. Off keeps the policy and makes it admit everything, which
+# leaves the passwords as the only check. The bootstrap chart's Application
+# passes `enabled` (its storeNetworkPolicies) and the namespaces from the
+# layout; the values here are what a `helm template` run by hand gets.
+networkPolicy:
+  enabled: true
+  ports:
+    # The port every client's connection settings name, and the one
+    # CloudNativePG's instance manager answers its operator on.
+    postgresql: 5432
+    status: 8000
+  namespaces:
+    authentication: kernel-authentication
+    authorization: kernel-authorization
+    control: kernel-control

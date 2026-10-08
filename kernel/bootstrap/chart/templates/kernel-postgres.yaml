@@ -20,6 +20,17 @@ spec:
       parameters:
       - name: storageClass
         value: {{ .Values.storageClass | quote }}
+      {{- /* The NetworkPolicy on the server's pods: the same switch as the
+           stores' (storeNetworkPolicies), compared as a string the way it is
+           for them, and the namespaces of its clients from the layout. */}}
+      - name: networkPolicy.enabled
+        value: {{ ternary "false" "true" (eq (toString .Values.storeNetworkPolicies) "false") | quote }}
+      - name: networkPolicy.namespaces.authentication
+        value: {{ include "ns" (list . "authentication") }}
+      - name: networkPolicy.namespaces.authorization
+        value: {{ include "ns" (list . "authorization") }}
+      - name: networkPolicy.namespaces.control
+        value: {{ include "ns" (list . "control") }}
   destination:
     server: https://kubernetes.default.svc
     namespace: {{ include "ns" (list . "data") }}
