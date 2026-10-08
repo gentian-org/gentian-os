@@ -159,6 +159,8 @@ func TestTheStoresClientsAreWhereTheirNetworkPoliciesExpectThem(t *testing.T) {
 			Cache: &gentianov1alpha1.CacheRequirement{Engine: gentianov1alpha1.CacheEngineRedis}}, "cache", provisioner.RedisPort),
 		"tenant-app-s3": app(gentianov1alpha1.ServiceRequirements{
 			Storage: &gentianov1alpha1.StorageRequirement{S3: &gentianov1alpha1.S3Requirement{}}}, "s3", provisioner.ObjectStoragePort),
+		"tenant-app-llm": app(gentianov1alpha1.ServiceRequirements{
+			LLM: &gentianov1alpha1.LLMRequirement{}}, "llm", provisioner.ModelGatewayPort),
 		"tenant-component-database": func(t *testing.T) builtClient {
 			comp := &gentianov1alpha1.Component{ObjectMeta: metav1.ObjectMeta{Name: "desktop", Namespace: tenant.NamespaceName()}}
 			profile := &gentianov1alpha1.ComponentProfile{Spec: gentianov1alpha1.ComponentProfileSpec{
@@ -202,6 +204,9 @@ func TestTheStoresClientsAreWhereTheirNetworkPoliciesExpectThem(t *testing.T) {
 		"mariadb":    provisioner.MariaDBPort,
 		"cache":      provisioner.RedisPort,
 		"s3":         provisioner.ObjectStoragePort,
+		// The model gateway is no store, and is held to the same table: its
+		// namespace carries the same kind of policy, per server pod set.
+		"llm": provisioner.ModelGatewayPort,
 	}
 
 	seen := map[string]bool{}
@@ -269,6 +274,9 @@ func TestTheStoresClientsAreWhereTheirNetworkPoliciesExpectThem(t *testing.T) {
 func profileNameOf(services gentianov1alpha1.ServiceRequirements) string {
 	if services.Database != nil && services.Database.Engine == gentianov1alpha1.DatabaseEngineMariaDB {
 		return "shop"
+	}
+	if services.LLM != nil {
+		return "chat"
 	}
 	return "wiki"
 }

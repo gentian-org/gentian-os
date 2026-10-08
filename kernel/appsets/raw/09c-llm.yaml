@@ -63,6 +63,18 @@ spec:
             # the operator addresses it as layout.System("llm").
             - name: servicesNamespace
               value: 'sys.llm.placeholder'
+            # The NetworkPolicies on the pods of this namespace, delivered
+            # with the chart like each store's: the cluster's one switch
+            # (kernel/appsets/values.yaml storeNetworkPolicies) and the
+            # namespaces of the platform's own clients from the layout.
+            - name: networkPolicy.enabled
+              value: 'store.networkpolicies.placeholder'
+            - name: networkPolicy.namespaces.control
+              value: 'ns.control.placeholder'
+            - name: networkPolicy.namespaces.data
+              value: 'ns.data.placeholder'
+            - name: networkPolicy.namespaces.edge
+              value: 'ns.edge.placeholder'
       destination:
         server: https://kubernetes.default.svc
         namespace: 'sys.llm.placeholder'

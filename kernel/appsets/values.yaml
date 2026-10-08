@@ -31,4 +31,6 @@ llmExternalProviders: "false"
 # says otherwise; "false" removes all four and leaves credentials as the only
 # check on a connection. From the bootstrap chart's value of the same name.
 # The mail servers' charts take the same switch for theirs.
+# The same switch carries the policies of the model gateway's namespace
+# (kernel/services/llm/manifests), on a cluster that serves models.
 storeNetworkPolicies: "true"

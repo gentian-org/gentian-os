@@ -36,6 +36,18 @@ check() {
     fi
 }
 
+check_llm() {
+    # check_llm <description> <assertion>
+    local what="$1"
+    shift
+    if python3 scripts/tests/llm_network_policies.py "$@"; then
+        printf '  \033[0;32mok\033[0m    %s\n' "${what}"
+    else
+        printf '  \033[0;31mFAIL\033[0m  %s\n' "${what}"
+        fail=$((fail + 1))
+    fi
+}
+
 fail=0
 echo ""
 echo "System tier: the NetworkPolicy on each shared store"
@@ -77,6 +89,16 @@ done
 check_server "namespaces, labels, hosts, ports and sync waves are what the policies assume; the installer's check runs where it is admitted" wiring
 check_server "storeNetworkPolicies=false: kernel-postgres admits everything, the mail servers carry no policy; on, each carries one" off
 check_server "a cluster that relays mail has no mail policy; without a certificate or an MX no rule is left for the port" modes
+
+# The model gateway's namespace is no store and is held to the same: one
+# policy per pod set that serves there, the clients from the same table.
+echo ""
+echo "System tier: the NetworkPolicies of the model gateway's namespace"
+echo ""
+check_llm "each policy selects its server's pods and no other; every port they declare is listed or recorded as closed" shape
+check_llm "every client of the table is admitted to the server it names, everything it says to refuse is refused" clients
+check_llm "the namespace, the parameters, the gateway's port and the edge's label are what the policies assume" wiring
+check_llm "storeNetworkPolicies=false: no policy; with GPUs no mock and no policy for one; no models, no ApplicationSet" off
 
 echo ""
 if [[ "${fail}" -gt 0 ]]; then

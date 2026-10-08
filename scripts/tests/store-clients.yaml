@@ -19,6 +19,9 @@
 # `built: none` marks a client no constructor in the operator's Go builds,
 # with the reason in `proof`.
 #
+# The model gateway's namespace is on the same table (`store: llm`): it is
+# no store, and its pods carry the same kind of policy.
+#
 # Namespaces of the kernel and system tiers get their labels from
 # kernel/namespaces.yaml. A tenant namespace is written out with the labels
 # the Tenant composition gives it.
@@ -268,6 +271,87 @@ clients:
       internal/bundlestore/bundlestore.go Minio, internal/applifecycle/bundle_download.go, bundle_import.go;
       the labels are checked against the rendered operator chart
 
+  # ── The model gateway's namespace (system-llm) ─────────────────────────
+  # Not a store, and held to the same discipline. Four pod sets serve there,
+  # each with a policy of its own, so a row names the `server` it connects
+  # to: gateway, database, cache or mock. Read by
+  # scripts/tests/llm_network_policies.py.
+  - store: llm
+    server: gateway
+    client: a tenant's app that declared the model gateway
+    namespace: *tenant
+    podLabels: {gentianos.io/app: chat}
+    port: 4000
+    built: tenant-app-llm
+    proof: internal/kernel/netpolicy/kernel.go kernelEgressTargets; the address is written by internal/controller/model_access_reconciler.go
+  - store: llm
+    server: gateway
+    client: the operator, registering and removing an app's key and a tenant's team
+    namespace: kernel-control
+    podLabels: {app.kubernetes.io/name: gentian-os, app.kubernetes.io/instance: gentian-os, app.kubernetes.io/component: operator}
+    port: 4000
+    built: none
+    proof: >-
+      internal/modelgateway/modelgateway.go, internal/controller/model_access_reconciler.go, litellm_team.go,
+      internal/applifecycle/purge.go (the lifecycle service runs in the operator, cmd/main.go);
+      the labels are checked against the rendered operator chart
+  - store: llm
+    server: gateway
+    client: the Gateway's Envoy pods, routing the gateway's console llm.<kernelDomain>
+    namespace: kernel-edge
+    podLabels: {app.kubernetes.io/name: envoy}
+    port: 4000
+    built: none
+    proof: >-
+      internal/controller/kernel_gateway_routes.go kernelRouteLiteLLM (the route and its backend);
+      the pods are Envoy Gateway's, labelled by it (upstream), and selected by the same label in
+      kernel/manifests/gateway/chart/templates/envoyproxy.yaml
+  - store: llm
+    server: database
+    client: the gateway, on its own database
+    namespace: system-llm
+    podLabels: {app: litellm-proxy}
+    port: 5432
+    built: none
+    proof: kernel/services/llm/manifests/templates/llm-services.yaml DATABASE_URL (the Secret litellm-db-app CloudNativePG writes)
+  - store: llm
+    server: database
+    client: a replica or a join Job of the gateway's database cluster, streaming from the primary
+    namespace: system-llm
+    podLabels: {cnpg.io/cluster: litellm-db, cnpg.io/jobRole: join}
+    port: 5432
+    built: none
+    proof: CloudNativePG 1.25.0 pkg/specs/jobs.go (upstream; the Cluster is rendered with instances 1, so this is for a cluster that raises it)
+  - store: llm
+    server: database
+    client: CloudNativePG's operator, asking the gateway's database instance for its status
+    namespace: kernel-data
+    podLabels: {app.kubernetes.io/name: cloudnative-pg, app.kubernetes.io/instance: cnpg}
+    port: 8000
+    built: none
+    proof: >-
+      chart cloudnative-pg 0.23.0 rendered with kernel/values/cnpg.yaml (kernel/bootstrap/chart/templates/cnpg.yaml);
+      the port is CloudNativePG 1.25.0 pkg/management/url StatusPort
+  - store: llm
+    server: cache
+    client: the gateway, on its own Redis
+    namespace: system-llm
+    podLabels: {app: litellm-proxy}
+    port: 6379
+    built: none
+    proof: kernel/services/llm/manifests/templates/llm-services.yaml REDIS_HOST
+  - store: llm
+    server: mock
+    client: the gateway, calling the mock model server on a cluster without GPUs
+    namespace: system-llm
+    podLabels: {app: litellm-proxy}
+    port: 8000
+    built: none
+    proof: >-
+      inferred: kernel/services/llm/manifests/templates/vllm-mock.yaml exists so that the gateway has a model to
+      answer with, and no code in this repository registers it or calls it; the registration is made in the
+      gateway's own console
+
 # What must NOT get in. Each is a pod that could connect before these
 # policies existed, or a port that is not a client's business.
 denied:
@@ -411,6 +495,121 @@ denied:
     namespace: kernel-control
     podLabels: {app.kubernetes.io/name: gentian-os, app.kubernetes.io/instance: gentian-os, app.kubernetes.io/component: operator}
     port: 9001
+  - store: llm
+    server: gateway
+    client: a perimeter proxy in a tenant's DMZ
+    namespace: {name: tenant-acme-dmz, labels: {gentianos.io/tier: tenant-dmz, gentianos.io/tenant: acme}}
+    podLabels: {app.kubernetes.io/name: perimeter-proxy}
+    port: 4000
+  - store: llm
+    server: gateway
+    client: the director, which administers nothing at the gateway
+    namespace: kernel-control
+    podLabels: {app.kubernetes.io/name: gentian-os, app.kubernetes.io/instance: gentian-os, app.kubernetes.io/component: director}
+    port: 4000
+  - store: llm
+    server: gateway
+    client: cert-manager, which shares the edge namespace with the Gateway's pods
+    namespace: kernel-edge
+    podLabels: {app.kubernetes.io/name: cert-manager}
+    port: 4000
+  - store: llm
+    server: gateway
+    client: the mock model server, which is called and calls nothing
+    namespace: system-llm
+    podLabels: {app: vllm-inference}
+    port: 4000
+  - store: llm
+    server: gateway
+    client: a pod of a namespace outside the layout
+    namespace: {name: default, labels: {}}
+    podLabels: {}
+    port: 4000
+  - store: llm
+    server: gateway
+    client: Keycloak
+    namespace: kernel-authentication
+    podLabels: {app.kubernetes.io/name: keycloakx}
+    port: 4000
+  - store: llm
+    server: database
+    client: a tenant's app that declared the model gateway, on the gateway's database
+    namespace: *tenant
+    podLabels: {gentianos.io/app: chat}
+    port: 5432
+  - store: llm
+    server: database
+    client: the operator, which reaches the gateway through its API only
+    namespace: kernel-control
+    podLabels: {app.kubernetes.io/name: gentian-os, app.kubernetes.io/instance: gentian-os, app.kubernetes.io/component: operator}
+    port: 5432
+  - store: llm
+    server: database
+    client: the mock model server
+    namespace: system-llm
+    podLabels: {app: vllm-inference}
+    port: 5432
+  - store: llm
+    server: database
+    client: the gateway on the instance manager's port
+    namespace: system-llm
+    podLabels: {app: litellm-proxy}
+    port: 8000
+  - store: llm
+    server: database
+    client: CloudNativePG's operator on the data port
+    namespace: kernel-data
+    podLabels: {app.kubernetes.io/name: cloudnative-pg, app.kubernetes.io/instance: cnpg}
+    port: 5432
+  - store: llm
+    server: database
+    client: the tenants' PostgreSQL, another cluster of the same operator
+    namespace: system-postgresql
+    podLabels: {cnpg.io/cluster: postgres, cnpg.io/podRole: instance}
+    port: 5432
+  - store: llm
+    server: database
+    client: a tenant's app on the metrics port
+    namespace: *tenant
+    podLabels: {gentianos.io/app: chat}
+    port: 9187
+  - store: llm
+    server: cache
+    client: a tenant's app that declared the model gateway, on the gateway's Redis
+    namespace: *tenant
+    podLabels: {gentianos.io/app: chat}
+    port: 6379
+  - store: llm
+    server: cache
+    client: the operator
+    namespace: kernel-control
+    podLabels: {app.kubernetes.io/name: gentian-os, app.kubernetes.io/instance: gentian-os, app.kubernetes.io/component: operator}
+    port: 6379
+  - store: llm
+    server: cache
+    client: the gateway's database, beside it in the namespace
+    namespace: system-llm
+    podLabels: {cnpg.io/cluster: litellm-db, cnpg.io/podRole: instance}
+    port: 6379
+  - store: llm
+    server: mock
+    client: a tenant's app that declared the model gateway, going round the gateway to a model server
+    namespace: *tenant
+    podLabels: {gentianos.io/app: chat}
+    port: 8000
+  - store: llm
+    server: mock
+    client: the Gateway's Envoy pods
+    namespace: kernel-edge
+    podLabels: {app.kubernetes.io/name: envoy}
+    port: 8000
+  - store: llm
+    server: mock
+    client: CloudNativePG's operator, whose port number the model server shares
+    namespace: kernel-data
+    podLabels: {app.kubernetes.io/name: cloudnative-pg, app.kubernetes.io/instance: cnpg}
+    port: 8000
+
 
 # ── Servers that are not shared stores ───────────────────────────────────
 #

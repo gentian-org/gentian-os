@@ -31,3 +31,31 @@ externalProviders: false
 # gateway routes llm.<kernelDomain> to the same place. Both take it from
 # layout.System("llm"), so this is that name.
 servicesNamespace: platform-kernel
+
+# Who may connect to the pods of this namespace
+# (templates/networkpolicy.yaml): one NetworkPolicy per server pod set.
+#
+# enabled is the cluster's one switch for the policies on the system tier's
+# servers (kernel/appsets/values.yaml storeNetworkPolicies), which the LLM
+# ApplicationSet passes with the namespaces below from the layout. Rendered on
+# the v5 layout only, where servicesNamespace is the llm namespace.
+networkPolicy:
+  enabled: true
+  ports:
+    # The gateway's port: what an app is handed in its address and what its
+    # kernel-access policy opens (modelgateway.Port).
+    gateway: 4000
+    # The gateway's PostgreSQL, a CloudNativePG cluster: the data port and the
+    # instance manager's.
+    postgresql: 5432
+    status: 8000
+    redis: 6379
+    # The mock model server.
+    mock: 8000
+  namespaces:
+    # The operator's.
+    control: kernel-control
+    # CloudNativePG's operator's.
+    data: kernel-data
+    # The Gateways' Envoy pods'.
+    edge: kernel-edge

@@ -1,0 +1,192 @@
+{{- /*
+  Who may open a connection to what runs in the model gateway's namespace.
+
+  Four pod sets serve here -- the gateway, its PostgreSQL, its Redis and, on a
+  cluster without GPUs, the mock model server -- and until these policies
+  each took a connection from any pod of any namespace that has no egress
+  policy of its own, with a key or a password the only thing in the way. One
+  policy per pod set now, and a connection is admitted from the clients below
+  and from nothing else.
+
+  The gateway (llm-gateway-ingress), on its one port:
+
+    tenant namespaces   every namespace labelled gentianos.io/tier=tenant.
+                        The gateway cannot tell one tenant's app from another's
+                        pod; what narrows it to the apps that declared the
+                        gateway (requires.services.llm) is the tenant's side,
+                        where egress is denied by default (tenant-isolation)
+                        and kernel-access-<app> opens this port for a
+                        declaring app alone. The two rules are one control:
+                        this one keeps out everything that is not a tenant
+                        namespace or a client named here, that one keeps out
+                        the apps that asked for no gateway. A tenant's DMZ is
+                        a different tier and is not admitted.
+    the operator        registers and removes each app's key and each tenant's
+                        team (internal/modelgateway, the tenant reconciler,
+                        and a purge, which runs in the operator).
+    the edge            the gateway's console is a kernel console,
+                        llm.<kernelDomain>, routed by the authenticated
+                        Gateway (kernel_gateway_routes.go); the connection
+                        comes from the Gateway's Envoy pods. Nothing else in
+                        the edge namespace is admitted.
+
+  No pod of this namespace is a client of the gateway: its database, its
+  cache and the model server are called by it and call nothing.
+
+  The gateway's PostgreSQL (llm-database-ingress), a CloudNativePG cluster:
+  the data port from the gateway, and from the cluster's own pods (a replica
+  or a join Job streams from the primary when instances is raised above the
+  1 it is rendered with); the instance manager's port from CloudNativePG's
+  operator in the kernel's data namespace, without which the Cluster never
+  reports healthy. The metrics port (9187) is listed nowhere and so is
+  closed: nothing the platform runs scrapes it.
+
+  The gateway's Redis (llm-cache-ingress) and the mock model server
+  (llm-mock-ingress): the gateway, and nobody else.
+
+  Each policy selects its server's pods only and says nothing about egress.
+  The kubelet's probes come from the pod's own node and are not subject to a
+  NetworkPolicy.
+
+  NOT covered: real vLLM instances. Their chart (kernel/services/llm/chart)
+  names the v4 namespace and nothing in this repository installs it on the
+  v5 layout, so there is no pod here to select; a cluster that runs one in
+  this namespace gets no policy for it from this file, and its pods stay
+  open until one is written with it.
+
+  Rendered on the v5 layout only: on v4 this chart lands in platform-kernel,
+  the one namespace everything shares, where the clients named here are
+  somewhere else. Sync wave -1, with the Secret the pods mount: before the
+  Deployments and the Cluster, so that no server is up without its policy.
+*/ -}}
+{{- if and (ne .Values.servicesNamespace "platform-kernel") (ne (toString .Values.networkPolicy.enabled) "false") }}
+{{- $np := .Values.networkPolicy }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: llm-gateway-ingress
+  namespace: {{ .Values.servicesNamespace }}
+  labels:
+    gentianos.io/tier: system
+    gentianos.io/function: llm
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  podSelector:
+    matchLabels:
+      app: litellm-proxy
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              gentianos.io/tier: tenant
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $np.namespaces.control | quote }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: gentian-os
+              app.kubernetes.io/component: operator
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $np.namespaces.edge | quote }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: envoy
+      ports:
+        - protocol: TCP
+          port: {{ $np.ports.gateway }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: llm-database-ingress
+  namespace: {{ .Values.servicesNamespace }}
+  labels:
+    gentianos.io/tier: system
+    gentianos.io/function: llm
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  podSelector:
+    matchLabels:
+      cnpg.io/cluster: litellm-db
+      cnpg.io/podRole: instance
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: litellm-proxy
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: litellm-db
+      ports:
+        - protocol: TCP
+          port: {{ $np.ports.postgresql }}
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $np.namespaces.data | quote }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: cloudnative-pg
+      ports:
+        - protocol: TCP
+          port: {{ $np.ports.status }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: llm-cache-ingress
+  namespace: {{ .Values.servicesNamespace }}
+  labels:
+    gentianos.io/tier: system
+    gentianos.io/function: llm
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  podSelector:
+    matchLabels:
+      app: redis-llm
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: litellm-proxy
+      ports:
+        - protocol: TCP
+          port: {{ $np.ports.redis }}
+{{- if .Values.mockBackend }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: llm-mock-ingress
+  namespace: {{ .Values.servicesNamespace }}
+  labels:
+    gentianos.io/tier: system
+    gentianos.io/function: llm
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  podSelector:
+    matchLabels:
+      app: vllm-inference
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: litellm-proxy
+      ports:
+        - protocol: TCP
+          port: {{ $np.ports.mock }}
+{{- end }}
+{{- end }}
