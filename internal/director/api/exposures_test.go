@@ -167,3 +167,105 @@ func TestAnApproverNeedNotBeAnAdministrator(t *testing.T) {
 		t.Fatalf("GET = %d; reading the tenant's registry is can_view", code)
 	}
 }
+
+const (
+	userSitePath = "/v1/tenants/user/exposures/website/site"
+	mainAddress  = `{"apex":true,"reason":"our public website"}`
+)
+
+// On a single-tenancy cluster the user tenant's perimeter approver may ask
+// for the cluster's main address, with the same relation and the same record
+// as any other surface, and the registry says which entry it is.
+func TestTheUserTenantPublishesAWebsiteOnTheMainAddress(t *testing.T) {
+	h := startTenancy(t, &residueOperator{}, "single", nil)
+	uma := h.token(t, "tenant-user", "uma")
+
+	// A member of the tenant may not: it is can_expose, like every surface.
+	if code, _ := h.do(t, "PUT", userSitePath, h.token(t, "tenant-user", "ulf"), mainAddress); code != http.StatusForbidden {
+		t.Fatalf("a member published on the main address: %d", code)
+	}
+	code, body := h.do(t, "PUT", userSitePath, uma, mainAddress)
+	if code != http.StatusAccepted {
+		t.Fatalf("PUT = %d %v", code, body)
+	}
+	message := dt.Git(t, "", "--git-dir", h.remote, "log", "-1", "--format=%B", "main")
+	if !strings.Contains(message, "on the cluster's main address") || !strings.Contains(message, "can_expose tenant:user") {
+		t.Fatalf("the commit does not say what was published, or by which relation:\n%s", message)
+	}
+	patch := dt.Git(t, "", "--git-dir", h.remote, "show", "main:"+strings.TrimSuffix(dt.TenantPath("user"), "tenant.yaml")+"exposures.yaml")
+	if !strings.Contains(patch, "apex: true") {
+		t.Fatalf("the Tenant patch does not carry apex:\n%s", patch)
+	}
+
+	_, body = h.do(t, "GET", "/v1/tenants/user/exposures", uma, "")
+	live, _ := body["live"].([]any)
+	if len(live) != 1 {
+		t.Fatalf("live = %v", body["live"])
+	}
+	entry, _ := live[0].(map[string]any)
+	if entry["apex"] != true || entry["owner"] != "uma" || entry["reviewAt"] == "" || entry["publishedAt"] == "" {
+		t.Fatalf("the registry entry = %v; it must say apex, the owner and the dates", entry)
+	}
+
+	// One surface at a time: a second is refused, and told who holds it.
+	before := h.tip(t)
+	code, body = h.do(t, "PUT", "/v1/tenants/user/exposures/blog/site", uma, mainAddress)
+	msg, _ := body["error"].(string)
+	if code != http.StatusConflict || !strings.Contains(msg, "website/site") || !strings.Contains(msg, "uma") {
+		t.Fatalf("a second website on the main address: %d %v, want 409 naming the holder", code, body)
+	}
+	if h.tip(t) != before {
+		t.Fatal("the refused request committed anyway")
+	}
+	// The same surface again is a review, not a second one.
+	// (200 when the review lands in the second the entry was written in.)
+	if code, body := h.do(t, "PUT", userSitePath, uma, mainAddress); code != http.StatusAccepted && code != http.StatusOK {
+		t.Fatalf("reviewing the website: %d %v", code, body)
+	}
+	// A surface that is not for the main address is not in its way.
+	if code, body := h.do(t, "PUT", "/v1/tenants/user/exposures/nextcloud/shares", uma, `{"reason":"shared calendars"}`); code != http.StatusAccepted {
+		t.Fatalf("another surface beside the website: %d %v", code, body)
+	}
+
+	// Withdrawn the way every surface is; the address is then free again.
+	if code, _ := h.do(t, "DELETE", userSitePath, uma, ""); code != http.StatusAccepted {
+		t.Fatalf("DELETE = %d", code)
+	}
+	if code, body := h.do(t, "PUT", "/v1/tenants/user/exposures/blog/site", uma, mainAddress); code != http.StatusAccepted {
+		t.Fatalf("after the withdrawal, another website: %d %v", code, body)
+	}
+}
+
+// Anywhere but the user tenant of a single-tenancy cluster the main address
+// is not a tenant's to ask for, and nothing is committed.
+func TestTheMainAddressIsRefusedEverywhereElse(t *testing.T) {
+	cases := []struct {
+		what, mode, path, realm, who string
+		platform                     bool
+	}{
+		{"a multi-tenancy cluster", "multi", userSitePath, "tenant-user", "uma", false},
+		{"a cluster that declares no mode", "", userSitePath, "tenant-user", "uma", false},
+		{"a tenant that is not the user tenant", "single", "/v1/tenants/demo/exposures/website/site", "tenant-demo", "tom", false},
+		{"the platform tenant", "single", "/v1/tenants/demo/exposures/website/site", "tenant-demo", "tom", true},
+	}
+	for _, tc := range cases {
+		h := startTenancy(t, &residueOperator{}, tc.mode, nil)
+		if tc.platform {
+			adoptKernelRealm(t, h, "demo")
+		}
+		before := h.tip(t)
+		tok := h.token(t, tc.realm, tc.who)
+		code, body := h.do(t, "PUT", tc.path, tok, mainAddress)
+		msg, _ := body["error"].(string)
+		if code != http.StatusConflict || !strings.Contains(msg, "single-tenancy") {
+			t.Errorf("%s: %d %v, want 409 with the reason", tc.what, code, body)
+		}
+		if h.tip(t) != before {
+			t.Errorf("%s: the refused request committed anyway", tc.what)
+		}
+		// Without apex the same request is an ordinary surface, as before.
+		if code, body := h.do(t, "PUT", tc.path, tok, `{"reason":"a public page"}`); code != http.StatusAccepted {
+			t.Errorf("%s: an ordinary surface: %d %v", tc.what, code, body)
+		}
+	}
+}

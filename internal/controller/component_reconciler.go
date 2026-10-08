@@ -743,7 +743,9 @@ type zoneNames struct {
 	// of it one label below, as admin.platform.<kernel>.
 	kernel bool
 	// apex is where an apex entry answers: the cluster's bare domain, for the
-	// platform tenant, and nowhere for anybody else. Under either tenancy
+	// platform tenant, and nowhere for anybody else -- the user tenant's
+	// website on a single-tenancy cluster is given that address one entry
+	// at a time, by mainAddressHolder, and not through here. Under either tenancy
 	// mode: the concierge is published there on a single-tenancy cluster too,
 	// because every desktop loads the cluster's brand from it, and the edge
 	// sends the front page on to the user tenant's desktop
@@ -1570,7 +1572,13 @@ func (r *ComponentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Watches(release, componentOfRelease()).
 		Watches(&gentianov1alpha1.ComponentProfile{}, componentsOfProfile(mgr.GetClient())).
 		Watches(&corev1.Secret{}, componentsOfZoneSecret(mgr.GetClient())).
-		Watches(&corev1.Secret{}, componentsOfModelCredentials())
+		Watches(&corev1.Secret{}, componentsOfModelCredentials()).
+		// Who holds the cluster's main address turns on the user tenant: what
+		// it published and whether it is Ready. The components on that
+		// address -- the website's, and the platform's page, which steps back
+		// for it -- are another object's and are told here.
+		Watches(&gentianov1alpha1.Tenant{}, componentsOnTheMainAddress(mgr.GetClient()),
+			builder.WithPredicates(mainAddressChanged()))
 	if r.WatchClusterClaim {
 		b = b.Watches(clusterClaimObject(), componentsToldTheStore(mgr.GetClient()),
 			builder.WithPredicates(storeAddressChanged()))

@@ -588,9 +588,11 @@ var facts = dt.Table{
 	// Tenant user carries the name of the one user tenant of a
 	// single-tenancy cluster. uma administers it, ulf is a member, and the
 	// platform operates it as it does demo.
-	"user:uma can_install_app tenant:user":   true,
-	"user:uma can_view tenant:user":          true,
-	"user:ulf can_view tenant:user":          true,
+	"user:uma can_install_app tenant:user": true,
+	"user:uma can_view tenant:user":        true,
+	"user:ulf can_view tenant:user":        true,
+	// Its admins approve what it publishes, as demo's do.
+	"user:uma can_expose tenant:user":        true,
 	"user:alice can_install_app tenant:user": true,
 	"user:alice can_view tenant:user":        true,
 	// Declaring where software comes from is asked as can_write_credential,

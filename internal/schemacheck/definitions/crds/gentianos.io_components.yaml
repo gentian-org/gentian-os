@@ -208,6 +208,11 @@ spec:
                     authMode is not repeated here: the profile's entry is the one source, and an
                     enablement cannot weaken it.
                   properties:
+                    apex:
+                      description: |-
+                        Apex is the approver saying that this surface is for the cluster's
+                        main address (the bare domain), copied from the Tenant's entry.
+                      type: boolean
                     expiresAt:
                       description: |-
                         ExpiresAt ends the exposure, for one that was published for a while:

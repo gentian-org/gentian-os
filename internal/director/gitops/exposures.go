@@ -67,6 +67,23 @@ type Exposure struct {
 	// public, and when. Publishing is the first review.
 	LastReviewedBy string `json:"lastReviewedBy,omitempty"`
 	LastReviewedAt string `json:"lastReviewedAt,omitempty"`
+	// Apex says this surface is for the cluster's main address, the bare
+	// domain: the approver's own word, which the profile's entry must match.
+	// One surface holds the main address at a time.
+	Apex bool `json:"apex,omitempty"`
+}
+
+// ErrMainAddressHeld is a second surface asked for the cluster's main
+// address while another holds it.
+var ErrMainAddressHeld = errors.New("the cluster's main address is already held")
+
+// live reports an entry that has not expired.
+func (e Exposure) live(now time.Time) bool {
+	if e.ExpiresAt == "" {
+		return true
+	}
+	at, err := time.Parse(time.RFC3339, e.ExpiresAt)
+	return err != nil || now.Before(at)
 }
 
 // Key is what makes one unique: a component's entry, published once.
@@ -149,6 +166,18 @@ func (g *GitOps) PublishExposure(ctx context.Context, tenant string, e Exposure,
 	if err != nil {
 		return Result{}, err
 	}
+	if e.Apex {
+		// One surface holds the main address at a time. Refused here, with
+		// the holder's name, rather than committed and left for the operator
+		// to ignore: the approver should hear it when they ask.
+		for _, h := range have {
+			if h.Apex && h.Key() != e.Key() && h.live(time.Now()) {
+				return Result{}, fmt.Errorf(
+					"%w by %s/%s, published by %s. One surface holds it at a time: withdraw that one first",
+					ErrMainAddressHeld, h.Install, h.ExposureName, h.Owner)
+			}
+		}
+	}
 	next := make([]Exposure, 0, len(have)+1)
 	replaced := false
 	now := time.Now().UTC().Format(time.RFC3339)
@@ -170,8 +199,12 @@ func (g *GitOps) PublishExposure(ctx context.Context, tenant string, e Exposure,
 		e.PublishedAt = now
 		next = append(next, e)
 	}
+	what := e.Install + "/" + e.ExposureName
+	if e.Apex {
+		what += " on the cluster's main address"
+	}
 	return g.writeTenantFileLocked(ctx, tenant, ExposuresFile, renderExposures(tenant, next), listPatch,
-		fmt.Sprintf("%s %s/%s for tenant %s", verb, e.Install, e.ExposureName, tenant), meta)
+		fmt.Sprintf("%s %s for tenant %s", verb, what, tenant), meta)
 }
 
 // WithdrawExposure takes one down. The operator removes the proxy, the route
@@ -234,6 +267,10 @@ func renderExposures(tenant string, exposures []Exposure) string {
 		b.WriteString("      exposureName: " + e.ExposureName + "\n")
 		b.WriteString("      owner: " + e.Owner + "\n")
 		b.WriteString("      reviewAt: " + e.ReviewAt + "\n")
+		if e.Apex {
+			b.WriteString("      # For the cluster's main address: the bare domain.\n")
+			b.WriteString("      apex: true\n")
+		}
 		if e.ExpiresAt != "" {
 			b.WriteString("      expiresAt: " + e.ExpiresAt + "\n")
 		}

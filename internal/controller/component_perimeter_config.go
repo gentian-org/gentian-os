@@ -62,7 +62,18 @@ const perimeterProxyPort = 8080
 // because those are two different people's decisions: the author said which
 // prefixes this surface is, and the tenant's perimeter approver said it may be
 // published and where. Neither can widen the other.
-func perimeterProxyConfig(e *gentianov1alpha1.ExposureSpec, upstreamHost string, upstreamPort int32) string {
+//
+// website says this surface is a tenant's on the cluster's main address. The
+// platform's paths there are then refused by the proxy as well as outranked
+// at the Gateway, so the website cannot answer them whatever the routes look
+// like for a moment; and every answer says nosniff, the one header the
+// platform adds to a page it does not own.
+func perimeterProxyConfig(e *gentianov1alpha1.ExposureSpec, upstreamHost string, upstreamPort int32, website bool) string {
+	denied := perimeterDenied(e)
+	if website {
+		denied = append(denied, mainAddressReservedPrefixes...)
+		sort.Strings(denied)
+	}
 	var b strings.Builder
 	b.WriteString("# Managed by gentian-os. The publishing proxy for one exposure (AD-6).\n")
 	b.WriteString("#\n")
@@ -109,7 +120,7 @@ func perimeterProxyConfig(e *gentianov1alpha1.ExposureSpec, upstreamHost string,
 	for _, prefix := range perimeterPrefixes(e) {
 		b.WriteString("\n")
 		fmt.Fprintf(&b, "    location %s {\n", prefix)
-		for _, deny := range perimeterDenied(e) {
+		for _, deny := range denied {
 			fmt.Fprintf(&b, "      location %s { return 404; }\n", deny)
 		}
 		fmt.Fprintf(&b, "      proxy_pass http://%s:%d;\n", upstreamHost, upstreamPort)
@@ -132,6 +143,10 @@ func perimeterProxyConfig(e *gentianov1alpha1.ExposureSpec, upstreamHost string,
 		b.WriteString("      proxy_hide_header Set-Cookie;\n")
 		b.WriteString("      proxy_pass_header Server;\n")
 		b.WriteString("      proxy_hide_header X-Powered-By;\n")
+		if website {
+			b.WriteString("      proxy_hide_header X-Content-Type-Options;\n")
+			b.WriteString("      add_header X-Content-Type-Options nosniff always;\n")
+		}
 		b.WriteString("    }\n")
 	}
 	b.WriteString("  }\n")

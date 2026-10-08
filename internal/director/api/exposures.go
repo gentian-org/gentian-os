@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
+	"github.com/gentian-org/gentian-os/internal/tenancy"
 )
 
 // Publishing a surface to the internet (AD-6).
@@ -48,6 +49,11 @@ type publishExposureRequest struct {
 	ExpiresAt string `json:"expiresAt,omitempty"`
 	// Reason is why this is public, in the approver's words.
 	Reason string `json:"reason,omitempty"`
+	// Apex asks for the cluster's main address, the bare domain. Only the
+	// user tenant of a single-tenancy cluster may, and for one surface at a
+	// time. The profile's entry has to be one declared for it (apex: true);
+	// the operator checks that and says so on the Component.
+	Apex bool `json:"apex,omitempty"`
 }
 
 // tenantExposures answers what this tenant publishes: the registry.
@@ -106,6 +112,21 @@ func (s *Server) publishExposure(w http.ResponseWriter, r *http.Request, c call)
 		return
 	}
 
+	if body.Apex {
+		// The main address is the most visible page of the cluster and
+		// nobody is signed in on it. Whose it may be is the mode's.
+		settings, err := s.cfg.Repo.ClusterSettingValues(r.Context())
+		if err != nil && !errors.Is(err, gitops.ErrNoClusterClaim) {
+			s.repoError(w, r, err)
+			return
+		}
+		// No claim is no word that the cluster is single, and so it is not.
+		if !tenancy.SoleUserTenant(settings["tenancyMode"], r.PathValue("t")) {
+			s.fail(w, r, http.StatusConflict, mainAddressRefused)
+			return
+		}
+	}
+
 	now := time.Now()
 	review := now.Add(defaultReview)
 	if v := strings.TrimSpace(body.ReviewAt); v != "" {
@@ -153,6 +174,7 @@ func (s *Server) publishExposure(w http.ResponseWriter, r *http.Request, c call)
 		ReviewAt:  review.UTC().Format(time.RFC3339),
 		ExpiresAt: expires,
 		Reason:    strings.TrimSpace(body.Reason),
+		Apex:      body.Apex,
 	}
 	res, err := s.cfg.Repo.PublishExposure(r.Context(), r.PathValue("t"), e, c.meta)
 	if err != nil && errors.Is(err, gitops.ErrInvalidName) {
@@ -161,8 +183,19 @@ func (s *Server) publishExposure(w http.ResponseWriter, r *http.Request, c call)
 		s.fail(w, r, http.StatusBadRequest, err.Error())
 		return
 	}
+	if err != nil && errors.Is(err, gitops.ErrMainAddressHeld) {
+		// The message names the holder, which is what the approver needs.
+		s.fail(w, r, http.StatusConflict, err.Error())
+		return
+	}
 	s.written(w, r, res, err)
 }
+
+// mainAddressRefused is the answer to apex: true anywhere but the user
+// tenant of a single-tenancy cluster.
+const mainAddressRefused = "a website on the cluster's main address is for the user tenant of a single-tenancy cluster only. " +
+	"On a multi-tenancy cluster the main address is the sign-in form, and the platform tenant's own page is published at install. " +
+	"Nothing was changed"
 
 // withdrawExposure takes one down.
 func (s *Server) withdrawExposure(w http.ResponseWriter, r *http.Request, c call) {

@@ -727,11 +727,14 @@ spec:
                       type: object
                     apex:
                       description: |-
-                        Apex publishes this entry on the zone's bare domain instead of a host
-                        under it. Only a perimeter entry may say it, and the operator honours
-                        it only for the platform tenant, whose zone is the cluster's own
-                        domain: the bare domain is the first thing anybody typing the cluster's
-                        address meets, and it belongs to nobody else.
+                        Apex publishes this entry on the cluster's bare domain -- its main
+                        address -- instead of a host under the zone's domain. Only a perimeter
+                        entry may say it. The operator honours it for the platform tenant,
+                        and for the one user tenant of a single-tenancy cluster when that
+                        tenant's approver published the entry for the main address (apex on
+                        the enablement) and no other surface holds it. Everywhere else an
+                        apex entry has no host and is not published: the bare domain is the
+                        first thing anybody typing the cluster's address meets.
                       type: boolean
                     authMode:
                       description: AuthMode is mandatory and has no default.

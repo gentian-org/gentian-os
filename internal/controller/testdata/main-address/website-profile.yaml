@@ -1,0 +1,33 @@
+# A fixture, not a catalogue entry: the smallest profile that can put a
+# public website on a cluster's main address. A static site server, with one
+# perimeter surface for the whole host.
+#
+# apex: true is the author saying "this surface is a website for the bare
+# domain". It publishes nothing. The tenant's perimeter approver publishes
+# it, and has to say apex too (docs/app-customization.md).
+apiVersion: gentianos.io/v1alpha1
+kind: ComponentProfile
+metadata:
+  name: website
+spec:
+  classes: [app]
+  launch: none
+  trustTier: community
+  version: "1.0.0"
+  package:
+    chart:
+      repository: oci://registry.example/charts
+      name: static-site
+      version: "1.0.0"
+  expose:
+    - name: site
+      surface: perimeter
+      # A public website: nobody signs in to read it.
+      authMode: none
+      apex: true
+      # The whole host. The platform's own paths on the main address are
+      # kept from it whatever is declared here.
+      paths: ["/"]
+      backend:
+        service: website
+        port: 8080

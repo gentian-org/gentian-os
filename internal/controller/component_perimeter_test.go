@@ -69,7 +69,7 @@ func perimeterScheme() *runtime.Scheme {
 func TestThePublishedSurfaceIsOnlyWhatWasDeclared(t *testing.T) {
 	profile := nextcloudWithPerimeter()
 	e := &profile.Spec.Expose[1]
-	conf := perimeterProxyConfig(e, "nextcloud.tenant-acme.svc.cluster.local", 8080)
+	conf := perimeterProxyConfig(e, "nextcloud.tenant-acme.svc.cluster.local", 8080, false)
 
 	// Property 1: only the declared prefixes, and everything else refused
 	// here rather than forwarded.
@@ -119,7 +119,7 @@ func TestAPerimeterEntryWithNoPathsPublishesNothing(t *testing.T) {
 		Name: "everything", Surface: gentianov1alpha1.SurfacePerimeter,
 		Backend: gentianov1alpha1.BackendRef{Service: "nextcloud", Port: 8080},
 	}
-	conf := perimeterProxyConfig(e, "nextcloud.tenant-acme.svc.cluster.local", 8080)
+	conf := perimeterProxyConfig(e, "nextcloud.tenant-acme.svc.cluster.local", 8080, false)
 	if strings.Contains(conf, "proxy_pass") {
 		t.Fatal("an entry declaring no paths forwarded something")
 	}
@@ -289,7 +289,7 @@ func TestAnEnablementWithoutADeclarationPublishesNothing(t *testing.T) {
 		ExposureName: "invented", Owner: "u-tom",
 		ExpiresAt: exposureEnds(time.Now().Add(time.Hour)),
 	}}
-	live := livePerimeterExposures(comp, nextcloudWithPerimeter(), edgeZone{zoneNames: zoneNames{domain: "acme.k.example"}}, time.Now())
+	live := livePerimeterExposures(comp, nextcloudWithPerimeter(), edgeZone{zoneNames: zoneNames{domain: "acme.k.example"}}, time.Now(), perimeterMainAddress{})
 	if len(live) != 0 {
 		t.Fatalf("published %d surfaces for an entry no profile declares", len(live))
 	}
@@ -304,7 +304,7 @@ func TestAGatewayEntryCannotBePublishedOnThePerimeter(t *testing.T) {
 		ExposureName: "web", Owner: "u-tom", // "web" is the gateway entry
 		ExpiresAt: exposureEnds(time.Now().Add(time.Hour)),
 	}}
-	live := livePerimeterExposures(comp, nextcloudWithPerimeter(), edgeZone{zoneNames: zoneNames{domain: "acme.k.example"}}, time.Now())
+	live := livePerimeterExposures(comp, nextcloudWithPerimeter(), edgeZone{zoneNames: zoneNames{domain: "acme.k.example"}}, time.Now(), perimeterMainAddress{})
 	if len(live) != 0 {
 		t.Fatalf("a gateway surface was published on the perimeter")
 	}

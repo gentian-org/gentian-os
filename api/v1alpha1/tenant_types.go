@@ -232,6 +232,13 @@ type TenantExposure struct {
 	LastReviewedBy string `json:"lastReviewedBy,omitempty"`
 	// +optional
 	LastReviewedAt *metav1.Time `json:"lastReviewedAt,omitempty"`
+
+	// Apex is the approver saying that this surface is for the cluster's
+	// main address: the bare domain. The profile's entry must say apex too;
+	// neither alone publishes anything. It is honoured for the one user
+	// tenant of a single-tenancy cluster and for one surface at a time.
+	// +optional
+	Apex bool `json:"apex,omitempty"`
 }
 
 // Enablement is this entry as the Component carries it.
@@ -241,6 +248,7 @@ func (e *TenantExposure) Enablement() ExposureEnablement {
 		Owner:        e.Owner,
 		ExpiresAt:    e.ExpiresAt,
 		ReviewAt:     e.ReviewAt,
+		Apex:         e.Apex,
 	}
 }
 

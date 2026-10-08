@@ -19,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -175,6 +176,15 @@ func (r *GatewayPlatformReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			handler.EnqueueRequestsFromMapFunc(mapToPlatform),
 			builder.WithPredicates(predicate.NewPredicateFuncs(func(obj client.Object) bool {
 				return obj.GetLabels()[bouncerRouteLabel] == "true"
+			})),
+		).
+		// A publishing proxy coming up or going away: the front page of the
+		// main address follows the website's (mainAddressWebsiteServing).
+		Watches(
+			&appsv1.Deployment{},
+			handler.EnqueueRequestsFromMapFunc(mapToPlatform),
+			builder.WithPredicates(predicate.NewPredicateFuncs(func(obj client.Object) bool {
+				return obj.GetLabels()["app.kubernetes.io/name"] == perimeterProxyAppName
 			})),
 		).
 		Complete(r)
@@ -334,6 +344,21 @@ func perimeterTenantListeners(kernelDomain, tenancyMode, kernelRealm string, ten
 			seen[host] = struct{}{}
 			out = append(out, withAllowedRoutes(tlsListener(
 				perimeterListenerName(host), gatewayv1.Hostname(host), secret, secretNamespace,
+			), true))
+		}
+	}
+	// A tenant's website on the cluster's main address answers on the bare
+	// domain, with the cluster's own certificate. The platform's page is
+	// normally published there already and this adds nothing; where it is
+	// not, the website still needs the listener.
+	if holder := mainAddressHolder(mainAddressInputs{
+		Tenants: tenants, Profiles: profiles,
+		KernelDomain: kernelDomain, KernelRealm: kernelRealm, TenancyMode: tenancyMode, Now: time.Now(),
+	}); holder != nil {
+		if _, dup := seen[kernelDomain]; !dup {
+			out = append(out, withAllowedRoutes(tlsListener(
+				perimeterListenerName(kernelDomain), gatewayv1.Hostname(kernelDomain),
+				kernelWildcardTLSSecretName, servicesNamespace,
 			), true))
 		}
 	}

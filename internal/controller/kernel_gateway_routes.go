@@ -13,7 +13,9 @@ package controller
 import (
 	"context"
 	"fmt"
+	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -118,9 +120,15 @@ func (r *GatewayPlatformReconciler) reconcileKernelHTTPRoutes(ctx context.Contex
 		}
 	}
 
+	door := kernelFrontDoorOf(tenantList.Items, r.KernelDomain, r.kernelRealm(), r.TenancyMode)
+	if door.userDesktop != "" {
+		if door.website, err = r.mainAddressWebsiteServing(ctx, tenantList.Items); err != nil {
+			return fmt.Errorf("main address: %w", err)
+		}
+	}
 	specs := kernelHTTPRouteSpecs(r.KernelDomain, effectiveDomains, oidcSubs, tenantNames,
 		clusterLLMEnabled(ctx, r.Client), r.Cluster, r.kernelZoneReady(ctx), desktopPresent(ctx, r.Client),
-		kernelFrontDoorOf(tenantList.Items, r.KernelDomain, r.kernelRealm(), r.TenancyMode))
+		door)
 	// The bouncer's table first: a route whose policy asks the bouncer before the
 	// bouncer knows the host is refused, which is the right direction, but a
 	// short one.
@@ -174,6 +182,34 @@ func (r *GatewayPlatformReconciler) reconcileKernelHTTPRoutes(ctx context.Contex
 	return r.deleteStaleKernelHTTPRoutes(ctx, expected)
 }
 
+// mainAddressWebsiteServing reports whether the user tenant's website holds
+// the cluster's main address and can answer on it: mainAddressHolder names
+// it, and its publishing proxy in the tenant's DMZ has an available pod.
+func (r *GatewayPlatformReconciler) mainAddressWebsiteServing(ctx context.Context, tenants []gentianov1alpha1.Tenant) (bool, error) {
+	profileList := &gentianov1alpha1.ComponentProfileList{}
+	if err := r.List(ctx, profileList); err != nil {
+		return false, err
+	}
+	profiles := map[string]*gentianov1alpha1.ComponentProfile{}
+	for i := range profileList.Items {
+		profiles[profileList.Items[i].Name] = &profileList.Items[i]
+	}
+	holder := mainAddressHolder(mainAddressInputs{
+		Tenants: tenants, Profiles: profiles,
+		KernelDomain: r.KernelDomain, KernelRealm: r.kernelRealm(), TenancyMode: r.TenancyMode,
+		Now: time.Now(),
+	})
+	if holder == nil {
+		return false, nil
+	}
+	namespace, name := mainAddressProxyName(holder)
+	proxy := &appsv1.Deployment{}
+	if err := r.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, proxy); err != nil {
+		return false, client.IgnoreNotFound(err)
+	}
+	return proxy.Status.AvailableReplicas > 0, nil
+}
+
 // desktopPresent reports whether this cluster ships a desktop at all: the
 // profile the operator chart installs (ui-restructure.md §1). Without it
 // there is no console anywhere, and nothing is redirected to one.
@@ -221,6 +257,14 @@ func zonedTenantDomains(tenants []gentianov1alpha1.Tenant, kernelDomain, tenancy
 //	                          which every desktop loads from the bare domain
 //	        www.<kernel>      -> the user tenant's desktop
 //	        console.<kernel>  the user tenant's desktop itself (its component)
+//
+// And on a single-tenancy cluster whose user tenant has a website on the
+// main address (main_address.go), once that website's proxy is up:
+//
+//	<kernel>/         the website (its component's route)
+//	<kernel>/sign-in  -> the user tenant's desktop, still
+//	<kernel>/branding  still the concierge's
+//	www.<kernel>      -> <kernel>, path kept
 type kernelFrontDoor struct {
 	single bool
 	// userDesktop is the user tenant's desktop on a single-tenancy cluster:
@@ -230,6 +274,12 @@ type kernelFrontDoor struct {
 	// and a browser sent to a name that is not published yet remembers that
 	// it is missing.
 	userDesktop string
+	// website says the user tenant's website is serving the main address:
+	// approved for it, and its publishing proxy has a pod that answers. The
+	// front page is then the website's and only /sign-in is sent on. Until
+	// the proxy answers the front page still leads to the desktop, so the
+	// main address never shows an error while a website is coming up.
+	website bool
 }
 
 // kernelFrontDoorOf reads the front door off the tenants and the mode.
@@ -375,9 +425,18 @@ func kernelHTTPRouteSpecs(
 	// there (/branding/) to every desktop; only the paths a person lands on,
 	// / and the form's /sign-in, are sent on. Those two are more specific than
 	// the concierge's whole-host route on the same listener, so they win.
+	// With a website on the main address the bare domain is the one name
+	// for it: www leads there, path kept, as it does on a multi-tenancy
+	// cluster. The website cannot take /sign-in: that redirect is the
+	// kernel's and more specific than the website's whole-host route.
 	frontDoor := kernelDomain
+	bareDomainRule := frontPageRedirectRule
 	if door.single && door.userDesktop != "" {
-		frontDoor = door.userDesktop
+		if door.website {
+			bareDomainRule = signInRedirectRule
+		} else {
+			frontDoor = door.userDesktop
+		}
 	}
 	specs = append(specs, kernelHTTPRouteSpec{
 		name:        kernelRouteWWWRedirect,
@@ -400,7 +459,7 @@ func kernelHTTPRouteSpecs(
 				host:        kernelDomain,
 				gateway:     PerimeterGatewayName,
 				sectionName: perimeterListenerName(kernelDomain),
-				rules:       []gatewayv1.HTTPRouteRule{frontPageRedirectRule(door.userDesktop)},
+				rules:       []gatewayv1.HTTPRouteRule{bareDomainRule(door.userDesktop)},
 			},
 			// Where nothing is published on the bare domain, it has no
 			// listener on the perimeter and arrives on the catch-all.
@@ -408,7 +467,7 @@ func kernelHTTPRouteSpecs(
 				name:        kernelRouteApexRedirect,
 				host:        kernelDomain,
 				sectionName: wildcardListenerName,
-				rules:       []gatewayv1.HTTPRouteRule{frontPageRedirectRule(door.userDesktop)},
+				rules:       []gatewayv1.HTTPRouteRule{bareDomainRule(door.userDesktop)},
 			})
 	}
 	// A tenant's apex likewise sends the browser to the tenant's own console.
@@ -710,16 +769,26 @@ func consoleRedirectRule(console string) gatewayv1.HTTPRouteRule {
 // Nothing else on the host is touched -- the brand under /branding/ is the
 // concierge's to serve.
 func frontPageRedirectRule(desktop string) gatewayv1.HTTPRouteRule {
+	return desktopRedirectRule(desktop,
+		pathMatch(gatewayv1.PathMatchExact, "/"),
+		pathPrefixMatch(mainAddressSignInPrefix))
+}
+
+// signInRedirectRule is what is left of that redirect while a website holds
+// the main address: /sign-in alone, which always leads to the desktop and so
+// to sign-in, whatever the website does.
+func signInRedirectRule(desktop string) gatewayv1.HTTPRouteRule {
+	return desktopRedirectRule(desktop, pathPrefixMatch(mainAddressSignInPrefix))
+}
+
+func desktopRedirectRule(desktop string, matches ...gatewayv1.HTTPRouteMatch) gatewayv1.HTTPRouteRule {
 	scheme := "https"
 	status := 302
 	port := gatewayv1.PortNumber(443)
 	host := gatewayv1.PreciseHostname(desktop)
 	root := "/"
 	return gatewayv1.HTTPRouteRule{
-		Matches: []gatewayv1.HTTPRouteMatch{
-			pathMatch(gatewayv1.PathMatchExact, "/"),
-			pathPrefixMatch("/sign-in"),
-		},
+		Matches: matches,
 		Filters: []gatewayv1.HTTPRouteFilter{{
 			Type: gatewayv1.HTTPRouteFilterRequestRedirect,
 			RequestRedirect: &gatewayv1.HTTPRequestRedirectFilter{

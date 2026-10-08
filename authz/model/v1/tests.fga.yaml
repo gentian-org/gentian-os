@@ -49,6 +49,7 @@ tuples:
   - {user: cluster:main, relation: operated_by, object: tenant:user}
   - {user: group:gentian/tenant/user/admins#member,  relation: admin,  object: tenant:user}
   - {user: group:gentian/tenant/user/members#member, relation: member, object: tenant:user}
+  - {user: group:gentian/tenant/user/admins#member,  relation: perimeter_approver, object: tenant:user}
 
   # --- one installed app
   - {user: tenant:demo, relation: tenant, object: app:demo/nextcloud}
@@ -86,7 +87,8 @@ tests:
       - {user: user:mia, object: tenant:demo, assertions: {can_install_app: false, can_manage_users: false, can_grant: false, can_administer: false, can_view: true, can_enter: true}}
       - {user: user:olaf, object: tenant:demo, assertions: {can_view: false, can_enter: false, can_install_app: false}}
       - {user: user:uma, object: tenant:user, assertions: {can_install_app: true, can_view: true, can_administer: true}}
-      - {user: user:ulf, object: tenant:user, assertions: {can_install_app: false, can_view: true}}
+      - {user: user:ulf, object: tenant:user, assertions: {can_install_app: false, can_view: true, can_expose: false}}
+      - {user: user:uma, object: tenant:user, assertions: {can_expose: true}}
       - {user: user:tom, object: tenant:user, assertions: {can_install_app: false, can_view: false}}
 
   - name: platform admin reaches a tenant only through operated_by

@@ -172,6 +172,11 @@ type ExposureEnablement struct {
 	// not it ends. A review that is overdue is reported; it takes nothing
 	// down.
 	ReviewAt metav1.Time `json:"reviewAt"`
+
+	// Apex is the approver saying that this surface is for the cluster's
+	// main address (the bare domain), copied from the Tenant's entry.
+	// +optional
+	Apex bool `json:"apex,omitempty"`
 }
 
 // PrivilegeGrant answers one entry of the profile's privilege request.

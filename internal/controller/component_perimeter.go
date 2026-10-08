@@ -15,6 +15,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"sort"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -22,6 +23,7 @@ import (
 	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -69,6 +71,22 @@ type perimeterEnablement struct {
 	spec *gentianov1alpha1.ExposureSpec
 	on   *gentianov1alpha1.ExposureEnablement
 	host string
+	// website marks a tenant's surface on the cluster's main address: its
+	// proxy refuses the platform's paths there (main_address.go).
+	website bool
+	// stepsBack marks the platform's own surface on the bare domain while a
+	// tenant's website holds it: routed for the platform's paths only.
+	stepsBack bool
+}
+
+// perimeterMainAddress is what the main address means for one component's
+// perimeter, decided by mainAddressHolder before anything is published.
+type perimeterMainAddress struct {
+	// entry is this component's entry that holds the main address, and host
+	// the address; both empty when none does.
+	entry, host string
+	// held says a tenant's website holds the main address, whoever's it is.
+	held bool
 }
 
 // livePerimeterExposures are the enablements in force right now.
@@ -79,7 +97,7 @@ type perimeterEnablement struct {
 // that it was once published.
 func livePerimeterExposures(
 	comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile,
-	zone edgeZone, now time.Time,
+	zone edgeZone, now time.Time, main perimeterMainAddress,
 ) []perimeterEnablement {
 	byName := map[string]*gentianov1alpha1.ExposureSpec{}
 	for i := range profile.Spec.Expose {
@@ -102,12 +120,28 @@ func livePerimeterExposures(
 			continue
 		}
 		host := exposureHost(zone, comp, spec)
+		website := false
+		if !zone.kernel {
+			// The main address takes two people saying so: the profile's
+			// author (apex on the entry) and the approver (apex on the
+			// enablement). One without the other publishes nothing, here or
+			// under the tenant's own hosts.
+			if spec.Apex != on.Apex {
+				continue
+			}
+			if spec.Apex && main.entry == spec.Name {
+				host, website = main.host, true
+			}
+		}
 		if host == "" {
 			// An entry with nowhere to answer in this zone: the bare domain,
-			// asked for by a tenant that is not the platform's.
+			// asked for by a tenant that does not hold it.
 			continue
 		}
-		out = append(out, perimeterEnablement{spec: spec, on: on, host: host})
+		out = append(out, perimeterEnablement{
+			spec: spec, on: on, host: host, website: website,
+			stepsBack: zone.kernel && spec.Apex && main.held,
+		})
 	}
 	return out
 }
@@ -123,10 +157,13 @@ func perimeterName(comp *gentianov1alpha1.Component, entry string) string {
 	return "perimeter-" + hex.EncodeToString(sum[:])[:16]
 }
 
+// perimeterProxyAppName labels every object of a publishing proxy.
+const perimeterProxyAppName = "perimeter-proxy"
+
 func perimeterLabels(comp *gentianov1alpha1.Component, entry string) map[string]string {
 	return map[string]string{
 		"app.kubernetes.io/managed-by": managedByValue,
-		"app.kubernetes.io/name":       "perimeter-proxy",
+		"app.kubernetes.io/name":       perimeterProxyAppName,
 		"gentianos.io/component":       comp.Name,
 		"gentianos.io/exposure":        entry,
 	}
@@ -138,7 +175,11 @@ func (r *ComponentReconciler) ensurePerimeter(
 	ctx context.Context, comp *gentianov1alpha1.Component,
 	profile *gentianov1alpha1.ComponentProfile, tenant *gentianov1alpha1.Tenant, zone edgeZone,
 ) (int, error) {
-	live := livePerimeterExposures(comp, profile, zone, time.Now())
+	main, err := r.mainAddressFor(ctx, comp, profile, tenant)
+	if err != nil {
+		return 0, fmt.Errorf("main address: %w", err)
+	}
+	live := livePerimeterExposures(comp, profile, zone, time.Now(), main)
 	dmz := layout.TenantDMZ(tenant.Name)
 
 	if err := r.prunePerimeter(ctx, comp, dmz, live); err != nil {
@@ -189,7 +230,7 @@ func (r *ComponentReconciler) ensurePerimeterProxy(
 	labels := perimeterLabels(comp, p.spec.Name)
 
 	upstream := fmt.Sprintf("%s.%s.svc.cluster.local", p.spec.Backend.Service, comp.Namespace)
-	config := perimeterProxyConfig(p.spec, upstream, p.spec.Backend.Port)
+	config := perimeterProxyConfig(p.spec, upstream, p.spec.Backend.Port, p.website)
 
 	cm := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: dmz, Labels: labels},
@@ -421,7 +462,7 @@ func (r *ComponentReconciler) ensurePerimeterRoute(
 	section := gatewayv1.SectionName(perimeterListenerName(p.host))
 
 	var rules []gatewayv1.HTTPRouteRule
-	for _, prefix := range perimeterPrefixes(p.spec) {
+	for _, prefix := range perimeterRoutePrefixes(p) {
 		pathType := gatewayv1.PathMatchPathPrefix
 		value := prefix
 		rules = append(rules, gatewayv1.HTTPRouteRule{
@@ -459,6 +500,105 @@ func (r *ComponentReconciler) ensurePerimeterRoute(
 	})
 }
 
+// perimeterRoutePrefixes are the prefixes one published surface is routed
+// for: what its profile declared.
+//
+// One exception. The platform's own surface on the bare domain steps back
+// while a tenant's website holds that address: it is then routed for the
+// platform's paths only (mainAddressPlatformPrefixes), as far as it declared
+// them, so that the website's whole-host route has no equal to tie with.
+func perimeterRoutePrefixes(p *perimeterEnablement) []string {
+	declared := perimeterPrefixes(p.spec)
+	if !p.stepsBack {
+		return declared
+	}
+	seen := map[string]struct{}{}
+	var out []string
+	add := func(prefix string) {
+		if _, dup := seen[prefix]; !dup {
+			seen[prefix] = struct{}{}
+			out = append(out, prefix)
+		}
+	}
+	for _, kept := range mainAddressPlatformPrefixes() {
+		for _, d := range declared {
+			switch {
+			case pathWithin(kept, d):
+				add(kept)
+			case pathWithin(d, kept):
+				add(d)
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// mainAddressFor decides what the cluster's main address means for this
+// component, and writes the answer on its MainAddress condition (in memory:
+// the caller's status update carries it).
+//
+// Asked only of a component whose profile has an apex entry, or one of whose
+// surfaces was published for the main address. Every other component has
+// nothing to do with it and reads nothing.
+func (r *ComponentReconciler) mainAddressFor(
+	ctx context.Context, comp *gentianov1alpha1.Component,
+	profile *gentianov1alpha1.ComponentProfile, tenant *gentianov1alpha1.Tenant,
+) (perimeterMainAddress, error) {
+	concerned := false
+	for i := range profile.Spec.Expose {
+		e := &profile.Spec.Expose[i]
+		concerned = concerned || (e.Surface == gentianov1alpha1.SurfacePerimeter && e.Apex)
+	}
+	for i := range comp.Spec.Exposures {
+		concerned = concerned || comp.Spec.Exposures[i].Apex
+	}
+	if !concerned {
+		apimeta.RemoveStatusCondition(&comp.Status.Conditions, ConditionMainAddress)
+		return perimeterMainAddress{}, nil
+	}
+	tenants := &gentianov1alpha1.TenantList{}
+	if err := r.List(ctx, tenants); err != nil {
+		return perimeterMainAddress{}, err
+	}
+	profileList := &gentianov1alpha1.ComponentProfileList{}
+	if err := r.List(ctx, profileList); err != nil {
+		return perimeterMainAddress{}, err
+	}
+	profiles := map[string]*gentianov1alpha1.ComponentProfile{}
+	for i := range profileList.Items {
+		profiles[profileList.Items[i].Name] = &profileList.Items[i]
+	}
+	profiles[comp.Name] = profile
+	in := mainAddressInputs{
+		Tenants: tenants.Items, Profiles: profiles,
+		KernelDomain: r.KernelDomain, KernelRealm: r.kernelRealm(), TenancyMode: r.TenancyMode,
+		Now: time.Now(),
+	}
+	main := perimeterMainAddress{held: mainAddressHolder(in) != nil}
+	if tenantAdoptsKernelRealm(tenant, r.kernelRealm()) {
+		// The platform's own page: it is on the bare domain either way, and
+		// has no decision to report.
+		apimeta.RemoveStatusCondition(&comp.Status.Conditions, ConditionMainAddress)
+		return main, nil
+	}
+	verdict, applies := mainAddressVerdictFor(in, tenant, comp.Name)
+	if !applies {
+		apimeta.RemoveStatusCondition(&comp.Status.Conditions, ConditionMainAddress)
+		return main, nil
+	}
+	status := metav1.ConditionFalse
+	if verdict.Entry != "" {
+		status = metav1.ConditionTrue
+		main.entry, main.host = verdict.Entry, r.KernelDomain
+	}
+	apimeta.SetStatusCondition(&comp.Status.Conditions, metav1.Condition{
+		Type: ConditionMainAddress, Status: status, Reason: verdict.Reason, Message: verdict.Message,
+		ObservedGeneration: comp.Generation,
+	})
+	return main, nil
+}
+
 // prunePerimeter removes what the enablements no longer say.
 //
 // This is what makes an expiry, a revocation and a removed path actually stop
@@ -472,7 +612,7 @@ func (r *ComponentReconciler) prunePerimeter(
 	for i := range live {
 		keep[perimeterName(comp, live[i].spec.Name)] = struct{}{}
 	}
-	selector := client.MatchingLabels{"gentianos.io/component": comp.Name, "app.kubernetes.io/name": "perimeter-proxy"}
+	selector := client.MatchingLabels{"gentianos.io/component": comp.Name, "app.kubernetes.io/name": perimeterProxyAppName}
 
 	routes := &gatewayv1.HTTPRouteList{}
 	if err := r.List(ctx, routes, client.InNamespace(dmz), selector); err == nil {
