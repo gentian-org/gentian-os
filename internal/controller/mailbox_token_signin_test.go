@@ -134,7 +134,7 @@ func TestTheClaimCarriesMailboxTokenSignIn(t *testing.T) {
 	}
 	write := func(r *ComponentReconciler, profile *gentianov1alpha1.ComponentProfile) {
 		t.Helper()
-		if _, _, err := r.ensureAppClaim(ctx, comp, tenant, zone, pullSecrets{}, "", r.mailboxTokenSignIn(ctx, tenant, profile)); err != nil {
+		if _, _, err := r.ensureAppClaim(ctx, comp, tenant, zone, pullSecrets{}, "", r.mailboxTokenSignIn(ctx, tenant, profile), nil); err != nil {
 			t.Fatal(err)
 		}
 	}

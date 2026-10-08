@@ -248,7 +248,11 @@ type LLMRequirement struct {
 	Optional bool `json:"optional,omitempty"`
 }
 
-// IdentityRequirement specifies OIDC or SAML needs.
+// IdentityRequirement says how the app signs people in: with an OIDC client
+// of its own, with a SAML client of its own, or -- for an app that can do
+// neither -- through the platform's sign-in sidecar.
+//
+// +kubebuilder:validation:XValidation:rule="!has(self.sidecar) || (!has(self.oidc) && !has(self.saml))",message="identity.sidecar signs people in for an app that can do neither OIDC nor SAML itself: it cannot be declared beside identity.oidc or identity.saml"
 type IdentityRequirement struct {
 	// OIDC describes the OIDC client to register in the tenant's Keycloak realm.
 	// When set, the composition emits a Client CR so every newly deployed tenant
@@ -261,6 +265,92 @@ type IdentityRequirement struct {
 	// SAML describes the SAML client to register in the tenant's Keycloak realm.
 	// +optional
 	SAML *SAMLClientSpec `json:"saml,omitempty"`
+
+	// Sidecar signs people in through the platform's sign-in sidecar.
+	// +optional
+	Sidecar *SignInSidecarSpec `json:"sidecar,omitempty"`
+}
+
+// SignInSidecarSpec declares that an app's people are signed in by the
+// platform's sign-in sidecar: for an app that, in the edition installed,
+// speaks neither OIDC nor SAML, so that a person who is signed in at the
+// platform opens it and is in -- with no second sign-in and no password.
+//
+// Declaring it is all a profile does. The platform then, for each install:
+//
+//   - registers the sidecar as a SAML service provider in the tenant's realm,
+//     under a name and with the one address it derives from where the app
+//     answers. A profile states neither;
+//   - runs the sidecar beside the app, told where the realm is, and gives it
+//     the handler from the profile's bundle;
+//   - routes two paths of the app's own host to it: /sso/login, behind the
+//     front door like the rest of the app, and /sso/acs, which the realm
+//     posts its answer to and which therefore takes no session;
+//   - opens the sidecar's network paths: to the realm's certificate, and to
+//     what is declared below, and to nothing else;
+//   - removes all of it with the app.
+//
+// The handler is the app's part: the code that makes a session in this app
+// for the person the sidecar names. It is the ConfigMap
+// "<profile>.sign-in-handler" of the profile's bundle (key handler.js, label
+// gentianos.io/asset: sign-in-handler), so the install's digest covers it. A
+// handler holds whatever is declared here, which is why it runs only from a
+// bundle the install is pinned to, and never from a tenant's own catalogue.
+//
+// Who may use the app is not decided here. A sign-in begins on /sso/login,
+// which only a person the front door admits to this app reaches.
+type SignInSidecarSpec struct {
+	// Exposure names the gateway entry people open the app at: the sidecar's
+	// two paths are on that entry's host. It may be omitted when the profile
+	// has exactly one gateway entry with authMode oidc.
+	// +optional
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	// +kubebuilder:validation:MaxLength=40
+	Exposure string `json:"exposure,omitempty"`
+
+	// EntryPaths are paths of the app that lead to the sign-in instead of to
+	// the app: its front page, and the address of its own sign-in form.
+	// Matched exactly, and only for a page load; a request the app's own page
+	// makes in the background is the app's to deal with. The page a handler
+	// sends a person to after signing them in must not be among them, and
+	// neither may a path under /sso/ or /oauth2/, which are the sign-in's own:
+	// the operator holds an install whose profile names one.
+	// +optional
+	// +listType=set
+	// +kubebuilder:validation:MaxItems=16
+	// +kubebuilder:validation:items:MaxLength=256
+	// +kubebuilder:validation:items:Pattern=`^/[A-Za-z0-9._~/-]*$`
+	EntryPaths []string `json:"entryPaths,omitempty"`
+
+	// Database gives the handler the app's own database: where it is and the
+	// app's own login to it, as DB_HOST, DB_PORT, DB_NAME, DB_USER and
+	// DB_PASSWORD, and the network path to that server. The profile must
+	// declare requires.services.database.
+	// +optional
+	Database bool `json:"database,omitempty"`
+
+	// Secrets gives the handler secrets of this app, by the names they have
+	// under spec.secrets.generated: each as SECRET_<NAME>, the name in upper
+	// case. An app's session-signing key is the usual one. A name that is not
+	// under spec.secrets.generated holds the install: what is read is always
+	// this app's own vault path, so no name reaches another app's secret.
+	// +optional
+	// +listType=set
+	// +kubebuilder:validation:MaxItems=8
+	// +kubebuilder:validation:items:MaxLength=64
+	// +kubebuilder:validation:items:Pattern=`^[a-z0-9_]+$`
+	Secrets []string `json:"secrets,omitempty"`
+
+	// AppPort lets the handler call the app itself inside the cluster: it
+	// is the port the app's pods listen on, and the network path is opened
+	// to that port of the app's own pods. The handler is told where the app
+	// is as APP_URL -- the Service and port the exposure routes to, which
+	// need not carry the same number. Such a call does not pass the front
+	// door.
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=65535
+	AppPort int32 `json:"appPort,omitempty"`
 }
 
 // SAMLClientSpec describes a SAML client to be registered in the tenant's Keycloak realm.

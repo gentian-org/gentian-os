@@ -121,7 +121,7 @@ func appComposition(comp *gentianov1alpha1.Component, profile *gentianov1alpha1.
 // Component removes the claim, and with it everything the Composition made.
 func (r *ComponentReconciler) ensureAppClaim(
 	ctx context.Context, comp *gentianov1alpha1.Component, tenant *gentianov1alpha1.Tenant, zone edgeZone, pull pullSecrets,
-	composition string, mailboxTokenSignIn bool,
+	composition string, mailboxTokenSignIn bool, signIn *signInSidecar,
 ) (bool, string, error) {
 	if composition == "" {
 		composition = defaultAppComposition
@@ -153,6 +153,13 @@ func (r *ComponentReconciler) ensureAppClaim(
 	// app whose profile stops declaring it loses the scope.
 	if mailboxTokenSignIn {
 		spec["mailboxTokenSignIn"] = true
+	}
+	// The app's sign-in sidecar (signin_sidecar.go): where it answers, where
+	// the realm is and which handler it runs. Absent when the profile
+	// declares none, and the loop below then takes it off a claim that had
+	// it -- which is what removes the sidecar and its client at the realm.
+	if signIn != nil {
+		spec["signInSidecar"] = signIn.claim
 	}
 	if len(comp.Spec.Addons) > 0 {
 		addons := make([]interface{}, 0, len(comp.Spec.Addons))
@@ -219,7 +226,7 @@ func (r *ComponentReconciler) ensureAppClaim(
 	// the whole of it would find a difference on every pass.
 	patch := client.MergeFrom(existing.DeepCopy())
 	changed := false
-	for _, field := range []string{"profileRef", "tenantNamespace", "domain", "realm", "addons", "config", "pullSecrets", "mailboxTokenSignIn", "compositionUpdatePolicy", "compositionRef"} {
+	for _, field := range []string{"profileRef", "tenantNamespace", "domain", "realm", "addons", "config", "pullSecrets", "mailboxTokenSignIn", "signInSidecar", "compositionUpdatePolicy", "compositionRef"} {
 		want, wanted := spec[field]
 		have, has, _ := unstructured.NestedFieldNoCopy(existing.Object, "spec", field)
 		switch {

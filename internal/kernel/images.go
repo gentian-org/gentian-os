@@ -42,6 +42,19 @@ const (
 	// upstream security fixes more than it wants a small attack surface we
 	// maintain ourselves.
 	DefaultPerimeterProxyImage = "nginx:1.27-alpine"
+	// DefaultSignInSidecarImage is the platform's sign-in sidecar: the
+	// program that signs people in to an app that can do neither OIDC nor
+	// SAML (internal/controller/signin_sidecar.go).
+	//
+	// One build, named twice: by a tag no later build takes, and by the
+	// digest of what that tag held. This is the program that decides whether
+	// a sign-in is genuine, so the build that was tested is the build that
+	// runs, and neither a registry nor a rebuild can change it.
+	//
+	// It is built by gentian-apps, from images/gentian-sidecar-sso-saml. A
+	// build of that repository's develop branch is develop-<commit>; a
+	// release is its version.
+	DefaultSignInSidecarImage = "ghcr.io/gentian-org/sidecar-sso-saml:develop-6da5d99@sha256:1c11542e079d5ebf868e929d0666af80b65d04ba294857dd18c9742200d40fff"
 )
 
 func PostgresProvisionerImage() string {
@@ -63,6 +76,12 @@ func MemcachedImage() string {
 // PerimeterProxyImage is the publishing proxy for a tenant's DMZ.
 func PerimeterProxyImage() string {
 	return envOrDefault("PERIMETER_PROXY_IMAGE", DefaultPerimeterProxyImage)
+}
+
+// SignInSidecarImage is the sign-in sidecar the operator runs beside an app
+// whose profile declares one.
+func SignInSidecarImage() string {
+	return envOrDefault("SIGN_IN_SIDECAR_IMAGE", DefaultSignInSidecarImage)
 }
 
 func KeycloakProvisionerImage() string {

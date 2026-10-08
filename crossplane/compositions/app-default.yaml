@@ -1380,6 +1380,75 @@ spec:
             {{- end }}
             {{- end }}
 
+            {{- /* ── The sign-in sidecar's client (requires.services.identity.sidecar)
+                 For an app that can do neither OIDC nor SAML itself. A small
+                 program beside the app is a SAML service provider towards the
+                 tenant's realm and runs the app's handler, which makes a
+                 session in the app for the person the realm vouches for.
+
+                 What is composed here is the sidecar's registration at the
+                 realm, as the OIDC client of an app that signs people in
+                 itself is composed above. The sidecar, its settings, its
+                 network paths and its routes are the operator's
+                 (internal/controller/signin_sidecar.go).
+
+                 Composed only where two things meet: the profile declares the
+                 sidecar, and the operator put on the claim where the app
+                 answers -- which it does only for an install pinned to a
+                 digest whose bundle, from a catalogue of the whole cluster,
+                 brings the handler. Either alone composes nothing, and a
+                 profile that stops declaring it loses the client with the
+                 sidecar: it is deleted from the realm.
+
+                 Nothing here is the profile's to choose. The client's name
+                 and the one address the realm may post its answer to follow
+                 from where the app answers. */}}
+            {{- $signIn := default dict $spec.signInSidecar }}
+            {{- $signInDeclared := hasKey (dig "identity" dict $kr) "sidecar" }}
+            {{- if and $signInDeclared $signIn.host }}
+            {{- $signInEntity := printf "https://%s/sso" $signIn.host }}
+            {{- $signInACS := printf "https://%s/sso/acs" $signIn.host }}
+            ---
+            apiVersion: samlclient.keycloak.crossplane.io/v1alpha1
+            kind: Client
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-sign-in-client
+              name: {{ $tenant }}-{{ $app }}-sign-in-client
+            spec:
+              deletionPolicy: Delete
+              managementPolicies: ["Observe", "Create", "Update", "Delete"]
+              forProvider:
+                realmId: {{ $realm }}
+                clientId: {{ $signInEntity | quote }}
+                name: {{ printf "Sign-in sidecar of %s" $app | quote }}
+                enabled: true
+                {{- /* The response and the assertion in it are both signed by
+                     the realm; the sidecar accepts nothing less. */}}
+                signDocuments: true
+                signAssertions: true
+                signatureAlgorithm: RSA_SHA256
+                encryptAssertions: false
+                {{- /* The sidecar's requests are not signed: it holds no key.
+                     What the realm answers goes to the one address below
+                     whoever asked, and the sidecar accepts an answer only to
+                     a request it sent itself. */}}
+                clientSignatureRequired: false
+                forcePostBinding: true
+                {{- /* The person is named by e-mail address, whatever a
+                     request asks for: it is the one thing the sidecar reads. */}}
+                forceNameIdFormat: true
+                nameIdFormat: email
+                includeAuthnStatement: true
+                frontChannelLogout: false
+                fullScopeAllowed: false
+                validRedirectUris:
+                  - {{ $signInACS | quote }}
+                assertionConsumerPostUrl: {{ $signInACS | quote }}
+              providerConfigRef:
+                name: keycloak
+            {{- end }}
+
             {{- /* Canonicalize extraVals so Helm values hashing is stable across reconciles */}}
             {{- $extraVals = $extraVals | toJson | fromJson }}
 

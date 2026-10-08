@@ -321,6 +321,17 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		}
 		return r.status(ctx, comp, metav1.ConditionFalse, "HostReserved", refusal, 0)
 	}
+	// The sign-in sidecar, for a profile that declares one: decided before
+	// anything is written, because a profile that may not have one -- its
+	// handler comes from a tenant's own catalogue, or from no reviewed
+	// bundle at all -- must not be installed with no way in either.
+	signIn, noSignIn := r.signInSidecarFor(comp, profile, tenant, zone)
+	if noSignIn != "" {
+		if r.Recorder != nil && !componentReports(comp, reasonSignInSidecarRefused, noSignIn) {
+			r.Recorder.Event(comp, corev1.EventTypeWarning, reasonSignInSidecarRefused, noSignIn)
+		}
+		return r.status(ctx, comp, metav1.ConditionFalse, reasonSignInSidecarRefused, noSignIn, 0)
+	}
 	values := map[string]interface{}{}
 	if profile.Spec.Package.ExtraValues != nil && len(profile.Spec.Package.ExtraValues.Raw) > 0 {
 		if err := decodeJSONObject(profile.Spec.Package.ExtraValues.Raw, &values); err != nil {
@@ -398,11 +409,19 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			return r.status(ctx, comp, metav1.ConditionFalse, "RepositoryAmbiguous", refusal, componentRequeue)
 		}
 	}
+	// The sign-in sidecar beside the app, for a profile that declares one,
+	// and its removal for one that no longer does. Asked of every component
+	// that installs a chart: only such a component can have had one.
+	if profile.Spec.Package.Chart != nil {
+		if err := r.ensureSignInSidecar(ctx, comp, tenant, signIn, pull); err != nil {
+			return ctrl.Result{}, fmt.Errorf("sign-in sidecar: %w", err)
+		}
+	}
 	switch {
 	case composed:
 		var err error
 		releaseReady, releaseMessage, err = r.ensureAppClaim(ctx, comp, tenant, zone, pull, appComposition(comp, profile),
-			r.mailboxTokenSignIn(ctx, tenant, profile))
+			r.mailboxTokenSignIn(ctx, tenant, profile), signIn)
 		if err != nil {
 			return ctrl.Result{}, err
 		}
@@ -498,7 +517,7 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		var oidcRoutes []string
 		forward := false
 		for _, e := range routable {
-			routeName, err := r.ensureExposureRoute(ctx, comp, profile, tenant, zone, e)
+			routeName, err := r.ensureExposureRoute(ctx, comp, profile, tenant, zone, e, signIn)
 			if err != nil {
 				return ctrl.Result{}, fmt.Errorf("expose %s: %w", e.Name, err)
 			}
@@ -517,6 +536,15 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			if err := r.ensureZonePolicy(ctx, comp, zone, oidcRoutes, authz); err != nil {
 				return ctrl.Result{}, fmt.Errorf("zone policy: %w", err)
 			}
+		}
+	}
+	// The one route that takes no session, for the realm's answer to the
+	// sidecar -- and its removal, where the profile no longer declares one.
+	// Asked only of a component that routes anything: one that publishes
+	// nothing on the Gateway never had such a route.
+	if signIn != nil || len(routable) > 0 {
+		if err := r.ensureSignInACSRoute(ctx, comp, zone, signIn); err != nil {
+			return ctrl.Result{}, fmt.Errorf("sign-in route: %w", err)
 		}
 	}
 	if !releaseReady {
@@ -1110,11 +1138,18 @@ func componentLabels(comp *gentianov1alpha1.Component) map[string]string {
 }
 
 // ensureExposureRoute keeps one gateway exposure's route.
-func (r *ComponentReconciler) ensureExposureRoute(ctx context.Context, comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile, tenant *gentianov1alpha1.Tenant, zone edgeZone, e *gentianov1alpha1.ExposureSpec) (string, error) {
+//
+// The entry a sign-in sidecar stands on carries its rules as well: the login
+// path, and the paths that lead to it. They are rules of this route and of
+// no other, so the session and the question of the route are theirs too.
+func (r *ComponentReconciler) ensureExposureRoute(ctx context.Context, comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile, tenant *gentianov1alpha1.Tenant, zone edgeZone, e *gentianov1alpha1.ExposureSpec, signIn *signInSidecar) (string, error) {
 	host := exposureHost(zone, comp, e)
 	routeName := comp.Name + "-" + e.Name
-	route := buildExposureRoute(comp, routeName, host, zone, e, exposureAuthz(tenant, comp, profile, e.ForwardToken), r.KernelDomain,
-		componentFramers(zone, comp, profile, host))
+	framers := componentFramers(zone, comp, profile, host)
+	route := buildExposureRoute(comp, routeName, host, zone, e, exposureAuthz(tenant, comp, profile, e.ForwardToken), r.KernelDomain, framers)
+	if signIn != nil && signIn.exposure.Name == e.Name {
+		route.Spec.Rules = append(signInRouteRules(comp.Namespace, signIn, frameAncestorsFilters(framers)...), route.Spec.Rules...)
+	}
 	if err := controllerutil.SetControllerReference(comp, route, r.Scheme); err != nil {
 		return "", err
 	}

@@ -107,7 +107,9 @@ func tcpPort(p int32) networkingv1.NetworkPolicyPort {
 //   - Mail: the mail namespaces, whole. Where an app's mail goes depends on
 //     the cluster's mail mode and on names that resolve to load balancers,
 //     and is not narrowed here.
-//   - Identity: the edge and the identity provider, whole.
+//   - Identity: the edge and the identity provider, whole -- for an app that
+//     signs people in itself (OIDC or SAML). An app that declares the
+//     sign-in sidecar instead is opened to neither.
 //   - Models: the model gateway's namespace on the gateway's port. The
 //     gateway's database, its cache and the model servers are in the same
 //     namespace on other ports, and are not an app's to reach.
@@ -136,7 +138,11 @@ func kernelEgressTargets(profile *gentianov1alpha1.ComponentProfile, cfg Config)
 	}
 
 	if kr := profile.Services(); kr != nil {
-		if kr.Identity != nil {
+		// Not for an app whose people are signed in by the platform's
+		// sidecar: that app never talks to the identity provider. The
+		// sidecar does, and its own policy opens that one path for it
+		// (app-default.yaml).
+		if id := kr.Identity; id != nil && (id.OIDC != nil || id.SAML != nil || id.Sidecar == nil) {
 			add(cfg.ServicesNamespace)
 			add(layout.Namespace(layout.Authentication))
 		}

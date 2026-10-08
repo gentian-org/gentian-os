@@ -13,7 +13,7 @@ spec:
     chart:
       repository: oci://ghcr.io/gentian-org/charts
       name: activepieces
-      version: 0.3.26
+      version: 0.3.28-develop.6da5d99
     valueMapping:
       database:
         hostKey: activepieces.postgresql.host
@@ -165,22 +165,32 @@ spec:
         seccompProfile:
           type: RuntimeDefault
     # Gentian runtime: the chart owns the nginx config and the entrypoint
-    # (patches 0005/0006). This profile passes values only — never a command.
-    # See customizations/nginx-sso-routing.yaml.
+    # (patches 0005/0006/0008). This profile passes values only — never a
+    # command. See customizations/nginx-sso-routing.yaml.
       gentian:
         enabled: true
-        sso:
-        # Empty = discover the sidecar from *_SSO_SAML_SERVICE_HOST at startup.
-          host: ''
         startup:
-          injectSessionScript: true
           disableUpgradeBanner: true
   requires:
     services:
       identity:
-        saml:
-          entityId: Activepieces
-          acsUrl: https://auto.${TENANT_DOMAIN}/api/v1/authn/saml/acs
+      # Activepieces' own single sign-on needs a licence key and is not used.
+      # Its people are signed in by the platform's sidecar, with the handler
+      # in assets/sign-in-handler.js. See customizations/sign-in-sidecar.yaml
+      # for the review, and for the question about it that is open.
+        sidecar:
+        # Activepieces' front page and the pages of its own sign-in. Not
+        # /flows, where the handler ends.
+          entryPaths: ["/", "/sign-in", "/sign-up"]
+        # The handler looks the person up and, for a person the app does not
+        # know, writes their account and their project.
+          database: true
+        # The key Activepieces signs session tokens with.
+          secrets: [jwt_secret]
+        # Activepieces' own first sign-up, which creates the platform, made
+        # inside the cluster. The container listens on 80; the Service this
+        # profile routes to serves it as 8080.
+          appPort: 80
       database:
         engine: postgresql
         databasePerTenant: true
@@ -209,6 +219,18 @@ spec:
     - name: web
       surface: gateway
       authMode: oidc
+      # The address the app is told it has (activepieces.domain above). The
+      # entry named none, so the app was published under the profile's name
+      # and told another: links it writes itself led nowhere.
+      subDomain: auto
+      # Activepieces' own ways in, refused at the front door: signing in and
+      # up with a password, its one-time codes, and the paid single sign-on's
+      # calls. Nobody has a password, so nothing is lost. The handler's one
+      # call to the sign-up is made inside the cluster.
+      denyPaths:
+        - /api/v1/authentication
+        - /api/v1/authn
+        - /api/v1/otp
       backend:
         service: activepieces-me
         port: 8080
@@ -219,127 +241,6 @@ spec:
         logo: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI1MiIgaGVpZ2h0PSI1MiIgdmlld0JveD0iMCAwIDUyIDUyIiByb2xlPSJpbWciPgogIDx0aXRsZT5QbGFjZWhvbGRlciB0aWxlPC90aXRsZT4KICA8cmVjdCB3aWR0aD0iNTIiIGhlaWdodD0iNTIiIHJ4PSIxMCIgZmlsbD0iI0VDRThERiIvPgogIDxyZWN0IHdpZHRoPSI1MiIgaGVpZ2h0PSI1MiIgcng9IjEwIiBmaWxsPSJub25lIiBzdHJva2U9InJnYmEoMjAsIDIxLCA0NiwgMC4wOCkiIHN0cm9rZS13aWR0aD0iMSIvPgogIDxnIGZpbGw9Im5vbmUiIHN0cm9rZT0iIzE0MTUyRSIgc3Ryb2tlLW9wYWNpdHk9IjAuNDUiIHN0cm9rZS13aWR0aD0iMiIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI+CiAgICA8cmVjdCB4PSIxNiIgeT0iMTYiIHdpZHRoPSIyMCIgaGVpZ2h0PSIyMCIgcng9IjQiLz4KICAgIDxwYXRoIGQ9Ik0xNiAyM2gyMCIvPgogIDwvZz4KICA8Y2lyY2xlIGN4PSIyMC41IiBjeT0iMTkuNSIgcj0iMS4yNSIgZmlsbD0iIzE0MTUyRSIgZmlsbC1vcGFjaXR5PSIwLjQ1Ii8+Cjwvc3ZnPgo=
         image: assets/tile.svg
         relation: can_launch
-  extensions:
-    - name: sso
-      chart:
-        repository: oci://ghcr.io/gentian-org/charts
-        name: gentian-sidecar-sso-saml
-      # 0.1.7 + the rebuilt image is the release that verifies SAML assertion
-      # signatures. Before it, the sidecar accepted any base64 XML carrying an
-      # email attribute, so anything able to reach the ACS path could log in as
-      # any user. acsPath is left unset so this keeps posting to
-      # /api/v1/authn/saml/acs, which is where the app's own nginx fronts it.
-        version: 0.1.7
-      extraValues:
-      # latest is this image's only moving tag, and the node has a pre-fix copy
-      # cached, so IfNotPresent (the chart default) would keep running the
-      # vulnerable build. Always is what actually delivers the fix here.
-        image:
-          pullPolicy: Always
-        podLabels:
-          gentianos.io/app: activepieces-me
-        podAnnotations:
-          gentianos.io/restart-reason: saml-signature-validation-2026-08-12
-        sso:
-          tenantId: ${TENANT_ID}
-          kernelDomain: ${KERNEL_DOMAIN}
-          issuer: Activepieces
-        handlerScript: "const { Client } = require('pg');\nconst jwt = require('jsonwebtoken');\n\nasync function upsertUserAndProject(email, firstName, lastName) {\n    const client = new Client({\n        host: process.env.AP_POSTGRES_HOST,\n        port: parseInt(process.env.AP_POSTGRES_PORT || '5432'),\n        user: process.env.AP_POSTGRES_USERNAME || process.env.username,\n        password: process.env.AP_POSTGRES_PASSWORD || process.env.password,\n        database: process.env.AP_POSTGRES_DATABASE,\n    });\n    \n    await client.connect();\n    try {\n        const resUser = await client.query('SELECT id FROM \"user\" WHERE email = $1', [email]);\n        let userId;\n        \n        if (resUser.rows.length > 0) {\n            userId = resUser.rows[0].id;\n        } else {\n            userId = 'usr_' + Math.random().toString(36).substring(2, 15).substring(0, 17);\n            await client.query(\n                'INSERT INTO \"user\" (id, created, updated, email, \"firstName\", \"lastName\", password, status, verified, \"platformRole\", \"platformId\") VALUES ($1, now(), now(), $2, $3, $4, $5, $6, $7, $8, $9)',\n                [userId, email, firstName || 'SSO', lastName || 'User', '', 'ACTIVE', true, 'ADMIN', 'plaActivepiecesPlatf1']\n            );\n            console.log(`User created: ${userId} (${email})`);\n        }\n        \n        const resProj = await client.query('SELECT id FROM project WHERE \"ownerId\" = $1', [userId]);\n        let projectId;\n        \n        if (resProj.rows.length > 0) {\n            projectId = resProj.rows[0].id;\n        } else {\n            projectId = 'prj_' + Math.random().toString(36).substring(2, 15).substring(0, 17);\n            await client.query(\n                'INSERT INTO project (id, created, updated, \"ownerId\", \"displayName\", \"notifyStatus\", \"platformId\") VALUES ($1, now(), now(), $2, $3, $4, $5)',\n                [projectId, userId, 'Default Project', 'ALWAYS', 'plaActivepiecesPlatf1']\n            );\n            console.log(`Project created: ${projectId} for user ${userId}`);\n        }\n        \n        return { userId, projectId };\n    } finally {\n        await client.end();\n    }\n}\n\nfunction signJwt(userId, email, firstName, lastName, projectId) {\n    const payload = {\n        id: userId,\n        type: 'USER',\n        projectId: projectId,\n        platform: {\n            id: 'plaActivepiecesPlatf1'\n        }\n    };\n    \n    const secret = process.env.jwt;\n    return jwt.sign(payload, secret, { \n        algorithm: 'HS256',\n        issuer: 'activepieces',\n        expiresIn: '7d' \n    });\n}\n\nmodule.exports = {\n    onLogin: async (profile, req, res) => {\n        const { email, firstName, lastName } = profile;\n        const { userId, projectId } = await upsertUserAndProject(email, firstName, lastName);\n        const token = signJwt(userId, email, firstName, lastName, projectId);\n        \n        const userObj = {\n            id: userId,\n            email: email,\n            firstName: firstName || 'SSO',\n            lastName: lastName || 'User',\n            status: 'ACTIVE',\n            verified: true,\n            platformRole: 'ADMIN'\n        };\n        \n        res.writeHead(200, { \n            'Content-Type': 'text/html',\n            'Set-Cookie': [\n                `ap_token=${token}; Path=/; Secure; SameSite=Lax; Max-Age=604800`,\n                `ap_user=${encodeURIComponent(JSON.stringify(userObj))}; Path=/; Secure; SameSite=Lax; Max-Age=604800`,\n                `ap_logged_in=true; Path=/; Secure; SameSite=Lax; Max-Age=604800`\n            ]\n        });\n        res.end(`<!DOCTYPE html>\n<html>\n<head>\n    <title>Logging in...</title>\n</head>\n<body>\n    <script>\n        localStorage.setItem('token', '${token}');\n        localStorage.setItem('currentUser', '${JSON.stringify(userObj)}');\n        window.location.href = '/';\n    </script>\n</body>\n</html>`);\n    }\n};\n"
-      # The sidecar writes to the app's own database, and is told where that
-      # is the way the app is: by the objects the app's chart renders from the
-      # values the platform injects (valueMapping.database above). The
-      # ConfigMap carries AP_POSTGRES_HOST, _PORT and _DATABASE; the
-      # credentials Secret carries username and password, which the handler
-      # reads. Host, port, role and database were spelled out here instead,
-      # the host as a Service in a namespace the cluster no longer has.
-        envFrom:
-          - configMapRef:
-              name: activepieces-me
-          - secretRef:
-              name: activepieces-me-postgresql-credentials
-          - secretRef:
-              name: activepieces-me-encryption-keys
-      # The realm's SAML descriptor, read in-cluster for the signing
-      # certificate. Stated because the image's built-in default names the
-      # namespace the identity provider ran in before the kernel was split up.
-      # requires.services.identity opens the path.
-        extraEnvVars:
-          - name: SSO_IDP_DESCRIPTOR_URL
-            value: http://gentian-idp-keycloak-keycloakx-http.kernel-authentication.svc.cluster.local:8080/auth/realms/${TENANT_ID}/protocol/saml/descriptor
-  # git-sync used to be declared here as a standalone Deployment writing a
-  # ReadWriteMany PVC. It is now two containers in the app's own pod --
-  # extraInitContainers/extraContainers in extraValues above. The sso sidecar
-  # stays: it is a real service with its own endpoint, not a copy of shared
-  # content every reader could produce for itself.
-  hooks:
-    postInstall:
-      image: ghcr.io/cloudnative-pg/postgresql:17.2
-      envFrom:
-        - activepieces-me-postgresql-credentials
-    # Seeds the CE platform row. Activepieces runs Community Edition here
-    # (no AP_EDITION / AP_LICENSE_KEY): SAML is terminated by the sso-saml
-    # sidecar, which creates ordinary CE users and mints a session JWT, so the
-    # platform's enterprise gates stay off and no IdP metadata is stored here.
-      script: |
-        set -eu
-
-        # Derive tenant + kernel domain from the namespace and the realm descriptor.
-        python3 -c '
-        import urllib.request, re
-        with open("/var/run/secrets/kubernetes.io/serviceaccount/namespace") as f:
-            ns = f.read().strip()
-        tenant_id = ns.replace("tenant-", "")
-        url = (
-            "http://gentian-idp-keycloak-keycloakx-http.kernel-authentication.svc.cluster.local:8080"
-            f"/auth/realms/{tenant_id}/protocol/saml/descriptor"
-        )
-        xml = urllib.request.urlopen(url).read().decode("utf-8")
-        match = re.search(r"https://id\.([^/\"]+)", xml)
-        kernel_domain = match.group(1) if match else "gentian.org"
-        with open("/tmp/env.sh", "w") as f:
-            f.write(f"export TENANT_ID={tenant_id}\n")
-            f.write(f"export KERNEL_DOMAIN={kernel_domain}\n")
-        '
-        . /tmp/env.sh
-
-        # Where the database is and what it is called come from the platform
-        # (DB_HOST, DB_PORT, DB_NAME: the values valueMapping.database maps),
-        # never from a Service name or a naming convention written here.
-        PSQL_HOST="$DB_HOST"
-        PSQL_PORT="$DB_PORT"
-        PSQL_DB="$DB_NAME"
-
-        echo "Waiting for database..."
-        until pg_isready -h "$PSQL_HOST" -p "$PSQL_PORT"; do
-          sleep 2
-        done
-
-        # Activepieces owns its schema; only seed once its migrations have landed.
-        TABLES_COUNT=$(PGPASSWORD="$password" psql -h "$PSQL_HOST" -p "$PSQL_PORT" -U "$username" \
-          -d "$PSQL_DB" -tAc "SELECT count(*) FROM information_schema.tables \
-          WHERE table_schema = 'public' AND table_name IN ('platform', 'project', 'user');")
-        if [ "$TABLES_COUNT" -ne 3 ]; then
-          echo "Activepieces migrations are not complete yet (found $TABLES_COUNT/3 required tables)."
-          exit 1
-        fi
-
-        PLATFORM_COUNT=$(PGPASSWORD="$password" psql -h "$PSQL_HOST" -p "$PSQL_PORT" -U "$username" \
-          -d "$PSQL_DB" -tAc "SELECT count(*) FROM platform;")
-        if [ "$PLATFORM_COUNT" -eq 0 ]; then
-          echo "Seeding Activepieces database..."
-
-          printf "%s\n" \
-            'INSERT INTO "user" (id, created, updated, email, "firstName", "lastName", password, status, verified, "platformRole")' \
-            "VALUES ('usrActivepiecesAdmin1', now(), now(), 'admin-${TENANT_ID}@${KERNEL_DOMAIN}', 'Admin', '${TENANT_ID}', '\$2b\$10\$EPY9LjgjhWG./xyzxyzxyzxyzxyzxyzxyzxyzxyzxyzxy', 'ACTIVE', true, 'ADMIN');" \
-            'INSERT INTO platform (id, created, updated, "ownerId", name, "primaryColor", "logoIconUrl", "fullLogoUrl", "favIconUrl", "filteredPieceNames", "filteredPieceBehavior", "showPoweredBy", "cloudAuthEnabled", "defaultLocale", "embeddingEnabled", "gitSyncEnabled", "allowedAuthDomains", "enforceAllowedAuthDomains", "ssoEnabled", "federatedAuthProviders", "emailAuthEnabled", "auditLogEnabled", "customDomainsEnabled", "customAppearanceEnabled", "manageProjectsEnabled", "managePiecesEnabled", "manageTemplatesEnabled", "apiKeysEnabled", "projectRolesEnabled", "flowIssuesEnabled", "alertsEnabled", "premiumPieces")' \
-            "VALUES ('plaActivepiecesPlatf1', now(), now(), 'usrActivepiecesAdmin1', 'Gentian', '#000000', '', '', '', '{}', 'ALLOWED', false, true, 'en', true, false, '{}', false, false, '{}'::jsonb, true, false, false, false, false, false, false, false, false, false, false, '{}');" \
-            'INSERT INTO project (id, created, updated, "ownerId", "displayName", "notifyStatus", "platformId")' \
-            "VALUES ('prjActivepiecesProje1', now(), now(), 'usrActivepiecesAdmin1', 'Default Project', 'ALWAYS', 'plaActivepiecesPlatf1');" \
-            | PGPASSWORD="$password" psql -v ON_ERROR_STOP=1 -h "$PSQL_HOST" -p "$PSQL_PORT" -U "$username" -d "$PSQL_DB"
-          echo "Database seeded successfully."
-        else
-          echo "Database already seeded."
-        fi
   customization:
     grade: A
     rubricScore: 7
@@ -380,11 +281,22 @@ spec:
       allowed: false
   launch: tile
 ---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: "activepieces-me.sign-in-handler"
+  labels:
+    "gentianos.io/asset": "sign-in-handler"
+    "gentianos.io/profile-name": "activepieces-me"
+data:
+  "handler.js": "'use strict';\n\n// Sign-in handler for Activepieces (community edition), run by the platform's\n// sign-in sidecar. See customization.md beside this file for the review.\n//\n// Activepieces' own single sign-on is a paid feature and is not used or\n// touched here. What the free edition has is an account per person and a\n// session that is a token signed with the installation's AP_JWT_SECRET, kept\n// by its web page in the browser's localStorage. This handler makes exactly\n// that, for the person the sidecar names:\n//\n//   1. the platform, if this is the first sign-in ever: Activepieces' own\n//      first sign-up, which creates it with the edition's own settings. No\n//      row of the platform table is written here, and none of its switches.\n//   2. the person's account and the project they work in, if they have none.\n//      Written to the database: the free edition's own interface makes an\n//      account for a second person only by invitation and gives that account\n//      no project (see customization.md, \"What the handler writes itself\").\n//   3. a token for that account and project, ending when the sidecar says\n//      the session ends.\n//\n// Every person is an ordinary member. Nobody is an administrator of the\n// installation, and nobody has a password: the column cannot be empty of a\n// value, so it holds the empty string, which no password matches.\n//\n// What it is given (see the profile's requires.services.identity.sidecar):\n//   DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD   Activepieces' own database\n//   SECRET_JWT_SECRET                                 its signing key\n//   APP_URL                                           Activepieces inside the cluster\n\nconst crypto = require('crypto');\nconst jwt = require('jsonwebtoken');\nconst { Pool } = require('pg');\n\n// The account the platform is created with. Activepieces has no service\n// account, so it is listed among the users; nobody can sign in as it.\nconst OWNER = { email: 'config-account@activepieces.internal', firstName: 'Config', lastName: 'Account' };\n\nconst pool = new Pool({\n    host: process.env.DB_HOST,\n    port: parseInt(process.env.DB_PORT || '5432', 10),\n    database: process.env.DB_NAME,\n    user: process.env.DB_USER,\n    password: process.env.DB_PASSWORD,\n    max: 4,\n    connectionTimeoutMillis: 5000,\n});\n\n// An identifier as Activepieces makes them: 21 characters of this alphabet.\nconst ALPHABET = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';\nfunction newId() {\n    let id = '';\n    while (id.length < 21) {\n        // 248 is the largest multiple of 62 a byte can reach: no letter is likelier than another.\n        for (const byte of crypto.randomBytes(32)) {\n            if (byte < 248 && id.length < 21) id += ALPHABET[byte % 62];\n        }\n    }\n    return id;\n}\n\nfunction names(person) {\n    const parts = person.name.trim().split(/\\s+/).filter(Boolean);\n    const first = (parts.shift() || person.email.split('@')[0]).slice(0, 100);\n    return { firstName: first, lastName: (parts.join(' ') || '-').slice(0, 100) };\n}\n\nasync function ensurePlatform() {\n    const found = await pool.query('select id from platform order by created asc limit 1');\n    if (found.rows.length > 0) return found.rows[0].id;\n    // The first sign-up of an installation creates its platform. The password\n    // is random, is kept nowhere, and is taken out of the row again below.\n    const res = await fetch(process.env.APP_URL + '/api/v1/authentication/sign-up', {\n        method: 'POST',\n        headers: { 'Content-Type': 'application/json' },\n        body: JSON.stringify({ ...OWNER, password: crypto.randomBytes(32).toString('base64url'), trackEvents: false, newsLetter: false }),\n        signal: AbortSignal.timeout(15000),\n    });\n    const made = await pool.query('select id from platform order by created asc limit 1');\n    if (made.rows.length === 0) throw new Error(`creating the platform answered ${res.status}`);\n    await pool.query('update \"user\" set password = \\'\\' where \"platformId\" = $1 and lower(email) = $2', [made.rows[0].id, OWNER.email]);\n    return made.rows[0].id;\n}\n\nasync function findUser(platformId, email) {\n    const found = await pool.query(\n        'select id, email, \"firstName\", \"lastName\", status, verified, \"platformRole\" from \"user\" ' +\n        'where \"platformId\" = $1 and lower(email) = $2 limit 1', [platformId, email]);\n    return found.rows[0] || null;\n}\n\nasync function createUser(platformId, person) {\n    const { firstName, lastName } = names(person);\n    const client = await pool.connect();\n    try {\n        await client.query('begin');\n        const userId = newId();\n        await client.query(\n            'insert into \"user\" (id, email, \"firstName\", \"lastName\", password, status, verified, \"trackEvents\", \"newsLetter\", \"platformRole\", \"platformId\") ' +\n            \"values ($1, $2, $3, $4, '', 'ACTIVE', true, false, false, 'MEMBER', $5)\",\n            [userId, person.email, firstName, lastName, platformId]);\n        await client.query(\n            'insert into project (id, \"ownerId\", \"displayName\", \"notifyStatus\", \"platformId\") values ($1, $2, $3, \\'ALWAYS\\', $4)',\n            [newId(), userId, `${firstName}'s Project`, platformId]);\n        await client.query('commit');\n    } catch (err) {\n        await client.query('rollback');\n        throw err;\n    } finally {\n        client.release();\n    }\n    return findUser(platformId, person.email);\n}\n\n// One account is made once, however many sign-ins of the same person arrive\n// together. The sidecar is a single process.\nconst creating = new Map();\n\nasync function ensureUser(platformId, person) {\n    const existing = await findUser(platformId, person.email);\n    if (existing) return existing;\n    if (!creating.has(person.email)) {\n        creating.set(person.email, createUser(platformId, person).finally(() => creating.delete(person.email)));\n    }\n    return creating.get(person.email);\n}\n\nmodule.exports = {\n    async onLogin(person, ctx) {\n        const platformId = await ensurePlatform();\n        const user = await ensureUser(platformId, person);\n        // An account switched off in Activepieces stays off.\n        if (!user || user.status !== 'ACTIVE') return { refuse: true };\n\n        const project = await pool.query(\n            'select id from project where \"ownerId\" = $1 and \"platformId\" = $2 and deleted is null order by created asc limit 1',\n            [user.id, platformId]);\n        if (project.rows.length === 0) return { refuse: true };\n        const projectId = project.rows[0].id;\n\n        // The token Activepieces signs itself, field for field\n        // (authentication sign-in, 0.28.0), with the sidecar's end.\n        const token = jwt.sign(\n            { id: user.id, type: 'USER', projectId, platform: { id: platformId } },\n            process.env.SECRET_JWT_SECRET,\n            { algorithm: 'HS256', issuer: 'activepieces', keyid: '1', expiresIn: ctx.sessionSeconds });\n\n        return {\n            // Not \"/\": the platform sends \"/\" to the sign-in.\n            redirect: '/flows',\n            // Where Activepieces' page keeps its session. It reads nothing else.\n            localStorage: {\n                token,\n                currentUser: JSON.stringify({\n                    id: user.id,\n                    email: user.email,\n                    firstName: user.firstName,\n                    lastName: user.lastName,\n                    verified: user.verified,\n                    status: user.status,\n                    platformRole: user.platformRole,\n                    platformId,\n                    projectId,\n                    projectRole: 'ADMIN',\n                    trackEvents: false,\n                    newsLetter: false,\n                    externalId: null,\n                }),\n            },\n        };\n    },\n};\n"
+---
 # Customization record — see gentian-os/docs/app-customization.md §5
 #
-# Covers patches 0005 and 0006 of the activepieces series: the nginx config that
-# fronts the app, the entrypoint that starts it, and the two startup patches that
-# entrypoint applies.
+# Covers patches 0005, 0006 and 0008 of the activepieces series: the nginx config
+# that fronts the app, the entrypoint that starts it, the one startup patch that
+# entrypoint still applies, and the script nginx serves to every page so that a
+# browser with no session goes to the platform's sign-in.
 apiVersion: gentianos.io/v1alpha1
 kind: Customization
 metadata:
@@ -395,13 +307,13 @@ metadata:
   labels:
     gentianos.io/profile-name: activepieces-me
 spec:
-  summary: "Front Activepieces with a Gentian nginx config that routes SAML to the sso-saml sidecar"
+  summary: "Front Activepieces with a Gentian nginx config, and send a browser with no session to the platform's sign-in"
 
   target:
     family: activepieces
     profile: activepieces-me
     appVersion: "0.28.0"
-    chartVersion: "0.3.24"
+    chartVersion: "0.3.28"
 
   rung: L4
   scope: profile
@@ -414,9 +326,10 @@ spec:
       Upstream exposes no conf.d drop-in directory, and the change overrides existing
       location blocks rather than adding new ones — L1 requires an upstream-promised path.
     L2: >-
-      The SAML gateway itself is a companion (gentian-sidecar-sso-saml) and is recorded
-      separately. What is left here is edge routing inside the app's own pod, which a
-      side-by-side deployable cannot express.
+      The sign-in itself is a companion (the platform's sign-in sidecar and this
+      profile's handler) and is recorded separately, in sign-in-sidecar.yaml. What is
+      left here is what the app's own pod serves, which a side-by-side deployable
+      cannot express.
     L3: >-
       Activepieces pieces extend flows, not HTTP routing or process startup. There is
       no in-app extension point for either.
@@ -425,19 +338,23 @@ spec:
     attempted: true
     forwarded: not-needed
     reason: >-
-      Both patches are Gentian portal integration glue — SAML route interception for
-      our IdP topology and the startup wiring that serves it — which upstream would
-      rightly decline. They are deliberately separate from 0001-0003, the three
-      generic upstream defects in the same series, which carry Forwarded: not-yet and
-      are tracked for submission on their own merits.
+      The patches are Gentian platform integration glue — the nginx config for our
+      edge, the startup wiring that serves it, and the script that leads a browser
+      with no session to the platform's sign-in — which upstream would rightly
+      decline. They are deliberately separate from 0001-0003, the three generic
+      upstream defects in the same series, which carry Forwarded: not-yet and are
+      tracked for submission on their own merits.
 
   artifacts:
     - repo: gentian-org/gentian-apps
       path: charts/activepieces/patches/0005-add-nginx-configmap-for-portal-sso-forwarding-and-ht.patch
-      version: "0.3.24"
+      version: "0.3.28"
     - repo: gentian-org/gentian-apps
       path: charts/activepieces/patches/0006-mount-the-gentian-runtime-and-own-the-entrypoint.patch
-      version: "0.3.24"
+      version: "0.3.28"
+    - repo: gentian-org/gentian-apps
+      path: charts/activepieces/patches/0008-leave-the-sign-in-routes-to-the-platform.patch
+      version: "0.3.28"
 
   # No delivery. The field describes how an L3 *module* reaches a running app —
   # git-sidecar, image-layer, addon-profile, app-store-api — and this record is
@@ -458,15 +375,16 @@ spec:
   created: 2026-08-06
   reviewBy: 2027-02-06
   exitCriteria: >-
-    The entrypoint's two startup patches are the L5 residue inside this L4 record and
-    should go first. gentian.startup.injectSessionScript is replaceable by an nginx
-    sub_filter injecting the same script into <head>, once ngx_http_sub_module is
-    confirmed present in the image. gentian.startup.disableUpgradeBanner is
-    replaceable by denying egress to raw.githubusercontent.com, since the fetch it
-    patches is already wrapped in a try/catch returning "0.0.0" — and that patch
-    matches a literal string in a minified bundle, so it fails silently on any
-    upstream rebuild. Both are values, so each can be switched off and verified
-    independently. The routing itself stays as long as SSO is terminated by a sidecar.
+    One startup patch is left as the L5 residue inside this L4 record and should go
+    first: gentian.startup.disableUpgradeBanner is replaceable by denying egress to
+    raw.githubusercontent.com, since the fetch it patches is already wrapped in a
+    try/catch returning "0.0.0" — and that patch matches a literal string in a
+    minified bundle, so it fails silently on any upstream rebuild. The other one is
+    gone: the page is no longer rewritten at start, nginx serves the sign-in script
+    (files/sign-in.js) and references it with a sub_filter. That script stays as long
+    as people are signed in by the sidecar, because Activepieces' page moves to its
+    own sign-in form without a request the edge could redirect. The nginx config
+    stays as long as the chart serves the app through it.
   upgradeRisk: medium
   testedAgainst: ["0.28.0"]
 
@@ -481,11 +399,100 @@ spec:
     effect: none
     notes: >-
       Activepieces runs Community Edition here — no AP_EDITION, no AP_LICENSE_KEY.
-      SAML is terminated by the sso-saml sidecar, which authenticates against
-      Keycloak and then creates an ordinary CE user row and signs a session JWT
-      with the instance's own secret; the app's licensed SSO code path is never
-      invoked, and nginx routes /api/v1/authn/saml/{login,acs} to the sidecar
-      rather than to the backend. The startup license patch and the placeholder
-      AP_LICENSE_KEY were removed in c5b0d4f, which also added the absolute
-      prohibition to docs/app-profile-guide.md. The postInstallJob seeds the
-      platform row with every enterprise gate off.
+      Nothing in these patches touches a licence check or a switch of the platform:
+      nginx serves the app and one script, and the entrypoint starts it. The startup
+      license patch and the placeholder AP_LICENSE_KEY were removed in c5b0d4f, which
+      also added the absolute prohibition to docs/app-profile-guide.md. The job that
+      seeded the platform row is gone as well: it wrote the row with
+      embeddingEnabled set, which the community edition leaves off, and the platform
+      is now created by Activepieces' own first sign-up. How people are signed in,
+      and the question that is open about it, is in sign-in-sidecar.yaml.
+---
+# Customization record — see gentian-os/docs/app-customization.md §5
+#
+# Covers the sign-in handler (assets/sign-in-handler.js): the code the
+# platform's sign-in sidecar runs to make an Activepieces session for a
+# person. The nginx side of it is nginx-sso-routing.yaml.
+apiVersion: gentianos.io/v1alpha1
+kind: Customization
+metadata:
+  # Named after the profile it travels with. No namespace: a companion in a
+  # profile bundle states none, and the cluster puts it where its catalogue
+  # is applied.
+  name: activepieces-me.sign-in-sidecar
+  labels:
+    gentianos.io/profile-name: activepieces-me
+spec:
+  summary: "Sign people in to Activepieces through the platform's sign-in sidecar, with no password"
+
+  target:
+    family: activepieces
+    profile: activepieces-me
+    appVersion: "0.28.0"
+    chartVersion: "0.3.28"
+
+  rung: L2
+  scope: profile
+
+  rungJustification:
+    L0: >-
+      Activepieces' community edition has no setting that takes a person from an
+      identity provider or from a proxy. Its single sign-on is behind a licence key.
+    L1: >-
+      The branding drop-in is the only one, and it carries static files.
+
+  upstreamFirst:
+    attempted: true
+    forwarded: not-needed
+    reason: >-
+      Single sign-on is what upstream sells. A sign-in that goes around it is not
+      something to offer them; the tenant that wants Activepieces' own single sign-on
+      supplies a licence key and the profile then declares identity.oidc.
+
+  artifacts:
+    - repo: gentian-org/gentian-apps
+      path: profiles/activepieces/activepieces-me/assets/sign-in-handler.js
+      version: "1.0.0"
+    - repo: gentian-org/gentian-apps
+      path: images/gentian-sidecar-sso-saml
+      version: "0.2.0"
+
+  origin:
+    authorship: gentian
+    repoOwnership: gentian
+    reviewedBy: platform-team
+    supportContract: none
+
+  owner: platform-team
+  created: 2026-10-08
+  reviewBy: 2027-01-08
+  exitCriteria: >-
+    Gone when Activepieces can sign people in by a standard the platform serves in
+    the edition installed. Until then, on every Activepieces upgrade: run
+    images/gentian-sidecar-sso-saml/e2e/activepieces.e2e.js against the new image
+    before the chart's image tag moves. It fails if the token's fields, the user or
+    project tables, or the first sign-up have changed. The open licensing question
+    below is to be answered before this record's review date, not at it.
+  upgradeRisk: high
+  testedAgainst: ["0.28.0"]
+
+  security:
+    macWaivers: []
+    newEgress: []
+    handlesPersonalData: true
+
+  licensing:
+    effect: none
+    notes: >-
+      Activepieces runs its community edition: no AP_EDITION, no AP_LICENSE_KEY, and
+      no row or switch of the platform table is written — the platform is created by
+      Activepieces' own first sign-up. The handler signs a session token with the
+      installation's own AP_JWT_SECRET. OPEN, for the owner: the community edition
+      (0.28.0) admits a second person only by invitation and then refuses the sign-in
+      with "No project found for user", because it creates a project for the first
+      account only and creating more is behind the manageProjectsEnabled switch. The
+      handler therefore writes the second person's account and a project of their own
+      into the database itself, as the handler before it did. That is one person, one
+      project — not shared projects, roles or any switch — but it is more than the
+      edition's own interface gives, and whether it is within the licence is a
+      judgement this record does not make.

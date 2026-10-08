@@ -1,0 +1,318 @@
+# ComponentProfile — Docmost (self-hosted collaborative wiki & docs)
+#
+# Source: no upstream Helm chart exists for Docmost (docker-compose only), so
+#   this profile is backed by a first-party Gentian chart: charts/docmost/
+#   (same pattern as charts/mathesar and charts/odoo — see
+#   docs/app-profile-guide.md §0 Consequence 3). The chart wraps the official
+#   docker.io/docmost/docmost image unmodified.
+#
+# ── Sign-in: the platform's sign-in sidecar ─────────────────────────────────
+# Docmost is dual-licensed (AGPL-3.0 core + a separate Enterprise/"ee" tree).
+# ALL of its single sign-on — SAML 2.0, OIDC and LDAP — lives under
+# apps/server/src/ee/ and needs a paid subscription. None of it is used,
+# configured or patched here. What the free edition has is an account per
+# person and a session: a token signed with the installation's APP_SECRET,
+# kept in the cookie "authToken" and recorded in the table user_sessions
+# (checked against the server build in docker.io/docmost/docmost:0.95.0).
+#
+# So this profile declares requires.services.identity.sidecar. The platform
+# then runs its sign-in sidecar beside Docmost, registers it at the tenant's
+# realm, and routes /sso/login and /sso/acs of this host to it. The sidecar
+# checks the realm's signed answer and runs this profile's handler,
+# assets/sign-in-handler.js, which makes the account if the person has none
+# and the session. A person who is signed in at the platform opens Docmost
+# and is in. Nobody has a password in Docmost, the account that owns the
+# workspace included.
+#
+# What the handler is handed, and nothing else: Docmost's database, its
+# signing key (the generated secret app_secret), and the path to Docmost's own
+# port inside the cluster. customization.md beside this file has the review:
+# what the handler does, what it writes itself, and what remains weak.
+#
+# Docmost's own sign-in is switched off at the front door rather than in the
+# app, which has no switch for it: its sign-in page leads to the platform's
+# sign-in (entryPaths), and the calls behind that page are refused
+# (expose[].denyPaths). The setup call is among them, and has to be: until the
+# first sign-in there is no workspace, and whoever called it first would own
+# the installation, with a password.
+#
+# Secret inventory:
+#   Platform-provided:
+#     database host/port/name/user/password (valueMapping.database)
+#     s3 secret key (valueMapping.s3), smtp password (valueMapping.smtp)
+#   (no Redis credentials: Docmost runs its own pod-local Redis with no auth —
+#    see requires below and charts/docmost/values.yaml "redis")
+#   Generated (1):
+#     app_secret → appSecret (Docmost's session-signing key, min 32 chars —
+#                  pinned so pod restarts don't invalidate every session).
+#                  Also given to the sign-in handler, which signs sessions
+#                  with it.
+apiVersion: gentianos.io/v1alpha1
+kind: ComponentProfile
+metadata:
+  name: docmost-ce
+  labels:
+    gentianos.io/profile-name: docmost-ce
+spec:
+  classes:
+    - app
+  trustTier: certified
+  version: "1.0.0"
+  package:
+    chart:
+      repository: "oci://ghcr.io/gentian-org/charts"
+      name: docmost
+      version: "0.2.11-develop.6da5d99"
+
+    valueMapping:
+      database:
+        hostKey: "database.host"
+        portKey: "database.port"
+        nameKey: "database.name"
+        userKey: "database.user"
+        passwordKey: "database.password"
+      s3:
+        endpointKey: "s3.endpoint"
+        bucketKey: "s3.bucket"
+        accessKeyKey: "s3.accessKeyId"
+        regionKey: "s3.region"
+        secretKeyKey: "s3.secretAccessKey"
+      smtp:
+        hostKey: "smtp.host"
+        portKey: "smtp.port"
+        userKey: "smtp.username"
+        passwordKey: "smtp.password"
+
+    extraValues:
+      appUrl: "https://docs.${TENANT_DOMAIN}"
+
+      fullnameOverride: "docmost-ce"
+
+    # database.* is deliberately absent here — all five fields come from
+    # valueMapping above (the per-tenant Postgres the operator provisions),
+    # not a static placeholder. Setting them here too would race the
+    # composition's own injection at the same values paths — see
+    # docs/app-profile-guide.md §3 and §12 checklist. Redis needs nothing at
+    # all: it is pod-local on 127.0.0.1 with no credentials (see the chart).
+
+      s3:
+      # accessKeyId, region, bucket and endpoint are supplied by the platform
+      # through valueMapping.s3 — this app does not name a bucket or an
+      # object store.
+        forcePathStyle: true
+
+      smtp:
+      # host, port and username are supplied by the platform through
+      # valueMapping.smtp — this app does not name a mail server.
+        secure: false
+        fromAddress: "docmost@${TENANT_DOMAIN}"
+
+    # docs.docmost.com/self-hosting/environment-variables lists an anonymous
+    # usage-telemetry ping and (separately) SAML_DISABLE_REQUESTED_AUTHN_CONTEXT
+    # as an ee/-adjacent knob; DISABLE_TELEMETRY is the only outbound-call
+    # toggle confirmed in CE — audit for others (avatar/gravatar fetches,
+    # update checks) per docs/app-profile-guide.md §6g before going live.
+      telemetry:
+        disabled: true
+
+      ingress:
+        enabled: false
+
+      podAnnotations:
+        secret.reloader.stakater.com/reload: docmost-ce-sensitive-values
+
+  # No post-install job: the workspace is created by the sign-in handler, with
+  # Docmost's own setup call, at the first sign-in.
+
+  requires:
+    services:
+      identity:
+      # Docmost can do neither OIDC nor SAML in the free edition (see the
+      # header). Its people are signed in by the platform's sidecar, with
+      # the handler in assets/sign-in-handler.js.
+        sidecar:
+        # Docmost's front page, and the pages of its own sign-in: its form,
+        # its password reset and its first-run setup. Its page goes to
+        # /login by a page load when a session has run out, so that leads
+        # back to the sign-in too. Not /home, where the handler ends.
+          entryPaths: ["/", "/login", "/forgot-password", "/setup/register"]
+        # The handler looks the person up, and writes the session row
+        # Docmost itself writes at a sign-in.
+          database: true
+        # The key Docmost signs sessions with.
+          secrets: [app_secret]
+        # Docmost's own calls for creating the workspace and inviting a
+        # person, made inside the cluster.
+          appPort: 3000
+      database:
+        engine: postgresql
+        databasePerTenant: true
+      storage:
+        s3:
+          bucketPerTenant: true
+    # No cache: requirement — Docmost runs its own dedicated in-pod Redis
+    # (charts/docmost, values.yaml "redis"). It cannot use the shared kernel
+    # Redis because parseRedisUrl drops the username and so can never
+    # authenticate as the per-app ACL user the kernel provisions; see the
+    # chart comment for the full reasoning. Requesting a cache here would
+    # provision an ACL user that nothing can ever use.
+      mail:
+        smtp: {}
+
+  provides:
+    - name: document-collaboration
+      protocol: http-html
+
+  integrations:
+    - contract: central-navigation
+      provider: portal
+      capabilities:
+        - navigation:register
+
+  secrets:
+    generated:
+      - name: app_secret
+        valuePath: "appSecret"
+
+  expose:
+    - name: web
+      surface: gateway
+      authMode: oidc
+      subDomain: "docs"
+      # Docmost's own ways in, refused at the front door: signing in with a
+      # password, setting or changing one, creating the workspace, and
+      # accepting an invitation. The handler makes the last two calls itself, inside the
+      # cluster. Nobody has a password, so nothing is lost; and the setup
+      # call would hand the installation to whoever made it first.
+      denyPaths:
+        - /api/auth/login
+        - /api/auth/setup
+        - /api/auth/forgot-password
+        - /api/auth/password-reset
+        - /api/auth/change-password
+        - /api/auth/verify-token
+        - /api/workspace/invites/accept
+      backend:
+        service: "docmost-ce"
+        port: 3000
+      tile:
+        displayName: "Docmost"
+        logo: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI1MiIgaGVpZ2h0PSI1MiIgdmlld0JveD0iMCAwIDUyIDUyIiByb2xlPSJpbWciPgogIDxyZWN0IHdpZHRoPSI1MiIgaGVpZ2h0PSI1MiIgcng9IjEwIiBmaWxsPSIjRUNFOERGIi8+CiAgPHJlY3Qgd2lkdGg9IjUyIiBoZWlnaHQ9IjUyIiByeD0iMTAiIGZpbGw9Im5vbmUiIHN0cm9rZT0icmdiYSgyMCwgMjEsIDQ2LCAwLjA4KSIgc3Ryb2tlLXdpZHRoPSIxIi8+CiAgPHN2ZyB4PSIxNCIgeT0iMTQiIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMTAxIDg4IDMxOCAzNDgiIHByZXNlcnZlQXNwZWN0UmF0aW89InhNaWRZTWlkIG1lZXQiPgogICAgPHBhdGggZD0iTTI3Ni4zLDQzNS40QzI4MS45LDQzMy41IDI5MC4xLDQyNi40IDI5Mi41LDQyMS40QzI5My43LDQxOC43IDI5NC4xLDQxNi4xIDI5My44LDQxMS42QzI5My40LDQwNS45IDI5Mi40LDQwMy44IDI3Ni42LDM3Ni4wQzI2Ny40LDM1OS44IDI1OC43LDM0NS4wIDI1Ny40LDM0My4yQzI1Mi45LDMzNy40IDI1MC4zLDMzNi42IDIzMS41LDMzNi4wQzIxNS44LDMzNS41IDIxNC4yLDMzNS4zIDIxMC4wLDMzMy4wQzIwNy42LDMzMS42IDIwNC4yLDMyOC41IDIwMi41LDMyNi4yTDE5OS41LDMyMS44TDE5OS4wLDIxNC43QzE5OC41LDEwOC41IDE5OC41LDEwNy41IDE5Ni40LDEwMy4wQzE5NC4wLDk3LjcgMTg5LjIsOTIuOCAxODQuMSw5MC4zQzE4MC45LDg4LjcgMTc3LjMsODguNSAxNDguNSw4OC41TDExNi41LDg4LjVMMTExLjcsOTEuM0MxMDkuMSw5Mi44IDEwNS43LDk2LjAgMTA0LjIsOTguMkwxMDEuNSwxMDIuNEwxMDEuMiwyNjAuMkMxMDEuMCw0MTUuMCAxMDEuMCw0MTguMSAxMDIuOSw0MjEuOUMxMDUuNSw0MjYuOCAxMTEuMCw0MzEuNiAxMTUuNyw0MzMuMEMxMTkuNSw0MzQuMSAyMDYuNiw0MzYuNiAyNDkuNiw0MzYuOUMyNjcuNCw0MzcuMCAyNzIuNSw0MzYuNyAyNzYuMyw0MzUuNFogTTQwNC4xLDM0NC41QzQxMC42LDM0MC4zIDQxNS43LDMyNi4wIDQxOS42LDMwMS4wQzQyMi4yLDI4NC42IDQyMi4zLDI0MS40IDQxOS43LDIyNS4wQzQxNC45LDE5NC4wIDQwOS4xLDE3My4xIDQwMC45LDE1Ni45QzM5NS4xLDE0NS4yIDM4OS45LDEzNy45IDM4MC45LDEyOC41QzM1OC40LDEwNS4xIDMyNy43LDkxLjkgMjg4LjUsODguOUMyNjAuMyw4Ni43IDI0Ny43LDg5LjcgMjQyLjMsMTAwLjBDMjQxLjEsMTAyLjUgMjMzLjksMTE3LjcgMjI2LjUsMTMzLjdDMjE0LjgsMTU5LjEgMjEzLjAsMTYzLjcgMjEzLjAsMTY4LjBDMjEzLjAsMTczLjYgMjE1LjQsMTc5LjEgMjE5LjIsMTgyLjdDMjI0LjEsMTg3LjMgMjI3LjEsMTg3LjggMjU0LjUsMTg4LjVDMjgzLjYsMTg5LjIgMjg5LjksMTkwLjMgMjk5LjQsMTk2LjRDMzA5LjYsMjAyLjkgMzEzLjgsMjA5LjcgMzE4LjAsMjI2LjRDMzIyLjUsMjQ0LjEgMzIzLjQsMjUyLjUgMzIyLjYsMjY5LjRDMzIxLjYsMjg5LjMgMzIxLjgsMjkxLjkgMzIzLjksMjk2LjBDMzI1LjIsMjk4LjUgMzMzLjksMzA1LjkgMzU0LjYsMzIxLjlDMzcwLjUsMzM0LjIgMzg1LjMsMzQ1LjEgMzg3LjUsMzQ2LjJDMzkyLjYsMzQ4LjYgMzk5LjAsMzQ3LjkgNDA0LjEsMzQ0LjVaIiBmaWxsPSIjMjYyNjk2IiBmaWxsLXJ1bGU9Im5vbnplcm8iLz4KICA8L3N2Zz4KPC9zdmc+Cg==
+        image: assets/tile.svg
+        relation: can_launch
+  # Customization ladder — see customization.md
+  customization:
+    grade: D
+    rubricScore: 2
+    supportedRungs: [L0, L4]
+    ladderDocs: https://github.com/gentian-org/gentian-apps/blob/main/profiles/docmost/docmost-ce/customization.md
+    configure:
+      hotReload: false
+    # No "publishes.apis" entry: Docmost's REST API is session-cookie
+    # authenticated for its own frontend, not a bearer-token surface other
+    # profiles can integrate against — nothing to publish yet.
+    repackage:
+      chartOwnership: gentian-owned
+    patch:
+      allowed: false
+      seriesPath: patches/series
+      requiresApproval: platform-team
+    fork:
+      allowed: false
+  launch: tile
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: "docmost-ce.sign-in-handler"
+  labels:
+    "gentianos.io/asset": "sign-in-handler"
+    "gentianos.io/profile-name": "docmost-ce"
+data:
+  "handler.js": "'use strict';\n\n// Sign-in handler for Docmost (community edition), run by the platform's\n// sign-in sidecar. See customization.md beside this file for the review.\n//\n// Docmost's own single sign-on is a paid feature and is not used or touched\n// here. What the free edition has is an account per person and a session\n// that is a token signed with the installation's APP_SECRET, kept in the\n// cookie \"authToken\" and recorded in the table user_sessions. This handler\n// makes exactly that, for the person the sidecar names:\n//\n//   1. the workspace, if this is the first sign-in ever: Docmost's own setup\n//      call, so that nobody meets the \"create workspace\" page;\n//   2. the person's account, if they have none: Docmost's own invitation,\n//      created and accepted here, as a member;\n//   3. a session row and the token that names it, both ending when the\n//      sidecar says the session ends.\n//\n// Nobody has a password. Docmost's calls demand one for a new account, so a\n// random value is given and the stored hash is removed again at once.\n//\n// What it is given (see the profile's requires.services.identity.sidecar):\n//   DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD   Docmost's own database\n//   SECRET_APP_SECRET                                 Docmost's signing key\n//   APP_URL                                           Docmost inside the cluster\n\nconst crypto = require('crypto');\nconst jwt = require('jsonwebtoken');\nconst { Pool } = require('pg');\n\nconst WORKSPACE_NAME = 'Docmost';\n// The account the workspace is created with. Docmost has no service account,\n// so it is listed among the members; nobody can sign in as it.\nconst OWNER = { name: 'Config Account', email: 'config-account@docmost.internal' };\n\nconst pool = new Pool({\n    host: process.env.DB_HOST,\n    port: parseInt(process.env.DB_PORT || '5432', 10),\n    database: process.env.DB_NAME,\n    user: process.env.DB_USER,\n    password: process.env.DB_PASSWORD,\n    max: 4,\n    connectionTimeoutMillis: 5000,\n});\n\nfunction sign(payload, seconds) {\n    // The issuer and the algorithm are the ones Docmost signs with\n    // (core/auth/token.module.js); it accepts no other.\n    return jwt.sign(payload, process.env.SECRET_APP_SECRET, { algorithm: 'HS256', issuer: 'Docmost', expiresIn: seconds });\n}\n\nasync function app(path, body, token) {\n    const res = await fetch(process.env.APP_URL + path, {\n        method: 'POST',\n        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },\n        body: JSON.stringify(body),\n        signal: AbortSignal.timeout(10000),\n    });\n    return res.status;\n}\n\nfunction unknownPassword() {\n    return crypto.randomBytes(32).toString('base64url');\n}\n\nasync function ensureWorkspace() {\n    const found = await pool.query('select id from workspaces order by created_at asc limit 1');\n    if (found.rows.length > 0) return found.rows[0].id;\n    // 403 is \"there is a workspace already\": another sign-in got here first.\n    const status = await app('/api/auth/setup', { ...OWNER, password: unknownPassword(), workspaceName: WORKSPACE_NAME });\n    if (status !== 200 && status !== 403) throw new Error(`workspace setup answered ${status}`);\n    const made = await pool.query('select id from workspaces order by created_at asc limit 1');\n    if (made.rows.length === 0) throw new Error('no workspace after setup');\n    await pool.query(\"update users set password = null where workspace_id = $1 and role = 'owner' and lower(email) = $2\",\n        [made.rows[0].id, OWNER.email]);\n    return made.rows[0].id;\n}\n\nasync function findUser(workspaceId, email) {\n    const found = await pool.query(\n        'select id, email, deactivated_at, deleted_at from users where workspace_id = $1 and lower(email) = $2 limit 1',\n        [workspaceId, email]);\n    return found.rows[0] || null;\n}\n\nasync function createUser(workspaceId, person) {\n    const owner = await pool.query(\n        \"select id, email from users where workspace_id = $1 and role = 'owner' and deleted_at is null order by created_at asc limit 1\",\n        [workspaceId]);\n    if (owner.rows.length === 0) throw new Error('the workspace has no owner');\n    // A token of a minute for the owner, to make the invitation with.\n    const ownerToken = sign({ sub: owner.rows[0].id, email: owner.rows[0].email, workspaceId, type: 'access' }, 60);\n    const invited = await app('/api/workspace/invites/create', { emails: [person.email], role: 'member', groupIds: [] }, ownerToken);\n    if (invited !== 200) throw new Error(`invitation answered ${invited}`);\n    const invitation = await pool.query(\n        'select id, token from workspace_invitations where workspace_id = $1 and lower(email) = $2 order by created_at desc limit 1',\n        [workspaceId, person.email]);\n    if (invitation.rows.length === 0) throw new Error('no invitation after it was created');\n    const name = person.name.trim().length >= 2 ? person.name.trim().slice(0, 60) : person.email.split('@')[0].padEnd(2, '_');\n    const accepted = await app('/api/workspace/invites/accept', {\n        invitationId: invitation.rows[0].id, token: invitation.rows[0].token, name, password: unknownPassword(),\n    });\n    if (accepted !== 200) throw new Error(`accepting the invitation answered ${accepted}`);\n    const user = await findUser(workspaceId, person.email);\n    if (!user) throw new Error('no account after the invitation was accepted');\n    await pool.query('update users set password = null where id = $1', [user.id]);\n    return user;\n}\n\n// One account is made once, however many sign-ins of the same person arrive\n// together. The sidecar is a single process.\nconst creating = new Map();\n\nasync function ensureUser(workspaceId, person) {\n    const existing = await findUser(workspaceId, person.email);\n    if (existing) return existing;\n    if (!creating.has(person.email)) {\n        creating.set(person.email, createUser(workspaceId, person).finally(() => creating.delete(person.email)));\n    }\n    return creating.get(person.email);\n}\n\nmodule.exports = {\n    async onLogin(person, ctx) {\n        const workspaceId = await ensureWorkspace();\n        const user = await ensureUser(workspaceId, person);\n        // An account an administrator of the app has switched off stays off.\n        if (user.deactivated_at || user.deleted_at) return { refuse: true };\n\n        const session = await pool.query(\n            \"insert into user_sessions (user_id, workspace_id, device_name, expires_at) \" +\n            \"values ($1, $2, 'Platform sign-in', now() + make_interval(secs => $3)) returning id\",\n            [user.id, workspaceId, ctx.sessionSeconds]);\n        const token = sign(\n            { sub: user.id, email: user.email, workspaceId, type: 'access', sessionId: session.rows[0].id },\n            ctx.sessionSeconds);\n        return {\n            // Not \"/\": the platform sends \"/\" to the sign-in, and Docmost\n            // itself sends it on to /home.\n            redirect: '/home',\n            cookies: [{ name: 'authToken', value: token }],\n        };\n    },\n};\n"
+---
+# Customization record — see gentian-os/docs/app-customization.md §5
+#
+# Covers the sign-in handler (assets/sign-in-handler.js): the code the
+# platform's sign-in sidecar runs to make a Docmost session for a person.
+apiVersion: gentianos.io/v1alpha1
+kind: Customization
+metadata:
+  # Named after the profile it travels with. No namespace: a companion in a
+  # profile bundle states none, and the cluster puts it where its catalogue
+  # is applied.
+  name: docmost-ce.sign-in-sidecar
+  labels:
+    gentianos.io/profile-name: docmost-ce
+spec:
+  summary: "Sign people in to Docmost through the platform's sign-in sidecar, with no password"
+
+  target:
+    family: docmost
+    profile: docmost-ce
+    appVersion: "0.95.0"
+    chartVersion: "0.2.11"
+
+  rung: L2
+  scope: profile
+
+  rungJustification:
+    L0: >-
+      Docmost's free edition has no setting that takes a person from an identity
+      provider or from a proxy: SAML, OIDC and LDAP are all in its paid tree, and
+      there is no trusted-header sign-in in either.
+    L1: >-
+      Docmost has no drop-in surface at all — it is configured by environment
+      variables only.
+
+  upstreamFirst:
+    attempted: true
+    forwarded: not-needed
+    reason: >-
+      Single sign-on is what upstream sells. A sign-in that goes around it is not
+      something to offer them; the tenant that wants Docmost's own single sign-on
+      buys the edition that has it and the profile then declares identity.oidc.
+
+  artifacts:
+    - repo: gentian-org/gentian-apps
+      path: profiles/docmost/docmost-ce/assets/sign-in-handler.js
+      version: "1.0.0"
+    - repo: gentian-org/gentian-apps
+      path: images/gentian-sidecar-sso-saml
+      version: "0.2.0"
+
+  origin:
+    authorship: gentian
+    repoOwnership: gentian
+    reviewedBy: platform-team
+    supportContract: none
+
+  owner: platform-team
+  created: 2026-10-08
+  reviewBy: 2027-01-08
+  exitCriteria: >-
+    Gone when Docmost can sign people in by a standard the platform serves in the
+    edition installed (the profile then declares identity.oidc), or when it can take
+    the person from the front door's headers. Until then, on every Docmost upgrade:
+    run images/gentian-sidecar-sso-saml/e2e/docmost.e2e.js against the new image
+    before the chart's image tag moves. It fails if the session token, the
+    user_sessions table, the setup call or the invitation calls have changed.
+  upgradeRisk: high
+  testedAgainst: ["0.95.0"]
+
+  security:
+    macWaivers: []
+    newEgress: []
+    handlesPersonalData: true
+
+  licensing:
+    effect: none
+    notes: >-
+      Docmost runs its community edition. Nothing under apps/server/src/ee is
+      configured, called or patched, and no licence check is touched. The handler
+      uses what the free edition has for everybody: an account, made with the free
+      edition's own setup and invitation calls, and a session signed with the
+      installation's own APP_SECRET and recorded in user_sessions as Docmost records
+      one. Whether making that session from outside the app, in place of the paid
+      single sign-on, is acceptable to the vendor is the owner's judgement and is
+      not settled by this record.

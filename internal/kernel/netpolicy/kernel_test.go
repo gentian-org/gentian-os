@@ -301,3 +301,42 @@ func TestTheModelGatewayIsOpenedForADeclaringAppOnItsPortAlone(t *testing.T) {
 		t.Errorf("opened = %v, want the namespace whole", got)
 	}
 }
+
+// An app that signs people in itself reaches the identity provider and the
+// edge. An app whose people are signed in by the platform's sidecar reaches
+// neither: it never talks to the identity provider, and the sidecar that
+// does has a policy of its own, for one port (app-default.yaml).
+func TestAnAppBehindTheSignInSidecarDoesNotReachTheIdentityProvider(t *testing.T) {
+	t.Parallel()
+	cfg := netpolicy.Config{ServicesNamespace: "kernel-edge"}
+	auth := layout.Namespace(layout.Authentication)
+
+	for name, identity := range map[string]*gentianov1alpha1.IdentityRequirement{
+		"an OIDC client":      {OIDC: &gentianov1alpha1.OIDCClientSpec{ClientID: "wiki"}},
+		"a SAML client":       {SAML: &gentianov1alpha1.SAMLClientSpec{EntityID: "wiki", ACSURL: "https://wiki/acs"}},
+		"identity, unadorned": {},
+	} {
+		np := netpolicy.KernelAccessNetworkPolicy("acme", "tenant-acme", "wiki",
+			profileRequiring(gentianov1alpha1.ServiceRequirements{Identity: identity}, nil), cfg)
+		want := []string{auth + ":*", "kernel-edge:*"}
+		sort.Strings(want)
+		if got := opened(t, np); !reflect.DeepEqual(got, want) {
+			t.Errorf("%s: opened = %v, want %v", name, got, want)
+		}
+	}
+
+	sidecar := gentianov1alpha1.ServiceRequirements{
+		Identity: &gentianov1alpha1.IdentityRequirement{Sidecar: &gentianov1alpha1.SignInSidecarSpec{Database: true}},
+		Database: &gentianov1alpha1.DatabaseRequirement{Engine: gentianov1alpha1.DatabaseEnginePostgreSQL},
+	}
+	np := netpolicy.KernelAccessNetworkPolicy("acme", "tenant-acme", "notes", profileRequiring(sidecar, nil), cfg)
+	want := []string{fmt.Sprintf("%s:%d", layout.System("postgresql"), provisioner.PostgresPort)}
+	if got := opened(t, np); !reflect.DeepEqual(got, want) {
+		t.Errorf("an app behind the sidecar: opened = %v, want its database alone, %v", got, want)
+	}
+	if only := netpolicy.KernelAccessNetworkPolicy("acme", "tenant-acme", "notes", profileRequiring(gentianov1alpha1.ServiceRequirements{
+		Identity: &gentianov1alpha1.IdentityRequirement{Sidecar: &gentianov1alpha1.SignInSidecarSpec{}},
+	}, nil), cfg); only != nil {
+		t.Errorf("an app that declares the sidecar and nothing else is opened to %v", opened(t, only))
+	}
+}

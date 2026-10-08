@@ -1217,7 +1217,74 @@ spec:
                               - acsUrl
                               - entityId
                               type: object
+                            sidecar:
+                              description: Sidecar signs people in through the platform's
+                                sign-in sidecar.
+                              properties:
+                                appPort:
+                                  description: |-
+                                    AppPort lets the handler call the app itself inside the cluster: it
+                                    is the port the app's pods listen on, and the network path is opened
+                                    to that port of the app's own pods. The handler is told where the app
+                                    is as APP_URL -- the Service and port the exposure routes to, which
+                                    need not carry the same number. Such a call does not pass the front
+                                    door.
+                                  format: int32
+                                  maximum: 65535
+                                  minimum: 1
+                                  type: integer
+                                database:
+                                  description: |-
+                                    Database gives the handler the app's own database: where it is and the
+                                    app's own login to it, as DB_HOST, DB_PORT, DB_NAME, DB_USER and
+                                    DB_PASSWORD, and the network path to that server. The profile must
+                                    declare requires.services.database.
+                                  type: boolean
+                                entryPaths:
+                                  description: |-
+                                    EntryPaths are paths of the app that lead to the sign-in instead of to
+                                    the app: its front page, and the address of its own sign-in form.
+                                    Matched exactly, and only for a page load; a request the app's own page
+                                    makes in the background is the app's to deal with. The page a handler
+                                    sends a person to after signing them in must not be among them, and
+                                    neither may a path under /sso/ or /oauth2/, which are the sign-in's own:
+                                    the operator holds an install whose profile names one.
+                                  items:
+                                    maxLength: 256
+                                    pattern: ^/[A-Za-z0-9._~/-]*$
+                                    type: string
+                                  maxItems: 16
+                                  type: array
+                                  x-kubernetes-list-type: set
+                                exposure:
+                                  description: |-
+                                    Exposure names the gateway entry people open the app at: the sidecar's
+                                    two paths are on that entry's host. It may be omitted when the profile
+                                    has exactly one gateway entry with authMode oidc.
+                                  maxLength: 40
+                                  pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                                  type: string
+                                secrets:
+                                  description: |-
+                                    Secrets gives the handler secrets of this app, by the names they have
+                                    under spec.secrets.generated: each as SECRET_<NAME>, the name in upper
+                                    case. An app's session-signing key is the usual one. A name that is not
+                                    under spec.secrets.generated holds the install: what is read is always
+                                    this app's own vault path, so no name reaches another app's secret.
+                                  items:
+                                    maxLength: 64
+                                    pattern: ^[a-z0-9_]+$
+                                    type: string
+                                  maxItems: 8
+                                  type: array
+                                  x-kubernetes-list-type: set
+                              type: object
                           type: object
+                          x-kubernetes-validations:
+                          - message: 'identity.sidecar signs people in for an app
+                              that can do neither OIDC nor SAML itself: it cannot
+                              be declared beside identity.oidc or identity.saml'
+                            rule: '!has(self.sidecar) || (!has(self.oidc) && !has(self.saml))'
                         llm:
                           description: |-
                             LLM declares that the component calls language models through the
@@ -2709,7 +2776,74 @@ spec:
                             - acsUrl
                             - entityId
                             type: object
+                          sidecar:
+                            description: Sidecar signs people in through the platform's
+                              sign-in sidecar.
+                            properties:
+                              appPort:
+                                description: |-
+                                  AppPort lets the handler call the app itself inside the cluster: it
+                                  is the port the app's pods listen on, and the network path is opened
+                                  to that port of the app's own pods. The handler is told where the app
+                                  is as APP_URL -- the Service and port the exposure routes to, which
+                                  need not carry the same number. Such a call does not pass the front
+                                  door.
+                                format: int32
+                                maximum: 65535
+                                minimum: 1
+                                type: integer
+                              database:
+                                description: |-
+                                  Database gives the handler the app's own database: where it is and the
+                                  app's own login to it, as DB_HOST, DB_PORT, DB_NAME, DB_USER and
+                                  DB_PASSWORD, and the network path to that server. The profile must
+                                  declare requires.services.database.
+                                type: boolean
+                              entryPaths:
+                                description: |-
+                                  EntryPaths are paths of the app that lead to the sign-in instead of to
+                                  the app: its front page, and the address of its own sign-in form.
+                                  Matched exactly, and only for a page load; a request the app's own page
+                                  makes in the background is the app's to deal with. The page a handler
+                                  sends a person to after signing them in must not be among them, and
+                                  neither may a path under /sso/ or /oauth2/, which are the sign-in's own:
+                                  the operator holds an install whose profile names one.
+                                items:
+                                  maxLength: 256
+                                  pattern: ^/[A-Za-z0-9._~/-]*$
+                                  type: string
+                                maxItems: 16
+                                type: array
+                                x-kubernetes-list-type: set
+                              exposure:
+                                description: |-
+                                  Exposure names the gateway entry people open the app at: the sidecar's
+                                  two paths are on that entry's host. It may be omitted when the profile
+                                  has exactly one gateway entry with authMode oidc.
+                                maxLength: 40
+                                pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                                type: string
+                              secrets:
+                                description: |-
+                                  Secrets gives the handler secrets of this app, by the names they have
+                                  under spec.secrets.generated: each as SECRET_<NAME>, the name in upper
+                                  case. An app's session-signing key is the usual one. A name that is not
+                                  under spec.secrets.generated holds the install: what is read is always
+                                  this app's own vault path, so no name reaches another app's secret.
+                                items:
+                                  maxLength: 64
+                                  pattern: ^[a-z0-9_]+$
+                                  type: string
+                                maxItems: 8
+                                type: array
+                                x-kubernetes-list-type: set
+                            type: object
                         type: object
+                        x-kubernetes-validations:
+                        - message: 'identity.sidecar signs people in for an app that
+                            can do neither OIDC nor SAML itself: it cannot be declared
+                            beside identity.oidc or identity.saml'
+                          rule: '!has(self.sidecar) || (!has(self.oidc) && !has(self.saml))'
                       llm:
                         description: |-
                           LLM declares that the component calls language models through the
@@ -2950,6 +3084,11 @@ spec:
               rule: '!has(self.__package__.valueMapping) || !has(self.__package__.valueMapping.platform)
                 || !has(self.__package__.valueMapping.platform.storeUrlKey) || self.__package__.valueMapping.platform.storeUrlKey.size()
                 == 0 || self.trustTier == ''platform'''
+            - message: 'requires.services.identity.sidecar.database needs requires.services.database:
+                the database the handler is given is the app''s own'
+              rule: '!has(self.requires) || !has(self.requires.services) || !has(self.requires.services.identity)
+                || !has(self.requires.services.identity.sidecar) || !has(self.requires.services.identity.sidecar.database)
+                || !self.requires.services.identity.sidecar.database || has(self.requires.services.database)'
             - message: 'requires.services.mail.imap.tokenSignIn needs requires.services.identity.oidc:
                 the sign-in client whose tokens the mail server is to accept'
               rule: '!has(self.requires) || !has(self.requires.services) || !has(self.requires.services.mail)

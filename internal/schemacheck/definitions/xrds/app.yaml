@@ -51,6 +51,23 @@ spec:
                     are made. Set by the operator from the Tenant
                     (spec.isolation.keycloakRealm, else the tenant's name).
                     When omitted, the realm is the one named after the tenant.
+                signInSidecar:
+                  type: object
+                  description: >
+                    The app's sign-in sidecar, for a profile that declares
+                    requires.services.identity.sidecar. Set by the operator,
+                    and only for an install pinned to a digest whose bundle,
+                    from a catalogue of the whole cluster, brings the handler.
+                    The sidecar is registered at the tenant's realm from it.
+                    The Composition reads the profile's declaration as well,
+                    so this alone composes nothing.
+                  properties:
+                    host:
+                      type: string
+                      description: >
+                        Where the app answers. The sidecar's name at the realm
+                        is https://<host>/sso, and the one address the realm
+                        may post its answer to is https://<host>/sso/acs.
                 mailboxTokenSignIn:
                   type: boolean
                   description: >

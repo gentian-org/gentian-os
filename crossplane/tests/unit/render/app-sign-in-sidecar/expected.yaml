@@ -1,0 +1,431 @@
+---
+apiVersion: gentianos.io/v1alpha1
+kind: XApp
+metadata:
+  name: render-demo-app-fixture
+status:
+  conditions:
+  - lastTransitionTime: "2024-01-01T00:00:00Z"
+    message: 'Unready resources: demo-app-api-stable-svc, demo-app-app-secret-kv,
+      demo-app-app-secret-seed-secret, and 8 more'
+    reason: Creating
+    status: "False"
+    type: Ready
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: demo-app-api-stable-svc
+  labels:
+    crossplane.io/composite: render-demo-app-fixture
+  name: render-demo-app-fixture-api-stable-svc
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XApp
+    name: render-demo-app-fixture
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: demo-app-api
+        namespace: tenant-demo
+      spec:
+        ports:
+        - name: http
+          port: 8000
+          protocol: TCP
+          targetPort: 8000
+        selector:
+          app.kubernetes.io/component: api
+          app.kubernetes.io/instance: demo-app-release
+  providerConfigRef:
+    name: kubernetes
+---
+apiVersion: kv.vault.upbound.io/v1alpha1
+kind: SecretV2
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: demo-app-app-secret-kv
+    crossplane.io/external-name: secret/data/gentian-os/tenants/demo/apps/demo-app/internal/app_secret
+  labels:
+    crossplane.io/composite: render-demo-app-fixture
+  name: render-demo-app-fixture-app-secret-seed-kv
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XApp
+    name: render-demo-app-fixture
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    dataJsonSecretRef:
+      key: data.json
+      name: render-demo-app-fixture-app-secret-seed
+      namespace: crossplane-system
+    mount: secret
+    name: gentian-os/tenants/demo/apps/demo-app/internal/app_secret
+  managementPolicies:
+  - Observe
+  - Create
+  providerConfigRef:
+    name: openbao
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: demo-app-app-secret-seed-secret
+  labels:
+    crossplane.io/composite: render-demo-app-fixture
+  name: render-demo-app-fixture-app-secret-seed
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XApp
+    name: render-demo-app-fixture
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: render-demo-app-fixture-app-secret-seed
+        namespace: crossplane-system
+      stringData:
+        data.json: '{"value":"45f87a79809b39e7e8c25a22890552f3cb0acbf3ea6e29b80e86afd1f7217bff"}'
+      type: Opaque
+  providerConfigRef:
+    name: kubernetes
+---
+apiVersion: group.keycloak.crossplane.io/v1alpha1
+kind: Group
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: demo-app-entitlement-group
+  labels:
+    crossplane.io/composite: render-demo-app-fixture
+  name: gentian-tenant-demo-app-demo-app
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XApp
+    name: render-demo-app-fixture
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    name: gentian:tenant:demo:app:demo-app
+    realmId: demo
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: demo-app-externalsecret
+  labels:
+    crossplane.io/composite: render-demo-app-fixture
+  name: render-demo-app-fixture-es
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XApp
+    name: render-demo-app-fixture
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: external-secrets.io/v1
+      kind: ExternalSecret
+      metadata:
+        name: demo-app-sensitive-values
+        namespace: tenant-demo
+      spec:
+        data:
+        - remoteRef:
+            key: gentian-os/tenants/demo/apps/demo-app/database
+            property: host
+          secretKey: db-host
+        - remoteRef:
+            key: gentian-os/tenants/demo/apps/demo-app/database
+            property: password
+          secretKey: db-password
+        - remoteRef:
+            key: gentian-os/tenants/demo/apps/demo-app/internal/app_secret
+            property: value
+          secretKey: internal-app_secret
+        - remoteRef:
+            key: gentian-os/tenants/demo/apps/demo-app/internal/other_secret
+            property: value
+          secretKey: internal-other_secret
+        refreshInterval: 1h
+        secretStoreRef:
+          kind: ClusterSecretStore
+          name: openbao
+        target:
+          creationPolicy: Owner
+          deletionPolicy: Retain
+          name: demo-app-sensitive-values
+  providerConfigRef:
+    name: kubernetes
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: demo-app-keep-volumes
+  labels:
+    crossplane.io/composite: render-demo-app-fixture
+  name: render-demo-app-fixture-keep-volumes
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XApp
+    name: render-demo-app-fixture
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: v1
+      data:
+        patch.yaml: |
+          patches:
+            - target:
+                version: v1
+                kind: PersistentVolumeClaim
+              patch: |-
+                apiVersion: v1
+                kind: PersistentVolumeClaim
+                metadata:
+                  name: every-claim-of-the-release
+                  annotations:
+                    helm.sh/resource-policy: keep
+      kind: ConfigMap
+      metadata:
+        name: demo-app-release-keep-volumes
+        namespace: tenant-demo
+  providerConfigRef:
+    name: kubernetes
+---
+apiVersion: kv.vault.upbound.io/v1alpha1
+kind: SecretV2
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: demo-app-other-secret-kv
+    crossplane.io/external-name: secret/data/gentian-os/tenants/demo/apps/demo-app/internal/other_secret
+  labels:
+    crossplane.io/composite: render-demo-app-fixture
+  name: render-demo-app-fixture-other-secret-seed-kv
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XApp
+    name: render-demo-app-fixture
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    dataJsonSecretRef:
+      key: data.json
+      name: render-demo-app-fixture-other-secret-seed
+      namespace: crossplane-system
+    mount: secret
+    name: gentian-os/tenants/demo/apps/demo-app/internal/other_secret
+  managementPolicies:
+  - Observe
+  - Create
+  providerConfigRef:
+    name: openbao
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: demo-app-other-secret-seed-secret
+  labels:
+    crossplane.io/composite: render-demo-app-fixture
+  name: render-demo-app-fixture-other-secret-seed
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XApp
+    name: render-demo-app-fixture
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: render-demo-app-fixture-other-secret-seed
+        namespace: crossplane-system
+      stringData:
+        data.json: '{"value":"892f0a72679e3ec2addd2a36bba079c80dde8f892fc2ed171009ab2af2b60a5f"}'
+      type: Opaque
+  providerConfigRef:
+    name: kubernetes
+---
+apiVersion: helm.crossplane.io/v1beta1
+kind: Release
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: demo-app-release
+    crossplane.io/external-name: demo-app-release
+  labels:
+    crossplane.io/composite: render-demo-app-fixture
+  name: render-demo-app-fixture-release
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XApp
+    name: render-demo-app-fixture
+    uid: ""
+spec:
+  forProvider:
+    chart:
+      name: demo-app
+      repository: oci://example.invalid/demo-app
+      version: 1.0.0
+    namespace: tenant-demo
+    patchesFrom:
+    - configMapKeyRef:
+        key: patch.yaml
+        name: demo-app-release-keep-volumes
+        namespace: tenant-demo
+        optional: false
+    set:
+    - name: database.host
+      valueFrom:
+        secretKeyRef:
+          key: db-host
+          name: demo-app-sensitive-values
+          namespace: tenant-demo
+    - name: database.password
+      valueFrom:
+        secretKeyRef:
+          key: db-password
+          name: demo-app-sensitive-values
+          namespace: tenant-demo
+    - name: appSecret
+      valueFrom:
+        secretKeyRef:
+          key: internal-app_secret
+          name: demo-app-sensitive-values
+          namespace: tenant-demo
+    - name: otherSecret
+      valueFrom:
+        secretKeyRef:
+          key: internal-other_secret
+          name: demo-app-sensitive-values
+          namespace: tenant-demo
+    skipCRDs: true
+    values:
+      global:
+        imagePullSecrets:
+        - registry-credentials
+      imagePullSecrets:
+      - registry-credentials
+      podLabels:
+        gentianos.io/app: demo-app
+        gentianos.io/tenant: demo
+    wait: true
+    waitTimeout: 10m
+  providerConfigRef:
+    name: kubernetes
+  rollbackLimit: 3
+---
+apiVersion: samlclient.keycloak.crossplane.io/v1alpha1
+kind: Client
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: demo-app-sign-in-client
+  labels:
+    crossplane.io/composite: render-demo-app-fixture
+  name: demo-demo-app-sign-in-client
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XApp
+    name: render-demo-app-fixture
+    uid: ""
+spec:
+  deletionPolicy: Delete
+  forProvider:
+    assertionConsumerPostUrl: https://demo.demo.platform.example.test/sso/acs
+    clientId: https://demo.demo.platform.example.test/sso
+    clientSignatureRequired: false
+    enabled: true
+    encryptAssertions: false
+    forceNameIdFormat: true
+    forcePostBinding: true
+    frontChannelLogout: false
+    fullScopeAllowed: false
+    includeAuthnStatement: true
+    name: Sign-in sidecar of demo-app
+    nameIdFormat: email
+    realmId: demo
+    signAssertions: true
+    signDocuments: true
+    signatureAlgorithm: RSA_SHA256
+    validRedirectUris:
+    - https://demo.demo.platform.example.test/sso/acs
+  managementPolicies:
+  - Observe
+  - Create
+  - Update
+  - Delete
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: demo-app-stable-svc
+  labels:
+    crossplane.io/composite: render-demo-app-fixture
+  name: render-demo-app-fixture-stable-svc
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XApp
+    name: render-demo-app-fixture
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: demo-app
+        namespace: tenant-demo
+      spec:
+        ports:
+        - name: http
+          port: 3000
+          protocol: TCP
+          targetPort: 3000
+        selector:
+          app.kubernetes.io/component: demo-app
+          app.kubernetes.io/instance: demo-app-release
+  providerConfigRef:
+    name: kubernetes

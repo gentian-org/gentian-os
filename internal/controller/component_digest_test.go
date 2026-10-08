@@ -15,6 +15,7 @@ import (
 	"strings"
 	"testing"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -78,6 +79,7 @@ func startDigestHarness(t *testing.T, profile *gentianov1alpha1.ComponentProfile
 	_ = gentianov1alpha1.AddToScheme(scheme)
 	_ = networkingv1.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
+	_ = appsv1.AddToScheme(scheme)
 	_ = gatewayv1.Install(scheme)
 	tenant := acmeTenantFixture()
 	comp := componentFor(profile.Name, tenantNamespaceName(tenant))
