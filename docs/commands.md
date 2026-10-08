@@ -120,8 +120,9 @@ of its own.
 ### The App Store app
 
 A person who may install apps in a tenant has an **App Store** tile whenever
-the Cluster claim names a store (`catalogue.storeUrl`) and the cluster's
-licence report is on ([design/operations.md §6.2](design/operations.md)). The
+the Cluster claim names a store (`catalogue.storeUrl`) that is not the App
+Store app's own address on a cluster, and the cluster's licence report is on
+([design/operations.md §6.2](design/operations.md)). The
 tile opens the App Store app, which runs on the cluster. It shows the data of
 the store outside the cluster — apps, descriptions, reviews, versions, prices
 — and installs through the director and the custodian as the person signed

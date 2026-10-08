@@ -127,6 +127,14 @@ break-glass key, and pushes it.
 [docs/deployment.md](deployment.md) covers the layering inside
 `gentian-deployments`.
 
+The deployments repository also holds `profiles/_base.yaml` and
+`profiles/<stage>.yaml`, the values every cluster, and every cluster of one
+stage, share ([deployment.md](deployment.md) §1). Both must exist, committed
+and pushed, even when they set nothing (`{}`): Argo CD reads them as values
+files of the platform's own chart and renders nothing when one is missing, so
+an install into a repository without them stops at `D-01` with no operator.
+Step 0 warns about a missing one and does not write it.
+
 A cluster property set in `install.env` beats the claim, silently — the file is
 loaded first. The installer reports it rather than reversing the precedence,
 because an operator who wrote it there meant something, but the claim is where
