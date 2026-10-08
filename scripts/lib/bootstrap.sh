@@ -1756,6 +1756,7 @@ ensure_claim_catalogue_section() {
     if yq_get '.spec.catalogue' "${claim}" >/dev/null 2>&1; then
         _claim_drop_catalogue_access "${claim}"
         _claim_drop_catalogue_tenants "${claim}"
+        _claim_warn_retired_catalogue_addresses "${claim}"
         # A store somebody named stays named: the claim is theirs. The desktop
         # is told the store is unavailable all the same, by the usher.
         if [[ "$(gentian_licence_report_enabled)" != "true" ]] \
@@ -1784,6 +1785,35 @@ ensure_claim_catalogue_section() {
     info "  Catalogue: $(gentian_catalogue_url)"
     info "  $(gentian_catalogue_reason)"
     info "  To run without a store, set 'catalogue: {}' under spec."
+}
+
+# _claim_warn_retired_catalogue_addresses <claim file>
+#
+# Two addresses an earlier installer wrote into every new claim never served
+# anything: the store at gentian.org/apps and the catalogue at
+# store.gentian.org/catalogue. A claim still naming them gives its tenants an
+# App Store that cannot reach a store and a catalogue that lists nothing, and
+# nothing on the cluster says why. The claim is not rewritten -- it is
+# somebody's -- so the installer says which line it is and what a new claim
+# would say there.
+_claim_warn_retired_catalogue_addresses() {
+    local claim="$1" store urls
+    store="$(yq_get '.spec.catalogue.storeUrl' "${claim}" 2>/dev/null || true)"
+    if [[ "${store%/}" == "https://gentian.org/apps" ]]; then
+        warn "claims/cluster.yaml names the App Store ${store} (spec.catalogue.storeUrl),"
+        warn "  an address earlier installs wrote that never served a store: the App Store"
+        warn "  app would list nothing. A new claim names ${GENTIAN_STORE_URL:-https://store-service.aluvian.io}."
+        warn "  Edit the line in ${claim} and run ./install.sh again."
+    fi
+    urls="$(yq_get '.spec.catalogue.sources[].url' "${claim}" 2>/dev/null || true)"
+    if grep -qE '^https://store\.gentian\.org/catalogue/?$' <<< "${urls}"; then
+        warn "claims/cluster.yaml names the catalogue https://store.gentian.org/catalogue"
+        warn "  (spec.catalogue.sources), an address earlier installs wrote that never served"
+        warn "  one: no app could be listed or installed from it. A new claim names"
+        warn "  $(gentian_catalogue_url)."
+        warn "  Edit the line in ${claim} and run ./install.sh again."
+    fi
+    return 0
 }
 
 # _claim_drop_catalogue_access <claim file>
@@ -1942,14 +1972,18 @@ scaffold_cluster_deployment() {
     local generated=0
 
     if [[ ! -f "${GENTIAN_DEPLOYMENTS_PATH}/profiles/${stage}.yaml" ]]; then
-        warn "gentian-deployments/profiles/${stage}.yaml does not exist yet."
-        warn "  Stage-tier policy (logLevel, ACME issuer, etc.) has no home for '${stage}' —"
-        warn "  add it (see profiles/dev.yaml for the existing example) before continuing."
+        warn "profiles/${stage}.yaml does not exist in the deployments repository."
+        warn "  Argo CD reads it as a values file of the platform's own chart and cannot"
+        warn "  render the chart without it: the install would stop at D-01, with no"
+        warn "  operator. Add the file (it may hold a comment and nothing else), commit"
+        warn "  and push it before continuing."
     fi
     if [[ ! -f "${GENTIAN_DEPLOYMENTS_PATH}/profiles/_base.yaml" ]]; then
-        warn "gentian-deployments/profiles/_base.yaml does not exist yet."
-        warn "  Cross-stage shared policy (platformSecurityPolicy, etc.) has no home —"
-        warn "  add it before continuing (see profiles/_base.yaml in an existing cluster's repo)."
+        warn "profiles/_base.yaml does not exist in the deployments repository."
+        warn "  Argo CD reads it as a values file of the platform's own chart and cannot"
+        warn "  render the chart without it: the install would stop at D-01, with no"
+        warn "  operator. Add the file (it may hold a comment and nothing else), commit"
+        warn "  and push it before continuing."
     fi
 
     mkdir -p "${kernel_dir}/claims"

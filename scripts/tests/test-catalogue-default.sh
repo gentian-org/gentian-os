@@ -116,6 +116,24 @@ before="$(cat "${CLAIM}")"
 run GENTIAN_OS_BRANCH=test-cb -- "ensure_claim_catalogue_section '${CLAIM}'" >/dev/null
 is "a claim that names a catalogue is not rewritten" "$(cat "${CLAIM}")" "${before}"
 
+# Two addresses earlier installs wrote never served anything. A claim that
+# still names them is left as it is, and the installer says so.
+if command -v yq >/dev/null 2>&1; then
+    said="$(run GENTIAN_OS_BRANCH=test-cb -- "ensure_claim_catalogue_section '${CLAIM}'")"
+    is "a claim naming a catalogue that serves is not warned about" \
+        "$(grep -c 'never served' <<<"${said}")" "0"
+    printf 'apiVersion: gentianos.io/v1alpha1\nkind: Cluster\nspec:\n  catalogue:\n    storeUrl: https://gentian.org/apps\n    sources:\n      - name: gentian\n        url: https://store.gentian.org/catalogue\n' > "${CLAIM}"
+    before="$(cat "${CLAIM}")"
+    said="$(run GENTIAN_OS_BRANCH=test-cb -- "ensure_claim_catalogue_section '${CLAIM}'")"
+    is "a claim naming the retired store and catalogue is warned about, once each" \
+        "$(grep -c 'never served' <<<"${said}")" "2"
+    is "the warning names the store a new claim would name" \
+        "$(grep -c 'https://store-service.aluvian.io' <<<"${said}")" "1"
+    is "and the catalogue a new claim would name" \
+        "$(grep -c "${DEVELOP}" <<<"${said}")" "1"
+    is "the claim itself is left as it is" "$(cat "${CLAIM}")" "${before}"
+fi
+
 echo ""
 if (( fail > 0 )); then
     printf '%s%d failed%s, %d passed\n' "${RED}" "${fail}" "${NC}" "${pass}"
