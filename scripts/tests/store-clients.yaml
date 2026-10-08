@@ -610,7 +610,6 @@ denied:
     podLabels: {app.kubernetes.io/name: cloudnative-pg, app.kubernetes.io/instance: cnpg}
     port: 8000
 
-
 # ── Servers that are not shared stores ───────────────────────────────────
 #
 # The kernel's own PostgreSQL (kernel-postgres, in kernel-data) and the two

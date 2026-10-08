@@ -65,7 +65,7 @@ with it. *destroyed* = deleted with what it held. "—" = not touched.
 | Access group and who is in it | made | copied, inside the realm | put back | put back under the new tenant's names | kept | destroyed | kept | destroyed |
 | Sign-in scope | made | not copied | — | made new | kept | destroyed | kept | destroyed |
 | Sign-in client | made | copied, inside the realm | put back | made new; the bundle's are not imported under another name | removed | — | removed, with the running app | destroyed |
-| Model key | made | not copied | — | made new | kept | removed | kept | removed |
+| Model key (an app that declared the model gateway, on a cluster that serves models) | made | not copied | — | made new | kept | removed | kept | removed |
 | Provisioning records | written | not copied | — | written new | kept | destroyed, last | kept | destroyed, last |
 | **What the cluster owns** | | | | | | | | |
 | The app's definition in git (its profile and what comes with it) | committed | not copied; the build is noted | — | fetched at the build the bundle notes and committed first, or the import is refused | kept | kept | kept | kept |

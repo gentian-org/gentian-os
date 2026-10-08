@@ -86,6 +86,36 @@ from in-cluster Postfix to a relay and no profile changes.
 
 The same shape covers `database`, `cache`, `s3`, `identity` and `imap`.
 
+**Language models are a need like the others.** An app that calls models
+declares the platform's model gateway, and only an app that declares it is
+given a key there, the gateway's address and a network path to it:
+
+```yaml
+spec:
+  requires:
+    services:
+      llm: {}                       # the need. It carries nothing.
+  package:
+    valueMapping:
+      llm:
+        baseUrlKey: openai.baseUrl  # what THIS chart calls these values
+        apiKeyKey: openai.apiKey
+```
+
+The gateway speaks the OpenAI API; the address ends in `/v1`. The key is the
+app's own, generated per tenant and app and kept in the vault. A chart that
+reads its configuration from the environment can take the Secret
+`llm-credentials-<app>` whole instead of mapping keys (`OPENAI_API_BASE`,
+`OPENAI_API_BASE_URL`, `OPENAI_API_KEY`); a post-install job gets
+`LLM_BASE_URL` and `LLM_API_KEY` for the keys the profile maps. The path
+opened is the gateway's port and nothing else in its namespace, so a profile
+that declares `llm` does not name `system-llm` in
+`gentianos.io/kernel-egress-namespaces`. On a cluster that serves no models
+the app is not installed: its Component waits and says the cluster has no
+model gateway. An app that keeps the key somewhere of its own on first start
+has to take it again when it changes -- the platform replaces a key at the
+gateway, it cannot reach into an app's database.
+
 **Never substitute an endpoint into `extraValues`.** `${SMTP_HOST}`,
 `${S3_ENDPOINT}`, `${MYSQL_HOST}` and `${REDIS_HOST}` handed the app a literal
 hostname and no credential — an app wired that way can only attempt

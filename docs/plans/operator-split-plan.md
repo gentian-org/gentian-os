@@ -469,6 +469,7 @@ corrects the difference. The operator runs these:
 | --- | --- |
 | Tenant | A tenant's namespaces, realm, databases, storage, mail setup, quota and network rules; and one Component for every app and add-on the tenant's manifest lists. |
 | Component | The app itself: its chart installed in the tenant's namespace, the services its component profile requires, and for each address it exposes a route, a session policy and the bouncer's question. |
+| Model access (a stage of Tenant) | For each app whose profile declares the model gateway: its key, registered at the gateway and held in the vault, and the Secret that delivers it. It takes both away from an app that does not declare the gateway. |
 | Gateway platform | The shared Gateway objects, the routes of the platform's own tools (Keycloak, Argo CD, the cluster dashboard, the model gateway), their session policies, and the bouncer's route table. |
 | Keycloak platform | Browser security settings in every realm, and the registrar's client and secret in every realm (handed over in a Secret the registrar mounts). |
 | Authorization projection | The contents of OpenFGA; see below. |

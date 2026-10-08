@@ -1526,11 +1526,10 @@ Two points deserve plain words.
 | 8 | **The notary's database is in the backup.** | Mandates are people's acts and cannot be rebuilt from git. | To do with the notary. |
 
 One more observation, not a precondition. The key an app presents to the
-platform's gateway to language models is the text
-`sk-gentian-<tenant>-<app>` ([modelgateway.go](../../internal/modelgateway/modelgateway.go)).
-It is derived from two names and is not a secret. An engine will be the
-heaviest user of models. That key should become a real secret before
-engines depend on it.
+platform's gateway to language models is generated per tenant and app and
+held in the vault ([model_access_reconciler.go](../../internal/controller/model_access_reconciler.go)),
+and only an app that declares the gateway is given one. An engine will be
+the heaviest user of models, and declares the gateway like any other app.
 
 ## 13. Stages of introduction
 

@@ -239,6 +239,14 @@ that cannot be configured so cannot use the field on MariaDB. Databases so named
 restored and purged with the app. On PostgreSQL the app's role owns what it creates and the names
 are free.
 
+**An app that calls language models** declares the model gateway
+(`spec.requires.services.llm: {}`) and receives its address and a key of its own, in the Secret
+`llm-credentials-<profile>` and, for a chart that takes them as values, through
+`spec.package.valueMapping.llm` (`baseUrlKey`, `apiKeyKey`). Without the declaration an app gets no
+key, no Secret and no network path to the gateway, whatever the cluster runs. With it, on a cluster
+that serves no models, the app is held and its Component says why
+([app-customization.md §1.1](app-customization.md)).
+
 ### 4.2 Generate the index
 
 Take the build script from gentian-apps and run it:

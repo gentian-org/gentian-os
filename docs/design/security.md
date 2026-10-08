@@ -113,8 +113,11 @@ A tenant's namespace denies egress by default. Policy `kernel-access-<app>` (`in
 | `storage.files` alone | Nothing: another app serves the files |
 | `mail` | `system-mail` and `system-mail-dmz`, every port. Not narrowed: where an app's mail goes depends on the cluster's mail mode |
 | `identity` | The edge and the identity provider's namespace, every port. Not narrowed |
+| `llm` | `system-llm`, TCP 4000: the model gateway, and nothing else in its namespace |
 
-One engine opens nothing of the other. The ports are the ones the app is handed with its credentials (`internal/controller/provisioner`), and a test holds the store charts to them. A namespace named in a profile's `gentianos.io/kernel-egress-namespaces` annotation is opened whole, beside these. The language-model gateway is not a declared service and nothing here opens `system-llm`. This is egress from the tenant's namespace; who a store admits is §2.7.
+One engine opens nothing of the other. The ports are the ones the app is handed with its credentials (`internal/controller/provisioner`), and a test holds the store charts to them. A namespace named in a profile's `gentianos.io/kernel-egress-namespaces` annotation is opened whole, beside these; a profile that declares `llm` has no reason left to name `system-llm` there, and one that does opens the gateway's database, cache and model servers to its own egress as well (the gateway's side, §2.9, still refuses it on those ports). This is egress from the tenant's namespace; who a store admits is §2.7, who the model gateway admits §2.9.
+
+**The model gateway is a declared requirement.** An app whose profile declares `requires.services.llm` is given a key at the gateway, the Secret `llm-credentials-<app>` and the rule above; an app that does not is given none of the three, on any cluster (`internal/controller/model_access_reconciler.go`). The key is generated per tenant and app the way a database password is -- derived from the master by the vault's seeder, or random without one -- kept in the vault at the app's path, and known to the gateway by its hash; nothing about it follows from the tenant's and the app's names. A key of the earlier form, `sk-gentian-<tenant>-<app>`, is replaced at the gateway in the first pass that finds it, and removed outright for an app that does not declare the gateway or is no longer installed.
 
 ### 2.7 Who may reach a shared store
 
@@ -136,7 +139,7 @@ Closed, deliberately: PostgreSQL's metrics port (9187) and MinIO's console (9001
 
 What this does not cover:
 
-- **The model gateway** (`system-llm`) has no ingress policy. Any pod of a namespace without an egress policy can open a connection to it, and its credentials are the only check. The kernel's own PostgreSQL and the mail servers have one each; what those leave open is in §2.8.
+- **The other servers.** The kernel's own PostgreSQL and the mail servers have a policy each (§2.8), and so has each server of the model gateway's namespace (§2.9); what those leave open is said there.
 - **Kernel and system namespaces deny no egress.** A pod in one of them is kept from a store by the store's policy alone, and from everything else by nothing (gap G28).
 - **A tenant's DMZ namespace has no default deny.** Its proxies carry their own egress policy; the stores do not admit that tier.
 - **A CNI that does not enforce NetworkPolicy** makes all of this a description. The kubelet's probes are unaffected either way: traffic from a pod's own node is not subject to a NetworkPolicy.
@@ -184,6 +187,24 @@ What stays open, and why:
 
 The clients of all three are in the `servers` section of `scripts/tests/store-clients.yaml`, each marked proven or inferred; `make test-store-network-policies` holds the policies to it (`scripts/tests/server_network_policies.py`) and a Go test holds it to the operator's code (`internal/controller/server_clients_test.go`).
 
+### 2.9 Who may reach the model gateway
+
+On a cluster that serves models, `system-llm` holds four pod sets that listen, and each carries a NetworkPolicy of its own. They are delivered with the gateway's chart (`kernel/services/llm/manifests/templates/networkpolicy.yaml`) in sync wave -1, before the servers, under the same switch as the stores' (`storeNetworkPolicies`).
+
+| Server | Policy | Port | Admitted |
+| --- | --- | --- | --- |
+| The gateway (LiteLLM) | `llm-gateway-ingress` | 4000 | tenant namespaces; the operator's pods in `kernel-control` (an app's key, a tenant's team, a purge); the Gateway's Envoy pods in the edge namespace (the console `llm.<kernelDomain>`, a kernel console behind the kernel session) |
+| Its PostgreSQL (CloudNativePG) | `llm-database-ingress` | 5432 | the gateway's pods; the cluster's own pods (a replica or join Job, when instances is raised) |
+| | | 8000 | CloudNativePG's operator in `kernel-data` |
+| Its Redis | `llm-cache-ingress` | 6379 | the gateway's pods |
+| The mock model server (clusters without GPUs) | `llm-mock-ingress` | 8000 | the gateway's pods |
+
+The database's metrics port (9187) is closed. The rule for the gateway has the same two sides as a store's: its policy admits every tenant namespace, and the tenant's side (§2.6) opens port 4000 for the apps that declared the gateway and for no other. Unlike a store, no pod of `system-llm` itself is admitted to the gateway: nothing there is its client.
+
+The clients are the `store: llm` rows of `scripts/tests/store-clients.yaml`, each naming the server it connects to, and `make test-store-network-policies` holds the four policies to them.
+
+Not covered: **real vLLM instances.** Their chart (`kernel/services/llm/chart`) names the v4 namespace and nothing in this repository installs it on the current layout, so there is no pod for a policy to select. A cluster that runs one in `system-llm` gets no policy for it from here.
+
 ---
 
 ## 3. Architecture
@@ -203,7 +224,7 @@ changes only when the code does.
 | The session's tokens stop at the edge: a backend gets its own cookies, the identity headers, and a bearer only where its exposure says `forwardToken` | Implemented | `internal/bouncer/cookies.go` rewrites the `Cookie` header without the edge's cookies on every allowed request of a session route; the names come from the route table ([routing.md §4.1](routing.md)) |
 | Tenant namespace + NetworkPolicy default-deny egress | Implemented | `internal/kernel/netpolicy/` — tenant namespaces only |
 | Per-app egress to the stores a profile declares | Implemented, mail and identity not narrowed | `internal/kernel/netpolicy/kernel.go`, policy `kernel-access-<app>`; see §2.6 |
-| NetworkPolicy in kernel, system and shared namespaces | **Partial**: ingress to eight servers, no egress anywhere | One policy in the operator chart, on the operator's pods: its app-lifecycle port admits the director's and the usher's pods only, and its other ports stay open. One on each shared store -- PostgreSQL, MariaDB, Redis, MinIO -- admitting tenant namespaces and the platform's named clients (§2.7). One on the kernel's own PostgreSQL, and one each on Dovecot and Postfix, whose internet-facing ports stay open (§2.8). The model gateway, CloudNativePG's operator and every other kernel pod are selected by no policy, and no kernel or system namespace denies egress (gap G28) |
+| NetworkPolicy in kernel, system and shared namespaces | **Partial**: ingress to twelve servers, no egress anywhere | One policy in the operator chart, on the operator's pods: its app-lifecycle port admits the director's and the usher's pods only, and its other ports stay open. One on each shared store -- PostgreSQL, MariaDB, Redis, MinIO -- admitting tenant namespaces and the platform's named clients (§2.7). One on the kernel's own PostgreSQL, and one each on Dovecot and Postfix, whose internet-facing ports stay open (§2.8). One on each server of the model gateway's namespace -- the gateway, its PostgreSQL, its Redis and the mock model server (§2.9). CloudNativePG's operator and every other kernel pod are selected by no policy, and no kernel or system namespace denies egress (gap G28) |
 | Approval path for profile-declared egress | **Target** | `security.egress` reaches the NetworkPolicy uninspected; `PlatformSecurityPolicy` allowlists MAC waivers only (gap G27) |
 | Pod-security admission (privileged, host ns, non-root, hostPath, caps, priv-esc) | Implemented | `kernel/security/kyverno/policies/` |
 | Gateway rate limit | **Target** | `BackendTrafficPolicy` carries timeouts only |

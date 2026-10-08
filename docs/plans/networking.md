@@ -263,9 +263,17 @@ balancer arrives from no pod, and apps reach the same ports under the
 public names. The table is in
 [security.md §2.8](../design/security.md).
 
-Still open at L5: `system-llm` admits any source, the app-facing mail ports
-are not narrowed to the apps that declared mail, and no kernel or system
-namespace denies egress -- a pod there is stopped at a server by that
+The model gateway is the same rule as a store. An app that declares
+`requires.services.llm` is opened `system-llm` on the gateway's port by its
+`kernel-access-<app>` policy; the gateway's own policy admits tenant
+namespaces, the operator and the Gateway's Envoy pods (its console) on that
+port, and the gateway's database, cache and mock model server each admit the
+gateway alone ([security.md §2.9](../design/security.md)). An app that did
+not declare the gateway has no path to it and no key for it.
+
+Still open at L5: the app-facing mail ports are not narrowed to the apps
+that declared mail, a real vLLM instance has no policy, and no kernel or
+system namespace denies egress -- a pod there is stopped at a server by that
 server's policy and nowhere else by anything.
 
 ## 3. Route classes
