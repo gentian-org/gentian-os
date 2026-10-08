@@ -518,7 +518,7 @@ type APIIntegration struct {
 	// +kubebuilder:validation:Enum=redirect;proxy;portal-proxy
 	Runtime APIIntegrationRuntime `json:"runtime,omitempty"`
 
-	// BaseURL is the external service origin (e.g. https://corp.gentian.org).
+	// BaseURL is the external service origin (e.g. https://service.example).
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:Pattern=`^https?://.+`
