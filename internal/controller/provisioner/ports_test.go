@@ -38,6 +38,17 @@ func TestTheStoreChartsAnswerOnThePortsAppsAreGiven(t *testing.T) {
 			fmt.Sprintf(".svc.cluster.local:%d", ObjectStoragePort)},
 		{"the MinIO pod's port", filepath.Join(infra, "minio", "values.yaml"),
 			fmt.Sprintf("api: %d", ObjectStoragePort)},
+		// And the port each store's NetworkPolicy admits its clients on
+		// (templates/networkpolicy.yaml beside each of these): the server's
+		// side of the rule the tenant's side opens with the same constant.
+		{"the port PostgreSQL's policy admits", filepath.Join("..", "..", "..", "kernel", "data", "tenant-postgres", "values.yaml"),
+			fmt.Sprintf("\n    postgresql: %d\n", PostgresPort)},
+		{"the port MariaDB's policy admits", filepath.Join(services, "infra-mariadb", "manifests", "values.yaml"),
+			fmt.Sprintf("\n    mariadb: %d\n", MariaDBPort)},
+		{"the port Redis's policy admits", filepath.Join(services, "infra-redis", "manifests", "values.yaml"),
+			fmt.Sprintf("\n    redis: %d\n", RedisPort)},
+		{"the port MinIO's policy admits", filepath.Join(services, "infra-minio", "manifests", "values.yaml"),
+			fmt.Sprintf("\n    api: %d\n", ObjectStoragePort)},
 	} {
 		b, err := os.ReadFile(c.file)
 		if err != nil {

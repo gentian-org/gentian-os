@@ -1,0 +1,309 @@
+# Who connects to the four shared stores of the system tier, and who must not.
+#
+# Every legitimate client of PostgreSQL, MariaDB, Redis and MinIO, as the code
+# builds it: the namespace its pod runs in, the labels that pod carries and
+# the port it dials. Two tests read this file and neither is enough alone:
+#
+#   scripts/tests/test-store-network-policies.sh
+#       renders each store's NetworkPolicy and asserts every client here is
+#       admitted and every entry under `denied` is not;
+#   internal/controller/store_clients_test.go
+#       builds each client with the constructor the operator uses (`built`)
+#       and asserts it runs where, and carries what, this file says.
+#
+# So a client that moves namespace, or loses the label a rule selects on,
+# fails the second; a rule that stops admitting a client fails the first. A
+# NEW client of a store belongs here before its code is merged: a client the
+# policy does not admit is a Job that hangs on a cluster and nowhere else.
+#
+# `built: none` marks a client no constructor in the operator's Go builds,
+# with the reason in `proof`.
+#
+# Namespaces of the kernel and system tiers get their labels from
+# kernel/namespaces.yaml. A tenant namespace is written out with the labels
+# the Tenant composition gives it.
+tenantNamespace: &tenant
+  name: tenant-acme
+  labels:
+    gentianos.io/tier: tenant
+    gentianos.io/tenant: acme
+
+clients:
+  # ── PostgreSQL (system-postgresql) ─────────────────────────────────────
+  - store: postgresql
+    client: a tenant's app that declared a PostgreSQL database
+    namespace: *tenant
+    podLabels: {gentianos.io/app: wiki}
+    port: 5432
+    built: tenant-app-postgresql
+    proof: internal/kernel/netpolicy/kernel.go kernelEgressTargets; the address is seeded by tenant_data_plane_manifests.go
+  - store: postgresql
+    client: a tenant's desktop, whose database lives on this server
+    namespace: *tenant
+    podLabels: {app.kubernetes.io/instance: tenant-acme-desktop}
+    port: 5432
+    built: tenant-component-database
+    proof: internal/controller/component_desktop.go componentDatabaseNamespace, component_network_policy.go
+  - store: postgresql
+    client: the role Job that makes an app's role and database
+    namespace: system-postgresql
+    podLabels: {}
+    port: 5432
+    built: postgres-role-job
+    proof: internal/controller/database_reconciler.go makeRoleJob
+  - store: postgresql
+    client: the destroy Job that drops an app's databases and role
+    namespace: system-postgresql
+    podLabels: {}
+    port: 5432
+    built: postgres-destroy-job
+    proof: internal/backup/teardown.go PostgresDestroyJob
+  - store: postgresql
+    client: pg_dump of a tenant export
+    namespace: system-s3
+    podLabels: {gentianos.io/component: tenant-export}
+    port: 5432
+    built: export-postgres-dump
+    proof: internal/controller/tenantexport_controller.go jobParams, internal/backup/jobs.go PostgresDumpJob
+  - store: postgresql
+    client: pg_restore of a tenant restore
+    namespace: system-s3
+    podLabels: {gentianos.io/component: tenant-export}
+    port: 5432
+    built: restore-postgres
+    proof: internal/controller/tenantrestore_controller.go jobParams, internal/backup/restore_jobs.go PostgresRestoreJob
+  - store: postgresql
+    client: the operator, reading and writing a tenant's usage history and notices
+    namespace: kernel-control
+    podLabels: {app.kubernetes.io/name: gentian-os, app.kubernetes.io/instance: gentian-os, app.kubernetes.io/component: operator}
+    port: 5432
+    built: none
+    proof: internal/usage/store.go connect, internal/applifecycle/notifications.go; the labels are checked against the rendered operator chart
+  - store: postgresql
+    client: a replica or a join Job of the cluster itself, streaming from the primary
+    namespace: system-postgresql
+    podLabels: {cnpg.io/cluster: postgres, cnpg.io/jobRole: join}
+    port: 5432
+    built: none
+    proof: CloudNativePG 1.25.0 pkg/specs/jobs.go (upstream; instances is 1 by default, so this is for a cluster that raises it)
+  - store: postgresql
+    client: CloudNativePG's operator, asking an instance for its status
+    namespace: kernel-data
+    podLabels: {app.kubernetes.io/name: cloudnative-pg, app.kubernetes.io/instance: cnpg}
+    port: 8000
+    built: none
+    proof: >-
+      chart cloudnative-pg 0.23.0 rendered with kernel/values/cnpg.yaml (kernel/bootstrap/chart/templates/cnpg.yaml);
+      the port is CloudNativePG 1.25.0 pkg/management/url StatusPort
+
+  # ── MariaDB (system-mariadb) ───────────────────────────────────────────
+  - store: mariadb
+    client: a tenant's app that declared a MariaDB database
+    namespace: *tenant
+    podLabels: {gentianos.io/app: shop}
+    port: 3306
+    built: tenant-app-mariadb
+    proof: internal/kernel/netpolicy/kernel.go kernelEgressTargets
+  - store: mariadb
+    client: the setup Job that makes an app's database and user
+    namespace: system-mariadb
+    podLabels: {}
+    port: 3306
+    built: mariadb-setup-job
+    proof: internal/controller/mariadb_reconciler.go makeMariaDBSetupJob
+  - store: mariadb
+    client: the destroy Job that drops an app's databases and user
+    namespace: system-mariadb
+    podLabels: {}
+    port: 3306
+    built: mariadb-destroy-job
+    proof: internal/backup/teardown.go MariaDBDestroyJob
+  - store: mariadb
+    client: mariadb-dump of a tenant export
+    namespace: system-s3
+    podLabels: {gentianos.io/component: tenant-export}
+    port: 3306
+    built: export-mariadb-dump
+    proof: internal/controller/tenantexport_controller.go jobParams, internal/backup/jobs.go MariaDBDumpJob
+  - store: mariadb
+    client: the load of a tenant restore
+    namespace: system-s3
+    podLabels: {gentianos.io/component: tenant-export}
+    port: 3306
+    built: restore-mariadb
+    proof: internal/controller/tenantrestore_controller.go jobParams, internal/backup/restore_jobs.go MariaDBRestoreJob
+
+  # ── Redis (system-cache) ───────────────────────────────────────────────
+  - store: cache
+    client: a tenant's app that declared a Redis cache
+    namespace: *tenant
+    podLabels: {gentianos.io/app: wiki}
+    port: 6379
+    built: tenant-app-cache
+    proof: internal/kernel/netpolicy/kernel.go kernelEgressTargets
+  - store: cache
+    client: the ACL Job that makes an app's user
+    namespace: system-cache
+    podLabels: {}
+    port: 6379
+    built: redis-acl-job
+    proof: internal/controller/cache_reconciler.go makeRedisACLJob
+  - store: cache
+    client: the destroy Job that removes an app's user and keys
+    namespace: system-cache
+    podLabels: {}
+    port: 6379
+    built: cache-destroy-job
+    proof: internal/backup/teardown.go CacheDestroyJob
+
+  # ── MinIO (system-s3) ──────────────────────────────────────────────────
+  - store: s3
+    client: a tenant's app that declared a bucket
+    namespace: *tenant
+    podLabels: {gentianos.io/app: wiki}
+    port: 9000
+    built: tenant-app-s3
+    proof: internal/kernel/netpolicy/kernel.go kernelEgressTargets
+  - store: s3
+    client: the volume capture of a tenant export, which runs where the claim is
+    namespace: *tenant
+    podLabels: {gentianos.io/component: tenant-export}
+    port: 9000
+    built: export-volume-archive
+    proof: internal/controller/tenantexport_controller.go captureUnits, internal/kernel/netpolicy/export.go
+  - store: s3
+    client: the volume load of a tenant restore, which runs where the claim is
+    namespace: *tenant
+    podLabels: {gentianos.io/component: tenant-export}
+    port: 9000
+    built: restore-volume
+    proof: internal/controller/tenantrestore_controller.go restoreUnits
+  - store: s3
+    client: the bucket Job that makes an app's bucket, user and policy
+    namespace: system-s3
+    podLabels: {}
+    port: 9000
+    built: s3-bucket-job
+    proof: internal/controller/storage_reconciler.go makeS3BucketJob
+  - store: s3
+    client: the destroy Job that removes an app's bucket, user and policy
+    namespace: system-s3
+    podLabels: {}
+    port: 9000
+    built: s3-destroy-job
+    proof: internal/backup/teardown.go ObjectStorageDestroyJob
+  - store: s3
+    client: every capture and restore Job that mounts no claim, uploading to or fetching from the bundle
+    namespace: system-s3
+    podLabels: {gentianos.io/component: tenant-export}
+    port: 9000
+    built: export-s3-archive
+    proof: internal/controller/tenantexport_controller.go jobParams, internal/backup/jobs.go uploadJob
+  - store: s3
+    client: the operator, reading a bundle's manifest, streaming a download and writing an import
+    namespace: kernel-control
+    podLabels: {app.kubernetes.io/name: gentian-os, app.kubernetes.io/instance: gentian-os, app.kubernetes.io/component: operator}
+    port: 9000
+    built: none
+    proof: >-
+      internal/bundlestore/bundlestore.go Minio, internal/applifecycle/bundle_download.go, bundle_import.go;
+      the labels are checked against the rendered operator chart
+
+# What must NOT get in. Each is a pod that could connect before these
+# policies existed, or a port that is not a client's business.
+denied:
+  - store: postgresql
+    client: Keycloak, whose database is the kernel's own
+    namespace: kernel-authentication
+    podLabels: {app.kubernetes.io/name: keycloakx}
+    port: 5432
+  - store: postgresql
+    client: the director, which reaches no store itself
+    namespace: kernel-control
+    podLabels: {app.kubernetes.io/name: gentian-os, app.kubernetes.io/instance: gentian-os, app.kubernetes.io/component: director}
+    port: 5432
+  - store: postgresql
+    client: a perimeter proxy in a tenant's DMZ
+    namespace: {name: tenant-acme-dmz, labels: {gentianos.io/tier: tenant-dmz, gentianos.io/tenant: acme}}
+    podLabels: {app.kubernetes.io/name: perimeter-proxy}
+    port: 5432
+  - store: postgresql
+    client: the object store's own pod, which is not a capture
+    namespace: system-s3
+    podLabels: {app.kubernetes.io/name: minio, app.kubernetes.io/instance: minio}
+    port: 5432
+  - store: postgresql
+    client: a pod of a namespace outside the layout
+    namespace: {name: default, labels: {}}
+    podLabels: {}
+    port: 5432
+  - store: postgresql
+    client: a tenant's app on the instance manager's port
+    namespace: *tenant
+    podLabels: {gentianos.io/app: wiki}
+    port: 8000
+  - store: postgresql
+    client: a tenant's app on the metrics port
+    namespace: *tenant
+    podLabels: {gentianos.io/app: wiki}
+    port: 9187
+  - store: postgresql
+    client: the kernel's own PostgreSQL on the instance manager's port
+    namespace: kernel-data
+    podLabels: {cnpg.io/cluster: kernel-postgres, cnpg.io/podRole: instance}
+    port: 8000
+  - store: postgresql
+    client: CloudNativePG's operator on the data port
+    namespace: kernel-data
+    podLabels: {app.kubernetes.io/name: cloudnative-pg, app.kubernetes.io/instance: cnpg}
+    port: 5432
+  - store: mariadb
+    client: the operator, which reaches MariaDB through its Jobs only
+    namespace: kernel-control
+    podLabels: {app.kubernetes.io/name: gentian-os, app.kubernetes.io/instance: gentian-os, app.kubernetes.io/component: operator}
+    port: 3306
+  - store: mariadb
+    client: Crossplane and its providers
+    namespace: kernel-provisioning
+    podLabels: {}
+    port: 3306
+  - store: mariadb
+    client: a perimeter proxy in a tenant's DMZ
+    namespace: {name: tenant-acme-dmz, labels: {gentianos.io/tier: tenant-dmz, gentianos.io/tenant: acme}}
+    podLabels: {app.kubernetes.io/name: perimeter-proxy}
+    port: 3306
+  - store: cache
+    client: a capture pod, because a cache is not captured
+    namespace: system-s3
+    podLabels: {gentianos.io/component: tenant-export}
+    port: 6379
+  - store: cache
+    client: the operator, which reaches Redis through its Jobs only
+    namespace: kernel-control
+    podLabels: {app.kubernetes.io/name: gentian-os, app.kubernetes.io/instance: gentian-os, app.kubernetes.io/component: operator}
+    port: 6379
+  - store: cache
+    client: Argo CD
+    namespace: kernel-gitops
+    podLabels: {}
+    port: 6379
+  - store: s3
+    client: the usher, which reaches no store itself
+    namespace: kernel-control
+    podLabels: {app.kubernetes.io/name: gentian-os, app.kubernetes.io/instance: gentian-os, app.kubernetes.io/component: usher}
+    port: 9000
+  - store: s3
+    client: the edge, which routes nothing to the object store
+    namespace: kernel-edge
+    podLabels: {}
+    port: 9000
+  - store: s3
+    client: a tenant's app on the console port
+    namespace: *tenant
+    podLabels: {gentianos.io/app: wiki}
+    port: 9001
+  - store: s3
+    client: the operator on the console port
+    namespace: kernel-control
+    podLabels: {app.kubernetes.io/name: gentian-os, app.kubernetes.io/instance: gentian-os, app.kubernetes.io/component: operator}
+    port: 9001
