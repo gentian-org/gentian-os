@@ -297,6 +297,8 @@ own answer — the tenant no longer names the app, its Component is gone, and
 Helm has finished uninstalling its release. The wait is bounded by
 `GENTIAN_UNINSTALL_WAIT` seconds (default 900); when it runs out the command
 says so, nothing has been purged, and the same command can be run again.
+What every act does with every kind of data is one table in
+[design/data-lifecycle.md](design/data-lifecycle.md).
 
 A purge is refused, with nothing destroyed, when the app's profile is not on
 the cluster — what the app owns cannot be determined without it; installing
@@ -678,9 +680,9 @@ kubectl get tenantexport nightly-2026-08-18 -n tenant-demo \
   -o custom-columns=PHASE:.status.phase,BUNDLE:.status.bundle.prefix,PAUSED:.status.quiesced
 
 # The capture Jobs themselves. Volume archives run in the tenant namespace —
-# a PVC is only mountable from its own namespace — everything else in the
-# kernel namespace beside the admin secrets.
-kubectl get jobs -n platform-kernel -l gentianos.io/tenant-export=nightly-2026-08-18
+# a PVC is only mountable from its own namespace — everything else beside the
+# object store, in system-s3 (see design/data-lifecycle.md §7, gap 1).
+kubectl get jobs -n system-s3 -l gentianos.io/tenant-export=nightly-2026-08-18
 kubectl get jobs -n tenant-demo -l gentianos.io/tenant-export=nightly-2026-08-18
 ```
 
@@ -704,15 +706,20 @@ apps are resumed and outstanding capture Jobs are stopped first. If the
 cleanup Job itself fails, the export is released anyway and the operator log
 names the bucket and prefix left behind.
 
-**Tearing a tenant down does not delete its bundles.** These resources live in
-the tenant's namespace, so retiring a tenant with `deletionPolicy: Delete` removes them — and if
-that removed the bundles too, "purge the tenant, then restore it" would destroy
-the only thing that could restore it. The operator recognises a teardown and
-keeps the objects, logging the bucket and prefix for each.
+**Retiring a tenant keeps its bundles; deleting it destroys them, unless it
+was told to keep them.** These resources live in the tenant's namespace, so a
+teardown removes them. The operator recognises a teardown and does not delete
+a bundle because its `TenantExport` went. What happens to the bundles is then
+the deletion policy's to say: with `Retain` the backup bucket stays; with
+`Delete` the bucket is destroyed with the tenant's other stores, unless the
+purge was asked for with `keepBundles` (or the bundles are on external
+storage, which the platform never deletes). A bundle you want to outlive its
+tenant has to be downloaded, or kept that way
+([design/data-lifecycle.md](design/data-lifecycle.md) §2).
 
-The consequence is real and points the other way: bundles outlive their tenant
-and nothing removes them afterwards. On an erasure request, or simply to
-reclaim the space, remove them deliberately once you are sure:
+Bundles a retired tenant left behind stay until they are removed by hand. On
+an erasure request, or simply to reclaim the space, remove them deliberately
+once you are sure:
 
 ```bash
 # What a deleted tenant left behind
@@ -839,7 +846,7 @@ kubectl get tenantrestore restore-2026-08-18 -n tenant-demo -o jsonpath='{.statu
 
 `phase: Ready` with `complete: false` is a restore that left something out;
 `notRestored` says what and why. `notes` is what no restore brings back
-([operations.md](design/operations.md) §9.4).
+([data-lifecycle.md](design/data-lifecycle.md) §5).
 
 ### After a restore, members cannot sign in
 

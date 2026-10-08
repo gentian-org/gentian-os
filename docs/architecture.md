@@ -844,6 +844,7 @@ are in [design/multi-tenancy.md](design/multi-tenancy.md#roles).
 | OIDC paths (catalogue apps) | [app-profile-guide.md](../../gentian-apps/docs/app-profile-guide.md) §8, [design/iam.md](design/iam.md) |
 | Mail kernel extension | [design/mail.md](design/mail.md) |
 | Backup, DR, observability, image updates | [design/operations.md](design/operations.md) |
+| What create, backup, restore, import, uninstall, purge, retire and delete do with a tenant's and an app's data | [design/data-lifecycle.md](design/data-lifecycle.md) |
 | Backing up and recovering a workspace (tenant admin) | [tenant-backup-guide.md](tenant-backup-guide.md) |
 | Recovering after a loss — cluster, tenant or key | [recovery-playbook.md](recovery-playbook.md) |
 | Agentic AI / MCP integration | [design/agentic-ai.md](design/agentic-ai.md) |

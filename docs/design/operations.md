@@ -42,8 +42,9 @@ This sequence is being automated by the namespaced `TenantExport` /
 Admin Console. Restore is **data-only** — the tenant's shape is re-composed
 from its claim, never restored — and quiesces one app at a time, since the
 consistency boundary that matters is an app's database plus its bucket plus
-its PVC, not the tenant as a whole. What a bundle carries per kind, the rule a
-restore decides by and what no restore brings back are in §9.
+its PVC, not the tenant as a whole. What a bundle carries per kind and what no
+restore brings back are in [data-lifecycle.md](data-lifecycle.md); the rule a
+restore decides by is in §9.4.
 
 ## 3. Tenant Migration Between Clusters
 
@@ -402,44 +403,47 @@ letting Argo CD roll the operator and the bouncer. In that order:
   replication lag check, OpenBao snapshot integrity check. Failures
   alert on the platform team's PagerDuty.
 
-## 9. One Inventory, One Order
+## 9. Data Lifecycle: Reference
 
-Five acts work on what an app of a tenant owns: provisioning makes it, export
-and backup copy it, uninstalling leaves it, a purge of the app destroys it,
-and deleting the tenant destroys it for every app at once. They read one
-inventory and follow one order, both in
-[`internal/backup`](../../internal/backup/): `inventory.go` names each thing
-(`InventoryOf`, and `AppVolumes` for whose a volume claim is), `teardown.go`
-lists the kinds in the order provisioning makes them (`AppKinds`), says what
-every act does with each and how each is found once its app is uninstalled,
-builds the one Job that destroys each store, and holds the one question that
-says which databases are an app's. `record.go` is the record provisioning
-keeps of what it made. Teardown is provisioning's order reversed
-(`TeardownOrder`); nothing else defines an order. A test fails when a kind is
-added without saying what export and each teardown do with it, when something
-uninstalling keeps does not say how it is found afterwards, or when a store a
-profile can declare is left out of the record.
+What creating, backing up, restoring, importing, uninstalling, purging,
+retiring and deleting do with each kind of thing a tenant and an app own is in
+**[data-lifecycle.md](data-lifecycle.md)**: one table, the order, what a
+bundle does not hold, how each act fails, and the known gaps. Read that first.
+This section is the reference under it: detail that page leaves out, and
+nothing that page already says.
 
-### 9.1 Per kind
+The inventory and the order are in [`internal/backup`](../../internal/backup/):
+`inventory.go` names each thing (`InventoryOf`, and `AppVolumes` for whose a
+volume claim is), `teardown.go` lists the kinds in the order provisioning
+makes them (`AppKinds`), says what every act does with each and how each is
+found once its app is uninstalled, builds the one Job that destroys each
+store, and holds the one question that says which databases are an app's.
+`record.go` is the record provisioning keeps of what it made. Teardown is
+provisioning's order reversed (`TeardownOrder`); nothing else defines an
+order. A test fails when a kind is added without saying what export and each
+teardown do with it, when something uninstalling keeps does not say how it is
+found afterwards, or when a store a profile can declare is left out of the
+record.
 
-In provisioning order. "Restore" is what a restore puts back: exactly what was
-carried, for the apps the bundle's manifest lists (§9.4).
+### 9.1 Per kind: what makes it, and the fine print
 
-| Kind | Install creates | Export / backup carries | Restore puts back | Uninstall | App purge | Tenant delete (`deletionPolicy: Delete`) |
-| --- | --- | --- | --- | --- | --- | --- |
-| Provisioning records (Jobs, labelled Secrets) | written from the first step on | nothing: not data | nothing | kept | destroyed, last | destroyed, last |
-| Stored credentials (vault `…/apps/<app>`, `…/apps/<app>-<extension>`) | seeded before each store; generated secrets by the app Composition | nothing: a bundle holds no stored credential | nothing: the tenant restored into has its own, seeded when it was provisioned; what a person entered has to be entered again | kept | destroyed | destroyed, with the tenant's whole vault subtree |
-| Access group and memberships | the tenant's identity Job | carried, in the realm export | put back, with the realm | kept | destroyed, in the tenant's realm | destroyed, with the realm |
-| Sign-in scope (the client scope the app's OIDC pack describes, with its mappers) | the tenant's identity Job | nothing: configuration, made again at install | nothing | kept | destroyed, unless an installed app names the same scope or it is one of Keycloak's own | destroyed, with the realm |
-| Database and role | role Job and CloudNativePG Database, or MariaDB setup Job | a dump of the provisioned database, and of every other database that is the app's: on PostgreSQL the ones its role owns, on MariaDB the ones named `<database>_…` | the provisioned database replaced; each other database of the app's created if missing and replaced — on MariaDB under the provisioned name of the tenant restored into; one that is the app's now and that the bundle does not hold is left, and named | kept | destroyed, with every other database that is the app's, and the role or user | destroyed, likewise |
-| Object storage (bucket, user, policy) | bucket Job | the bucket's objects | the bucket, its user and its policy made by the code install uses, then the objects | kept | destroyed | destroyed, and the tenant's backup bucket unless bundles are kept |
-| Cache user | ACL Job | nothing: a restored cache is stale | nothing | kept | removed; keys are not | removed; keys are not |
-| Model key (at the model gateway, where the cluster serves models) | the tenant reconciler | nothing: a credential, registered again at install | nothing | kept | removed | removed, then the tenant's team |
-| Sign-in client, with its client role, default-scope assignments and the group's mapping to the role | the app Composition, or the identity Job | carried, in the realm export | put back, with the realm | removed (Keycloak removes what is part of the client with it) | — | destroyed, with the realm |
-| Workloads (the Helm release) | the app Composition or the component reconciler | nothing: re-made from the profile; the manifest records the build | nothing; the installed build is checked against the manifest's | removed | — | removed, first |
-| Files (the release's volume claims) | the app's chart | an archive per claim that is the app's (`AppVolumes`) | each archive unpacked onto the claim of the same name | kept | destroyed | destroyed, with the namespace |
-| Materialised profile (the `ComponentProfile`, committed under `clusters/<cluster>/catalogue/`) | committed by the director at the digest the install named, applied by Argo CD | nothing: the manifest records the build | nothing; the tenant restored into installs from its own catalogues | kept: a purge of the app reads it to know what the app owns | kept | kept: it is the cluster's and no tenant's |
-| Bundle companions (the Composition, OIDC pack catalog, ConfigMaps and customization records a profile's bundle brings) | applied with the profile, from the same file | nothing | nothing | kept | kept | kept |
+In provisioning order.
+
+| Kind | Made by | Detail |
+| --- | --- | --- |
+| Provisioning records | every provisioning Job, and the operator's labelled Secrets, from the first step on | Jobs, their pods and labelled Secrets; found by the tenant's and the app's labels. A teardown's own Jobs are records too, which is why they go last. |
+| Stored credentials | the tenant reconciler's seeder before each store; the app Composition for generated secrets | Vault paths `…/apps/<app>` and `…/apps/<app>-<extension>`. A tenant's deletion removes them with the tenant's whole vault subtree. |
+| Access group and memberships | the tenant's identity Job, from `Tenant.spec.apps` | Carried inside the realm export; a purge destroys it in the tenant's own realm. |
+| Sign-in scope | the tenant's identity Job, from the OIDC pack the app's profile names | The client scope with its mappers. Kept at an uninstall: taking it away there would need the uninstall to talk to the identity provider, and an uninstall is a commit nobody waits on. A purge destroys it unless an installed app names the same scope or it is one of Keycloak's own. |
+| Database and role | a role Job and a CloudNativePG Database, or a MariaDB setup Job | A bundle holds a dump of the provisioned database and of every other database that is the app's (§9.3). A restore replaces the provisioned one; each other one is created if missing and replaced, on MariaDB under the provisioned name of the tenant restored into; one that is the app's now and that the bundle does not hold is left, and named. |
+| Object storage | the bucket Job | A restore makes the bucket, its user and its policy with the code install uses, then writes the objects, removing objects the bundle does not hold. |
+| Cache user | the ACL Job | A restored cache is stale, so none is carried. |
+| Model key | the tenant reconciler, at the model gateway, where the cluster serves models | A credential, registered again at install. A tenant's deletion removes the keys, then the tenant's team. |
+| Sign-in client | the app Composition, or the identity Job | With its client role, its default-scope assignments and the group's mapping to the role. Keycloak removes what is part of the client with it. |
+| Workloads | the Helm release the app Composition or the component reconciler writes | The manifest records the chart version, the digest and the releases; a restore checks the installed build against them (§9.4). |
+| Files | the app's chart, as volume claims of its release | An archive per claim that is the app's (`AppVolumes`), unpacked onto the claim of the same name. At a tenant's deletion they go with the namespace. |
+| Materialised profile | committed by the director under `clusters/<cluster>/catalogue/` at the digest the install named, applied by Argo CD | Kept by every act: a purge of the app reads it to know what the app owns. |
+| Bundle companions | applied with the profile, from the same file | The Composition, OIDC pack catalog, ConfigMaps and customization records a profile's bundle brings. Kept by every act. |
 
 So the teardown order is: files, workloads, sign-in client, model key, cache,
 object storage, database, sign-in scope, access group, stored credentials,
@@ -450,9 +454,6 @@ claim and the release — waits for them, then runs the store steps in the same
 order for every app the tenant ever had, with the same Jobs and scripts, then
 the realm; then it removes the namespace and waits until the API server no
 longer has it, removes the vault subtree and, last, the records.
-
-With `deletionPolicy: Retain` a tenant's deletion keeps every kind and removes
-the workloads.
 
 The last two rows are not a tenant's. A profile and its companions belong to
 the cluster, are shared by every tenant that installs the app, and no act on
@@ -467,19 +468,23 @@ entry of that list on request
 
 Several of these lie outside what a deletion sweeps by default — outside the
 tenant's namespace, realm and vault subtree, and without its label. The
-inventory lists them (`TenantOwned`) so that each says what removes it.
+inventory lists them (`TenantOwned`) so that each says what removes it. What
+each act does with them is in [data-lifecycle.md](data-lifecycle.md) §2; the
+fine print:
 
-| What | Export | Retain | Delete |
-| --- | --- | --- | --- |
-| The namespace, with every workload and volume in it | volumes per app; workloads not | kept; Components and the operator's quota, limits and network policy removed | deleted, and the deletion waits until it is gone |
-| The realm | carried: configuration, people, memberships; no passwords | disabled | deleted; never when it is the kernel realm, which a tenant only adopts |
-| The client the realm signs in to the kernel realm as (`broker-<realm>`), and the mapper on it | not carried | kept | removed from the kernel realm, by the Job that deletes the realm |
-| The vault subtree | not carried | kept | deleted; an operator with no vault that was not told to run without one (`GENTIAN_WITHOUT_VAULT=true`) fails here |
-| The team at the model gateway | not carried | kept | removed, after the apps' keys |
-| Mail routing, submission and IMAP credentials, mail DNS records (`DNSEndpoint mail-<tenant>`) | not carried | removed | removed, with the DKIM key and SMTP credentials |
-| The edge: gateway, routes, wildcard certificate, edge routes, DNS records | not carried | removed | removed; a route that cannot be removed fails the deletion |
-| The backup bucket | it is where exports go | kept | destroyed, unless the tenant keeps its bundles |
-| The record of what was provisioned | not carried | kept | deleted, last |
+- **The namespace.** With `Retain` the Components and the operator's quota,
+  limits and network policy are removed from it. With `Delete` the deletion
+  waits until the namespace is gone.
+- **The realm.** Never deleted or disabled when it is the kernel realm, which
+  a tenant only adopts.
+- **The client the realm signs in to the kernel realm as** (`broker-<realm>`),
+  and the mapper on it: removed from the kernel realm by the Job that deletes
+  the realm.
+- **The vault subtree.** An operator with no vault that was not told to run
+  without one (`GENTIAN_WITHOUT_VAULT=true`) fails the deletion here.
+- **Mail.** The DNS records are `DNSEndpoint mail-<tenant>`; a deletion also
+  removes the DKIM key and the SMTP credentials.
+- **The edge.** A route that cannot be removed fails the deletion.
 
 ### 9.3 Finding what an uninstalled app left
 
@@ -581,25 +586,17 @@ format newer than the platform reads is refused. A `postgresOwned` artefact is
 a tar.gz holding `INDEX`, the database names one per line, and
 `<line number from 0>.pgc`, each one's custom-format dump.
 
-**What no restore brings back**, said on every result (`status.notes`):
+**What no restore brings back** is the checklist in
+[data-lifecycle.md](data-lifecycle.md) §5, and is said on every result
+(`status.notes`). The detail behind it:
 
-- **Stored credentials.** A bundle holds none, on purpose: it would put every
-  password of a tenant in a file that leaves the cluster. What the platform
-  seeds was made for the tenant restored into when it was provisioned, and a
-  restore changes none of it. Credentials a person entered — a repository's
-  password, an SMTP relay's, an API key — did not come back and have to be
-  entered again. A profile's `spec.backup.boundSecrets` are not carried
-  either, and an export of such an app says so.
-- **Data sealed with a generated secret** can be read only where that secret
-  is the same: on the cluster the bundle was taken on, or one built from its
-  recovery kit.
-- **Passwords.** Members come back without them and are sent a reset.
-- **Mail, the cache, and declared state.** Mailboxes are not in a bundle. App
-  grants are declared in git and come from there; integration bindings are
-  derived from the installed apps and their profiles; authorization tuples are
-  projections. On the same cluster none of the three is lost. A tenant
-  imported into another cluster has its bindings and tuples made again and its
-  app grants to set again.
+- **Stored credentials.** A profile's `spec.backup.boundSecrets` are not
+  carried either, and an export of such an app says so.
+- **Declared state.** App grants are declared in git and come from there;
+  integration bindings are derived from the installed apps and their
+  profiles; authorization tuples are projections. On the same cluster none of
+  the three is lost. A tenant imported into another cluster has its bindings
+  and tuples made again and its app grants to set again.
 
 An uploaded bundle (the import bucket, `gentian-imports`) is removed when a
 restore of it has run to its end, restored or failed. A restore refused before
@@ -608,17 +605,20 @@ is never restored stays until it is removed by hand.
 
 ### 9.5 Failing loudly
 
-Both teardowns fail loudly. A destroy script ends in success only when what
-it was asked to remove is verifiably gone. A purge of an app stops at the first
-step that fails and answers with it
+What a person sees when an act fails is in
+[data-lifecycle.md](data-lifecycle.md) §6. Underneath: a destroy script ends
+in success only when what it was asked to remove is verifiably gone. A purge
+of an app stops at the first step that fails and answers with it
 ([store-contract.md](store-contract.md) §8). A tenant's deletion is not waited
 for by anybody: a cleanup Job that fails, a vault or a model gateway that does
 not answer, an edge route or a provisioning Job that cannot be removed, is a
 reconcile error; the Tenant stays `Terminating`, and the failed step is run
-again on the next pass, so it resumes where it stopped and does not move past
-a store it could not destroy. The Tenant is gone only when its namespace is.
+again on the next pass. The Tenant is gone only when its namespace is.
 
 ### 9.6 Known limits
+
+The gaps that matter to a person running the platform are in
+[data-lifecycle.md](data-lifecycle.md) §7. The technical limits behind them:
 
 - **Cache keys.** The cache is one shared instance and an app's user may touch
   every key, so the keys an app wrote cannot be told from another's. A purge

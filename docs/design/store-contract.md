@@ -851,7 +851,7 @@ If one of these fails the answer is `503`, and nothing was destroyed.
 
 Once admitted, it destroys kind by kind in the platform's one teardown order —
 the order provisioning makes things in, reversed, which the deletion of a
-tenant follows too ([operations.md](operations.md) §9): files, cache user,
+tenant follows too ([data-lifecycle.md](data-lifecycle.md) §2): files, cache user,
 object storage, database, access group, stored credentials, and last the
 provisioning records. The first step that fails ends it: the answer is `500`
 and says which step failed, what had already been destroyed and what was not
