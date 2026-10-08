@@ -116,6 +116,33 @@ model gateway. An app that keeps the key somewhere of its own on first start
 has to take it again when it changes -- the platform replaces a key at the
 gateway, it cannot reach into an app's database.
 
+A component the platform places on every tenant itself (`defaultForTenants`
+and its siblings: the desktop) may declare the same need, at `trustTier:
+platform` only. It gets a key of its own per tenant under the same names, and
+its chart is told the Secret's *name*, never the key:
+
+```yaml
+spec:
+  requires:
+    services:
+      llm:
+        optional: true              # run without the gateway where there is none
+  package:
+    valueMapping:
+      llm:
+        availableKey: llm.available         # true once the key is delivered
+        baseUrlKey: llm.baseUrl
+        secretNameKey: llm.apiKeySecretName # llm-credentials-<component>; key OPENAI_API_KEY
+```
+
+`optional` is for such a component: while the cluster serves no models, or the
+key is not delivered yet, it is released without credentials and without a
+path to the gateway, `availableKey` receives `false`, and it is rendered again
+when the key arrives. For an app a tenant installs the requirement holds the
+release whether or not `optional` is set. Nobody uninstalls a placed
+component, so its key goes when the tenant is deleted with its data, when the
+profile stops declaring `llm`, or when the platform takes the component away.
+
 **Never substitute an endpoint into `extraValues`.** `${SMTP_HOST}`,
 `${S3_ENDPOINT}`, `${MYSQL_HOST}` and `${REDIS_HOST}` handed the app a literal
 hostname and no credential — an app wired that way can only attempt

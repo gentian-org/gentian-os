@@ -193,13 +193,19 @@ On a cluster that serves models, `system-llm` holds four pod sets that listen, a
 
 | Server | Policy | Port | Admitted |
 | --- | --- | --- | --- |
-| The gateway (LiteLLM) | `llm-gateway-ingress` | 4000 | tenant namespaces; the operator's pods in `kernel-control` (an app's key, a tenant's team, a purge); the Gateway's Envoy pods in the edge namespace (the console `llm.<kernelDomain>`, a kernel console behind the kernel session) |
+| The gateway (LiteLLM) | `llm-gateway-ingress` | 4000 | tenant namespaces; the operator's pods in `kernel-control` (an app's or a desktop's key, a tenant's team, a purge); the Gateway's Envoy pods in the edge namespace (the console `llm.<kernelDomain>`, a kernel console behind the kernel session) |
 | Its PostgreSQL (CloudNativePG) | `llm-database-ingress` | 5432 | the gateway's pods; the cluster's own pods (a replica or join Job, when instances is raised) |
 | | | 8000 | CloudNativePG's operator in `kernel-data` |
 | Its Redis | `llm-cache-ingress` | 6379 | the gateway's pods |
 | The mock model server (clusters without GPUs) | `llm-mock-ingress` | 8000 | the gateway's pods |
 
 The database's metrics port (9187) is closed. The rule for the gateway has the same two sides as a store's: its policy admits every tenant namespace, and the tenant's side (§2.6) opens port 4000 for the apps that declared the gateway and for no other. Unlike a store, no pod of `system-llm` itself is admitted to the gateway: nothing there is its client.
+
+**The desktop is a client of the gateway**, for the assistant on it. Its profile declares the gateway as an app's does, optionally, and the operator serves it per tenant (`internal/controller/model_access_reconciler.go`): a key generated in the vault for this tenant's desktop alone, registered under the alias `<tenant>-desktop`, delivered in the Secret `llm-credentials-desktop` of the tenant's namespace, and written on the tenant's record so that deleting the tenant with its data removes it. The desktop's chart is told the gateway's address and that Secret's name; the key is in no release value and no Component. The desktop's pods reach port 4000 of `system-llm` by a rule of `component-desktop`, written once the key is delivered, and nothing else in that namespace. The platform tenant's desktop is served the same way -- its namespace is a tenant-tier namespace like any other. What this leaves as it was:
+
+- **The key is the tenant's desktop's, not a person's.** Every member who can open the desktop calls models with it; the gateway sees one key per tenant's desktop and, at most, the name the desktop passes along with a request.
+- **No budget is attached.** The gateway knows a team per tenant, and neither an app's key nor the desktop's is attached to it, so a tenant's spend is not capped at the gateway by this.
+- **A profile below platform trust cannot have this.** The API server refuses a placed profile that declares the gateway at another tier, and the reconciler refuses one that asks for the key as a chart value.
 
 The clients are the `store: llm` rows of `scripts/tests/store-clients.yaml`, each naming the server it connects to, and `make test-store-network-policies` holds the four policies to them.
 
