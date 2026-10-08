@@ -278,6 +278,22 @@ adminConsole:
   # Values the profile carries as its own, merged over what it sets already.
   extraValues: {}
 
+# The App Store app: the store's interface on the cluster, a client of the
+# director, the custodian and the usher. Off by default; the v5 bootstrap
+# turns it on. Turning it on ships the profile only: a tenant gets the
+# component while the cluster offers an App Store -- licence reporting is on
+# and the Cluster claim names a store -- and the platform tenant never does.
+# From gentian-ui like the consoles, pinned to the immutable version the same
+# way.
+appStore:
+  enabled: false
+  chart:
+    repository: oci://ghcr.io/gentian-org/charts
+    name: app-store
+    version: "0.1.0-develop"
+  # Values the profile carries as its own, merged over what it sets already.
+  extraValues: {}
+
 # The concierge: the page on the cluster's bare domain, a component of the
 # platform tenant published from its DMZ. Off by default; the v5 bootstrap
 # turns it on. Like the consoles it comes from gentian-ui as a moving chart

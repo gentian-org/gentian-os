@@ -533,7 +533,7 @@ func (s *Service) unusedProfiles(ctx context.Context, reader client.Reader, view
 			// Not materialised from a catalogue: the platform's chart
 			// shipped it, or the installer wrote it.
 		case p.Labels["app.kubernetes.io/managed-by"] == "Helm", p.Annotations[platformAppAnnotation] == "true":
-		case p.Spec.DefaultForTenants, p.Spec.DefaultForPlatform:
+		case p.Spec.DefaultForTenants, p.Spec.DefaultForPlatform, p.Spec.DefaultWhereStoreOffered:
 		case p.DeletionTimestamp != nil, len(p.OwnerReferences) > 0:
 		case view.inUse[p.Name]:
 		default:
@@ -762,8 +762,8 @@ func (s *Service) whyNot(ctx context.Context, view *residueView, kind, name stri
 			return fmt.Sprintf("the ComponentProfile %s was not materialised from a catalogue: the platform ships it, or the installer wrote it", name)
 		case view.inUse[name]:
 			return fmt.Sprintf("the ComponentProfile %s is in use: a tenant has it installed or switched on as an add-on", name)
-		case state.profile.Spec.DefaultForTenants || state.profile.Spec.DefaultForPlatform:
-			return fmt.Sprintf("the ComponentProfile %s is one every tenant gets", name)
+		case state.profile.Spec.DefaultForTenants || state.profile.Spec.DefaultForPlatform || state.profile.Spec.DefaultWhereStoreOffered:
+			return fmt.Sprintf("the ComponentProfile %s is one the platform places on tenants itself", name)
 		case view.retained[name]:
 			return fmt.Sprintf("the ComponentProfile %s is not unused: a tenant retains data for it", name)
 		case !view.retainedRead && len(view.incomplete) > 0:

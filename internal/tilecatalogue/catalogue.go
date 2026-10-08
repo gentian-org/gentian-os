@@ -91,11 +91,39 @@ type Tile struct {
 // Catalogue is the file's whole content.
 type Catalogue struct {
 	Tiles []Tile `json:"tiles"`
+	// AppStore is whether this cluster offers an App Store, as the operator
+	// decided it. Beside the tiles because it is the same kind of statement:
+	// something the operator knows about the cluster and the usher hands on.
+	// Absent means the operator said nothing, which is read as not offered.
+	AppStore *AppStore `json:"appStore,omitempty"`
 }
+
+// AppStore is the operator's verdict on whether the cluster offers an App
+// Store. It is the same verdict that places the App Store app on tenants, so
+// what the usher answers and whether the app is there cannot differ.
+type AppStore struct {
+	// Offered is whether licence reporting is on and the Cluster claim names
+	// a store.
+	Offered bool `json:"offered"`
+	// Reason says why not, as one of the AppStoreReason words.
+	Reason string `json:"reason,omitempty"`
+}
+
+// Why a cluster offers no App Store.
+const (
+	// AppStoreReasonNoLicenceReport: the cluster does not report what it
+	// runs, and an app installed through a store is what the report lists.
+	AppStoreReasonNoLicenceReport = "licence-report-disabled"
+	// AppStoreReasonNoStore: the Cluster claim names no store
+	// (spec.catalogue.storeUrl), or names one that is not an https address.
+	AppStoreReasonNoStore = "no-store-configured"
+)
 
 // header explains the projected file to whoever opens the ConfigMap, which is
 // the one place a person meets it without reading this package first.
-const header = `# The tiles this cluster offers, projected by the operator.
+const header = `# The tiles this cluster offers, projected by the operator, and whether it
+# offers an App Store (appStore: licence reporting is on and the Cluster claim
+# names a store).
 #
 # Every entry is something the operator routes: a kernel console it composes an
 # HTTPRoute for, or an exposure of an installed component whose profile
@@ -137,7 +165,7 @@ func Parse(data []byte) (Catalogue, error) {
 		}
 		kept = append(kept, t)
 	}
-	return Catalogue{Tiles: kept}, nil
+	return Catalogue{Tiles: kept, AppStore: c.AppStore}, nil
 }
 
 // URL is <scheme>://<host><path>, with the front page when no path is given.

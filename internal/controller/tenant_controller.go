@@ -243,6 +243,14 @@ type TenantReconciler struct {
 	// plan change is recorded as. Nil opens the tenant's own database.
 	PlanEventStore planEventStoreFor
 	Scheme         *runtime.Scheme
+	// LicenceReporting is whether this cluster reports what it runs: half of
+	// whether it offers an App Store, which decides whether a tenant gets the
+	// components that declare defaultWhereStoreOffered.
+	LicenceReporting bool
+	// WatchClusterClaim re-runs every tenant when the Cluster claim changes,
+	// so that a store named or withdrawn there places or removes those
+	// components at once. Off where the claim's kind is not installed.
+	WatchClusterClaim bool
 	// Seeder derives and persists per-tenant-per-app credentials into OpenBao.
 	// May be nil — in which case all reconcilers skip the seeding step and behave
 	// exactly as they did before Inc 21a. This keeps existing envtest suites
@@ -543,6 +551,10 @@ func (r *TenantReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			handler.EnqueueRequestsFromMapFunc(mapAllTenants),
 			builder.WithPredicates(envoyKernelServicePredicate),
 		)
+	}
+
+	if r.WatchClusterClaim {
+		ctrlBuilder = ctrlBuilder.Watches(clusterClaimObject(), handler.EnqueueRequestsFromMapFunc(mapAllTenants))
 	}
 
 	return ctrlBuilder.Complete(r.guarded())

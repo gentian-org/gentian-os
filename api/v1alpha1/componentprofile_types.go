@@ -86,6 +86,8 @@ const (
 // +kubebuilder:validation:XValidation:rule="!has(self.classes) || !('service' in self.classes) || !has(self.expose) || self.expose.all(e, e.surface == 'gateway')",message="a service exposes on the gateway only: the perimeter has no session"
 // +kubebuilder:validation:XValidation:rule="!has(self.classes) || !('service' in self.classes) || !has(self.expose) || self.expose.all(e, !has(e.tile) || e.tile.object == 'cluster')",message="a service's tile asks on the cluster: it has no app object and runs in no tenant"
 // +kubebuilder:validation:XValidation:rule="!has(self.classes) || ('app' in self.classes) || !has(self.defaultForTenants) || !self.defaultForTenants",message="defaultForTenants is for class app: a service and a shared-app have one instance"
+// +kubebuilder:validation:XValidation:rule="!has(self.classes) || ('app' in self.classes) || !has(self.defaultWhereStoreOffered) || !self.defaultWhereStoreOffered",message="defaultWhereStoreOffered is for class app: a service and a shared-app have one instance"
+// +kubebuilder:validation:XValidation:rule="!has(self.__package__.valueMapping) || !has(self.__package__.valueMapping.platform) || !has(self.__package__.valueMapping.platform.storeUrlKey) || self.__package__.valueMapping.platform.storeUrlKey.size() == 0 || self.trustTier == 'platform'",message="storeUrlKey requires trustTier platform: naming it opens the component a way out of the cluster"
 // One delivery, and nothing outside package to reach for. The OR this replaces
 // admitted a chart beside an API integration, and deploymentMethod could
 // contradict whichever was set.
@@ -221,6 +223,19 @@ type ComponentProfileSpec struct {
 	// and named the way DefaultForTenants creates its own.
 	// +optional
 	DefaultForPlatform bool `json:"defaultForPlatform,omitempty"`
+
+	// DefaultWhereStoreOffered means every tenant except the platform tenant
+	// gets a Component of this profile for as long as the cluster offers an
+	// App Store: licence reporting is on and the Cluster claim names a store
+	// (spec.catalogue.storeUrl). Created and named the way DefaultForTenants
+	// creates its own.
+	//
+	// Unlike the two above it is also taken away: when the cluster stops
+	// offering a store the Component is removed again, so a profile that says
+	// this must own no data. The platform tenant gets none because nobody
+	// installs apps there.
+	// +optional
+	DefaultWhereStoreOffered bool `json:"defaultWhereStoreOffered,omitempty"`
 }
 
 // PackageSpec is the chart, the deployment method, and the mapping from granted

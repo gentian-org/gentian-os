@@ -684,6 +684,19 @@ spec:
                   Only a profile of class "app" may say it: a service and a shared-app
                   have one instance, so there is nothing to give each tenant.
                 type: boolean
+              defaultWhereStoreOffered:
+                description: |-
+                  DefaultWhereStoreOffered means every tenant except the platform tenant
+                  gets a Component of this profile for as long as the cluster offers an
+                  App Store: licence reporting is on and the Cluster claim names a store
+                  (spec.catalogue.storeUrl). Created and named the way DefaultForTenants
+                  creates its own.
+
+                  Unlike the two above it is also taken away: when the cluster stops
+                  offering a store the Component is removed again, so a profile that says
+                  this must own no data. The platform tenant gets none because nobody
+                  installs apps there.
+                type: boolean
               expose:
                 description: |-
                   Expose declares entry points. A service may have them -- a console is
@@ -1945,6 +1958,14 @@ spec:
                               on a platform-trust component that relays the forwarded token there;
                               naming it also opens the component's egress to the control namespace.
                             type: string
+                          hostKey:
+                            description: |-
+                              HostKey receives the host this component answers on in its zone: the
+                              host of its first gateway entry, as the operator routes it. A component
+                              that has to spell its own address -- a redirect address it states to a
+                              service outside the cluster -- is told it rather than left to assemble
+                              it from the tenant and the domain, which differs by tenancy mode.
+                            type: string
                           issuerKey:
                             description: |-
                               IssuerKey receives the zone's OIDC issuer, the realm on the identity
@@ -1969,6 +1990,19 @@ spec:
                               The registrar serves the paths the director served for people, so a
                               component that called the director for them changes the address and
                               nothing else.
+                            type: string
+                          storeUrlKey:
+                            description: |-
+                              StoreURLKey receives the base address of the App Store API this cluster
+                              names (the Cluster claim's spec.catalogue.storeUrl), and the empty
+                              string while the cluster offers no App Store: none is named, or licence
+                              reporting is off.
+
+                              Like the URL keys above it is more than a fact. A store is outside the
+                              cluster, and so are the addresses its own metadata names, so naming this
+                              key is what opens the component's pods a way out: TCP 443 to public
+                              addresses, and only while a store is offered. That is why only a
+                              platform-trust profile may name it.
                             type: string
                           tenantKey:
                             description: TenantKey receives the name of the tenant
@@ -2789,6 +2823,15 @@ spec:
                 have one instance'
               rule: '!has(self.classes) || (''app'' in self.classes) || !has(self.defaultForTenants)
                 || !self.defaultForTenants'
+            - message: 'defaultWhereStoreOffered is for class app: a service and a
+                shared-app have one instance'
+              rule: '!has(self.classes) || (''app'' in self.classes) || !has(self.defaultWhereStoreOffered)
+                || !self.defaultWhereStoreOffered'
+            - message: 'storeUrlKey requires trustTier platform: naming it opens the
+                component a way out of the cluster'
+              rule: '!has(self.__package__.valueMapping) || !has(self.__package__.valueMapping.platform)
+                || !has(self.__package__.valueMapping.platform.storeUrlKey) || self.__package__.valueMapping.platform.storeUrlKey.size()
+                == 0 || self.trustTier == ''platform'''
             - message: a package is a chart, a composition, the two together, an api,
                 or an addon -- and nothing else beside them
               rule: '[has(self.__package__.chart) || (has(self.__package__.composition)

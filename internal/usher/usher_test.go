@@ -202,28 +202,87 @@ func TestNothingButReadsIsRouted(t *testing.T) {
 	}
 }
 
-// The App Store is offered only on a cluster that reports what it runs. The
-// tiles answer says which this is, and why not, so a console can put the
-// reason into words instead of showing a store that is merely missing.
-func TestTheAppStoreIsWithheldWhereTheClusterDoesNotReport(t *testing.T) {
+// catalogueWith writes a catalogue file with the operator's verdict on the App
+// Store beside one tile for the people who may install apps.
+func catalogueWith(t *testing.T, offer *tilecatalogue.AppStore) string {
+	t.Helper()
+	body, err := tilecatalogue.Marshal(tilecatalogue.Catalogue{
+		Tiles: []tilecatalogue.Tile{
+			{Name: "acme/app-store/web", DisplayName: "App Store", URL: "https://store.acme.k.example/", Icon: "data:x",
+				Object: "tenant:acme", AnyOf: []string{"can_install_app"}},
+			{Name: "acme/notes/web", DisplayName: "Notes", URL: "https://notes.acme.k.example/", Icon: "data:x",
+				Object: "app:acme/notes", AnyOf: []string{"can_launch"}},
+		},
+		AppStore: offer,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "tiles.yaml")
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// The App Store is offered only on a cluster that reports what it runs and
+// whose claim names a store. The second half is the operator's verdict, read
+// from beside the tiles -- the verdict that also places the App Store app --
+// and this process's own setting stands in front of it. The tiles answer says
+// which this is, and why not, so a page can put the reason into words instead
+// of showing a store that is merely missing.
+func TestTheAppStoreIsWithheldWhereTheClusterOffersNone(t *testing.T) {
 	store := &fakeStore{held: map[string]bool{"user:ada can_enter tenant:acme": true}}
-	for _, c := range []struct {
+	offered := &tilecatalogue.AppStore{Offered: true}
+	noStore := &tilecatalogue.AppStore{Reason: tilecatalogue.AppStoreReasonNoStore}
+	noReport := &tilecatalogue.AppStore{Reason: tilecatalogue.AppStoreReasonNoLicenceReport}
+	for name, c := range map[string]struct {
 		reporting bool
+		offer     *tilecatalogue.AppStore
 		want      map[string]any
 	}{
-		{true, map[string]any{"available": true}},
-		{false, map[string]any{"available": false, "reason": "licence-report-disabled"}},
+		"reporting, a store named":           {true, offered, map[string]any{"available": true}},
+		"reporting, no store named":          {true, noStore, map[string]any{"available": false, "reason": "no-store-configured"}},
+		"reporting, the operator said none":  {true, nil, map[string]any{"available": false, "reason": "no-store-configured"}},
+		"the operator says reporting is off": {true, noReport, map[string]any{"available": false, "reason": "licence-report-disabled"}},
+		"not reporting, a store named":       {false, offered, map[string]any{"available": false, "reason": "licence-report-disabled"}},
+		"not reporting, no store named":      {false, noStore, map[string]any{"available": false, "reason": "licence-report-disabled"}},
 	} {
 		s := New(Config{
-			Authn: fakeAuthn{"ada": "ada"}, Authz: store, TilesPath: catalogueFile(t),
+			Authn: fakeAuthn{"ada": "ada"}, Authz: store, TilesPath: catalogueWith(t, c.offer),
 			LicenceReporting: c.reporting,
 		})
 		code, body := ask(t, s, "/v1/tenants/acme/tiles", "ada")
 		if code != http.StatusOK {
-			t.Fatalf("reporting %v: status %d", c.reporting, code)
+			t.Fatalf("%s: status %d", name, code)
 		}
 		if got := fmt.Sprint(body["appStore"]); got != fmt.Sprint(c.want) {
-			t.Errorf("reporting %v: appStore = %s, want %v", c.reporting, got, c.want)
+			t.Errorf("%s: appStore = %s, want %v", name, got, c.want)
+		}
+	}
+}
+
+// The App Store tile is asked on the tenant with the install right: whoever
+// may install apps there is shown it, and a member who may only enter and
+// open an app is not.
+func TestTheAppStoreTileIsForThePeopleWhoMayInstall(t *testing.T) {
+	store := &fakeStore{held: map[string]bool{
+		"user:ada can_enter tenant:acme":       true,
+		"user:ada can_install_app tenant:acme": true,
+		"user:mel can_enter tenant:acme":       true,
+		"user:mel can_launch app:acme/notes":   true,
+	}}
+	s := New(Config{
+		Authn: fakeAuthn{"ada": "ada", "mel": "mel"}, Authz: store,
+		TilesPath: catalogueWith(t, &tilecatalogue.AppStore{Offered: true}), LicenceReporting: true,
+	})
+	for token, want := range map[string]string{"ada": "[acme/app-store/web]", "mel": "[acme/notes/web]"} {
+		code, body := ask(t, s, "/v1/tenants/acme/tiles", token)
+		if code != http.StatusOK {
+			t.Fatalf("%s: status %d", token, code)
+		}
+		if got := names(body); got != want {
+			t.Errorf("%s sees %s, want %s", token, got, want)
 		}
 	}
 }

@@ -21,6 +21,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -81,6 +82,14 @@ type TileProjectionReconciler struct {
 	// name is the tenant's domain.
 	KernelDomain string
 	TenancyMode  string
+	// LicenceReporting is whether this cluster reports what it runs: half of
+	// whether it offers an App Store, which is written beside the tiles.
+	LicenceReporting bool
+	// WatchClusterClaim re-runs the projection when the Cluster claim
+	// changes, so that a store named or withdrawn there is in the catalogue
+	// without waiting out the floor. Off where the claim's kind is not
+	// installed, which a watch would never get past.
+	WatchClusterClaim bool
 }
 
 // primaryExposureName is what a component's own host is called: the first
@@ -194,6 +203,20 @@ func (r *TileProjectionReconciler) Reconcile(ctx context.Context, _ ctrl.Request
 		return ctrl.Result{}, fmt.Errorf("project the component tiles: %w", err)
 	}
 	catalogue.Tiles = append(catalogue.Tiles, apps...)
+
+	// Whether the cluster offers an App Store, by the verdict that also
+	// places the App Store app on tenants (store_offer.go). A cluster with no
+	// claim kind at all has no claim naming a store; any other failure to
+	// read is retried rather than written down as "no store".
+	offer, err := readStoreOffer(ctx, r.Client, r.LicenceReporting)
+	switch {
+	case err == nil:
+	case meta.IsNoMatchError(err) || errors.IsNotFound(err):
+		offer = storeOffer{reason: tilecatalogue.AppStoreReasonNoStore}
+	default:
+		return ctrl.Result{}, fmt.Errorf("read whether the cluster offers an App Store: %w", err)
+	}
+	catalogue.AppStore = &tilecatalogue.AppStore{Offered: offer.offered(), Reason: offer.reason}
 
 	if err := r.write(ctx, catalogue); err != nil {
 		return ctrl.Result{}, fmt.Errorf("write the tile catalogue: %w", err)
@@ -455,11 +478,14 @@ func (r *TileProjectionReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	one := handler.EnqueueRequestsFromMapFunc(func(context.Context, client.Object) []reconcile.Request {
 		return []reconcile.Request{{}}
 	})
-	return ctrl.NewControllerManagedBy(mgr).
+	b := ctrl.NewControllerManagedBy(mgr).
 		Named("tile-projection").
 		For(&gentianov1alpha1.Component{}, builder.WithPredicates()).
 		Watches(&gentianov1alpha1.ComponentProfile{}, one).
 		Watches(&gentianov1alpha1.Tenant{}, one).
-		Watches(&gatewayv1.HTTPRoute{}, one).
-		Complete(r)
+		Watches(&gatewayv1.HTTPRoute{}, one)
+	if r.WatchClusterClaim {
+		b = b.Watches(clusterClaimObject(), one)
+	}
+	return b.Complete(r)
 }

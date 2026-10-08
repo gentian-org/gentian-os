@@ -191,16 +191,12 @@ type tileOut struct {
 // empty list in its place would show a person a desktop with nothing on it,
 // which looks exactly like holding no rights and says nothing about the
 // projection being missing.
-func (s *Server) catalogue() ([]tilecatalogue.Tile, error) {
+func (s *Server) catalogue() (tilecatalogue.Catalogue, error) {
 	data, err := os.ReadFile(s.cfg.TilesPath)
 	if err != nil {
-		return nil, err
+		return tilecatalogue.Catalogue{}, err
 	}
-	c, err := tilecatalogue.Parse(data)
-	if err != nil {
-		return nil, err
-	}
-	return c.Tiles, nil
+	return tilecatalogue.Parse(data)
 }
 
 // inTenant reports whether a tile belongs on this tenant's desktop.
@@ -233,7 +229,7 @@ func (s *Server) tenantTiles(w http.ResponseWriter, r *http.Request, c call) {
 		return
 	}
 	out := []tileOut{}
-	for _, t := range catalogue {
+	for _, t := range catalogue.Tiles {
 		if !inTenant(t.Object, c.tenant) {
 			continue
 		}
@@ -252,34 +248,52 @@ func (s *Server) tenantTiles(w http.ResponseWriter, r *http.Request, c call) {
 			}
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"tenant": c.tenant, "tiles": out, "appStore": s.appStore()})
+	writeJSON(w, http.StatusOK, map[string]any{"tenant": c.tenant, "tiles": out, "appStore": s.appStore(catalogue.AppStore)})
 }
 
 // appStoreReasonNoLicenceReport is why a cluster that does not report offers
 // no App Store.
-const appStoreReasonNoLicenceReport = "licence-report-disabled"
+const appStoreReasonNoLicenceReport = tilecatalogue.AppStoreReasonNoLicenceReport
 
 type appStoreOut struct {
 	// Available is whether a desktop may offer the App Store at all.
 	Available bool `json:"available"`
 	// Reason says why not, for a console to put into words: the App Store
-	// needs licence reporting, which is turned off on this cluster.
+	// needs licence reporting, which is turned off on this cluster
+	// (licence-report-disabled), or the cluster names no store
+	// (no-store-configured).
 	Reason string `json:"reason,omitempty"`
 }
 
 // appStore answers whether the App Store may be offered on this cluster.
 //
-// It is not a tile: where the store is comes from the cluster's catalogue
-// settings, and whether a person may install is asked when they do. This is
-// the one thing in front of both. An app installed through the store is what
-// the licence report lists, so a cluster that sends no report does not offer
-// the store, and says so here instead of leaving a desktop to show a store
-// that is merely absent.
-func (s *Server) appStore() appStoreOut {
-	if s.cfg.LicenceReporting {
-		return appStoreOut{Available: true}
+// It is not a tile: whether a person may install is asked when they do. This
+// is the one thing in front of that. An app installed through the store is
+// what the licence report lists, so a cluster that sends no report does not
+// offer the store; and a cluster whose claim names no store has none to
+// offer. Both are said here instead of leaving an App Store app to show a
+// store that is merely absent.
+//
+// The second half is the operator's verdict, read from beside the tiles: the
+// operator places the App Store app on tenants by that same verdict, so this
+// answer and the app's presence agree. This process's own setting stands in
+// front of it, so that an usher told reporting is off says so whatever it
+// finds in the file.
+func (s *Server) appStore(offer *tilecatalogue.AppStore) appStoreOut {
+	if !s.cfg.LicenceReporting {
+		return appStoreOut{Available: false, Reason: appStoreReasonNoLicenceReport}
 	}
-	return appStoreOut{Available: false, Reason: appStoreReasonNoLicenceReport}
+	if offer == nil {
+		return appStoreOut{Available: false, Reason: tilecatalogue.AppStoreReasonNoStore}
+	}
+	if !offer.Offered {
+		reason := offer.Reason
+		if reason == "" {
+			reason = tilecatalogue.AppStoreReasonNoStore
+		}
+		return appStoreOut{Available: false, Reason: reason}
+	}
+	return appStoreOut{Available: true}
 }
 
 func writeJSON(w http.ResponseWriter, code int, body any) {

@@ -78,6 +78,13 @@ type ComponentReconciler struct {
 	// Recorder writes the events a person should see on a Component without
 	// reading its conditions. Nil writes none.
 	Recorder record.EventRecorder
+	// LicenceReporting is whether this cluster reports what it runs: half of
+	// whether it offers an App Store, which decides what a component that
+	// asked where the store is gets told and may reach.
+	LicenceReporting bool
+	// WatchClusterClaim re-runs the components told where the store is when
+	// the Cluster claim changes. Off where the claim's kind is not installed.
+	WatchClusterClaim bool
 }
 
 // The markers are a free-floating block: controller-gen ignores a block that
@@ -333,6 +340,13 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// What the platform tells any component about itself, where its profile
 	// says its chart takes it. Nothing is keyed on which component this is.
 	mergeValues(values, r.platformValues(profile, tenant, zone))
+	// And the two that are this component's own: the host it answers on and
+	// where the store is, for a profile that asked for either.
+	placed, err := r.placementValues(ctx, comp, profile, zone)
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("read where the App Store is: %w", err)
+	}
+	mergeValues(values, placed)
 	// The namespace is closed by default; the component's pods may reach
 	// what its requirements were fulfilled with, written down before the
 	// chart runs so its first connection is not the one that is refused.
@@ -1175,9 +1189,22 @@ func exposureHostIn(zone zoneNames, component string, e *gentianov1alpha1.Exposu
 // route asks the same relation on the same object its tile does
 // (app:<tenant>/<profile>, can_use), so the route cannot be more open than
 // the tile: knowing an app's hostname is not a way in.
+//
+// One tenant-held tile is not entered by entering the tenant. A component
+// whose tile asks can_install_app -- the App Store app -- is for the people
+// who may install apps in the tenant and for nobody else, so its route asks
+// what its tile asks: a member who knows the host is refused at the edge, not
+// by the component's own courtesy. It is the one relation besides can_enter a
+// tenant-held route asks; every other tenant-held tile (the consoles'
+// can_administer) still shows to fewer people than its route admits, as
+// before.
 func exposureAuthz(tenant *gentianov1alpha1.Tenant, comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile, forwardToken bool) routeAuthz {
 	if tenantScoped(profile) {
-		return routeAuthz{relation: "can_enter", object: "tenant:" + tenant.Name, forwardToken: forwardToken}
+		relation := "can_enter"
+		if tenantTileAsks(profile, relationInstallApp) {
+			relation = relationInstallApp
+		}
+		return routeAuthz{relation: relation, object: "tenant:" + tenant.Name, forwardToken: forwardToken}
 	}
 	return routeAuthz{relation: "can_use", object: "app:" + tenant.Name + "/" + comp.Spec.ProfileRef.Name, forwardToken: forwardToken}
 }
@@ -1190,6 +1217,22 @@ func tenantScoped(profile *gentianov1alpha1.ComponentProfile) bool {
 	}
 	for i := range profile.Spec.Expose {
 		if t := profile.Spec.Expose[i].Tile; t != nil && t.Object == gentianov1alpha1.TileObjectTenant {
+			return true
+		}
+	}
+	return false
+}
+
+// relationInstallApp is tenant#can_install_app: who may install apps in a
+// tenant (authz/model/v1/model.fga).
+const relationInstallApp = "can_install_app"
+
+// tenantTileAsks reports whether a profile carries a tile held on the tenant
+// that asks the given relation.
+func tenantTileAsks(profile *gentianov1alpha1.ComponentProfile, relation string) bool {
+	for i := range profile.Spec.Expose {
+		t := profile.Spec.Expose[i].Tile
+		if t != nil && t.Object == gentianov1alpha1.TileObjectTenant && t.Relation == relation {
 			return true
 		}
 	}
@@ -1493,12 +1536,15 @@ func mergeValues(dst, src map[string]interface{}) {
 func (r *ComponentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	release := &unstructured.Unstructured{}
 	release.SetGroupVersionKind(helmReleaseGVK)
-	return ctrl.NewControllerManagedBy(mgr).
+	b := ctrl.NewControllerManagedBy(mgr).
 		Named("component").
 		For(&gentianov1alpha1.Component{}).
 		Owns(&gatewayv1.HTTPRoute{}).
 		Watches(release, componentOfRelease()).
 		Watches(&gentianov1alpha1.ComponentProfile{}, componentsOfProfile(mgr.GetClient())).
-		Watches(&corev1.Secret{}, componentsOfZoneSecret(mgr.GetClient())).
-		Complete(r.guarded())
+		Watches(&corev1.Secret{}, componentsOfZoneSecret(mgr.GetClient()))
+	if r.WatchClusterClaim {
+		b = b.Watches(clusterClaimObject(), componentsToldTheStore(mgr.GetClient()))
+	}
+	return b.Complete(r.guarded())
 }

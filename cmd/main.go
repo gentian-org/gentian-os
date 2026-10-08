@@ -264,6 +264,11 @@ func main() {
 		Ingress:                  buildEdgeIngress(),
 		RoutingMode:              routingMode,
 		CrossplaneOnly:           controller.EnvBool("TENANT_CROSSPLANE_ONLY"),
+		// Whether the cluster offers an App Store: it reports what it runs
+		// and its claim names a store. The first half is this process's own
+		// setting; the claim is read, and watched, for the second.
+		LicenceReporting:  licencereport.SettingsFromEnv().Active(),
+		WatchClusterClaim: true,
 	}
 	if err := tenantReconciler.SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Tenant")
@@ -358,6 +363,9 @@ func main() {
 		UsherURL:       os.Getenv("USHER_URL"),
 		Seeder:         buildSeeder(),
 		Recorder:       mgr.GetEventRecorderFor("component"), //nolint:staticcheck
+		// What a component that asked where the App Store is gets told.
+		LicenceReporting:  licencereport.SettingsFromEnv().Active(),
+		WatchClusterClaim: true,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Component")
 		os.Exit(1)
@@ -516,6 +524,9 @@ func main() {
 		// tenant to the service it leads to.
 		KernelDomain: os.Getenv("KERNEL_DOMAIN"),
 		TenancyMode:  tenancyMode,
+		// Whether the cluster offers an App Store, written beside the tiles.
+		LicenceReporting:  licencereport.SettingsFromEnv().Active(),
+		WatchClusterClaim: true,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "TileProjection")
 		os.Exit(1)

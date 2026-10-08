@@ -128,11 +128,19 @@ func buildComponentNetworkPolicy(comp *gentianov1alpha1.Component, egressNamespa
 // ensureNetworkPolicy keeps the component's egress policy, or removes it
 // when the component may reach nothing beyond the baseline.
 func (r *ComponentReconciler) ensureNetworkPolicy(ctx context.Context, comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile, tenant *gentianov1alpha1.Tenant) error {
+	// The way to a store outside the cluster, for a profile that asked where
+	// the store is and while the cluster offers one. Ahead of the granted
+	// privileges: it follows from the profile's mapping, as the namespaces
+	// do, and is nothing a person approved.
+	outside, err := r.storeEgress(ctx, profile)
+	if err != nil {
+		return fmt.Errorf("read whether the cluster offers an App Store: %w", err)
+	}
 	desired := buildComponentNetworkPolicy(comp, r.componentEgressNamespaces(profile, tenant),
-		security.GrantedEgressRules(profile, comp, time.Now()))
+		append(outside, security.GrantedEgressRules(profile, comp, time.Now())...))
 	key := types.NamespacedName{Name: desired.Name, Namespace: desired.Namespace}
 	existing := &networkingv1.NetworkPolicy{}
-	err := r.Get(ctx, key, existing)
+	err = r.Get(ctx, key, existing)
 	if len(desired.Spec.Egress) == 0 {
 		if err == nil {
 			return client.IgnoreNotFound(r.Delete(ctx, existing))

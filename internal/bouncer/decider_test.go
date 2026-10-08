@@ -530,3 +530,37 @@ func TestDenyPathsAreNormalisedAndAnEmptyOneIsDropped(t *testing.T) {
 		t.Fatal("an empty entry refused the whole host")
 	}
 }
+
+// A host may ask more than entry to the tenant. The App Store app's asks who
+// may install apps there, so a member who may enter the tenant and knows the
+// host is refused here, at the edge, and somebody who may install is let
+// through with the token the app relays.
+func TestAHostThatAsksTheInstallRightRefusesAPlainMember(t *testing.T) {
+	store := &fakeStore{allow: map[string]bool{
+		"user:root|can_enter|tenant:acme":       true,
+		"user:root|can_install_app|tenant:acme": true,
+		"user:mia|can_enter|tenant:acme":        true,
+	}}
+	d := decider(store)
+	d.SetTable(&Table{Routes: []Route{
+		{Host: "store.acme.k.example", Relation: "can_install_app", Object: "tenant:acme", ForwardToken: true, AuthMode: AuthModeOIDC},
+		{Host: "console.acme.k.example", Relation: "can_enter", Object: "tenant:acme", ForwardToken: true, AuthMode: AuthModeOIDC},
+	}})
+	for _, path := range []string{"/", "/api/v1/context", "/oauth/callback?code=c&state=s"} {
+		dec := d.Decide(context.Background(), Request{Host: "store.acme.k.example", Path: path, Authorization: "Bearer mia-token"})
+		if dec.Allow || dec.Status != http.StatusForbidden {
+			t.Fatalf("a member reached %s: allow=%v status=%d", path, dec.Allow, dec.Status)
+		}
+		dec = d.Decide(context.Background(), Request{Host: "store.acme.k.example", Path: path, Authorization: "Bearer root-token"})
+		if !dec.Allow {
+			t.Fatalf("somebody who may install was refused %s: %s", path, dec.Reason)
+		}
+		if removes(dec, "authorization") {
+			t.Fatalf("the App Store app's route must keep the bearer; removes %v", dec.RemoveHeaders)
+		}
+	}
+	// The same member still reaches what entry to the tenant reaches.
+	if dec := d.Decide(context.Background(), Request{Host: "console.acme.k.example", Authorization: "Bearer mia-token"}); !dec.Allow {
+		t.Fatalf("a member was refused the desktop: %s", dec.Reason)
+	}
+}

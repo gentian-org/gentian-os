@@ -31,6 +31,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
@@ -504,22 +505,82 @@ const (
 // Existing Components are left alone. Removing the declaration does not
 // delete them, because a tenant's component going away is a tenant-level
 // change and this is not where those are decided.
+//
+// One declaration is conditional, and its Component is taken away again:
+// defaultWhereStoreOffered gives every tenant but the platform tenant a
+// Component while the cluster offers an App Store (store_offer.go), and
+// removes the one this function made once it no longer does. Such a profile
+// owns no data, which is what makes removing it a statement about the cluster
+// rather than about the tenant. While the claim cannot be read nothing is
+// placed and nothing is removed.
 func (r *TenantReconciler) ensureDefaultComponents(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
 	profiles := &gentianov1alpha1.ComponentProfileList{}
 	if err := r.List(ctx, profiles); err != nil {
 		return err
 	}
+	var (
+		offer     storeOffer
+		offerErr  error
+		offerRead bool
+	)
 	for i := range profiles.Items {
 		profile := &profiles.Items[i]
+		if !classIncludes(profile, gentianov1alpha1.ComponentClassApp) {
+			continue
+		}
 		// Every tenant's, or the platform tenant's alone.
 		wanted := profile.Spec.DefaultForTenants ||
 			(profile.Spec.DefaultForPlatform && r.adoptsKernelRealm(tenant))
-		if !wanted || !classIncludes(profile, gentianov1alpha1.ComponentClassApp) {
+		if !wanted && profile.Spec.DefaultWhereStoreOffered {
+			if !offerRead {
+				offer, offerErr = readStoreOffer(ctx, r.Client, r.LicenceReporting)
+				offerRead = true
+				if offerErr != nil {
+					log.FromContext(ctx).Info("whether the cluster offers an App Store could not be read; "+
+						"the components placed where it does are left as they are",
+						"tenant", tenant.Name, "error", offerErr.Error())
+				}
+			}
+			if offerErr != nil {
+				continue
+			}
+			if !offer.offered() || r.adoptsKernelRealm(tenant) {
+				if err := r.removeDefaultComponent(ctx, tenant, profile.Name); err != nil {
+					return err
+				}
+				continue
+			}
+			wanted = true
+		}
+		if !wanted {
 			continue
 		}
 		if err := r.ensureComponent(ctx, tenant, profile.Name, componentOriginDefault, "", nil, nil, nil); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// removeDefaultComponent deletes the Component this reconciler placed for a
+// profile, and only that one: named after the profile, of the profile, and
+// labelled as a default. A Component of the same name a tenant installed is
+// the tenant's and stays.
+func (r *TenantReconciler) removeDefaultComponent(ctx context.Context, tenant *gentianov1alpha1.Tenant, profileName string) error {
+	comp := &gentianov1alpha1.Component{}
+	err := r.Get(ctx, types.NamespacedName{Name: profileName, Namespace: tenantNamespaceName(tenant)}, comp)
+	if errors.IsNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if comp.DeletionTimestamp != nil || comp.Labels[componentOriginLabel] != componentOriginDefault ||
+		comp.Spec.ProfileRef.Name != profileName {
+		return nil
+	}
+	if err := r.Delete(ctx, comp); client.IgnoreNotFound(err) != nil {
+		return fmt.Errorf("remove the %s component, which this cluster no longer offers: %w", profileName, err)
 	}
 	return nil
 }

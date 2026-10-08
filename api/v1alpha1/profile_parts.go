@@ -674,6 +674,27 @@ type PlatformValueMapping struct {
 	// German-speaking and also serves English.
 	// +optional
 	DefaultLanguageKey string `json:"defaultLanguageKey,omitempty"`
+
+	// HostKey receives the host this component answers on in its zone: the
+	// host of its first gateway entry, as the operator routes it. A component
+	// that has to spell its own address -- a redirect address it states to a
+	// service outside the cluster -- is told it rather than left to assemble
+	// it from the tenant and the domain, which differs by tenancy mode.
+	// +optional
+	HostKey string `json:"hostKey,omitempty"`
+
+	// StoreURLKey receives the base address of the App Store API this cluster
+	// names (the Cluster claim's spec.catalogue.storeUrl), and the empty
+	// string while the cluster offers no App Store: none is named, or licence
+	// reporting is off.
+	//
+	// Like the URL keys above it is more than a fact. A store is outside the
+	// cluster, and so are the addresses its own metadata names, so naming this
+	// key is what opens the component's pods a way out: TCP 443 to public
+	// addresses, and only while a store is offered. That is why only a
+	// platform-trust profile may name it.
+	// +optional
+	StoreURLKey string `json:"storeUrlKey,omitempty"`
 }
 
 // IntegrationValueMapping maps integration credentials to Helm chart keys.
