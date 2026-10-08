@@ -117,6 +117,38 @@ func TestConcurrentWritersAllLand(t *testing.T) {
 	}
 }
 
+// Losing is not bad luck that evens out: the writer that landed starts its next
+// change before the one it beat has put its checkout back, so the loser loses
+// for as long as the other keeps writing. It must still be trying when that
+// ends, however many pushes that took. The hook stands in for the other
+// writer and refuses in git's own words for "the remote moved".
+func TestAWriterThatKeepsLosingLandsWhenTheOthersAreDone(t *testing.T) {
+	remote := dt.Remote(t, "demo")
+	g := gitops.NewGitOps(dt.Clone(t, remote), remote, dt.Cluster, director)
+	const lost = 12
+	count := t.TempDir() + "/pushes"
+	hook := fmt.Sprintf(`#!/bin/sh
+n=$(cat %[1]q 2>/dev/null || echo 0); n=$((n+1)); echo "$n" > %[1]q
+if [ "$n" -le %[2]d ]; then echo "! [rejected] main -> main (fetch first)" >&2; exit 1; fi
+`, count, lost)
+	if err := os.WriteFile(remote+"/hooks/pre-receive", []byte(hook), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	res, err := g.Install(context.Background(), "demo", "element", "", meta("u-ada"))
+	if err != nil {
+		t.Fatalf("install after %d lost pushes: %v", lost, err)
+	}
+	if pushes, _ := os.ReadFile(count); strings.TrimSpace(string(pushes)) != fmt.Sprint(lost+1) {
+		t.Fatalf("pushed %s times, want %d", strings.TrimSpace(string(pushes)), lost+1)
+	}
+	if tip := dt.Git(t, "", "--git-dir", remote, "rev-parse", "main"); tip != res.Commit {
+		t.Fatalf("result names %s, remote is at %s", res.Commit, tip)
+	}
+	if n := dt.Git(t, "", "--git-dir", remote, "rev-list", "--count", "main"); n != "2" {
+		t.Fatalf("remote has %s commits, want the seed and the install", n)
+	}
+}
+
 // A push that cannot land must not leave a commit behind for the next request
 // to push on someone else's behalf.
 func TestAFailedPushLeavesTheCheckoutWhereTheRemoteIs(t *testing.T) {

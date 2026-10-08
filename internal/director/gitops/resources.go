@@ -14,7 +14,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math/rand"
 	"os"
 	"path/filepath"
 	"strings"
@@ -76,7 +75,7 @@ func (g *GitOps) SetResourcePlan(ctx context.Context, tenant string, plan Plan, 
 	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	for attempt := 1; attempt <= maxPushAttempts; attempt++ {
+	for started, attempt := time.Now(), 1; ; attempt++ {
 		manifest, err := g.tenantFile(ctx, tenant)
 		if err != nil {
 			return Result{}, err
@@ -124,13 +123,10 @@ func (g *GitOps) SetResourcePlan(ctx context.Context, tenant string, plan Plan, 
 		if !errors.Is(err, errPushRejected) {
 			return Result{}, err
 		}
-		select {
-		case <-ctx.Done():
-			return Result{}, ctx.Err()
-		case <-time.After(time.Duration(rand.Int63n(int64(attempt) * int64(40*time.Millisecond)))):
+		if err := retryPush(ctx, started, attempt); err != nil {
+			return Result{}, err
 		}
 	}
-	return Result{}, ErrPushContended
 }
 
 // samePlan reports whether the patch already says what desired says, apart

@@ -145,7 +145,8 @@ func (m Meta) trailers() []string {
 	return []string{"Gentian-Authz: " + strings.Join(parts, " ")}
 }
 
-// ErrPushContended is returned when every retry lost the race to another writer.
+// ErrPushContended is returned when a write lost the race to other writers
+// for as long as it was prepared to keep trying.
 var ErrPushContended = errors.New("push rejected after retries: another writer keeps winning")
 
 // ErrNoPushCredential is a push refused because this process has nothing to
@@ -159,8 +160,37 @@ var ErrPushContended = errors.New("push rejected after retries: another writer k
 // somebody looking for a broken repository instead of a missing Secret.
 var ErrNoPushCredential = errors.New("no credential to push to the deployments repository")
 
-// maxPushAttempts bounds the sync-edit-push loop.
-const maxPushAttempts = 8
+// pushContentionBudget is for how long a write keeps starting over while other
+// writers keep landing first.
+//
+// It is a length of time and not a number of attempts because losing is not
+// independent from one attempt to the next. A writer that has just landed
+// starts its next change at once; the one it beat has first to learn that it
+// lost and put its checkout back, so it starts later, takes as long, and loses
+// again -- every time, for as long as the other has something to write. A
+// count is used up by one such run: two writers with four changes each were
+// enough to refuse a third after eight attempts. What a loser needs is to
+// still be trying when the run ends.
+//
+// Shorter than the server's write timeout, so a caller who waited this long
+// is still told why.
+const pushContentionBudget = time.Minute
+
+// retryPush is what a write does between a rejected push and starting over:
+// it answers ErrPushContended once the budget that began at started is spent,
+// and otherwise waits a random moment, so that several losers do not all
+// start over in step.
+func retryPush(ctx context.Context, started time.Time, attempt int) error {
+	if time.Since(started) >= pushContentionBudget {
+		return ErrPushContended
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(time.Duration(rand.Int63n(int64(min(attempt, 8)) * int64(40*time.Millisecond)))):
+		return nil
+	}
+}
 
 // NewGitOps returns a GitOps helper. Path must be a local git checkout.
 func NewGitOps(path, repo, cluster string, committer Person) *GitOps {
@@ -371,7 +401,7 @@ func (g *GitOps) apply(ctx context.Context, tenant, message string, meta Meta, f
 func (g *GitOps) applyTo(ctx context.Context, tenant, sibling, message string, meta Meta, fn edit) (Result, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	for attempt := 1; attempt <= maxPushAttempts; attempt++ {
+	for started, attempt := time.Now(), 1; ; attempt++ {
 		file, err := g.tenantFile(ctx, tenant)
 		if err != nil {
 			return Result{}, err
@@ -400,15 +430,10 @@ func (g *GitOps) applyTo(ctx context.Context, tenant, sibling, message string, m
 		if !errors.Is(err, errPushRejected) {
 			return Result{}, err
 		}
-		// Back off by a random amount so writers that collided once do not
-		// collide again in step.
-		select {
-		case <-ctx.Done():
-			return Result{}, ctx.Err()
-		case <-time.After(time.Duration(rand.Int63n(int64(attempt) * int64(40*time.Millisecond)))):
+		if err := retryPush(ctx, started, attempt); err != nil {
+			return Result{}, err
 		}
 	}
-	return Result{}, ErrPushContended
 }
 
 // digestPattern is the one spelling of a content digest a manifest carries.
