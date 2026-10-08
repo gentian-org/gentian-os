@@ -16,7 +16,10 @@
                         gateway (requires.services.llm) is the tenant's side,
                         where egress is denied by default (tenant-isolation)
                         and kernel-access-<app> opens this port for a
-                        declaring app alone. The two rules are one control:
+                        declaring app alone -- and, for a component the
+                        platform places that declared it (the desktop), a
+                        rule of component-<name> opens the same port once
+                        its key is delivered. The two rules are one control:
                         this one keeps out everything that is not a tenant
                         namespace or a client named here, that one keeps out
                         the apps that asked for no gateway. A tenant's DMZ is

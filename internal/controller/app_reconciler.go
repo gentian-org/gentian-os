@@ -108,13 +108,6 @@ func (r *TenantReconciler) reconcileTenantApps(ctx context.Context, tenant *gent
 		return ctrl.Result{}, err
 	}
 
-	// The model gateway, for the apps that declared it -- and its removal
-	// from the ones that did not. Before the loop: an app's Component holds
-	// its release until this has delivered its key.
-	if _, err := r.ensureModelAccess(ctx, tenant, profileIndex); err != nil {
-		return ctrl.Result{}, fmt.Errorf("model access: %w", err)
-	}
-
 	allReady := true
 
 	for _, app := range tenant.Spec.Apps {

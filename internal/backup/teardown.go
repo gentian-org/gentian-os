@@ -189,7 +189,7 @@ var AppKinds = []KindRule{
 		FoundBy: "the tenant's record of what was provisioned",
 	},
 	{
-		Kind: KindModelAccess, MadeBy: "the tenant reconciler, at the model gateway, for an app whose profile declares it (requires.services.llm), on a cluster that serves models",
+		Kind: KindModelAccess, MadeBy: "the tenant reconciler, at the model gateway, for an app -- or a component the platform places on the tenant -- whose profile declares it (requires.services.llm), on a cluster that serves models",
 		Export: Omits, ExportNote: "a credential; the tenant restored into has its own, registered when the app is installed there",
 		Uninstall: Keeps, AppPurge: Destroys, TenantDelete: Destroys,
 		TenantDeleteNote: "and the tenant's team at the gateway",

@@ -1221,6 +1221,20 @@ spec:
                             platform's model gateway. Only a component that declares it is given a
                             key at the gateway, the address and the key, and a network path to the
                             gateway; a component that does not is given none of the three.
+                          properties:
+                            optional:
+                              description: |-
+                                Optional means the component runs without the gateway. While the
+                                cluster serves no models, or the component's key is not delivered yet,
+                                it is released all the same: without credentials, without a network
+                                path to the gateway, and told so through valueMapping.llm.availableKey.
+                                When the key arrives the component is rendered again with it.
+
+                                Honoured for a component the platform places on tenants itself. For an
+                                app a tenant installs the requirement holds the release as if this
+                                were not set: its chart is rendered by the app Composition, which
+                                reads the key from where it is kept and cannot render without it.
+                              type: boolean
                           type: object
                         mail:
                           description: Mail specifies SMTP and/or IMAP requirements.
@@ -1887,13 +1901,35 @@ spec:
                           keys, for a component that declares requires.services.llm.
                         properties:
                           apiKeyKey:
-                            description: APIKeyKey is the Helm value key for the key
-                              the component presents.
+                            description: |-
+                              APIKeyKey is the Helm value key for the key the component presents.
+                              For an app a tenant installs, where the app Composition sets it from
+                              the vault. A component the platform places on tenants itself is
+                              rendered by the operator, whose release values are not a place for a
+                              key: such a profile names SecretNameKey instead, and is refused if it
+                              names this.
+                            type: string
+                          availableKey:
+                            description: |-
+                              AvailableKey receives true when the gateway's address and the
+                              component's key are delivered, and false while an optional requirement
+                              (requires.services.llm.optional) is not met. For a component the
+                              platform places on tenants itself.
                             type: string
                           baseUrlKey:
                             description: |-
                               BaseURLKey is the Helm value key for the gateway's OpenAI-compatible
                               base address (it ends in /v1).
+                            type: string
+                          secretNameKey:
+                            description: |-
+                              SecretNameKey receives the NAME of the Secret the component's model
+                              credentials are in (llm-credentials-<component>, in the component's
+                              namespace; the key is under OPENAI_API_KEY), as a plain string, for a
+                              chart that reads the key with a secretKeyRef or envFrom. The same shape
+                              as database.secretNameKey: the key is never a chart value. Empty while
+                              an optional requirement is not met. For a component the platform
+                              places on tenants itself.
                             type: string
                         type: object
                       oidc:
@@ -2659,6 +2695,20 @@ spec:
                           platform's model gateway. Only a component that declares it is given a
                           key at the gateway, the address and the key, and a network path to the
                           gateway; a component that does not is given none of the three.
+                        properties:
+                          optional:
+                            description: |-
+                              Optional means the component runs without the gateway. While the
+                              cluster serves no models, or the component's key is not delivered yet,
+                              it is released all the same: without credentials, without a network
+                              path to the gateway, and told so through valueMapping.llm.availableKey.
+                              When the key arrives the component is rendered again with it.
+
+                              Honoured for a component the platform places on tenants itself. For an
+                              app a tenant installs the requirement holds the release as if this
+                              were not set: its chart is rendered by the app Composition, which
+                              reads the key from where it is kept and cannot render without it.
+                            type: boolean
                         type: object
                       mail:
                         description: Mail specifies SMTP and/or IMAP requirements.
@@ -2861,6 +2911,13 @@ spec:
               rule: '!has(self.__package__.valueMapping) || !has(self.__package__.valueMapping.platform)
                 || !has(self.__package__.valueMapping.platform.storeUrlKey) || self.__package__.valueMapping.platform.storeUrlKey.size()
                 == 0 || self.trustTier == ''platform'''
+            - message: 'a component the platform places on tenants declares requires.services.llm
+                only at trustTier platform: it is given a key at the model gateway
+                without a tenant having installed it'
+              rule: '!has(self.requires) || !has(self.requires.services) || !has(self.requires.services.llm)
+                || !((has(self.defaultForTenants) && self.defaultForTenants) || (has(self.defaultForPlatform)
+                && self.defaultForPlatform) || (has(self.defaultWhereStoreOffered)
+                && self.defaultWhereStoreOffered)) || self.trustTier == ''platform'''
             - message: a package is a chart, a composition, the two together, an api,
                 or an addon -- and nothing else beside them
               rule: '[has(self.__package__.chart) || (has(self.__package__.composition)

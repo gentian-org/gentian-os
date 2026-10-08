@@ -3,7 +3,7 @@
   Every tenant gets one from this profile, the platform tenant included --
   its desktop is the platform console, in the kernel zone (AD-10). The
   profile is what the desktop is: a tenant component of platform trust, a
-  database requirement, and two gateway exposures on one host, the API's
+  database requirement, an optional model gateway requirement, and two gateway exposures on one host, the API's
   forwarding the edge token because the BFF relays it to the director and to
   nothing else. What the platform tells it -- realm, zone client, director --
   is the component reconciler's, not the profile's.
@@ -58,6 +58,13 @@ spec:
         # The desktop consumes its credentials Secret whole, with envFrom, so
         # it is told the Secret's name and nothing else.
         secretNameKey: existingSecret.name
+      llm:
+        # The model gateway, for the desktop's assistant: whether there is
+        # one for this tenant's desktop, its address, and the name of the
+        # Secret this desktop's own key is in. The key is no chart value.
+        availableKey: llm.available
+        baseUrlKey: llm.baseUrl
+        secretNameKey: llm.apiKeySecretName
     extraValues:
       # The shape of the desktop chart as the platform runs it: the edge holds
       # the session, so the bundle runs no code flow; and the desktop holds no
@@ -81,6 +88,11 @@ spec:
       database:
         engine: postgresql
         databasePerTenant: true
+      # The assistant on the desktop calls models with a key that is this
+      # tenant's desktop's alone. Optional: on a cluster that serves no
+      # models the desktop comes up without the assistant.
+      llm:
+        optional: true
   expose:
     # The BFF: the same-origin relay the shell talks to. It relays to the
     # director with the user's own token, which is why this entry -- and

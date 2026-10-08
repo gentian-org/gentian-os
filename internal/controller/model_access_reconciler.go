@@ -19,11 +19,15 @@ import (
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/backup"
@@ -54,6 +58,24 @@ import (
 //
 // An app that does not declare it gets none of them, and what an earlier
 // version gave it is taken away.
+//
+// A component the platform places on tenants itself -- the desktop, the
+// administration console: defaultForTenants and its two siblings -- is
+// served the same way when its profile is of platform trust: a key per
+// tenant and component under the same alias, vault path and Secret name,
+// with the component's name where an app's would be. Three things differ,
+// because nothing installs or uninstalls such a component and the operator
+// renders its release itself:
+//
+//   - the key is written on the tenant's record here, before it is
+//     registered, and is removed when the tenant is deleted with its data,
+//     when the profile stops declaring the gateway, or when the platform
+//     takes the component away. A tenant cannot purge it;
+//   - the chart is told the gateway's address and the NAME of the Secret
+//     (valueMapping.llm.baseUrlKey, secretNameKey, availableKey). The key is
+//     never a release value;
+//   - the network path is a rule of the component's own policy
+//     (component_network_policy.go), opened once the key is delivered.
 
 // modelCredentialsSecretName is the Secret an app's model access is delivered
 // in, in the tenant's namespace. Profiles consume it by this name.
@@ -117,6 +139,32 @@ func (r *TenantReconciler) ensureModelAccess(
 		}
 	}
 
+	// The components the platform placed on this tenant. One whose profile
+	// declares the gateway, at platform trust, is served beside the apps;
+	// any other is looked at for what it must not hold.
+	placed, err := r.placedComponents(ctx, tenant)
+	if err != nil {
+		return state, err
+	}
+	direct := map[string]bool{}
+	for _, name := range placed {
+		if installed[name] {
+			// An app of this name is the tenant's own install.
+			continue
+		}
+		installed[name] = true
+		profile, ok := appProfileFromIndex(profiles, name)
+		if !ok {
+			continue
+		}
+		if placedModelAccess(profile) && placedModelAccessRefusal(profile) == "" {
+			declaring = append(declaring, name)
+			direct[name] = true
+		} else {
+			undeclared = append(undeclared, name)
+		}
+	}
+
 	recorded, err := r.provisionedStores(ctx, tenant.Name)
 	if err != nil {
 		return state, err
@@ -137,10 +185,19 @@ func (r *TenantReconciler) ensureModelAccess(
 	}
 	var retained []string
 	for app, p := range recorded {
-		if !installed[app] && p.ModelKey != "" {
-			retained = append(retained, app)
+		if installed[app] || p.ModelKey == "" {
+			continue
 		}
+		// A key on record for a component the platform places, which this
+		// tenant no longer has: the platform took the component away. It was
+		// never the tenant's to uninstall, so nothing of it is retained.
+		if profile, ok := appProfileFromIndex(profiles, app); ok && placedByPlatform(profile) {
+			stale = append(stale, app)
+			continue
+		}
+		retained = append(retained, app)
 	}
+	sort.Strings(stale)
 	sort.Strings(retained)
 
 	if len(declaring) == 0 && len(stale) == 0 && len(retained) == 0 {
@@ -193,6 +250,14 @@ func (r *TenantReconciler) ensureModelAccess(
 		if gateway == nil {
 			state.waiting = append(state.waiting, app+": "+gatewayWhy)
 			continue
+		}
+		if direct[app] {
+			// On record before it is registered: nothing else writes a
+			// placed component's key down, and the record is what a deleted
+			// tenant's keys are found by.
+			if err := r.recordModelAccess(ctx, tenant, app); err != nil {
+				return state, err
+			}
 		}
 		why, err := r.serveModelAccess(ctx, tenant, app, profile, gateway)
 		if err != nil {
@@ -452,18 +517,131 @@ func (r *TenantReconciler) forgetModelAccess(ctx context.Context, tenantName, ap
 	}
 }
 
-// modelAccessHold answers whether a component that declares the model gateway
+// placedByPlatform reports whether a profile is one the platform places on
+// tenants itself, rather than one a tenant installs.
+func placedByPlatform(profile *gentianov1alpha1.ComponentProfile) bool {
+	return profile != nil &&
+		(profile.Spec.DefaultForTenants || profile.Spec.DefaultForPlatform || profile.Spec.DefaultWhereStoreOffered)
+}
+
+// placedModelAccess reports whether a profile declares the model gateway for
+// a component the platform places. Such a component is rendered by the
+// Component reconciler, not by the app Composition (composedDelivery).
+func placedModelAccess(profile *gentianov1alpha1.ComponentProfile) bool {
+	return placedByPlatform(profile) && provisioner.MatchModelAccessProfile(profile) && !profile.IsAPI()
+}
+
+// placedModelAccessRefusal says why a placed component's declaration is not
+// served, or "" when it is.
+//
+// Only a profile of platform trust: a placed component is given a key at the
+// gateway on every tenant without any tenant having asked for it, which is
+// the platform's to decide and not a catalogue entry's. And no key among the
+// release values: the operator renders this release, and its values are read
+// by whoever may read the release.
+func placedModelAccessRefusal(profile *gentianov1alpha1.ComponentProfile) string {
+	if profile.Spec.TrustTier != gentianov1alpha1.TrustTierPlatform {
+		return fmt.Sprintf("%s declares requires.services.llm and is placed on tenants by the platform; "+
+			"that is served only for a profile of trustTier platform, and this one is %q", profile.Name, profile.Spec.TrustTier)
+	}
+	if m := profile.Spec.Package.ValueMapping; m != nil && m.LLM != nil && m.LLM.APIKeyKey != "" {
+		return fmt.Sprintf("%s maps the model key to a chart value (valueMapping.llm.apiKeyKey); a component the platform places "+
+			"is told the Secret's name instead (valueMapping.llm.secretNameKey), so that the key is no release value", profile.Name)
+	}
+	return ""
+}
+
+// modelAccessOptional reports whether a profile's model gateway requirement
+// is one its component runs without.
+func modelAccessOptional(profile *gentianov1alpha1.ComponentProfile) bool {
+	return provisioner.MatchModelAccessProfile(profile) && profile.Services().LLM.Optional
+}
+
+// placedComponents are the names of the Components the platform placed on a
+// tenant that are not on their way out.
+func (r *TenantReconciler) placedComponents(ctx context.Context, tenant *gentianov1alpha1.Tenant) ([]string, error) {
+	list := &gentianov1alpha1.ComponentList{}
+	if err := r.List(ctx, list, client.InNamespace(tenantNamespaceName(tenant)),
+		client.MatchingLabels{componentOriginLabel: componentOriginDefault}); err != nil {
+		return nil, fmt.Errorf("list the components the platform placed on %s: %w", tenant.Name, err)
+	}
+	var out []string
+	for i := range list.Items {
+		comp := &list.Items[i]
+		// Named after its profile (ensureComponent); one that is not was
+		// placed by nothing here.
+		if comp.DeletionTimestamp != nil || comp.Spec.ProfileRef.Name != comp.Name {
+			continue
+		}
+		out = append(out, comp.Name)
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+// recordModelAccess writes a placed component's key alias on the tenant's
+// record of what was provisioned. An app's is written with its stores
+// (recordProvisionedStores); a placed component is no entry of spec.apps and
+// has no other.
+func (r *TenantReconciler) recordModelAccess(ctx context.Context, tenant *gentianov1alpha1.Tenant, name string) error {
+	key := backup.ProvisionedRecordKey(tenant.Name)
+	record := &corev1.ConfigMap{}
+	err := r.Get(ctx, key, record)
+	create := errors.IsNotFound(err)
+	if create {
+		record = backup.NewProvisionedRecord(tenant.Name)
+	} else if err != nil {
+		return fmt.Errorf("read the record of what was provisioned for %s: %w", tenant.Name, err)
+	}
+	original := record.DeepCopy()
+	changed, err := backup.RecordProvisioned(record, name, backup.Provisioned{ModelKey: modelgateway.KeyAlias(tenant.Name, name)})
+	if err != nil {
+		return err
+	}
+	switch {
+	case create:
+		if err := r.Create(ctx, record); err != nil {
+			return fmt.Errorf("write the record of what was provisioned for %s: %w", tenant.Name, err)
+		}
+	case changed:
+		if err := r.Patch(ctx, record, client.MergeFromWithOptions(original, client.MergeFromWithOptimisticLock{})); err != nil {
+			return fmt.Errorf("update the record of what was provisioned for %s: %w", tenant.Name, err)
+		}
+	}
+	return nil
+}
+
+// modelAccessHold is the hold of modelAccessFor alone.
+func modelAccessHold(ctx context.Context, c client.Client, comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile, tenant *gentianov1alpha1.Tenant) (reason, message string, err error) {
+	v, err := modelAccessFor(ctx, c, comp, profile, tenant)
+	return v.reason, v.message, err
+}
+
+// modelAccessVerdict is what the Component reconciler is told about a
+// component's model gateway requirement.
+type modelAccessVerdict struct {
+	// reason and message hold the release when reason is not empty.
+	reason, message string
+	// placed says the component is one the platform placed and its profile
+	// declares the gateway: its values and its network path are written by
+	// the Component reconciler.
+	placed bool
+	// delivered says the placed component's key is in its Secret.
+	delivered bool
+}
+
+// modelAccessFor answers whether a component that declares the model gateway
 // has to wait, and why. It is asked by the Component reconciler before it
 // installs anything, the way it asks for a database: a requirement that is
 // not met holds the release, and the Component says which one.
-func modelAccessHold(ctx context.Context, c client.Client, comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile, tenant *gentianov1alpha1.Tenant) (reason, message string, err error) {
+//
+// An optional requirement of a placed component holds nothing: the verdict
+// says whether the key is delivered, and the component is rendered with or
+// without it.
+func modelAccessFor(ctx context.Context, c client.Client, comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile, tenant *gentianov1alpha1.Tenant) (modelAccessVerdict, error) {
+	var v modelAccessVerdict
 	if !provisioner.MatchModelAccessProfile(profile) || profile.IsAPI() {
-		return "", "", nil
-	}
-	if !clusterLLMEnabled(ctx, c) {
-		return "ModelGatewayUnavailable", fmt.Sprintf(
-			"this cluster has no model gateway: %s declares requires.services.llm, and the Cluster claim's llm.enabled is false. "+
-				"Nothing is installed until the cluster serves models", profile.Name), nil
+		return v, nil
 	}
 	isApp := false
 	for _, app := range tenant.Spec.Apps {
@@ -471,23 +649,112 @@ func modelAccessHold(ctx context.Context, c client.Client, comp *gentianov1alpha
 			isApp = true
 		}
 	}
-	if !isApp {
-		return "ModelAccessUnsupported", fmt.Sprintf(
-			"%s declares requires.services.llm, which is served for the apps a tenant installs (Tenant.spec.apps); "+
-				"%s is not one of tenant %s's, so nothing gives it a key", profile.Name, comp.Name, tenant.Name), nil
+	v.placed = !isApp && placedByPlatform(profile) && comp.Labels[componentOriginLabel] == componentOriginDefault
+	if v.placed {
+		if refusal := placedModelAccessRefusal(profile); refusal != "" {
+			v.placed = false
+			v.reason, v.message = "ModelAccessUnsupported", refusal+"; nothing gives it a key"
+			return v, nil
+		}
+	}
+	optional := v.placed && modelAccessOptional(profile)
+	if !clusterLLMEnabled(ctx, c) {
+		if optional {
+			return v, nil
+		}
+		v.reason, v.message = "ModelGatewayUnavailable", fmt.Sprintf(
+			"this cluster has no model gateway: %s declares requires.services.llm, and the Cluster claim's llm.enabled is false. "+
+				"Nothing is installed until the cluster serves models", profile.Name)
+		return v, nil
+	}
+	if !isApp && !v.placed {
+		v.reason, v.message = "ModelAccessUnsupported", fmt.Sprintf(
+			"%s declares requires.services.llm, which is served for the apps a tenant installs (Tenant.spec.apps) "+
+				"and for the components the platform places on tenants; "+
+				"%s is neither for tenant %s, so nothing gives it a key", profile.Name, comp.Name, tenant.Name)
+		return v, nil
 	}
 	secret := &corev1.Secret{}
-	err = c.Get(ctx, types.NamespacedName{Name: modelCredentialsSecretName(comp.Name), Namespace: comp.Namespace}, secret)
-	if errors.IsNotFound(err) {
-		return "ModelAccessPending", fmt.Sprintf(
+	err := c.Get(ctx, types.NamespacedName{Name: modelCredentialsSecretName(comp.Name), Namespace: comp.Namespace}, secret)
+	switch {
+	case errors.IsNotFound(err):
+		v.reason, v.message = "ModelAccessPending", fmt.Sprintf(
 			"waiting for the model gateway to register a key for %s: the Secret %s does not exist yet",
-			comp.Name, modelCredentialsSecretName(comp.Name)), nil
+			comp.Name, modelCredentialsSecretName(comp.Name))
+	case err != nil:
+		return v, err
+	case strings.TrimSpace(string(secret.Data[modelCredentialsAPIKey])) == "":
+		v.reason, v.message = "ModelAccessPending", fmt.Sprintf("the Secret %s carries no key yet", secret.Name)
+	case v.placed && !ownsModelCredentials(secret, tenant.Name, comp.Name):
+		// The name is the component's by convention only. A Secret somebody
+		// else put there is not mounted into a component of platform trust.
+		v.reason, v.message = "ModelAccessPending", fmt.Sprintf(
+			"the Secret %s is not the one the operator writes for %s; it is not used", secret.Name, comp.Name)
+	default:
+		v.delivered = v.placed
 	}
-	if err != nil {
-		return "", "", err
+	if optional {
+		v.reason, v.message = "", ""
 	}
-	if strings.TrimSpace(string(secret.Data[modelCredentialsAPIKey])) == "" {
-		return "ModelAccessPending", fmt.Sprintf("the Secret %s carries no key yet", secret.Name), nil
+	return v, nil
+}
+
+// modelAccessValues tells a placed component's chart about the gateway, where
+// its profile's valueMapping.llm says the chart takes it: the address, the
+// name of the Secret its key is in, and whether there is a gateway for it at
+// all. While an optional requirement is not met the address and the name are
+// empty and available is false, so a chart renders the same keys either way.
+func modelAccessValues(comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile, delivered bool) map[string]interface{} {
+	out := map[string]interface{}{}
+	if profile.Spec.Package.ValueMapping == nil || profile.Spec.Package.ValueMapping.LLM == nil {
+		return out
 	}
-	return "", "", nil
+	m := profile.Spec.Package.ValueMapping.LLM
+	baseURL, secretName := "", ""
+	if delivered {
+		baseURL = modelgateway.OpenAIBaseURL(litellmProxyBaseURL)
+		secretName = modelCredentialsSecretName(comp.Name)
+	}
+	if m.BaseURLKey != "" {
+		setPath(out, m.BaseURLKey, baseURL)
+	}
+	if m.SecretNameKey != "" {
+		setPath(out, m.SecretNameKey, secretName)
+	}
+	if m.AvailableKey != "" {
+		setPath(out, m.AvailableKey, delivered)
+	}
+	return out
+}
+
+// modelGatewayEgress is the way to the model gateway for a placed component
+// whose key is delivered: the gateway's namespace on the gateway's port, and
+// nothing else there. An app's is a rule of its kernel-access policy
+// (internal/kernel/netpolicy); a placed component has none, so it is a rule
+// of the component's own.
+func modelGatewayEgress() networkingv1.NetworkPolicyEgressRule {
+	tcp := corev1.ProtocolTCP
+	port := intstr.FromInt32(provisioner.ModelGatewayPort)
+	return networkingv1.NetworkPolicyEgressRule{
+		To: []networkingv1.NetworkPolicyPeer{{
+			NamespaceSelector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{"kubernetes.io/metadata.name": llmNamespace},
+			},
+		}},
+		Ports: []networkingv1.NetworkPolicyPort{{Protocol: &tcp, Port: &port}},
+	}
+}
+
+// componentsOfModelCredentials re-runs a Component when the Secret its model
+// credentials are delivered in appears, changes or goes: a placed component
+// whose requirement is optional was released without it and is rendered
+// again with it.
+func componentsOfModelCredentials() handler.EventHandler {
+	return handler.EnqueueRequestsFromMapFunc(func(_ context.Context, obj client.Object) []reconcile.Request {
+		name, ok := strings.CutPrefix(obj.GetName(), modelCredentialsSecretName(""))
+		if !ok || name == "" || obj.GetLabels()[managedByLabel] != managedByValue || obj.GetLabels()[appLabel] != name {
+			return nil
+		}
+		return []reconcile.Request{{NamespacedName: types.NamespacedName{Name: name, Namespace: obj.GetNamespace()}}}
+	})
 }

@@ -286,6 +286,26 @@ clients:
     proof: internal/kernel/netpolicy/kernel.go kernelEgressTargets; the address is written by internal/controller/model_access_reconciler.go
   - store: llm
     server: gateway
+    client: a tenant's desktop, a component the platform places, whose profile declares the model gateway
+    namespace: *tenant
+    podLabels: {app.kubernetes.io/instance: tenant-acme-desktop}
+    port: 4000
+    built: tenant-component-llm
+    proof: >-
+      internal/controller/model_access_reconciler.go modelGatewayEgress, component_network_policy.go ensureNetworkPolicy
+      (opened once the desktop's key is delivered); charts/gentian-os/templates/componentprofile-desktop.yaml declares it
+  - store: llm
+    server: gateway
+    client: the desktop of the tenant that adopts the kernel realm, served as any tenant's is
+    namespace: {name: tenant-platform, labels: {gentianos.io/tier: tenant, gentianos.io/tenant: platform}}
+    podLabels: {app.kubernetes.io/instance: tenant-platform-desktop}
+    port: 4000
+    built: kernel-realm-desktop-llm
+    proof: >-
+      the same rule; the platform tenant's namespace is a tenant-tier namespace like any other
+      (crossplane/compositions/tenant-default.yaml labels every tenant's namespace gentianos.io/tier=tenant)
+  - store: llm
+    server: gateway
     client: the operator, registering and removing an app's key and a tenant's team
     namespace: kernel-control
     podLabels: {app.kubernetes.io/name: gentian-os, app.kubernetes.io/instance: gentian-os, app.kubernetes.io/component: operator}
@@ -537,6 +557,18 @@ denied:
     namespace: *tenant
     podLabels: {gentianos.io/app: chat}
     port: 5432
+  - store: llm
+    server: database
+    client: a tenant's desktop, on the gateway's database
+    namespace: *tenant
+    podLabels: {app.kubernetes.io/instance: tenant-acme-desktop}
+    port: 5432
+  - store: llm
+    server: cache
+    client: a tenant's desktop, on the gateway's Redis
+    namespace: *tenant
+    podLabels: {app.kubernetes.io/instance: tenant-acme-desktop}
+    port: 6379
   - store: llm
     server: database
     client: the operator, which reaches the gateway through its API only

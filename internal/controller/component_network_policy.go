@@ -127,7 +127,10 @@ func buildComponentNetworkPolicy(comp *gentianov1alpha1.Component, egressNamespa
 
 // ensureNetworkPolicy keeps the component's egress policy, or removes it
 // when the component may reach nothing beyond the baseline.
-func (r *ComponentReconciler) ensureNetworkPolicy(ctx context.Context, comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile, tenant *gentianov1alpha1.Tenant) error {
+//
+// modelGateway says the component's key at the model gateway is delivered
+// (modelAccessFor): only then is the gateway's port opened to it.
+func (r *ComponentReconciler) ensureNetworkPolicy(ctx context.Context, comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile, tenant *gentianov1alpha1.Tenant, modelGateway bool) error {
 	// The way to a store outside the cluster, for a profile that asked where
 	// the store is and while the cluster offers one. Ahead of the granted
 	// privileges: it follows from the profile's mapping, as the namespaces
@@ -135,6 +138,13 @@ func (r *ComponentReconciler) ensureNetworkPolicy(ctx context.Context, comp *gen
 	outside, err := r.storeEgress(ctx, profile)
 	if err != nil {
 		return fmt.Errorf("read whether the cluster offers an App Store: %w", err)
+	}
+	// The model gateway, for a placed component that declared it and holds
+	// its key: one port of one namespace. It follows from the requirement,
+	// like the store, and is ahead of the granted privileges for the same
+	// reason.
+	if modelGateway {
+		outside = append(outside, modelGatewayEgress())
 	}
 	desired := buildComponentNetworkPolicy(comp, r.componentEgressNamespaces(profile, tenant),
 		append(outside, security.GrantedEgressRules(profile, comp, time.Now())...))

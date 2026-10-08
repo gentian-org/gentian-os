@@ -630,7 +630,7 @@ func TestTheAppStoresWayOutIsPublicAddressesOn443(t *testing.T) {
 		if err := c.Get(ctx, client.ObjectKeyFromObject(comp), live); err != nil {
 			t.Fatal(err)
 		}
-		if err := r.ensureNetworkPolicy(ctx, live, profile, tenant); err != nil {
+		if err := r.ensureNetworkPolicy(ctx, live, profile, tenant, false); err != nil {
 			t.Fatal(err)
 		}
 		np := &networkingv1.NetworkPolicy{}

@@ -68,6 +68,9 @@ func (g *keyGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			delete(g.keys, alias)
 		}
 		_, _ = w.Write([]byte(`{}`))
+	case "/team/list":
+		// No teams: the tests of the keys keep none.
+		_, _ = w.Write([]byte(`[]`))
 	default:
 		w.WriteHeader(http.StatusNotFound)
 	}

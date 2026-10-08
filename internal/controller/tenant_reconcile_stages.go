@@ -416,6 +416,18 @@ func (r *TenantReconciler) reconcileTenantStageAppsAndEdge(ctx context.Context, 
 		return ctrl.Result{}, fmt.Errorf("ensure default components: %w", err)
 	}
 
+	// The model gateway, for the apps and the placed components that
+	// declared it -- and its removal from the ones that did not. After both
+	// kinds of Component exist: each holds its release, or runs without the
+	// gateway, until this has delivered its key.
+	profiles, err := loadAppProfileIndex(ctx, r.Client)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if _, err := r.ensureModelAccess(ctx, tenant, profiles); err != nil {
+		return ctrl.Result{}, fmt.Errorf("model access: %w", err)
+	}
+
 	if _, err := r.ensureGateway(ctx, tenant); err != nil {
 		r.setCondition(tenant, conditionGatewayReady, metav1.ConditionFalse, "EnsureFailed", err.Error())
 		r.updateBlockedStatus(ctx, tenant)

@@ -218,7 +218,7 @@ type ServiceRequirements struct {
 }
 
 // LLMRequirement declares that a component uses the platform's model gateway.
-// It carries nothing: being present is the declaration.
+// Being present is the declaration.
 //
 // The gateway speaks the OpenAI API. The component receives its base address
 // and a key of its own -- random, per tenant and component, never derived
@@ -226,10 +226,27 @@ type ServiceRequirements struct {
 // tenant's namespace (OPENAI_API_BASE, OPENAI_API_BASE_URL, OPENAI_API_KEY),
 // and, where its chart takes them as values, through valueMapping.llm.
 //
+// It is served for an app a tenant installs, and for a component the
+// platform places on tenants itself (defaultForTenants, defaultForPlatform,
+// defaultWhereStoreOffered) when its profile is of platform trust.
+//
 // On a cluster that runs no model gateway the requirement cannot be met, and
 // the component waits and says so, as it does for a database that is not
-// there.
-type LLMRequirement struct{}
+// there -- unless the requirement is optional.
+type LLMRequirement struct {
+	// Optional means the component runs without the gateway. While the
+	// cluster serves no models, or the component's key is not delivered yet,
+	// it is released all the same: without credentials, without a network
+	// path to the gateway, and told so through valueMapping.llm.availableKey.
+	// When the key arrives the component is rendered again with it.
+	//
+	// Honoured for a component the platform places on tenants itself. For an
+	// app a tenant installs the requirement holds the release as if this
+	// were not set: its chart is rendered by the app Composition, which
+	// reads the key from where it is kept and cannot render without it.
+	// +optional
+	Optional bool `json:"optional,omitempty"`
+}
 
 // IdentityRequirement specifies OIDC or SAML needs.
 type IdentityRequirement struct {
@@ -848,8 +865,28 @@ type LLMValueMapping struct {
 	// +optional
 	BaseURLKey string `json:"baseUrlKey,omitempty"`
 	// APIKeyKey is the Helm value key for the key the component presents.
+	// For an app a tenant installs, where the app Composition sets it from
+	// the vault. A component the platform places on tenants itself is
+	// rendered by the operator, whose release values are not a place for a
+	// key: such a profile names SecretNameKey instead, and is refused if it
+	// names this.
 	// +optional
 	APIKeyKey string `json:"apiKeyKey,omitempty"`
+	// SecretNameKey receives the NAME of the Secret the component's model
+	// credentials are in (llm-credentials-<component>, in the component's
+	// namespace; the key is under OPENAI_API_KEY), as a plain string, for a
+	// chart that reads the key with a secretKeyRef or envFrom. The same shape
+	// as database.secretNameKey: the key is never a chart value. Empty while
+	// an optional requirement is not met. For a component the platform
+	// places on tenants itself.
+	// +optional
+	SecretNameKey string `json:"secretNameKey,omitempty"`
+	// AvailableKey receives true when the gateway's address and the
+	// component's key are delivered, and false while an optional requirement
+	// (requires.services.llm.optional) is not met. For a component the
+	// platform places on tenants itself.
+	// +optional
+	AvailableKey string `json:"availableKey,omitempty"`
 }
 
 // SMTPValueMapping maps SMTP submission values to Helm chart keys.

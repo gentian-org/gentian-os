@@ -108,6 +108,9 @@ const (
 	componentFinalizer      = "gentianos.io/component-cleanup"
 	componentLabel          = "gentianos.io/component"
 	componentRequeue        = 15 * time.Second
+	// modelAccessRecheck is how often a Ready component the platform placed,
+	// whose profile declares the model gateway, is reconciled again.
+	modelAccessRecheck = 5 * time.Minute
 	// bouncerRouteLabel marks an HTTPRoute whose L2 question the gateway
 	// reconciler copies into the bouncer's table; the question is in the
 	// annotations below.
@@ -341,11 +344,18 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// The model gateway, for a component that declares it: nothing is
 	// installed while the cluster has none, or before the component's key is
 	// registered there and delivered. Asked for every delivery, because the
-	// requirement is met by the tenant's reconciler either way.
-	if reason, message, err := modelAccessHold(ctx, r.Client, comp, profile, tenant); err != nil {
+	// requirement is met by the tenant's reconciler either way. A component
+	// the platform placed is told here where the gateway and its key are --
+	// or, when its requirement is optional and not met, that there is none.
+	models, err := modelAccessFor(ctx, r.Client, comp, profile, tenant)
+	if err != nil {
 		return ctrl.Result{}, err
-	} else if reason != "" {
-		return r.status(ctx, comp, metav1.ConditionFalse, reason, message, componentRequeue)
+	}
+	if models.reason != "" {
+		return r.status(ctx, comp, metav1.ConditionFalse, models.reason, models.message, componentRequeue)
+	}
+	if models.placed {
+		mergeValues(values, modelAccessValues(comp, profile, models.delivered))
 	}
 	// What the platform tells any component about itself, where its profile
 	// says its chart takes it. Nothing is keyed on which component this is.
@@ -361,7 +371,7 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// what its requirements were fulfilled with, written down before the
 	// chart runs so its first connection is not the one that is refused.
 	if !composed {
-		if err := r.ensureNetworkPolicy(ctx, comp, profile, tenant); err != nil {
+		if err := r.ensureNetworkPolicy(ctx, comp, profile, tenant, models.delivered); err != nil {
 			return ctrl.Result{}, fmt.Errorf("network policy: %w", err)
 		}
 	}
@@ -528,7 +538,14 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		// component that somebody should never discover by accident.
 		message += fmt.Sprintf("; %d published on the perimeter", published)
 	}
-	return r.status(ctx, comp, metav1.ConditionTrue, "Ready", message, 0)
+	// A placed component that declares the gateway is looked at again without
+	// an event: the claim switching the gateway on or off changes what it is
+	// told, and is no change to anything this reconciler watches.
+	recheck := time.Duration(0)
+	if models.placed {
+		recheck = modelAccessRecheck
+	}
+	return r.status(ctx, comp, metav1.ConditionTrue, "Ready", message, recheck)
 }
 
 // addonBaseReady reports whether the component this addon activates into is
@@ -1552,7 +1569,8 @@ func (r *ComponentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&gatewayv1.HTTPRoute{}).
 		Watches(release, componentOfRelease()).
 		Watches(&gentianov1alpha1.ComponentProfile{}, componentsOfProfile(mgr.GetClient())).
-		Watches(&corev1.Secret{}, componentsOfZoneSecret(mgr.GetClient()))
+		Watches(&corev1.Secret{}, componentsOfZoneSecret(mgr.GetClient())).
+		Watches(&corev1.Secret{}, componentsOfModelCredentials())
 	if r.WatchClusterClaim {
 		b = b.Watches(clusterClaimObject(), componentsToldTheStore(mgr.GetClient()),
 			builder.WithPredicates(storeAddressChanged()))
