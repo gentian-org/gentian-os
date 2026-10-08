@@ -612,7 +612,7 @@ entry*, not who publishes it:
 | --- | --- |
 | `ce` | community edition, as the upstream organisation publishes it |
 | `pe` | private edition: somebody's own profile, in their own catalogue source, for their own tenants |
-| `me` | maintained edition — `ce` plus active Gentian maintenance; the editions Gentian Technologies itself runs |
+| `me` | maintained edition — `ce` plus active Gentian maintenance; the editions Aluvian itself runs |
 | `ee` | enterprise edition — commercially licensed and supported by its supplier |
 
 `ee` is deliberately not "the upstream's enterprise build" — a third party's

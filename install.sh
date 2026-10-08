@@ -179,7 +179,7 @@ Other options:
                         (admin@<kernel-domain>), mailed or shown once — for a lost
                         password when nobody can sign in to ask the director
   --disable-api-extensions
-                        leave the Gentian Corp extensions -- the Operations
+                        leave the Aluvian extensions -- the Operations
                         Console's service and the API-extension grant it needs
                         -- out of the scaffold. Everything of Gentian OS stays:
                         export, import, purge and the bundle need no extension

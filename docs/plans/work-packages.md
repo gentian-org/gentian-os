@@ -557,7 +557,7 @@ From [security-gap-closing.md](security-gap-closing.md).
       at scheduling: one-click export, import, restore, purge and the bundle
       format stay here; scheduled backups, remote targets with key escrow,
       retention across tenants, restore drills, recovery on a click, DR and
-      the workspace converters are Gentian Corp's Operations Console,
+      the workspace converters are Aluvian's Operations Console,
       delivered as a catalogue entry under its own license.
       `TenantExportSchedule` and `BackupPolicy` leave this repository with
       it. [sovereignty-concept.md](sovereignty-concept.md) §5 is normative.
@@ -821,7 +821,7 @@ describe a store page asking a desktop to install are superseded by it.
       source repository needs a credential the tenant is issued on purchase,
       and an OSS entry's needs none.
 - [~] **Install and read-back.** The website's checkout page and account page
-      call the store from the browser with the person's GTC token; the
+      call the store from the browser with the person's Aluvian token; the
       install trigger and read-back live in the tenant desktop's store screen
       (WP-7), which asks for the install with the confirmation it is handed:
       `POST /v1/tenants/{t}/apps/{p}` with the person's token, the coordinate
@@ -900,11 +900,11 @@ offboard, the bundle format); the convenience half is the Operations Console's.
       waits for the apps, so an import onto a fresh cluster does not stall on
       entries nobody installed there.
 - [ ] **The `operations` service** (§5.2): `TenantExportSchedule`,
-      `BackupPolicy` and their controllers leave gentian-os for a Corp
+      `BackupPolicy` and their controllers leave gentian-os for an Aluvian
       component with the `apiExtensions` privilege kind, approved by the
       security officer; `operations-console` requires it. The Cluster claim's
       default entries carry the grant from the scaffold.
-- [ ] **Where the Gentian catalogue source is served**, and the Corp
+- [ ] **Where the Gentian catalogue source is served**, and the Aluvian
       profile's chart version written at build time (the publish job produces
       `0.1.0-main.<sha>`, the profile says `0.1.0`).
 - [ ] **Canonical forms** (§6): `spec.backup.canonical` on the profile, hooks

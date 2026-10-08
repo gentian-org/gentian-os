@@ -34,7 +34,7 @@ info:
 
     * It sends to one `https` address fixed at install time
       (`licenceReport.url` in the operator chart). The installer's default
-      is `https://licence.sovrence.com/api/v1/licence-reports`; that
+      is `https://licence.aluvian.io/api/v1/licence-reports`; that
       default is provisional. An address that is not
       `https` counts as none and nothing is sent.
     * It follows no redirect. A `3xx` is a report that did not arrive.

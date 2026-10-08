@@ -120,7 +120,7 @@ licenceReport:
   # installed any other way reports nowhere. It can be changed
   # (GENTIAN_LICENCE_REPORT_URL in install.env, which arrives as `url` below)
   # or turned off (above).
-  defaultUrl: https://licence.sovrence.com/api/v1/licence-reports
+  defaultUrl: https://licence.aluvian.io/api/v1/licence-reports
   # Another address for this cluster, from the installer. Empty is the default.
   url: ""
 

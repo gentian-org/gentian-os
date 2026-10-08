@@ -3,7 +3,7 @@
 Two layers, two promises. **Gentian OS** promises security and sovereignty:
 at any moment a tenant can take all of their data with them, and at any moment
 they can have all of it destroyed, without asking the platform's permission and
-without depending on anyone's tooling to read what they took. **Gentian Corp**
+without depending on anyone's tooling to read what they took. **Aluvian**
 promises convenience and reliability: the same data looked after on a schedule,
 kept off-site, recoverable with one click, and movable in and out of the
 workspace products an organisation already uses. The first is this
@@ -28,7 +28,7 @@ A **bundle** is a self-contained, encrypted snapshot of one tenant. It is the
 unit everything else moves: an export produces one, a backup is an export on a
 timer, an import consumes one, recovery is an import of the most recent one,
 and deletion is the promise that nothing the bundle would have contained
-survives. Its format is normative here, in Gentian OS, and every Gentian Corp
+survives. Its format is normative here, in Gentian OS, and every Aluvian
 tool produces or consumes exactly this format — the converters, the schedulers,
 the recovery screen. There is no second format.
 
@@ -94,7 +94,7 @@ Every artefact is an age file. The recipient is one of:
 |---|---|---|
 | **tenant key** — an X25519 identity minted in the console, shown once, escrowable at the tenant's choice | the tenant | manual export |
 | **passphrase** | whoever holds the phrase | manual export, on request |
-| **platform key** — the cluster's backup recipients | the tenant and the operator | scheduled backup (Gentian Corp) |
+| **platform key** — the cluster's backup recipients | the tenant and the operator | scheduled backup (Aluvian) |
 
 This is what exists (`BackupKeyChoice`), with one change: a manual export
 defaults to the tenant's own key, not the platform's. Sovereignty means the
@@ -129,11 +129,11 @@ closing that is the first piece of work.
 | **Retire** | OS | cluster admin | remove the manifest; data follows `deletionPolicy` (Retain) | built |
 | **Purge** | OS | cluster admin | set `deletionPolicy: Delete`, wait for the cluster to hold it, remove the manifest → P5 | built 2026-10-02; P5 incomplete |
 | **Offboard** | OS | tenant admin asks, cluster admin confirms | Export to the tenant's key → hand over → Purge → signed deletion record | missing; the sovereign exit |
-| **Backup** | Corp | tenant admin sets it, nobody runs it | P3 on a schedule → a destination → retention | built in OS today; moves (§5) |
-| **Remote backup** | Corp | cluster admin | Backup to an external destination, keys escrowed | partly built in OS today; moves (§5) |
-| **Recovery** | Corp | cluster or tenant admin, one click | pick a bundle → Import (tenant gone) or Restore (tenant present) → verified | missing |
-| **Ingest** | Corp | tenant admin | converter reads M365 / Google Workspace → writes a bundle → Import | missing |
-| **Egress** | Corp | tenant admin | Export → converter pushes the bundle to M365 / Google Workspace | missing |
+| **Backup** | Aluvian | tenant admin sets it, nobody runs it | P3 on a schedule → a destination → retention | built in OS today; moves (§5) |
+| **Remote backup** | Aluvian | cluster admin | Backup to an external destination, keys escrowed | partly built in OS today; moves (§5) |
+| **Recovery** | Aluvian | cluster or tenant admin, one click | pick a bundle → Import (tenant gone) or Restore (tenant present) → verified | missing |
+| **Ingest** | Aluvian | tenant admin | converter reads M365 / Google Workspace → writes a bundle → Import | missing |
+| **Egress** | Aluvian | tenant admin | Export → converter pushes the bundle to M365 / Google Workspace | missing |
 
 Import is Create plus Restore; Recovery is Import or Restore chosen by whether
 the tenant exists; Backup is Export on a timer; Offboard is Export plus Purge;
@@ -224,17 +224,17 @@ export to a key the tenant supplies → hand the bundle over → purge with
 `keepBundles: false` → deletion record. Each step is one of the above; the flow
 only sequences them and refuses to purge before the export is Ready.
 
-## 5. What is Gentian OS and what is Gentian Corp
+## 5. What is Gentian OS and what is Aluvian
 
 Everything a tenant needs to **own** their data is in gentian-os. Everything
-that makes owning it **convenient and reliable** is Gentian Corp's: delivered
+that makes owning it **convenient and reliable** is Aluvian's: delivered
 as catalogue entries under its own license, bringing its own profiles, its own
 controller and its own AppProject as every add-on does. The Admin Console
 points at them and builds its default workflows around them. What it never
 does is make them mandatory — every promise in §1 holds with nothing but
 Gentian OS installed.
 
-| | Gentian OS (FOSS) | Gentian Corp |
+| | Gentian OS (FOSS) | Aluvian |
 |---|---|---|
 | Bundle format, schema, encryption | normative here | consumes and produces |
 | Export now, to the browser, to the tenant's key | ✓ | |
@@ -251,20 +251,20 @@ exist in gentian-os today and are the scheduling layer; they move to the
 Operations Console's component (§5.1). What stays is the primitive they
 schedule (`TenantExport`) and the director's routes that write a committed
 backup policy for a tenant — the director is the only writer of git (AD-2),
-so a Corp console sets a policy the same way the Admin Console sets anything:
-by asking the director. A cluster without the Corp component installed holds
+so an Aluvian console sets a policy the same way the Admin Console sets anything:
+by asking the director. A cluster without the Aluvian component installed holds
 the policy file and nothing acts on it; that is the OS on its own, precisely.
 
 **The 2026-09-22 backup split** recorded in work-packages WP-9 drew the line
 one step further towards gentian-os: it kept "local backup" — scheduling to
 the cluster's own storage — and `BackupPolicy` on the free side, and moved
 only remote targets, escrow, cross-tenant retention, drills, DR and migration
-to a GTC component. This document supersedes it: the line is at *scheduling*,
+to an Aluvian component. This document supersedes it: the line is at *scheduling*,
 not at *where the bundle goes*. WP-9's entry is updated to point here.
 
 ### 5.1 The Operations Console
 
-A Gentian Corp app, built from the same template as the Admin Console and
+An Aluvian app, built from the same template as the Admin Console and
 installed the same way — a component per tenant from its own profile
 (AD-10), with its platform-tenant instance carrying the cluster-scope
 screens. Where the Admin Console is the place a tenant *controls* its
@@ -497,7 +497,7 @@ the promotion; the installer learns the switch.
 (§4.3) exist end to end: director routes, operator verbs, the console's
 Download link and Import card, `kubectl gentian tenants import`. Step 0
 materialises the default profiles into `clusters/<id>/catalogue/`
-(`GENTIAN_DEFAULT_PROFILES`, §5.4). The Corp side publishes its chart and
+(`GENTIAN_DEFAULT_PROFILES`, §5.4). The Aluvian side publishes its chart and
 builds its catalogue source.
 
 **M2b — still to do**, in this order: inventory parity for the remaining
@@ -528,7 +528,7 @@ the deletion record and the offboard flow; canonical forms.
    the Admin Console's Backup tab keeps export and download and promotes the
    Operations Console for the rest.
 
-Gentian Corp — the Operations Console with backups, destinations, recovery,
+Aluvian — the Operations Console with backups, destinations, recovery,
 drills, then ingest and egress — starts after 2, 6 and 7, since those are its
 contract and its code.
 

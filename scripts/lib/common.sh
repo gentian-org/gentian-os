@@ -441,7 +441,7 @@ SCRIPT_DIR="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 # without needing to know where it went.
 OPENBAO_INIT_FILE="${OPENBAO_INIT_FILE:-${HOME}/.gentian/openbao-init.json}"
 INSTALL_CLUSTER_INFRA="${INSTALL_CLUSTER_INFRA:-1}"
-# A vanilla installation comes with the Gentian Corp extensions -- the
+# A vanilla installation comes with the Aluvian extensions -- the
 # Operations Console and the API-extension grant its service needs. 1 leaves
 # them out of the scaffold; the OS installs and runs the same either way.
 GENTIAN_DISABLE_API_EXTENSIONS="${GENTIAN_DISABLE_API_EXTENSIONS:-0}"

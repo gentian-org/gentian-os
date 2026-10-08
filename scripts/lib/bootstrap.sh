@@ -1523,7 +1523,7 @@ _claim_cluster_fields() {
     # access. A cluster with no source still works: it materialises nothing on
     # reference, and its profiles arrive with the kernel.
     _claim_catalogue_section
-    # The Gentian Corp extensions. Recorded here even while nothing reads it,
+    # The Aluvian extensions. Recorded here even while nothing reads it,
     # so the choice an installer made is in git beside everything else it
     # chose; the grant and the service entries follow when the catalogue
     # serves them (sovereignty-concept.md §5.2, §5.4).
@@ -1658,12 +1658,12 @@ _claim_catalogue_section() {
     printf '    # The base address of the App Store API: where the App Store app on\n'
     printf '    # this cluster reads what is on offer and what a tenant has acquired.\n'
     if [[ "$(gentian_licence_report_enabled)" == "true" ]]; then
-        printf '    storeUrl: %s\n' "${GENTIAN_STORE_URL:-https://store.sovrence.com}"
+        printf '    storeUrl: %s\n' "${GENTIAN_STORE_URL:-https://store.aluvian.io}"
     else
         printf '    #\n'
         printf '    # Not named here: the App Store needs licence reporting, which is\n'
         printf '    # turned off on this cluster (--no-licence-report).\n'
-        printf '    # storeUrl: %s\n' "${GENTIAN_STORE_URL:-https://store.sovrence.com}"
+        printf '    # storeUrl: %s\n' "${GENTIAN_STORE_URL:-https://store.aluvian.io}"
     fi
     printf '    sources:\n'
     printf '      - name: gentian\n'
@@ -2490,7 +2490,7 @@ print_roles_summary() {
     fi
 }
 
-# _scaffold_default_profiles <cluster> -- the Gentian Corp entries a vanilla
+# _scaffold_default_profiles <cluster> -- the Aluvian entries a vanilla
 # installation comes with, written as materialised profiles.
 #
 # GENTIAN_DEFAULT_PROFILES lists them: local files or https URLs, comma
