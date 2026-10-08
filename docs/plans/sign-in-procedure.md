@@ -49,7 +49,7 @@ Three short answers, each explained later:
 | Word | Meaning |
 | --- | --- |
 | **Tenant** | One organisation on the cluster, with its own people, apps and addresses. |
-| **Desktop** | The page a person lands on after signing in. It shows a tile for each thing they may open. Each tenant has its own, at `console.<tenant's domain>`. |
+| **Desktop** | The page a person lands on after signing in. It shows a tile for each thing they may open. Each tenant has its own, at `desktop.<tenant's domain>`. |
 | **Tile** | One entry on the desktop. A click opens an address. |
 | **Frame** | A page shown inside another page. The desktop opens an app in a frame, so the app appears as a window on the desktop. |
 | **Identity provider** | The program that holds the accounts and passwords and vouches for who somebody is. Here it is Keycloak, at `id.<cluster's domain>`. |
@@ -62,7 +62,7 @@ Three short answers, each explained later:
 | **Front door** | The two programs every request passes before it reaches an app: the Gateway and the bouncer. Section 2. |
 | **Component profile** | The file that describes an app to the platform: what to install, what it needs, which addresses it serves, which tile it shows. The *catalogue* is the collection of these files. |
 | **Back-channel logout** | Keycloak tells an app, server to server, that a person's session has ended, so the app can end its own. |
-| **Same site** | Two addresses are on the same site when they share the registrable domain: the part a person buys, such as `example.org`. `console.acme.example.org` and `files.acme.example.org` are on the same site. `console.acme.com` and `id.example.org` are not. Browsers treat cookies differently across sites. |
+| **Same site** | Two addresses are on the same site when they share the registrable domain: the part a person buys, such as `example.org`. `desktop.acme.example.org` and `files.acme.example.org` are on the same site. `desktop.acme.com` and `id.example.org` are not. Browsers treat cookies differently across sites. |
 
 ## 2. The front door, which every case shares
 
@@ -254,10 +254,10 @@ time when the app starts its own sign-in (section 5). Both trips are silent
 only if the browser sends Keycloak's cookie from inside the frame.
 
 - **Tenant under the cluster's domain.** The desktop is
-  `console.acme.example.org`, the app is `files.acme.example.org`, Keycloak
+  `desktop.acme.example.org`, the app is `files.acme.example.org`, Keycloak
   is `id.example.org`. All three are on the same site. Every browser sends
   the cookie. This works.
-- **Tenant on its own domain.** The desktop is `console.acme.com`, the app
+- **Tenant on its own domain.** The desktop is `desktop.acme.com`, the app
   is `files.acme.com`, Keycloak is still `id.example.org`. Inside the frame,
   Keycloak is now a *third party*: a site other than the one in the address
   bar. Browsers restrict cookies for third parties, to stop tracking across

@@ -337,14 +337,14 @@ func TestTheInvitationNamesTheZonesOwnClient(t *testing.T) {
 // about a redirect URI list.
 func TestTheInvitationLandsWhereTheZoneClientSays(t *testing.T) {
 	f := newFakeIdentity("demo")
-	f.landing = "https://console.demo.example.test/"
+	f.landing = "https://desktop.demo.example.test/"
 	h := startWithIdentity(t, f)
 
 	if status, _ := h.do(t, http.MethodPost, "/v1/tenants/demo/actions/invite-person",
 		h.token(t, "tenant-demo", "tom"), `{"email":"ada@example.com"}`); status != http.StatusAccepted {
 		t.Fatalf("invite: %d", status)
 	}
-	if f.lastInvite.RedirectURI != "https://console.demo.example.test/" {
+	if f.lastInvite.RedirectURI != "https://desktop.demo.example.test/" {
 		t.Fatalf("redirect = %q", f.lastInvite.RedirectURI)
 	}
 }

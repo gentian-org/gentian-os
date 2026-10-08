@@ -74,7 +74,7 @@ func TestIngressWritesNoDNSRecords(t *testing.T) {
 	ing, fake := newFakeTunnel()
 	ctx := context.Background()
 
-	for _, h := range []string{"id.example.test", "console.example.test"} {
+	for _, h := range []string{"id.example.test", "desktop.example.test"} {
 		if err := ing.EnsureRoute(ctx, h, "http://gw.platform-kernel.svc:80"); err != nil {
 			t.Fatalf("EnsureRoute(%s): %v", h, err)
 		}

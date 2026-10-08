@@ -1059,7 +1059,7 @@ cluster runs in one of two modes, chosen at install:
 | | `multi` | `single` |
 | --- | --- | --- |
 | User tenants | any number | exactly one, named `user` |
-| A user tenant's desktop | `console.<tenant>.<domain>` | `console.<domain>` |
+| A user tenant's desktop | `desktop.<tenant>.<domain>` | `desktop.<domain>` |
 | Its admin console | `admin.<tenant>.<domain>` | `admin.<domain>` |
 | Its apps | `<app>.<tenant>.<domain>` | `<app>.<domain>` |
 | Who administers it | the tenant admin | the user admin |

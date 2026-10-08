@@ -297,16 +297,16 @@ spec:
     implicitFlowEnabled: false
     name: Acme Cloud edge (user zone)
     realmId: user
-    rootUrl: https://console.platform.example.test
+    rootUrl: https://desktop.platform.example.test
     serviceAccountsEnabled: false
     standardFlowEnabled: true
     validPostLogoutRedirectUris:
-    - https://console.platform.example.test/
+    - https://desktop.platform.example.test/
     - https://admin.platform.example.test/
     - https://cloud.platform.example.test/
     validRedirectUris:
-    - https://console.platform.example.test/oauth2/callback
-    - https://console.platform.example.test/
+    - https://desktop.platform.example.test/oauth2/callback
+    - https://desktop.platform.example.test/
     - https://admin.platform.example.test/oauth2/callback
     - https://admin.platform.example.test/
     - https://cloud.platform.example.test/oauth2/callback

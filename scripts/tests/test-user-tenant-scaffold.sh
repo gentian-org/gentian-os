@@ -240,7 +240,7 @@ out="$(run "${CO}" TENANCY_MODE=single -- 'print_roles_summary')"
 expect "single: the platform admin and where" "${out}" "platform admin — in charge of the platform"
 expect "single: the platform admin's address" "${out}" "https://platform.k.example/"
 expect "single: the user admin and what of" "${out}" "user admin — in charge of the users and the user tenant"
-expect "single: the user admin's address and login" "${out}" "https://console.k.example/      user-admin@k.example"
+expect "single: the user admin's address and login" "${out}" "https://desktop.k.example/      user-admin@k.example"
 expect "single: no tenant admin, and nothing about creating tenants" "${out}" "single-tenancy cluster" "tenants create <name>"
 new_checkout "${CO}"
 # shellcheck disable=SC2016

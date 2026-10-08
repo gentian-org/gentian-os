@@ -64,7 +64,7 @@ func ensureKernelGatewayTunnelIngress(
 		}
 	}
 	// A component's exposures are routes in its tenant's namespace, the
-	// desktop's console among them; they are published the same way.
+	// desktop's host among them; they are published the same way.
 	componentRoutes, err := componentRouteTableEntries(ctx, c)
 	if err != nil {
 		return fmt.Errorf("list component routes for kernel tunnel ingress: %w", err)

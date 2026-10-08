@@ -27,7 +27,7 @@ import (
 )
 
 // A zone's Keycloak client admits a redirect only to a host it lists, and the
-// list was written by hand in the tenant Composition: console, admin, and for
+// list was written by hand in the tenant Composition: desktop, admin, and for
 // the kernel realm argocd, headlamp and id. A component whose profile declares
 // any other subDomain got "Invalid parameter: redirect_uri" on an error page
 // that names neither the component nor a redirect URI list. The administration

@@ -323,7 +323,7 @@ spec:
                  general, and until now nothing produced one except a shell Job
                  in the installer, which made the kernel's and no other. This
                  composes it per tenant, so a second tenant signs in at
-                 console.<t>.<kernel> with no installer step having run for it.
+                 desktop.<t>.<kernel> with no installer step having run for it.
 
                  Rendered for a tenant that adopts the kernel realm as well as
                  for one with its own, unlike the realm state above. The kernel
@@ -353,7 +353,7 @@ spec:
                  have to cover. The kernel zone's four were read off the Job
                  this replaces rather than reconstructed from the routes.
 
-                 console and admin are the components every tenant gets: the
+                 desktop and admin are the components every tenant gets: the
                  desktop, and the administration console beside it. Both are
                  ComponentProfiles with defaultForTenants, so both hosts exist
                  in every zone, kernel and tenant alike.
@@ -375,10 +375,10 @@ spec:
                  not components, so nothing projects them and they are named
                  here. Everything else follows the components: the operator
                  writes the labels its routes serve into a ConfigMap per
-                 tenant, and this reads it back. console and admin stay in the
+                 tenant, and this reads it back. desktop and admin stay in the
                  base list so a tenant reconciling before the operator has
                  projected still has a desktop to sign in to. */}}
-            {{- $zoneHosts := list "console" "admin" }}
+            {{- $zoneHosts := list "desktop" "admin" }}
             {{- /* An explicit if, not ternary: Go templates evaluate both of
                  ternary's arms, so indexing an empty list is an error even
                  when the guard is false. The clusterConfig read above has the
@@ -398,11 +398,11 @@ spec:
             {{- /* The labels as host names, which is where the two kinds of
                  zone differ.
 
-                 A tenant's zone: <label>.<zone domain>, console among them.
+                 A tenant's zone: <label>.<zone domain>, desktop among them.
 
                  The platform tenant's zone, the kernel realm's: its desktop is
                  on the zone's domain itself -- platform.<kernel>, not
-                 console.platform.<kernel> -- and every other component one
+                 desktop.platform.<kernel> -- and every other component one
                  label below it, as admin.platform.<kernel>. The operator
                  routes them by the same rule (exposureHostIn). Beside them are
                  the kernel's own consoles, which sign in through this client
@@ -411,7 +411,7 @@ spec:
                  the kernel session. */}}
             {{- $zoneHostNames := list }}
             {{- range $h := $zoneHosts }}
-            {{- if and $adoptsKernelRealm (eq $h "console") }}
+            {{- if and $adoptsKernelRealm (eq $h "desktop") }}
             {{- $zoneHostNames = append $zoneHostNames $zoneDomain }}
             {{- else }}
             {{- $zoneHostNames = append $zoneHostNames (printf "%s.%s" $h $zoneDomain) }}
@@ -423,7 +423,7 @@ spec:
             {{- end }}
             {{- end }}
             {{- /* Where a person lands: the zone's desktop. */}}
-            {{- $zoneDesktop := ternary $zoneDomain (printf "console.%s" $zoneDomain) (not (not $adoptsKernelRealm)) }}
+            {{- $zoneDesktop := ternary $zoneDomain (printf "desktop.%s" $zoneDomain) (not (not $adoptsKernelRealm)) }}
 
             {{- /* The secret exists before the client does, and is generated
                  here rather than minted by Keycloak. A client created with no

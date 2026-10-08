@@ -1,7 +1,7 @@
 # The user tenant of a single-tenancy cluster: its own realm, and the
 # cluster's own domain as its base (spec.domain is what the operator projects
 # from Tenant.EffectiveDomain). Its zone client's redirect URIs are on
-# console.<kernel>, admin.<kernel> and <app>.<kernel>; its administrator is
+# desktop.<kernel>, admin.<kernel> and <app>.<kernel>; its administrator is
 # user-admin@<kernel>, not the kernel realm's admin@<kernel>.
 apiVersion: gentianos.io/v1alpha1
 kind: XTenant

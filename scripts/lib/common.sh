@@ -1529,12 +1529,12 @@ explain_tenancy_mode() {
     _decided "the platform admin signs in at platform.${domain} (admin console: admin.platform.${domain})."
     if [[ "${TENANCY_MODE:-multi}" == "single" ]]; then
         _decided "single: the platform tenant plus exactly one user tenant, named user."
-        _decided "  Its desktop is console.${domain}, its admin console admin.${domain}, its apps"
+        _decided "  Its desktop is desktop.${domain}, its admin console admin.${domain}, its apps"
         _decided "  <app>.${domain}; ${domain} itself leads to the desktop. The install creates it"
         _decided "  after the handover and hands its administrator -- the user admin -- a link."
     else
         _decided "multi: the platform tenant plus any number of user tenants, each at"
-        _decided "  console.<tenant>.${domain}; ${domain} asks for an e-mail address. The install"
+        _decided "  desktop.<tenant>.${domain}; ${domain} asks for an e-mail address. The install"
         _decided "  creates none: the platform admin does, in the admin console or with"
         _decided "  kubectl gentian tenants create."
     fi

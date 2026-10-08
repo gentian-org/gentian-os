@@ -572,11 +572,11 @@ func TestACallWithNoRequestIdSendsNoHeader(t *testing.T) {
 func TestZoneLandingReadsTheClientsRoot(t *testing.T) {
 	t.Parallel()
 	f, srv := newFake(t)
-	f.clients["demo"] = []clientRep{{ClientID: "gentian-edge-demo", RootURL: "https://console.demo.example.test"}}
+	f.clients["demo"] = []clientRep{{ClientID: "gentian-edge-demo", RootURL: "https://desktop.demo.example.test"}}
 	c := clientFor(t, srv, StaticSource{"demo": {Realm: "demo", ClientID: "a", ClientSecret: "s"}})
 	r, _ := c.Realm("demo")
 
-	if got := c.ZoneLanding(context.Background(), r, "gentian-edge-demo"); got != "https://console.demo.example.test/" {
+	if got := c.ZoneLanding(context.Background(), r, "gentian-edge-demo"); got != "https://desktop.demo.example.test/" {
 		t.Fatalf("landing = %q", got)
 	}
 	// A client that states no root yields nothing, and an invitation then

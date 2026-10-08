@@ -41,9 +41,9 @@ const (
 	kernelRouteHeadlamp        = "kernel-headlamp"
 	// The name people type: an alias of the bare domain, by redirect.
 	kernelRouteWWWRedirect = "kernel-www-redirect"
-	// console.<kernel> on a multi-tenancy cluster: nobody's desktop there,
+	// desktop.<kernel> on a multi-tenancy cluster: nobody's desktop there,
 	// and sent to the bare domain like www.
-	kernelRouteConsoleRedirect = "kernel-console-redirect"
+	kernelRouteDesktopRedirect = "kernel-desktop-redirect"
 	// The bare domain on a single-tenancy cluster: its front page is sent to
 	// the user tenant's desktop. Two routes, for the two listeners the bare
 	// domain can be on: the perimeter's exact one while the concierge is
@@ -52,14 +52,14 @@ const (
 	kernelRouteApexPerimeterRedirect = "kernel-apex-perimeter-redirect"
 	kernelRouteLiteLLM               = "kernel-llm"
 
-	// consoleSubdomain is the desktop's host label in a tenant's zone
-	// (networking.md §3): console.<t>.<kernel> for a tenant, console.<kernel>
+	// desktopSubdomain is the desktop's host label in a tenant's zone
+	// (networking.md §3): desktop.<t>.<kernel> for a tenant, desktop.<kernel>
 	// for the user tenant of a single-tenancy cluster. The desktop profile
 	// exposes it under this name, and every redirect and frame policy here
 	// assumes it. The platform tenant's desktop is the one exception: the
 	// same entry answers on the zone's own name, platform.<kernel>
 	// (exposureHostIn).
-	consoleSubdomain = "console"
+	desktopSubdomain = "desktop"
 
 	argocdServerServiceName = "argocd-server"
 	headlampServiceName     = "headlamp"
@@ -212,18 +212,18 @@ func (r *GatewayPlatformReconciler) mainAddressWebsiteServing(ctx context.Contex
 
 // desktopPresent reports whether this cluster ships a desktop at all: the
 // profile the operator chart installs (ui-restructure.md §1). Without it
-// there is no console anywhere, and nothing is redirected to one.
+// there is no desktop anywhere, and nothing is redirected to one.
 func desktopPresent(ctx context.Context, c client.Reader) bool {
 	profile := &gentianov1alpha1.ComponentProfile{}
 	return c.Get(ctx, client.ObjectKey{Name: DesktopProfileName}, profile) == nil
 }
 
-// consoleHost is where a tenant's desktop answers, console.<zone>
+// desktopHost is where a tenant's desktop answers, desktop.<zone>
 // (networking.md §3): the name the desktop profile exposes and the
 // component reconciler routes. Not the platform tenant's, which is
 // platformDesktopHost.
-func consoleHost(zoneDomain string) string {
-	return consoleSubdomain + "." + zoneDomain
+func desktopHost(zoneDomain string) string {
+	return desktopSubdomain + "." + zoneDomain
 }
 
 // zonedTenantDomains are the tenants with a domain of their own -- one that
@@ -251,12 +251,12 @@ func zonedTenantDomains(tenants []gentianov1alpha1.Tenant, kernelDomain, tenancy
 //	multi   <kernel>          the concierge's address form (the platform
 //	                          tenant publishes it; not routed here)
 //	        www.<kernel>      -> <kernel>
-//	        console.<kernel>  -> <kernel>
+//	        desktop.<kernel>  -> <kernel>
 //	single  <kernel>/         -> the user tenant's desktop
 //	        <kernel>/branding  still the concierge's: the cluster's brand,
 //	                          which every desktop loads from the bare domain
 //	        www.<kernel>      -> the user tenant's desktop
-//	        console.<kernel>  the user tenant's desktop itself (its component)
+//	        desktop.<kernel>  the user tenant's desktop itself (its component)
 //
 // And on a single-tenancy cluster whose user tenant has a website on the
 // main address (main_address.go), once that website's proxy is up:
@@ -268,7 +268,7 @@ func zonedTenantDomains(tenants []gentianov1alpha1.Tenant, kernelDomain, tenancy
 type kernelFrontDoor struct {
 	single bool
 	// userDesktop is the user tenant's desktop on a single-tenancy cluster:
-	// console.<kernel>, or console.<its custom domain> when a TenantDomain
+	// desktop.<kernel>, or desktop.<its custom domain> when a TenantDomain
 	// binds one. Empty until that tenant is Ready, and the bare domain is the
 	// concierge's form until then: before that the desktop does not answer,
 	// and a browser sent to a name that is not published yet remembers that
@@ -295,7 +295,7 @@ func kernelFrontDoorOf(tenants []gentianov1alpha1.Tenant, kernelDomain, kernelRe
 			continue
 		}
 		if domain := t.EffectiveDomain(kernelDomain, tenancyMode); domain != "" {
-			door.userDesktop = consoleHost(domain)
+			door.userDesktop = desktopHost(domain)
 		}
 	}
 	return door
@@ -402,7 +402,7 @@ func kernelHTTPRouteSpecs(
 		})
 	}
 	// The desktop is the tenant's own component, routed where it runs
-	// (tenant-<t>): console.<zone> for a tenant, platform.<kernel> for the
+	// (tenant-<t>): desktop.<zone> for a tenant, platform.<kernel> for the
 	// platform tenant.
 	//
 	// The cluster's bare domain is the first thing anybody typing the
@@ -412,14 +412,14 @@ func kernelHTTPRouteSpecs(
 	// Multi-tenancy: it is a perimeter surface -- the concierge, a component
 	// of the platform tenant, published from that tenant's DMZ on a listener
 	// of the perimeter Gateway (networking.md §1) -- and is not routed here at
-	// all. www.<kernel> and console.<kernel> are the other names people type,
-	// and both are sent to it. console.<kernel> was the platform's desktop
-	// before that moved to platform.<kernel>; it is nobody's desktop now, and
-	// a bookmark of it lands on the form that asks who is asking.
+	// all. www.<kernel> and desktop.<kernel> are the other names people type,
+	// and both are sent to it. desktop.<kernel> is nobody's desktop there: it
+	// is a tenant's desktop address with the tenant left out, and it lands
+	// on the form that asks who is asking.
 	//
 	// Single-tenancy: there is one user tenant and so nothing to ask. The
 	// bare domain's front page and www are sent to its desktop, once it is
-	// Ready, and console.<kernel> is that desktop -- routed by the tenant's
+	// Ready, and desktop.<kernel> is that desktop -- routed by the tenant's
 	// component, so it is not claimed here. The concierge stays published on
 	// the bare domain underneath, because the cluster's brand is served from
 	// there (/branding/) to every desktop; only the paths a person lands on,
@@ -442,15 +442,15 @@ func kernelHTTPRouteSpecs(
 		name:        kernelRouteWWWRedirect,
 		host:        "www." + kernelDomain,
 		sectionName: wildcardListenerName,
-		rules:       []gatewayv1.HTTPRouteRule{consoleRedirectRule(frontDoor)},
+		rules:       []gatewayv1.HTTPRouteRule{hostRedirectRule(frontDoor)},
 	})
 	switch {
 	case !door.single:
 		specs = append(specs, kernelHTTPRouteSpec{
-			name:        kernelRouteConsoleRedirect,
-			host:        consoleHost(kernelDomain),
+			name:        kernelRouteDesktopRedirect,
+			host:        desktopHost(kernelDomain),
 			sectionName: wildcardListenerName,
-			rules:       []gatewayv1.HTTPRouteRule{consoleRedirectRule(kernelDomain)},
+			rules:       []gatewayv1.HTTPRouteRule{hostRedirectRule(kernelDomain)},
 		})
 	case door.userDesktop != "":
 		specs = append(specs,
@@ -470,7 +470,7 @@ func kernelHTTPRouteSpecs(
 				rules:       []gatewayv1.HTTPRouteRule{bareDomainRule(door.userDesktop)},
 			})
 	}
-	// A tenant's apex likewise sends the browser to the tenant's own console.
+	// A tenant's apex likewise sends the browser to the tenant's own desktop.
 	// The apex is published with the tenant either way (it is the tenant's
 	// name), so the redirect is what makes it answer. Not the platform
 	// tenant's: platform.<kernel> is its desktop, not a name beside it.
@@ -486,7 +486,7 @@ func kernelHTTPRouteSpecs(
 				name:        fmt.Sprintf("tenant-%s-apex", tenantNames[i]),
 				host:        domain,
 				sectionName: wildcardListenerName,
-				rules:       []gatewayv1.HTTPRouteRule{consoleRedirectRule(consoleHost(domain))},
+				rules:       []gatewayv1.HTTPRouteRule{hostRedirectRule(desktopHost(domain))},
 			})
 		}
 	}
@@ -738,16 +738,16 @@ func kernelHTTPSRedirectRule() gatewayv1.HTTPRouteRule {
 	}
 }
 
-// consoleRedirectRule sends every request on a host to the console, keeping
+// hostRedirectRule sends every request on a host to another host, keeping
 // path and query: a redirect that replaced them dropped whatever travelled on
 // the request, which is why the portal used to be served on these names
 // rather than redirected. Nothing travels on them now -- the session is in
 // cookies on the zone's domain -- so an alias by redirect loses nothing.
-func consoleRedirectRule(console string) gatewayv1.HTTPRouteRule {
+func hostRedirectRule(target string) gatewayv1.HTTPRouteRule {
 	scheme := "https"
 	status := 302
 	port := gatewayv1.PortNumber(443)
-	host := gatewayv1.PreciseHostname(console)
+	host := gatewayv1.PreciseHostname(target)
 	return gatewayv1.HTTPRouteRule{
 		Matches: []gatewayv1.HTTPRouteMatch{pathPrefixMatch("/")},
 		Filters: []gatewayv1.HTTPRouteFilter{

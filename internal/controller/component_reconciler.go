@@ -739,7 +739,7 @@ type zoneNames struct {
 	domain string
 	// kernel marks the platform tenant's zone, whose session is the kernel
 	// realm's. Its desktop answers on the zone's domain itself --
-	// platform.<kernel>, not console.platform.<kernel> -- and everything else
+	// platform.<kernel>, not desktop.platform.<kernel> -- and everything else
 	// of it one label below, as admin.platform.<kernel>.
 	kernel bool
 	// apex is where an apex entry answers: the cluster's bare domain, for the
@@ -1182,7 +1182,7 @@ func exposureHost(zone edgeZone, comp *gentianov1alpha1.Component, e *gentianov1
 //
 // The desktop's, in the platform tenant's zone, answers on the zone's domain
 // itself: platform.<kernel> is the platform administrator's desktop, and
-// console.<kernel> is not the platform's at all -- it is the user tenant's
+// desktop.<kernel> is not the platform's at all -- it is the user tenant's
 // desktop on a single-tenancy cluster and an alias of the bare domain on a
 // multi-tenancy one.
 //
@@ -1201,7 +1201,7 @@ func exposureHostIn(zone zoneNames, component string, e *gentianov1alpha1.Exposu
 	if sub == "" {
 		sub = component
 	}
-	if zone.kernel && sub == consoleSubdomain {
+	if zone.kernel && sub == desktopSubdomain {
 		return zone.domain
 	}
 	return sub + "." + zone.domain
@@ -1269,7 +1269,7 @@ func tenantTileAsks(profile *gentianov1alpha1.ComponentProfile, relation string)
 }
 
 // zoneDesktopHost is where a zone's desktop answers: the zone's own domain
-// for the platform tenant, console.<domain> for every other.
+// for the platform tenant, desktop.<domain> for every other.
 func zoneDesktopHost(zone zoneNames) string {
 	if zone.domain == "" {
 		return ""
@@ -1277,7 +1277,7 @@ func zoneDesktopHost(zone zoneNames) string {
 	if zone.kernel {
 		return zone.domain
 	}
-	return consoleHost(zone.domain)
+	return desktopHost(zone.domain)
 }
 
 // componentFramers are the hosts that may put one of a component's pages in a

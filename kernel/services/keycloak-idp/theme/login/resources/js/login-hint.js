@@ -1,7 +1,7 @@
 /* The address the concierge was given, filled in for the person.
  *
- * The router sends the browser to the workspace's console with the address on
- * it as ?login_hint=. The console is behind the edge, which starts the
+ * The router sends the browser to the workspace's desktop with the address on
+ * it as ?login_hint=. The desktop is behind the edge, which starts the
  * sign-in and passes the address it was asked for to this page inside the
  * request's `state` -- so the hint is in this page's own URL, and reading it
  * needs no cookie and nothing stored anywhere.

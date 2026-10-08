@@ -172,8 +172,8 @@ type gatewayFrameAncestorsPolicy struct {
 	Origins string
 }
 
-// consoleOrigins is the desktop an app of one tenant may be framed by: the
-// tenant's own, console.<its domain>, and no other. Not the platform's:
+// desktopOrigins is the desktop an app of one tenant may be framed by: the
+// tenant's own, desktop.<its domain>, and no other. Not the platform's:
 // platform administrators do not open tenants' apps, and a desktop allowed to
 // frame every tenant's pages is one place from which all of them can be
 // overlaid.
@@ -184,17 +184,17 @@ type gatewayFrameAncestorsPolicy struct {
 // lost the origin the user was actually on, and every document open failed
 // with "Failed to load Nextcloud Office" while the server side stayed healthy.
 // A desktop's hostname must reach both policies at once.
-func consoleOrigins(effectiveDomain string) []string {
+func desktopOrigins(effectiveDomain string) []string {
 	// Also when the tenant's domain is the cluster's: the user tenant of a
-	// single-tenancy cluster, whose desktop is console.<kernel>.
+	// single-tenancy cluster, whose desktop is desktop.<kernel>.
 	if effectiveDomain == "" {
 		return nil
 	}
-	return []string{"https://" + consoleHost(effectiveDomain)}
+	return []string{"https://" + desktopHost(effectiveDomain)}
 }
 
 func computeGatewayFrameAncestorsPolicy(kernelDomain, effectiveDomain, _ string) gatewayFrameAncestorsPolicy {
-	origins := consoleOrigins(effectiveDomain)
+	origins := desktopOrigins(effectiveDomain)
 	// Every host under a domain that is the tenant's alone. Not where the
 	// tenant's domain is the cluster's: the platform's desktop and the
 	// kernel's consoles are under that one too.

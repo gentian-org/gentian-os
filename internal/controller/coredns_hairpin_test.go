@@ -67,7 +67,7 @@ func TestPatchHairpinCorefile_InsertsMissingHosts(t *testing.T) {
 	t.Parallel()
 
 	corefile := `# BEGIN gentian-hairpin
-          192.0.2.197 console.platform.example.test
+          192.0.2.197 desktop.platform.example.test
           # END gentian-hairpin`
 
 	patched, changed := patchHairpinCorefile(corefile, "192.0.2.36", "platform.example.test", nil)
@@ -83,7 +83,7 @@ func TestPatchHairpinCorefile_AddsTenantAppHosts(t *testing.T) {
 	t.Parallel()
 
 	corefile := `# BEGIN gentian-hairpin
-          192.0.2.36 console.platform.example.test
+          192.0.2.36 desktop.platform.example.test
           # END gentian-hairpin`
 
 	tenantHosts := map[string]struct{}{
@@ -194,12 +194,12 @@ func TestPatchHairpinCorefile_RetiresHostsNothingWants(t *testing.T) {
 
 	corefile := `# BEGIN gentian-hairpin
           192.0.2.36 platform.example.test
-          192.0.2.36 console.platform.example.test
+          192.0.2.36 desktop.platform.example.test
           192.0.2.36 id.platform.example.test
           192.0.2.36 argocd.platform.example.test
           192.0.2.36 mail.platform.example.test
           198.51.100.7 old.previous.test
-          198.51.100.7 console.previous.test
+          198.51.100.7 desktop.previous.test
           198.51.100.7 mail.previous.test
           # END gentian-hairpin`
 
@@ -207,7 +207,7 @@ func TestPatchHairpinCorefile_RetiresHostsNothingWants(t *testing.T) {
 	if !changed {
 		t.Fatal("expected the stale hosts to be retired")
 	}
-	for _, gone := range []string{"old.previous.test", "console.previous.test", "mail.previous.test"} {
+	for _, gone := range []string{"old.previous.test", "desktop.previous.test", "mail.previous.test"} {
 		if strings.Contains(patched, gone) {
 			t.Errorf("%q survived:\n%s", gone, patched)
 		}
@@ -215,7 +215,7 @@ func TestPatchHairpinCorefile_RetiresHostsNothingWants(t *testing.T) {
 	// What this cluster wants is untouched, the mail host included.
 	for _, kept := range []string{
 		"192.0.2.36 platform.example.test",
-		"192.0.2.36 console.platform.example.test",
+		"192.0.2.36 desktop.platform.example.test",
 		"192.0.2.36 id.platform.example.test",
 		"192.0.2.36 argocd.platform.example.test",
 		"192.0.2.36 mail.platform.example.test",

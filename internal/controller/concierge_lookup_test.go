@@ -24,7 +24,7 @@ import (
 
 // The concierge finds a tenant on a custom domain by the domain's hash
 // and nothing else: a tenant without one adds no entry, and the entry sends
-// the browser to the console on the custom domain.
+// the browser to the desktop on the custom domain.
 func TestTheSignInLookupHoldsOnlyCustomDomainsByTheirHash(t *testing.T) {
 	ctx := context.Background()
 	s := componentDatabaseScheme(t)
@@ -56,7 +56,7 @@ func TestTheSignInLookupHoldsOnlyCustomDomainsByTheirHash(t *testing.T) {
 	if got != want {
 		t.Fatalf("key = %q, want %q", got, want)
 	}
-	if cm.Data[got] != `{"url":"https://console.acme.example/"}` {
+	if cm.Data[got] != `{"url":"https://desktop.acme.example/"}` {
 		t.Fatalf("entry = %q", cm.Data[got])
 	}
 }
@@ -73,7 +73,7 @@ func userTenant(name string, phase gentianov1alpha1.TenantPhase) gentianov1alpha
 // The lookup forwards nobody. Whether the bare domain asks for an address or
 // leads to the one user tenant's desktop is the cluster's tenancy mode, and
 // the edge does it (kernelFrontDoor): however many tenants there are and
-// whatever the mode, no file here names "the one console".
+// whatever the mode, no file here names "the one desktop".
 func TestTheLookupNeverNamesAConsoleToForwardTo(t *testing.T) {
 	ready := gentianov1alpha1.TenantPhaseReady
 	platform := *platformTenantFixture()

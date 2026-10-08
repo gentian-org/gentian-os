@@ -297,15 +297,15 @@ spec:
     implicitFlowEnabled: false
     name: Acme Cloud edge (render-fixture zone)
     realmId: render-fixture
-    rootUrl: https://console.render-fixture.platform.example.test
+    rootUrl: https://desktop.render-fixture.platform.example.test
     serviceAccountsEnabled: false
     standardFlowEnabled: true
     validPostLogoutRedirectUris:
-    - https://console.render-fixture.platform.example.test/
+    - https://desktop.render-fixture.platform.example.test/
     - https://admin.render-fixture.platform.example.test/
     validRedirectUris:
-    - https://console.render-fixture.platform.example.test/oauth2/callback
-    - https://console.render-fixture.platform.example.test/
+    - https://desktop.render-fixture.platform.example.test/oauth2/callback
+    - https://desktop.render-fixture.platform.example.test/
     - https://admin.render-fixture.platform.example.test/oauth2/callback
     - https://admin.render-fixture.platform.example.test/
     webOrigins: []

@@ -2356,7 +2356,7 @@ _cluster_scaffold_paths() {
 # multi: the platform tenant plus any number of user tenants, each created
 # through the director after the install. single: the platform tenant plus
 # exactly one user tenant, always named "user", which lives on the cluster's
-# own addresses -- console.<domain>, admin.<domain>, <app>.<domain>.
+# own addresses -- desktop.<domain>, admin.<domain>, <app>.<domain>.
 #
 # Only under single does the install create a tenant, and it is that one.
 # Step 0 writes its manifest beside the platform tenant's and commits both,
@@ -2471,7 +2471,7 @@ scaffold_user_tenant() {
 # the install.
 #
 # The cluster's users live here, in a realm of their own, on the cluster's
-# own addresses: the desktop at console.<domain>, the administration console
+# own addresses: the desktop at desktop.<domain>, the administration console
 # at admin.<domain>, each app at <app>.<domain>. The platform tenant beside
 # it holds the platform admin and takes no apps; its desktop is at
 # platform.<domain>.
@@ -2534,7 +2534,7 @@ print_roles_summary() {
     echo -e "${GREEN}      A new activation link: ./install.sh --activate-admin${NC}"
     if [[ "$(gentian_tenancy_mode)" == "single" ]]; then
         echo -e "${GREEN}    user admin — in charge of the users and the user tenant:${NC}"
-        echo -e "${GREEN}      https://console.${domain}/      user-admin@${domain}${NC}"
+        echo -e "${GREEN}      https://desktop.${domain}/      user-admin@${domain}${NC}"
         echo -e "${GREEN}      A new activation link: kubectl gentian tenants activate-admin ${USER_TENANT_NAME}${NC}"
         echo -e "${GREEN}    This is a single-tenancy cluster: the user tenant is its one tenant for${NC}"
         echo -e "${GREEN}    users, and https://${domain}/ leads to its desktop.${NC}"
@@ -2552,7 +2552,7 @@ print_roles_summary() {
         echo -e "${GREEN}      kubectl gentian login${NC}"
         echo -e "${GREEN}      kubectl gentian tenants create <name>${NC}"
         echo -e "${GREEN}      kubectl gentian tenants activate-admin <name> [--recovery-email <address>]${NC}"
-        echo -e "${GREEN}    A tenant's desktop is https://console.<name>.${domain}/, and https://${domain}/${NC}"
+        echo -e "${GREEN}    A tenant's desktop is https://desktop.<name>.${domain}/, and https://${domain}/${NC}"
         echo -e "${GREEN}    asks for an e-mail address and sends each person to theirs.${NC}"
     fi
 }

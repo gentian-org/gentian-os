@@ -213,10 +213,10 @@ is in both and is never counted.
 |---|---|---|
 | Tenants for users | any number, created after the install by the platform admin | exactly one, named `user`, created by the install after the handover; any other is refused |
 | **Platform admin** — in charge of the platform | `https://platform.<kernel-domain>/` as `admin@<kernel-domain>`, kernel realm; admin console `admin.platform.<kernel-domain>` | the same |
-| In charge of a tenant and its users | a **tenant admin** per tenant: `https://console.<tenant>.<kernel-domain>/` as `admin@<tenant>.<kernel-domain>`, the tenant's realm | the **user admin**: `https://console.<kernel-domain>/` as `user-admin@<kernel-domain>`, realm `user` |
+| In charge of a tenant and its users | a **tenant admin** per tenant: `https://desktop.<tenant>.<kernel-domain>/` as `admin@<tenant>.<kernel-domain>`, the tenant's realm | the **user admin**: `https://desktop.<kernel-domain>/` as `user-admin@<kernel-domain>`, realm `user` |
 | A tenant's admin console and apps | `admin.<tenant>.<kernel-domain>`, `<app>.<tenant>.<kernel-domain>` | `admin.<kernel-domain>`, `<app>.<kernel-domain>` |
 | `https://<kernel-domain>/`, `www.` | the page that asks for an e-mail address | the user tenant's desktop |
-| `console.<kernel-domain>` | redirects to the bare domain | the user tenant's desktop |
+| `desktop.<kernel-domain>` | redirects to the bare domain | the user tenant's desktop |
 | Identity provider | `id.<kernel-domain>` | the same |
 | Account handed over by | platform admin: the handover's activation link, `./install.sh --activate-admin` for a new one. Tenant admin: the admin console, or `kubectl gentian tenants activate-admin <tenant>` | platform admin: the same. User admin: `E-04`'s activation link, `kubectl gentian tenants activate-admin user` for a new one |
 

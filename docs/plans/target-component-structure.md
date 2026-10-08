@@ -21,7 +21,7 @@ tiers: `kernel | system | system-dmz | shared | tenant | tenant-dmz`. This
 document covers the last five.
 
 A consequence for S7A.15: of the five hosts in the tenant Composition's
-`$zoneHosts` list, `console` and `admin` are components and `argocd`,
+`$zoneHosts` list, `desktop` and `admin` are components and `argocd`,
 `headlamp` and `id` are kernel tier. Deriving the list from components covers
 two of the five. The other three need a separate answer.
 

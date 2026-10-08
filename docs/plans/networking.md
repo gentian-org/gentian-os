@@ -83,7 +83,7 @@ flowchart TB
     end
 
     subgraph TPLAT["tenant-platform — the platform is a tenant (AD-10)"]
-        CON["platform desktop BFF<br/>console.&lt;kernel&gt;, kernel-realm session"]
+        CON["platform desktop BFF<br/>platform.&lt;kernel&gt;, kernel-realm session"]
     end
 
     subgraph SHR["shared-&lt;app&gt;"]
@@ -285,7 +285,7 @@ server's policy and nowhere else by anything.
 | Tenant desktop | `desktop.<t>.<kernel>` or vanity | `oidc` | tenant-realm session | `can_enter` on `tenant:<t>` — members and admins both reach the desktop; which tiles they see is `can_launch` per app, answered by the director | desktop BFF in `tenant-<t>` |
 | Shared app | `<app>.<t>.<kernel>` per granted tenant | `oidc` | tenant-realm session | `can_use` via the tenant's grant | instance in `shared-<app>` |
 | Platform desktop | `platform.<kernel>`; the platform's admin console at `admin.platform.<kernel>` | `oidc` | **kernel**-realm session | `can_enter` on `tenant:platform` | desktop BFF in `tenant-platform` (AD-10) — a tenant desktop whose realm is the kernel realm. `admin.platform.<kernel>` is served on a listener for `*.platform.<kernel>` with a wildcard of its own, issued like a tenant's |
-| Single-tenancy cluster: the user tenant | `console.<kernel>`, `admin.<kernel>`, `<app>.<kernel>` | `oidc` | session in realm `user` | as a tenant's | components in `tenant-user`, on the catch-all listener and the cluster's own certificate. The kernel's own labels at that level are refused to it (`HostReserved`) |
+| Single-tenancy cluster: the user tenant | `desktop.<kernel>`, `admin.<kernel>`, `<app>.<kernel>` | `oidc` | session in realm `user` | as a tenant's | components in `tenant-user`, on the catch-all listener and the cluster's own certificate. The kernel's own labels at that level are refused to it (`HostReserved`) |
 | Director API | `api.<kernel>` | `bearer` | JWT, any realm; the director verifies again | its own OpenFGA check | director |
 | Kernel UI | `argocd.<kernel>`, `headlamp.<kernel>`, Keycloak `/auth/admin/*` on `id.<kernel>` | `oidc` | **kernel**-realm session | `can_configure`, or `can_audit` for read-only tools | the tool in its `kernel-*` namespace. "Hidden" means behind a session with a platform role, not an internal hostname: the tool's own login is the second factor, not the first |
 | Identity provider | `id.<kernel>` | `none` — it *is* the issuer; a kernel-owned perimeter surface on the `perimeter` Gateway with a **path allowlist**: `/realms/<r>/protocol/openid-connect/*`, `/realms/<r>/login-actions/*`, theme assets. `/admin/*`, the `master` realm, metrics and health are served on an internal hostname only (roadmap 1.6) | — | — | Keycloak in `kernel-authentication`; brute-force detection per realm, per-IP and per-username rate limits, body limits at L0 **Except `/auth/admin/*`**, which is the same hostname behind the kernel-realm session and `can_configure` — see below. |
@@ -406,7 +406,7 @@ design cannot do for it.
 | **Inbound webhook** (payment provider, git host) | a perimeter path with `authMode: signature`; the proxy verifies the HMAC before the app sees the body | the proxy, then the app | replay protection is the app's unless the proxy keeps nonces |
 | **Automation or agent calling an app API** | `authMode: bearer` on the authenticated edge: JWT verified, no redirect; ext-auth `can_use`; the token is an exchanged one carrying `act` | L2 for reach, L4 for the ceiling | none new |
 | **Agent using tools over MCP** | the MCP gateway, itself an authenticated-edge route with `bearer` | L4 per tool call | none new |
-| **Someone types the cluster's bare domain** | Multi-tenancy: `<kernel>` → the concierge, a perimeter surface of the platform tenant (`tenant-platform-dmz`, `authMode: none`), which asks for an address and forwards to that address's desktop; `www.<kernel>` and `console.<kernel>` redirect to it. Single-tenancy: the edge redirects `<kernel>/` and `www.<kernel>` to the user tenant's desktop, `console.<kernel>` (or its custom domain), once that tenant is Ready; the concierge stays published underneath for `/branding/`. If the user tenant put a website on the main address (§8.7), the bare domain shows it, `www` leads to it, and `<kernel>/sign-in` still leads to the desktop | nobody: neither the page nor the redirect holds a session or asks the server anything | which of the two it is is the cluster's tenancy mode, not a count of tenants; before the user tenant of a single-tenancy cluster is Ready the bare domain shows the form |
+| **Someone types the cluster's bare domain** | Multi-tenancy: `<kernel>` → the concierge, a perimeter surface of the platform tenant (`tenant-platform-dmz`, `authMode: none`), which asks for an address and forwards to that address's desktop; `www.<kernel>` and `desktop.<kernel>` redirect to it. Single-tenancy: the edge redirects `<kernel>/` and `www.<kernel>` to the user tenant's desktop, `desktop.<kernel>` (or its custom domain), once that tenant is Ready; the concierge stays published underneath for `/branding/`. If the user tenant put a website on the main address (§8.7), the bare domain shows it, `www` leads to it, and `<kernel>/sign-in` still leads to the desktop | nobody: neither the page nor the redirect holds a session or asks the server anything | which of the two it is is the cluster's tenancy mode, not a count of tenants; before the user tenant of a single-tenancy cluster is Ready the bare domain shows the form |
 | **Tenant admin in the console** | `desktop.<t>.<kernel>` → desktop BFF → director with the user's token | L1 the session, the director its own check | the BFF is a relay; it decides nothing |
 | **Platform admin** | `platform.<kernel>` → the platform tenant's desktop BFF in `tenant-platform`, kernel-realm session; writes through the director | same | kernel and tenant realms are different sessions by design; a platform admin acting inside a tenant does so through the director, never through that tenant's zone |
 | **App-to-app inside a tenant** (Nextcloud ↔ Collabora, OpenProject ↔ Nextcloud) | never through the edge: Service-to-Service under NetworkPolicy from `integrations`, credentials from the binding | L5 and the binding | none |
@@ -702,7 +702,7 @@ website's server receives none, and it cannot set any through its answers.
 
 One thing remains, and the proxy cannot stop it. A script running in a page
 on `<kernel>` can set a cookie for the whole domain (`Domain=<kernel>`). The
-browser then sends that cookie to `console.`, `admin.`, `platform.` and
+browser then sends that cookie to `desktop.`, `admin.`, `platform.` and
 `id.<kernel>` too, next to the real one. The Gateway reads the first cookie
 of a name it finds (Envoy 1.39's OAuth2 filter). What follows from that:
 

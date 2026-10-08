@@ -15,7 +15,7 @@ import "testing"
 func TestUpsertTunnelIngress(t *testing.T) {
 	t.Parallel()
 	rules := []cfTunnelIngressRule{
-		{Hostname: "console.example.com", Service: "https://envoy:443"},
+		{Hostname: "desktop.example.com", Service: "https://envoy:443"},
 		{Service: "http_status:404"},
 	}
 	got := upsertTunnelIngress(rules, tunnelIngressRuleForService("*.demo.example.com", "https://envoy:443"))

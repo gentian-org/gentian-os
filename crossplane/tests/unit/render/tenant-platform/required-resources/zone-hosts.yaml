@@ -7,7 +7,7 @@
 # page naming neither the component nor a list. "wiki" here is that component:
 # it is in no hand-written list anywhere and must still reach the client.
 #
-# console and admin repeat what the base list already has, which is what the
+# desktop and admin repeat what the base list already has, which is what the
 # projection really looks like, and proves the union does not double them.
 apiVersion: v1
 kind: ConfigMap
@@ -20,5 +20,5 @@ metadata:
 data:
   hosts: |
     admin
-    console
+    desktop
     wiki

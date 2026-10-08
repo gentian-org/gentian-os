@@ -92,7 +92,7 @@ platform operators, Argo CD, and the portal's own clients.
 
 ```mermaid
 flowchart TD
-    TenantHost["console.&lt;tenant&gt;.&lt;kernel&gt;<br>(bookmarkable, canonical)"]
+    TenantHost["desktop.&lt;tenant&gt;.&lt;kernel&gt;<br>(bookmarkable, canonical)"]
     Apex["&lt;kernel&gt; → id.&lt;kernel&gt;/sign-in/<br>(email prompt only)"]
 
     TenantHost -->|"edge → email + password, one stage"| TenantRealm
@@ -115,11 +115,11 @@ silently — no broker hop, no second login screen.
 
 A realm is an isolated user store and a login page belongs to exactly one
 realm, so a single password form in front of users from several realms isn't
-possible — which is why the tenant's console, not the apex, is what's meant to
+possible — which is why the tenant's desktop, not the apex, is what's meant to
 be bookmarked: it's the only entry point that knows the realm before rendering
 the form, so it can ask for both email and password in one stage. The apex
 lands on the concierge (gentian-ui `apps/concierge`, served beside Keycloak),
-which only asks for an email and sends the browser to that tenant's console.
+which only asks for an email and sends the browser to that tenant's desktop.
 The edge starts the code flow there and can carry no `login_hint`, so the router
 leaves the address in a ten-minute cookie scoped to `id.<kernel>/auth/realms/`,
 and the login theme fills the username from it.

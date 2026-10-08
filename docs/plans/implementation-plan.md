@@ -210,7 +210,7 @@ rather than derived from the master password and is not written to OpenBao, so
 because both sides read the same Secret.
 
 **Still open:** the "done when" of this step was *a second tenant* signing in
-at `console.<t>.<kernel>` with no installer step having run for it. That has
+at `desktop.<t>.<kernel>` with no installer step having run for it. That has
 not been tried. It is the same code path, and the kernel zone is the harder
 case, but it is unproven.
 
@@ -870,7 +870,7 @@ here.
 ### S7A.15 ◐ A zone's hosts follow the components, not a list
 
 The zone client's redirect URIs are enumerated in the tenant composition —
-`console`, `admin`, and for the kernel zone `argocd`, `headlamp`, `id`. A
+`desktop`, `admin`, and for the kernel zone `argocd`, `headlamp`, `id`. A
 component whose profile declares any other `subDomain` gets a Keycloak refusal
 ("Invalid parameter: redirect_uri") on an error page that says nothing about a
 redirect URI list. The administration console hit exactly this the first time
@@ -891,7 +891,7 @@ would widen that client for a host the zone does not serve.
 **Three of the five hosts still cannot follow anything**, and this is why it
 is ◐ rather than ✅. `argocd`, `headlamp` and `id` are kernel tier: installed
 by `install.sh`, not components, so nothing projects them. They stay named in
-the Composition. `console` and `admin` stay in the base list too, so a tenant
+the Composition. `desktop` and `admin` stay in the base list too, so a tenant
 reconciling before the operator has projected still has a desktop to sign in
 to.
 
@@ -1194,10 +1194,10 @@ owner can choose and read back.
 2. The platform's own addresses are the same on every cluster: the platform
    admin's desktop at `platform.<kernel>`, the admin console at
    `admin.platform.<kernel>`, Keycloak at `id.<kernel>`.
-3. Under `multi`, `<kernel>`, `www.<kernel>` and `console.<kernel>` lead to
+3. Under `multi`, `<kernel>`, `www.<kernel>` and `desktop.<kernel>` lead to
    the concierge's address form, and a tenant is at `<label>.<t>.<kernel>`.
 4. Under `single`, the user tenant lives on the cluster's own addresses --
-   `console.<kernel>`, `admin.<kernel>`, `<app>.<kernel>` -- in its own realm,
+   `desktop.<kernel>`, `admin.<kernel>`, `<app>.<kernel>` -- in its own realm,
    `user`, and `<kernel>` and `www.<kernel>` lead to its desktop.
 5. The install creates the user tenant of a single-tenancy cluster, after the
    handover and through the gate every tenant passes. Under `multi` it creates
@@ -1212,7 +1212,7 @@ owner can choose and read back.
 | c | `EffectiveDomain` is the cluster's domain for the tenant named `user` under `single` and for nobody else; the platform tenant is `platform.<kernel>` under both | `api/v1alpha1/tenant_types.go`, `tenancy.go` |
 | d | One derivation of where a zone's hosts are (`zoneNamesOf`, `exposureHostIn`): the platform tenant's desktop on its zone's own name, everything else one label below a zone's domain. Routes name the listener whose certificate covers the host (`listenerFor`) | `internal/controller/component_reconciler.go` |
 | e | The platform tenant gets what every tenant gets for hosts two labels down: a wildcard certificate `*.platform.<kernel>`, the listener for it, and its records | `tenant_edge_manifests.go`, `gateway_platform_reconciler.go` |
-| f | The front door per mode: `www` and, under `multi`, `console.<kernel>` redirect to the bare domain; under `single` the bare domain's `/` and `/sign-in` and `www` redirect to the user tenant's desktop once it is Ready. The concierge stays published for `/branding/` | `kernel_gateway_routes.go` (`kernelFrontDoor`) |
+| f | The front door per mode: `www` and, under `multi`, `desktop.<kernel>` redirect to the bare domain; under `single` the bare domain's `/` and `/sign-in` and `www` redirect to the user tenant's desktop once it is Ready. The concierge stays published for `/branding/` | `kernel_gateway_routes.go` (`kernelFrontDoor`) |
 | g | The concierge's lookup holds custom domains only; `_single.json` is gone | `concierge_lookup.go` |
 | h | The kernel's own host labels are refused to the user tenant of a single-tenancy cluster (`HostReserved`) | `reserved_hosts.go` |
 | i | The kernel zone's client: redirect, post-logout and root URLs on `platform.<kernel>` and `<label>.platform.<kernel>`, beside the kernel consoles | `crossplane/compositions/tenant-default.yaml` |
@@ -1239,7 +1239,7 @@ owner can choose and read back.
 
 **Open, in gentian-ui.**
 
-- The concierge page sends `@<kernel>` addresses to `console.<kernel>`. Under
+- The concierge page sends `@<kernel>` addresses to `desktop.<kernel>`. Under
   `multi` that now redirects back to the bare domain; it has to become
   `platform.<kernel>`. The workspace name `platform` likewise.
 - `forwardWhenSingle` and `singleConsole` read a file that is no longer
@@ -1247,11 +1247,11 @@ owner can choose and read back.
 
 **Done when** a fresh `single` install ends with the platform admin signed in
 at `platform.<kernel>` and the user admin holding an activation link, the user
-admin signs in at `console.<kernel>` and installs an app at `<app>.<kernel>`,
+admin signs in at `desktop.<kernel>` and installs an app at `<app>.<kernel>`,
 a second tenant is refused with the mode named, and `<kernel>` leads to the
 desktop; and a fresh `multi` install ends at the handover with no user tenant,
-`<kernel>` and `console.<kernel>` showing the form, and a created tenant at
-`console.<t>.<kernel>`.
+`<kernel>` and `desktop.<kernel>` showing the form, and a created tenant at
+`desktop.<t>.<kernel>`.
 
 ### M3 — the first user invited by a tenant administrator
 

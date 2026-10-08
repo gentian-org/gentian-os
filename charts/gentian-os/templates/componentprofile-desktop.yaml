@@ -100,11 +100,11 @@ spec:
     - name: api
       surface: gateway
       authMode: oidc
-      # console.<zone>, the desktop's name in a tenant's zone (networking.md
+      # desktop.<zone>, the desktop's name in a tenant's zone (networking.md
       # §3); the operator's redirects and frame policies assume it. In the
       # platform tenant's zone the same entry answers on the zone's own name,
       # platform.<kernel>.
-      subDomain: console
+      subDomain: desktop
       paths: ["/api", "/healthz", "/readyz"]
       forwardToken: true
       backend:
@@ -114,7 +114,7 @@ spec:
     - name: web
       surface: gateway
       authMode: oidc
-      subDomain: console
+      subDomain: desktop
       backend:
         service: desktop-gentian-portal-web
         port: 8080

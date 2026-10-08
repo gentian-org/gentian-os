@@ -77,7 +77,7 @@ func TestBuildKernelGateway(t *testing.T) {
 	// A listener's hostname both selects it by SNI and gates which routes may
 	// attach, and a route only attaches where its hostnames intersect. The
 	// kernel certificate covers platform.example.test and *.platform.example.test, so a
-	// browser may coalesce console.platform.example.test onto an existing
+	// browser may coalesce desktop.platform.example.test onto an existing
 	// platform.example.test connection; with a listener scoped to the apex that
 	// request had nowhere to attach and Envoy returned a bare 404. Serving every
 	// name the certificate covers from one listener removes the hole.
@@ -218,7 +218,7 @@ func TestComputeGatewayFrameAncestorsPolicy(t *testing.T) {
 		t.Fatalf("mode = %q", policy.Mode)
 	}
 	// The tenant's own desktop and its own domain. Not the platform's desktop.
-	if policy.Origins != "https://console.demo.platform.example.test https://*.demo.platform.example.test" {
+	if policy.Origins != "https://desktop.demo.platform.example.test https://*.demo.platform.example.test" {
 		t.Fatalf("origins = %q", policy.Origins)
 	}
 }
@@ -247,10 +247,10 @@ func TestIngressGatewayFrameAncestorsPolicy(t *testing.T) {
 	if strings.Contains(policy.Origins, "https://platform.platform.example.test") {
 		t.Fatalf("the platform's desktop may frame a tenant's app: origins = %q", policy.Origins)
 	}
-	// The tenant's own console is the host a tenant user is normally signed
+	// The tenant's own desktop is the host a tenant user is normally signed
 	// in on. Leaving it out passes every server-side check and still blocks
 	// the iframe in the browser, so assert it explicitly.
-	if !strings.Contains(policy.Origins, "https://console.demo.platform.example.test") {
+	if !strings.Contains(policy.Origins, "https://desktop.demo.platform.example.test") {
 		t.Fatalf("origins = %q", policy.Origins)
 	}
 }
@@ -272,7 +272,7 @@ func TestIngressGatewayFrameAncestorsPortalTokenMatchesRoutedPortalHosts(t *test
 	if !ok {
 		t.Fatal("expected custom policy")
 	}
-	want := strings.Join(consoleOrigins("demo.platform.example.test"), " ")
+	want := strings.Join(desktopOrigins("demo.platform.example.test"), " ")
 	if policy.Origins != want {
 		t.Fatalf("origins = %q, want %q", policy.Origins, want)
 	}
@@ -347,7 +347,7 @@ func TestAppAPIBackendRulesApplyEmbeddingFilters(t *testing.T) {
 	if modifier == nil || len(modifier.Set) != 1 {
 		t.Fatalf("modifier = %+v", modifier)
 	}
-	if got := modifier.Set[0].Value; !strings.Contains(got, "https://console.demo.platform.example.test") ||
+	if got := modifier.Set[0].Value; !strings.Contains(got, "https://desktop.demo.platform.example.test") ||
 		strings.Contains(got, "https://platform.platform.example.test") {
 		t.Fatalf("csp = %q: the tenant's own desktop and not the platform's", got)
 	}
@@ -378,7 +378,7 @@ func TestKernelHTTPRouteSpecs(t *testing.T) {
 	t.Parallel()
 	specs := kernelHTTPRouteSpecs("platform.example.test", []string{"demo.platform.example.test"}, nil, []string{"demo"}, false, "c1", true, true, kernelFrontDoor{})
 	// One route per kernel host, plus one per tenant apex sending the browser
-	// to that tenant's console. Asserted by name rather than by count, so
+	// to that tenant's desktop. Asserted by name rather than by count, so
 	// adding a route does not fail a test that has nothing to do with it.
 	byName := map[string]kernelHTTPRouteSpec{}
 	for _, s := range specs {
@@ -478,7 +478,7 @@ func TestKernelHTTPRouteSpecs(t *testing.T) {
 		t.Fatalf("http redirect parent = %q, want the perimeter Gateway", got)
 	}
 	// www is an alias of the bare domain, by redirect; a tenant's apex is an
-	// alias of the tenant's own console.
+	// alias of the tenant's own desktop.
 	www := buildKernelHTTPRoute(byName[kernelRouteWWWRedirect])
 	if string(www.Spec.Hostnames[0]) != "www.platform.example.test" {
 		t.Fatalf("www host = %v", www.Spec.Hostnames[0])
@@ -487,15 +487,15 @@ func TestKernelHTTPRouteSpecs(t *testing.T) {
 		t.Fatalf("www redirects to %q", got)
 	}
 	apex := buildKernelHTTPRoute(byName["tenant-demo-apex"])
-	if got := *apex.Spec.Rules[0].Filters[0].RequestRedirect.Hostname; string(got) != "console.demo.platform.example.test" {
+	if got := *apex.Spec.Rules[0].Filters[0].RequestRedirect.Hostname; string(got) != "desktop.demo.platform.example.test" {
 		t.Fatalf("tenant apex redirects to %q", got)
 	}
 }
 
-// A redirect to a console that does not exist is a public dead end, so
+// A redirect to a desktop that does not exist is a public dead end, so
 // without a desktop profile no name is sent to one -- and before the kernel
-// zone exists there is no platform console to send the kernel names to.
-func TestNoConsoleRedirectsWithoutADesktop(t *testing.T) {
+// zone exists there is no platform desktop to send the kernel names to.
+func TestNoDesktopRedirectsWithoutADesktop(t *testing.T) {
 	t.Parallel()
 	specs := kernelHTTPRouteSpecs("platform.example.test",
 		[]string{"demo.platform.example.test"}, nil, []string{"demo"}, false, "c1", true, false, kernelFrontDoor{})
@@ -589,17 +589,17 @@ func TestKernelHTTPRouteSpecsLLMEnabled(t *testing.T) {
 
 func TestConsoleRedirectRule(t *testing.T) {
 	t.Parallel()
-	rule := consoleRedirectRule("console.platform.example.test")
+	rule := hostRedirectRule("desktop.platform.example.test")
 	if len(rule.Filters) != 1 || rule.Filters[0].RequestRedirect == nil {
 		t.Fatalf("rule = %+v", rule)
 	}
 	redirect := rule.Filters[0].RequestRedirect
-	if redirect.Hostname == nil || string(*redirect.Hostname) != "console.platform.example.test" {
+	if redirect.Hostname == nil || string(*redirect.Hostname) != "desktop.platform.example.test" {
 		t.Fatalf("hostname = %v", redirect.Hostname)
 	}
 	// Path and query travel: an alias by redirect loses nothing of the request.
 	if redirect.Path != nil {
-		t.Fatalf("console redirect rewrites the path: %+v", redirect.Path)
+		t.Fatalf("the redirect rewrites the path: %+v", redirect.Path)
 	}
 }
 

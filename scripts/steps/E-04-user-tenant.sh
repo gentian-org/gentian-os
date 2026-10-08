@@ -116,7 +116,7 @@ apply() {
 
     echo ""
     warn "  THE USER ADMIN — in charge of the users and the user tenant"
-    warn "  https://console.${domain}/"
+    warn "  https://desktop.${domain}/"
     issue_tenant_admin_activation "${tenant}" ||
         warn "  No activation link could be issued for the user admin; later: kubectl gentian tenants activate-admin ${tenant}"
     info "  That account is the tenant's, in the tenant's own realm, and is another"

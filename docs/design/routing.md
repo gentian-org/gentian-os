@@ -69,7 +69,7 @@ whose hostname does not match the apex and which therefore holds no route for
 it — `404 route_not_found`, intermittently, depending on which connection
 happened to be open.
 
-The apex carries a redirect to the tenant's console (§5), and it is kept
+The apex carries a redirect to the tenant's desktop (§5), and it is kept
 reachable by keeping it out of the tenant certificate.
 
 Two tenants are not like the others.
@@ -80,7 +80,7 @@ way every tenant's is. Its administration console is
 `admin.platform.<kernelDomain>`, two labels under the cluster's domain, which
 the cluster's own certificate (`<kernelDomain>` and `*.<kernelDomain>`) does
 not name. Its desktop is `platform.<kernelDomain>` itself -- the zone's own
-name, not `console.` under it -- which that certificate does name, so the
+name, not `desktop.` under it -- which that certificate does name, so the
 desktop's routes attach to `https-wildcard` and there is no apex redirect.
 
 The **user tenant of a single-tenancy cluster** is on the kernel domain itself
@@ -153,7 +153,7 @@ The domain model is:
     and for nobody else
 
 A host is `<subDomain>.<effectiveDomain>`. The one exception is the platform
-tenant's desktop, whose `console` entry answers on `platform.<kernelDomain>`
+tenant's desktop, whose `desktop` entry answers on `platform.<kernelDomain>`
 itself (`exposureHostIn`).
 
 TLS issuance is handled by cert-manager:
@@ -433,8 +433,8 @@ frame policy, set at the edge and not by the component:
 
 | Component of | May be framed by |
 |---|---|
-| A tenant, tenancy `multi` | `console.<tenant>.<kernelDomain>` (or `console.<its own domain>`) |
-| The user tenant, tenancy `single` | `console.<kernelDomain>` |
+| A tenant, tenancy `multi` | `desktop.<tenant>.<kernelDomain>` (or `desktop.<its own domain>`) |
+| The user tenant, tenancy `single` | `desktop.<kernelDomain>` |
 | The platform tenant (`admin.platform.<kernelDomain>`, …) | `platform.<kernelDomain>` |
 | The kernel's consoles (`argocd.`, `headlamp.`, Keycloak's administration) | `platform.<kernelDomain>` |
 
@@ -446,7 +446,7 @@ page gets its session only when the framing page is on the same site (the
 same registrable domain). So:
 
 - A desktop and its apps under one registrable domain work —
-  `console.acme.example.org` framing `cloud.acme.example.org`, or a tenant's
+  `desktop.acme.example.org` framing `cloud.acme.example.org`, or a tenant's
   own domain throughout.
 - A frame across sites does not: the framed app has no cookie, is sent to
   sign in, and the sign-in cannot complete in the frame.
@@ -484,10 +484,10 @@ tenancy mode. What a visitor gets there is the mode's
 
 | Host | `multi` | `single` |
 |---|---|---|
-| `<kernelDomain>/` | the concierge's form: asks for an e-mail address and sends the browser to its workspace's desktop | `302` to the user tenant's desktop, `https://console.<kernelDomain>/` (`console.<custom domain>` when a `TenantDomain` binds one) |
+| `<kernelDomain>/` | the concierge's form: asks for an e-mail address and sends the browser to its workspace's desktop | `302` to the user tenant's desktop, `https://desktop.<kernelDomain>/` (`desktop.<custom domain>` when a `TenantDomain` binds one) |
 | `<kernelDomain>/branding/` | the cluster's brand, served by the concierge | the same |
 | `www.<kernelDomain>` | `302` to the bare domain | `302` to the user tenant's desktop |
-| `console.<kernelDomain>` | `302` to the bare domain (`kernel-console-redirect`) | the user tenant's desktop itself, routed by its component |
+| `desktop.<kernelDomain>` | `302` to the bare domain (`kernel-desktop-redirect`) | the user tenant's desktop itself, routed by its component |
 | `platform.<kernelDomain>` | the platform admin's desktop | the same |
 
 **A website on the main address (single-tenancy only).** The user tenant may
@@ -502,11 +502,11 @@ this:
 | `<kernelDomain>/branding/` | the concierge | the same | the same |
 | `<kernelDomain>/.well-known/acme-challenge/`, `/.well-known/pki-validation/` | the concierge (`404`) | the same | the same |
 | `www.<kernelDomain>` | `302` to the desktop | `302` to the desktop | `302` to the bare domain, path kept |
-| `console.`, `admin.`, `platform.`, `id.<kernelDomain>` | unchanged | unchanged | unchanged |
+| `desktop.`, `admin.`, `platform.`, `id.<kernelDomain>` | unchanged | unchanged | unchanged |
 
 The bare domain is the website's one name; `www` redirects to it, as `www`
 redirects everywhere on this platform. Sign-in does not move: the desktop is
-at `console.<kernelDomain>`, and `https://<kernelDomain>/sign-in` always leads
+at `desktop.<kernelDomain>`, and `https://<kernelDomain>/sign-in` always leads
 there, whatever the website does. A multi-tenancy cluster is not affected: its
 main address stays the sign-in form.
 
@@ -580,7 +580,7 @@ Nothing is forwarded by the page. The `concierge-lookup` ConfigMap the
 operator keeps in the platform tenant's namespace holds one file per custom
 domain and nothing else; there is no `_single.json`.
 
-A **tenant** apex redirects to `https://console.<effectiveDomain>/`, path and
+A **tenant** apex redirects to `https://desktop.<effectiveDomain>/`, path and
 query kept. Two tenants have none: the platform tenant, whose apex is its
 desktop, and the user tenant of a single-tenancy cluster, whose apex is the
 cluster's.

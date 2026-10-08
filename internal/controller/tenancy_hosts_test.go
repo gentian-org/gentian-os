@@ -37,7 +37,7 @@ func singleUserTenantFixture() *gentianov1alpha1.Tenant {
 }
 
 var (
-	desktopEntry      = &gentianov1alpha1.ExposureSpec{Name: "web", SubDomain: "console"}
+	desktopEntry      = &gentianov1alpha1.ExposureSpec{Name: "web", SubDomain: "desktop"}
 	adminEntry        = &gentianov1alpha1.ExposureSpec{Name: "web", SubDomain: "admin"}
 	appEntry          = &gentianov1alpha1.ExposureSpec{Name: "web", SubDomain: "cloud"}
 	appNamelessEntry  = &gentianov1alpha1.ExposureSpec{Name: "web"}
@@ -65,14 +65,14 @@ func TestWhereEverythingAnswersPerTenancyMode(t *testing.T) {
 		{"concierge, single", "single", platformTenantFixture(), "concierge", conciergeApexSpec, "k.example"},
 		// The one user tenant of a single-tenancy cluster: the cluster's own
 		// addresses, with no tenant name in between.
-		{"user desktop, single", "single", singleUserTenantFixture(), "desktop", desktopEntry, "console.k.example"},
+		{"user desktop, single", "single", singleUserTenantFixture(), "desktop", desktopEntry, "desktop.k.example"},
 		{"user admin console, single", "single", singleUserTenantFixture(), "admin-console", adminEntry, "admin.k.example"},
 		{"user app with a label, single", "single", singleUserTenantFixture(), "nextcloud", appEntry, "cloud.k.example"},
 		{"user app by its name, single", "single", singleUserTenantFixture(), "wiki", appNamelessEntry, "wiki.k.example"},
 		{"user tenant asks for the bare domain, single", "single", singleUserTenantFixture(), "x", conciergeApexSpec, ""},
 		// Under multi, a tenant named user is an ordinary tenant.
-		{"tenant named user, multi", "multi", singleUserTenantFixture(), "desktop", desktopEntry, "console.user.k.example"},
-		{"a tenant, multi: desktop", "multi", acmeTenantFixture(), "desktop", desktopEntry, "console.acme.k.example"},
+		{"tenant named user, multi", "multi", singleUserTenantFixture(), "desktop", desktopEntry, "desktop.user.k.example"},
+		{"a tenant, multi: desktop", "multi", acmeTenantFixture(), "desktop", desktopEntry, "desktop.acme.k.example"},
 		{"a tenant, multi: admin console", "multi", acmeTenantFixture(), "admin-console", adminEntry, "admin.acme.k.example"},
 		{"a tenant, multi: app", "multi", acmeTenantFixture(), "nextcloud", appEntry, "cloud.acme.k.example"},
 		{"a tenant asks for the bare domain", "multi", acmeTenantFixture(), "x", conciergeApexSpec, ""},
@@ -132,9 +132,9 @@ func TestARouteIsOnTheListenerWhoseCertificateNamesItsHost(t *testing.T) {
 		{"multi", platformTenantFixture(), "desktop", desktopEntry, "platform.k.example", wildcardListenerName},
 		{"multi", platformTenantFixture(), "admin-console", adminEntry, "admin.platform.k.example", tenantGatewayListenerName("platform")},
 		{"single", platformTenantFixture(), "admin-console", adminEntry, "admin.platform.k.example", tenantGatewayListenerName("platform")},
-		{"single", singleUserTenantFixture(), "desktop", desktopEntry, "console.k.example", wildcardListenerName},
+		{"single", singleUserTenantFixture(), "desktop", desktopEntry, "desktop.k.example", wildcardListenerName},
 		{"single", singleUserTenantFixture(), "admin-console", adminEntry, "admin.k.example", wildcardListenerName},
-		{"multi", acmeTenantFixture(), "desktop", desktopEntry, "console.acme.k.example", tenantGatewayListenerName("acme")},
+		{"multi", acmeTenantFixture(), "desktop", desktopEntry, "desktop.acme.k.example", tenantGatewayListenerName("acme")},
 	} {
 		host, listener := section(c.mode, c.tenant, c.component, c.entry)
 		if host != c.host || listener != c.listener {
@@ -159,7 +159,7 @@ func redirectsOf(specs []kernelHTTPRouteSpec) map[string]string {
 	return out
 }
 
-// The bare domain, www and console.<kernel>, per mode.
+// The bare domain, www and desktop.<kernel>, per mode.
 func TestTheFrontDoorPerTenancyMode(t *testing.T) {
 	const kd = "k.example"
 	ready := gentianov1alpha1.TenantPhaseReady
@@ -181,13 +181,13 @@ func TestTheFrontDoorPerTenancyMode(t *testing.T) {
 			kernelFrontDoorOf(tenants, kd, "kernel", mode))
 	}
 
-	// multi: console.<kernel> and www lead to the bare domain, which the
+	// multi: desktop.<kernel> and www lead to the bare domain, which the
 	// kernel does not route -- it is the concierge's, on the perimeter.
 	// A tenant named user changes nothing.
 	for _, tenants := range [][]gentianov1alpha1.Tenant{{platform}, {platform, acme}, {platform, user}, {platform, user, acme}} {
 		got := redirectsOf(specsFor("multi", tenants...))
-		if got["www."+kd] != kd || got["console."+kd] != kd {
-			t.Fatalf("multi, %d tenants: www -> %q, console -> %q, want both the bare domain", len(tenants), got["www."+kd], got["console."+kd])
+		if got["www."+kd] != kd || got["desktop."+kd] != kd {
+			t.Fatalf("multi, %d tenants: www -> %q, desktop -> %q, want both the bare domain", len(tenants), got["www."+kd], got["desktop."+kd])
 		}
 		if to, routed := got[kd]; routed {
 			t.Fatalf("multi, %d tenants: the kernel routes the bare domain to %q; it is the concierge's", len(tenants), to)
@@ -196,19 +196,19 @@ func TestTheFrontDoorPerTenancyMode(t *testing.T) {
 			t.Fatalf("multi: platform.<kernel> is redirected to %q; it is the platform's desktop", to)
 		}
 	}
-	// A tenant's own apex still leads to that tenant's console.
-	if got := redirectsOf(specsFor("multi", platform, acme)); got["acme."+kd] != "console.acme."+kd {
+	// A tenant's own apex still leads to that tenant's desktop.
+	if got := redirectsOf(specsFor("multi", platform, acme)); got["acme."+kd] != "desktop.acme."+kd {
 		t.Fatalf("multi: acme's apex -> %q", got["acme."+kd])
 	}
 
 	// single: the bare domain and www lead to the user tenant's desktop once
-	// it is Ready; console.<kernel> is that desktop and is not redirected.
+	// it is Ready; desktop.<kernel> is that desktop and is not redirected.
 	got := redirectsOf(specsFor("single", platform, user))
-	if got[kd] != "console."+kd || got["www."+kd] != "console."+kd {
-		t.Fatalf("single: bare -> %q, www -> %q, want console.%s", got[kd], got["www."+kd], kd)
+	if got[kd] != "desktop."+kd || got["www."+kd] != "desktop."+kd {
+		t.Fatalf("single: bare -> %q, www -> %q, want desktop.%s", got[kd], got["www."+kd], kd)
 	}
-	if to, routed := got["console."+kd]; routed {
-		t.Fatalf("single: console.<kernel> is redirected to %q; it is the user tenant's desktop", to)
+	if to, routed := got["desktop."+kd]; routed {
+		t.Fatalf("single: desktop.<kernel> is redirected to %q; it is the user tenant's desktop", to)
 	}
 	if to, routed := got["platform."+kd]; routed {
 		t.Fatalf("single: platform.<kernel> is redirected to %q", to)
@@ -234,7 +234,7 @@ func TestTheFrontDoorPerTenancyMode(t *testing.T) {
 		t.Fatalf("single: the perimeter redirect matches %v; it must leave /branding/ to the concierge", matched)
 	}
 	rr := rule.Filters[0].RequestRedirect
-	if string(*rr.Hostname) != "console."+kd || rr.Path == nil || *rr.Path.ReplaceFullPath != "/" {
+	if string(*rr.Hostname) != "desktop."+kd || rr.Path == nil || *rr.Path.ReplaceFullPath != "/" {
 		t.Fatalf("single: the perimeter redirect leads to %v %v", *rr.Hostname, rr.Path)
 	}
 	for _, s := range specsFor("multi", platform, user) {
@@ -244,18 +244,18 @@ func TestTheFrontDoorPerTenancyMode(t *testing.T) {
 	}
 	// With a custom domain bound, the desktop is on it and the bare domain
 	// follows.
-	if got := redirectsOf(specsFor("single", platform, custom)); got[kd] != "console.acme.example" || got["www."+kd] != "console.acme.example" {
+	if got := redirectsOf(specsFor("single", platform, custom)); got[kd] != "desktop.acme.example" || got["www."+kd] != "desktop.acme.example" {
 		t.Fatalf("single, custom domain: bare -> %q, www -> %q", got[kd], got["www."+kd])
 	}
 	// Before the user tenant is Ready, and before it exists: nothing claims
-	// console.<kernel>, and the bare domain is sent nowhere yet.
+	// desktop.<kernel>, and the bare domain is sent nowhere yet.
 	for _, tenants := range [][]gentianov1alpha1.Tenant{{platform}, {platform, pending}} {
 		got := redirectsOf(specsFor("single", tenants...))
 		if to, routed := got[kd]; routed {
 			t.Fatalf("single, user tenant not Ready: the bare domain is sent to %q", to)
 		}
-		if to, routed := got["console."+kd]; routed {
-			t.Fatalf("single, user tenant not Ready: console.<kernel> is redirected to %q", to)
+		if to, routed := got["desktop."+kd]; routed {
+			t.Fatalf("single, user tenant not Ready: desktop.<kernel> is redirected to %q", to)
 		}
 	}
 	// A tenant of another name is not the user tenant, Ready or not: it is
@@ -303,7 +303,7 @@ func TestTheBareDomainIsOnThePerimeterWithTheClustersCertificate(t *testing.T) {
 }
 
 // A component of the user tenant of a single-tenancy cluster may not take a
-// name that is the kernel's; console and admin are its own; and on a
+// name that is the kernel's; desktop and admin are its own; and on a
 // multi-tenancy cluster, or in the platform tenant, nothing is refused.
 func TestAKernelsHostLabelIsRefusedOnTheClustersDomain(t *testing.T) {
 	const kd = "k.example"
@@ -331,7 +331,7 @@ func TestAKernelsHostLabelIsRefusedOnTheClustersDomain(t *testing.T) {
 		t.Error("a component named llm was not refused")
 	}
 	// Its own names, and any other, are fine.
-	for _, label := range []string{"console", "admin", "cloud", "identity", "platformer"} {
+	for _, label := range []string{"desktop", "admin", "console", "cloud", "identity", "platformer"} {
 		if refusal := reservedHostRefusal(componentFor("thing", "tenant-user"), profileWith(label), single, kd); refusal != "" {
 			t.Errorf("%s was refused: %s", label, refusal)
 		}
@@ -364,15 +364,15 @@ func TestAKernelsHostLabelIsRefusedOnTheClustersDomain(t *testing.T) {
 // The desktop an app may be framed by is its own tenant's, and not the
 // platform's -- also when the tenant's domain is the cluster's.
 func TestTheDesktopAnAppMayBeFramedBy(t *testing.T) {
-	if got := strings.Join(consoleOrigins("acme.k.example"), " "); got != "https://console.acme.k.example" {
+	if got := strings.Join(desktopOrigins("acme.k.example"), " "); got != "https://desktop.acme.k.example" {
 		t.Errorf("a tenant: %s", got)
 	}
-	if got := strings.Join(consoleOrigins("k.example"), " "); got != "https://console.k.example" {
+	if got := strings.Join(desktopOrigins("k.example"), " "); got != "https://desktop.k.example" {
 		t.Errorf("the user tenant of a single-tenancy cluster: %s", got)
 	}
 	// The wildcard over the tenant's domain is only for a domain that is the
 	// tenant's alone.
-	if got := computeGatewayFrameAncestorsPolicy("k.example", "k.example", "").Origins; got != "https://console.k.example" {
+	if got := computeGatewayFrameAncestorsPolicy("k.example", "k.example", "").Origins; got != "https://desktop.k.example" {
 		t.Errorf("the user tenant's default policy names more than its desktop: %s", got)
 	}
 	if got := computeGatewayFrameAncestorsPolicy("k.example", "acme.k.example", "").Origins; strings.Contains(got, "platform.") {
@@ -408,7 +408,7 @@ func TestAComponentIsFramedByItsOwnTenantsDesktopAndNobodyElses(t *testing.T) {
 	desktop := &gentianov1alpha1.ComponentProfile{}
 	desktop.Spec.Launch = gentianov1alpha1.ComponentLaunchNone
 	desktop.Spec.Expose = []gentianov1alpha1.ExposureSpec{
-		{Name: "web", Surface: gentianov1alpha1.SurfaceGateway, AuthMode: gentianov1alpha1.AuthModeOIDC, SubDomain: "console",
+		{Name: "web", Surface: gentianov1alpha1.SurfaceGateway, AuthMode: gentianov1alpha1.AuthModeOIDC, SubDomain: "desktop",
 			Backend: gentianov1alpha1.BackendRef{Service: "desktop", Port: 80}},
 	}
 	custom := acmeTenantFixture()
@@ -426,17 +426,17 @@ func TestAComponentIsFramedByItsOwnTenantsDesktopAndNobodyElses(t *testing.T) {
 		want      string
 	}{
 		{"a tenant's app, tenancy multi", gentianov1alpha1.TenancyModeMulti, acmeTenantFixture(), "files", office, 0,
-			"cloud.acme.k.example", "frame-ancestors 'self' https://console.acme.k.example https://editor.acme.k.example"},
+			"cloud.acme.k.example", "frame-ancestors 'self' https://desktop.acme.k.example https://editor.acme.k.example"},
 		{"the program it embeds", gentianov1alpha1.TenancyModeMulti, acmeTenantFixture(), "files", office, 1,
-			"editor.acme.k.example", "frame-ancestors 'self' https://console.acme.k.example https://cloud.acme.k.example"},
+			"editor.acme.k.example", "frame-ancestors 'self' https://desktop.acme.k.example https://cloud.acme.k.example"},
 		{"a tenant's desktop", gentianov1alpha1.TenancyModeMulti, acmeTenantFixture(), "desktop", desktop, 0,
-			"console.acme.k.example", "frame-ancestors 'self'"},
+			"desktop.acme.k.example", "frame-ancestors 'self'"},
 		{"the user tenant's app, tenancy single", gentianov1alpha1.TenancyModeSingle, user, "files", office, 0,
-			"cloud.k.example", "frame-ancestors 'self' https://console.k.example https://editor.k.example"},
+			"cloud.k.example", "frame-ancestors 'self' https://desktop.k.example https://editor.k.example"},
 		{"the user tenant's desktop", gentianov1alpha1.TenancyModeSingle, user, "desktop", desktop, 0,
-			"console.k.example", "frame-ancestors 'self'"},
+			"desktop.k.example", "frame-ancestors 'self'"},
 		{"an app on a tenant's own domain", gentianov1alpha1.TenancyModeMulti, custom, "files", office, 0,
-			"cloud.acme.example", "frame-ancestors 'self' https://console.acme.example https://editor.acme.example"},
+			"cloud.acme.example", "frame-ancestors 'self' https://desktop.acme.example https://editor.acme.example"},
 		{"the platform's admin console", gentianov1alpha1.TenancyModeMulti, platformTenantFixture(), "admin-console", admin, 0,
 			"admin.platform.k.example", "frame-ancestors 'self' https://platform.k.example"},
 		{"the platform's desktop", gentianov1alpha1.TenancyModeSingle, platformTenantFixture(), "desktop", desktop, 0,
@@ -480,9 +480,9 @@ func TestAComponentIsFramedByItsOwnTenantsDesktopAndNobodyElses(t *testing.T) {
 // kernel's own names with it: its domain is the cluster's.
 func TestDirectlyUnder(t *testing.T) {
 	for host, want := range map[string]bool{
-		"k.example": true, "console.k.example": true, "platform.k.example": true,
-		"admin.platform.k.example": false, "console.acme.k.example": false,
-		"console.acme.example": false, "xk.example": false, ".k.example": false,
+		"k.example": true, "desktop.k.example": true, "platform.k.example": true,
+		"admin.platform.k.example": false, "desktop.acme.k.example": false,
+		"desktop.acme.example": false, "xk.example": false, ".k.example": false,
 	} {
 		if got := directlyUnder(host, "k.example"); got != want {
 			t.Errorf("directlyUnder(%q) = %v, want %v", host, got, want)

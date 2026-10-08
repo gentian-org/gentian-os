@@ -74,7 +74,7 @@ const kernelClient = "gentian-edge-kernel"
 func table() *Table {
 	return &Table{Routes: []Route{
 		{Host: "argocd.k.example", Relation: "can_configure", Object: "cluster:c1", AuthMode: AuthModeOIDC},
-		{Host: "console.k.example", Relation: "can_enter", Object: "tenant:platform", ForwardToken: true, AuthMode: AuthModeOIDC},
+		{Host: "desktop.k.example", Relation: "can_enter", Object: "tenant:platform", ForwardToken: true, AuthMode: AuthModeOIDC},
 		{Host: "id.k.example", Relation: "can_configure", Object: "cluster:c1", KeepClientToken: true, IDTokenAudience: kernelClient, AuthMode: AuthModeOIDC},
 		{Host: "api.k.example", Relation: "can_view", Object: "tenant:platform", AuthMode: AuthModeBearer},
 		{Host: "shop.k.example", Relation: "can_use", Object: "app:acme/odoo", AuthMode: AuthModeOIDC,
@@ -163,7 +163,7 @@ func TestIdentityHeadersAreAlwaysOursNeverTheClients(t *testing.T) {
 
 func TestTheDesktopRouteKeepsTheToken(t *testing.T) {
 	store := &fakeStore{allow: map[string]bool{"user:root|can_enter|tenant:platform": true}}
-	dec := decider(store).Decide(context.Background(), Request{Host: "console.k.example:443", Authorization: "Bearer root-token"})
+	dec := decider(store).Decide(context.Background(), Request{Host: "desktop.k.example:443", Authorization: "Bearer root-token"})
 	if !dec.Allow {
 		t.Fatalf("denied: %s", dec.Reason)
 	}
@@ -332,7 +332,7 @@ func TestAKeepClientTokenRouteTakesNothingButTheSessionsIDToken(t *testing.T) {
 func TestAnIDTokenHeaderIsNeverPassedToABackend(t *testing.T) {
 	store := &fakeStore{allow: map[string]bool{"user:root|can_enter|tenant:platform": true}}
 	dec := decider(store).Decide(context.Background(), Request{
-		Host: "console.k.example", Authorization: "Bearer root-token", IDToken: "anything-a-client-sent",
+		Host: "desktop.k.example", Authorization: "Bearer root-token", IDToken: "anything-a-client-sent",
 	})
 	if !dec.Allow || !removes(dec, HeaderIDToken) {
 		t.Fatalf("%+v", dec)
@@ -351,7 +351,7 @@ func TestTheOldSignOutPathIsSentToTheGatewaysLogout(t *testing.T) {
 		"no token at all":      {Host: "argocd.k.example", Path: SignOutPath},
 		"with a query":         {Host: "argocd.k.example", Path: SignOutPath + "?from=desktop"},
 		"behind a deny rule":   {Host: "shop.k.example", Path: SignOutPath},
-		"on a forwarded route": {Host: "console.k.example:443", Path: SignOutPath},
+		"on a forwarded route": {Host: "desktop.k.example:443", Path: SignOutPath},
 	} {
 		dec := d.Decide(context.Background(), req)
 		if dec.Allow || dec.Status != http.StatusFound || dec.Redirect != LogoutPath {
@@ -544,7 +544,7 @@ func TestAHostThatAsksTheInstallRightRefusesAPlainMember(t *testing.T) {
 	d := decider(store)
 	d.SetTable(&Table{Routes: []Route{
 		{Host: "store.acme.k.example", Relation: "can_install_app", Object: "tenant:acme", ForwardToken: true, AuthMode: AuthModeOIDC},
-		{Host: "console.acme.k.example", Relation: "can_enter", Object: "tenant:acme", ForwardToken: true, AuthMode: AuthModeOIDC},
+		{Host: "desktop.acme.k.example", Relation: "can_enter", Object: "tenant:acme", ForwardToken: true, AuthMode: AuthModeOIDC},
 	}})
 	for _, path := range []string{"/", "/api/v1/context", "/oauth/callback?code=c&state=s"} {
 		dec := d.Decide(context.Background(), Request{Host: "store.acme.k.example", Path: path, Authorization: "Bearer mia-token"})
@@ -560,7 +560,7 @@ func TestAHostThatAsksTheInstallRightRefusesAPlainMember(t *testing.T) {
 		}
 	}
 	// The same member still reaches what entry to the tenant reaches.
-	if dec := d.Decide(context.Background(), Request{Host: "console.acme.k.example", Authorization: "Bearer mia-token"}); !dec.Allow {
+	if dec := d.Decide(context.Background(), Request{Host: "desktop.acme.k.example", Authorization: "Bearer mia-token"}); !dec.Allow {
 		t.Fatalf("a member was refused the desktop: %s", dec.Reason)
 	}
 }

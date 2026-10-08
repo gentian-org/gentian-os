@@ -196,7 +196,7 @@ one. Every question shows its default; Enter takes it.
 | `mail.host` | unset | `external` mode: the relay's hostname. Its credentials are a credential, supplied in step 5 — not asked here |
 | `platform` | detected from the nodes | Detection is wrong for your provider |
 | `storageClass` | the cluster default | The cluster has more than one StorageClass |
-| `tenancyMode` | `multi` | Who the cluster is for. `multi`: the platform tenant plus any number of user tenants, each at `console.<tenant>.<kernel-domain>`; the install creates none. `single`: the platform tenant plus exactly one user tenant, named `user`, on the cluster's own addresses (`console.<kernel-domain>`); the install creates it after the handover. The platform admin signs in at `platform.<kernel-domain>` either way. See step 7. |
+| `tenancyMode` | `multi` | Who the cluster is for. `multi`: the platform tenant plus any number of user tenants, each at `desktop.<tenant>.<kernel-domain>`; the install creates none. `single`: the platform tenant plus exactly one user tenant, named `user`, on the cluster's own addresses (`desktop.<kernel-domain>`); the install creates it after the handover. The platform admin signs in at `platform.<kernel-domain>` either way. See step 7. |
 | First tenant | none | This cluster's users should have a tenant when the install ends: give its name, and the install creates it (step 7). With exactly one, the cluster's bare domain leads straight to its sign-in |
 | `secretMode` | `derived` | You want independent random secrets rather than ones reproducible from the master password |
 | `backup.escrowIdentity` | `true` | The backup key should live in the recovery kit only, never in OpenBao |
@@ -329,7 +329,7 @@ waits for nothing after that and closes by naming both roles:
 - the **platform admin**, in charge of the platform:
   `https://platform.<kernel-domain>/`
 - the **user admin**, in charge of the users and the user tenant:
-  `https://console.<kernel-domain>/`
+  `https://desktop.<kernel-domain>/`
 
 They are two accounts in two realms, and may or may not be the same person.
 If the tenant is not Ready within the wait, the install says what it is
@@ -377,18 +377,18 @@ asked for (`tenancyMode` on the Cluster claim).
 | | Multi-tenancy (`multi`, the default) | Single-tenancy (`single`) |
 |---|---|---|
 | Tenants for users | any number; you create them | exactly one, named `user`; the install creates it (step 5) |
-| Its desktop | `https://console.<tenant>.<kernel-domain>/` | `https://console.<kernel-domain>/` |
+| Its desktop | `https://desktop.<tenant>.<kernel-domain>/` | `https://desktop.<kernel-domain>/` |
 | Its admin console and apps | `admin.<tenant>.<kernel-domain>`, `<app>.<tenant>.<kernel-domain>` | `admin.<kernel-domain>`, `<app>.<kernel-domain>` |
 | In charge of it | a **tenant admin**, `admin@<tenant>.<kernel-domain>` | the **user admin**, `user-admin@<kernel-domain>` |
 | `https://<kernel-domain>/` and `www.` | a page that asks for an e-mail address and sends each person to their tenant | the user tenant's desktop |
-| `console.<kernel-domain>` | leads to that page | the user tenant's desktop |
+| `desktop.<kernel-domain>` | leads to that page | the user tenant's desktop |
 | The **platform admin** | `admin@<kernel-domain>` at `https://platform.<kernel-domain>/`; admin console at `admin.platform.<kernel-domain>` | the same |
 
 **On a single-tenancy cluster your website can live at the main address.**
 Install an app that offers a public website for it, then publish that surface
 for the main address (the user admin approves it, like every public surface).
 `https://<kernel-domain>/` and `www.` then show the website. Sign-in is at
-`https://console.<kernel-domain>/`, and `https://<kernel-domain>/sign-in`
+`https://desktop.<kernel-domain>/`, and `https://<kernel-domain>/sign-in`
 always leads there.
 
 **On a single-tenancy cluster there is nothing to create.** A second tenant

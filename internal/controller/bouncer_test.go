@@ -85,7 +85,7 @@ func TestKernelSecurityPolicyIsTheZoneSessionAndTheBouncer(t *testing.T) {
 	}
 	// forwardToken is no longer the policy's: the token is always there for
 	// the bouncer, and the bouncer's table says whether the backend gets it.
-	desktop := kernelSecurityPolicySpec("k.example", "kernel", "console", routeAuthz{relation: "can_enter", object: "tenant:platform", forwardToken: true}, "s")
+	desktop := kernelSecurityPolicySpec("k.example", "kernel", "desktop", routeAuthz{relation: "can_enter", object: "tenant:platform", forwardToken: true}, "s")
 	if desktop["oidc"].(map[string]interface{})["forwardAccessToken"] != true {
 		t.Fatal("forwardAccessToken must be set on a forwarded route too")
 	}
@@ -122,7 +122,7 @@ func TestTheRouteTableListsEveryRouteWithAQuestionSortedByHost(t *testing.T) {
 		{name: "b", host: "headlamp.k.example", authz: &routeAuthz{relation: "can_audit", object: "cluster:c1"}},
 		{name: "id", host: "id.k.example"},
 		{name: "a", host: "argocd.k.example", authz: &routeAuthz{relation: "can_configure", object: "cluster:c1"}},
-	}, []bouncerRoute{{Host: "console.k.example", Relation: "can_enter", Object: "tenant:platform", ForwardToken: true, AuthMode: "oidc"}})
+	}, []bouncerRoute{{Host: "desktop.k.example", Relation: "can_enter", Object: "tenant:platform", ForwardToken: true, AuthMode: "oidc"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,7 +132,7 @@ func TestTheRouteTableListsEveryRouteWithAQuestionSortedByHost(t *testing.T) {
 	if strings.Contains(table, "host: id.k.example") {
 		t.Fatalf("a route with no question is not in the table:\n%s", table)
 	}
-	if !strings.Contains(table, "host: console.k.example") {
+	if !strings.Contains(table, "host: desktop.k.example") {
 		t.Fatalf("a component's route is in the table beside the kernel's:\n%s", table)
 	}
 	if !strings.Contains(table, "authMode: oidc") {
@@ -150,7 +150,7 @@ func TestTheRouteTableListsEveryRouteWithAQuestionSortedByHost(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r := parsed.Match("console.k.example"); r == nil || !r.ForwardToken || r.AuthMode != bouncer.AuthModeOIDC {
+	if r := parsed.Match("desktop.k.example"); r == nil || !r.ForwardToken || r.AuthMode != bouncer.AuthModeOIDC {
 		t.Fatalf("the bouncer's reading of the desktop route: %+v", r)
 	}
 }

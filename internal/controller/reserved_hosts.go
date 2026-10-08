@@ -36,7 +36,7 @@ import (
 // it, and "the identity provider's host now serves somebody's app" has no
 // error anywhere. So it is refused before anything is written.
 //
-// console and admin are deliberately not here: on a single-tenancy cluster
+// desktop and admin are deliberately not here: on a single-tenancy cluster
 // they are the user tenant's desktop and administration console.
 var kernelReservedHostLabels = []string{
 	"argocd", "corp", "headlamp", "id", "imap", "llm", "mail", "mail-egress",

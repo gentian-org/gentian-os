@@ -68,12 +68,12 @@ the sign-in side and the table of addresses):
 3. **`multi`: any number of user tenants**, each on its own subdomain or a
    custom domain. The install creates none; the platform admin does, in the
    admin console or with `kubectl gentian tenants create`. The bare domain,
-   `www` and `console.<KERNEL_DOMAIN>` lead to the concierge's address form.
+   `www` and `desktop.<KERNEL_DOMAIN>` lead to the concierge's address form.
    No tenant can put a website on the main address here: it belongs to all
    of them. A tenant publishes its website under its own hosts, or on a
    domain of its own (a custom domain).
 4. **`single`: exactly one user tenant, named `user`, on the cluster's own
-   addresses.** Its desktop is `console.<KERNEL_DOMAIN>`, its admin console
+   addresses.** Its desktop is `desktop.<KERNEL_DOMAIN>`, its admin console
    `admin.<KERNEL_DOMAIN>`, its apps `<app>.<KERNEL_DOMAIN>`, and the bare
    domain and `www` lead to its desktop -- or show its public website, if it
    has put one on the main address
@@ -222,8 +222,8 @@ NetworkPolicies enforce three rules at the CNI level:
 **Suze** (Keycloak + OpenFGA) is the **single trust anchor** on new installs.
 Each tenant gets a dedicated Keycloak realm; apps authenticate users via OIDC
 against that realm, and its people sign in there too: the edge in front of a
-tenant's console sends the browser to the tenant realm, and the concierge
-on the kernel domain sends an address to its tenant's console (see
+tenant's desktop sends the browser to the tenant realm, and the concierge
+on the kernel domain sends an address to its tenant's desktop (see
 [iam.md](iam.md)). App-to-app calls use **OIDC token exchange (RFC 8693)** — app A
 presents its user-bound token and receives a scoped token usable against app B.
 The `IntegrationBinding` configures which exchanges are permitted; the binding's

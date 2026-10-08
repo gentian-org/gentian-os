@@ -30,7 +30,7 @@ import (
 
 // conciergeLookupConfigMap is what the concierge answers an address on a
 // custom domain from: one key per bound domain, named by the domain's
-// SHA-256, holding {"url": <its console>}. Mounted beside the page as
+// SHA-256, holding {"url": <its desktop>}. Mounted beside the page as
 // /sign-in/lookup/, so the page finds a domain it already knows and nobody
 // can list the domains a cluster serves.
 //
@@ -82,7 +82,7 @@ func conciergeLookupData(tenants []gentianov1alpha1.Tenant, kernelDomain, tenanc
 		if t.DeletionTimestamp != nil || t.Status.Domain == "" {
 			continue
 		}
-		body, _ := json.Marshal(map[string]string{"url": "https://" + consoleHost(t.EffectiveDomain(kernelDomain, tenancyMode)) + "/"})
+		body, _ := json.Marshal(map[string]string{"url": "https://" + desktopHost(t.EffectiveDomain(kernelDomain, tenancyMode)) + "/"})
 		data[conciergeLookupKey(t.Status.Domain)] = string(body)
 	}
 	return data

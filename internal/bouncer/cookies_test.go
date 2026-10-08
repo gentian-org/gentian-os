@@ -33,7 +33,7 @@ func sessionTable() *Table {
 	}
 	return &Table{Routes: []Route{
 		with(Route{Host: "argocd.k.example", Relation: "can_configure", Object: "cluster:c1", AuthMode: AuthModeOIDC}),
-		with(Route{Host: "console.k.example", Relation: "can_enter", Object: "tenant:platform", ForwardToken: true, AuthMode: AuthModeOIDC}),
+		with(Route{Host: "desktop.k.example", Relation: "can_enter", Object: "tenant:platform", ForwardToken: true, AuthMode: AuthModeOIDC}),
 		with(Route{Host: "id.k.example", Relation: "can_configure", Object: "cluster:c1", KeepClientToken: true, IDTokenAudience: kernelClient, AuthMode: AuthModeOIDC}),
 		// A bearer route has no session. Naming cookies on one changes
 		// nothing: only a route with a session has them taken out.
@@ -121,7 +121,7 @@ func TestAnAllowedRequestGoesOnWithoutTheSessionsCookies(t *testing.T) {
 
 	// forwardToken hands the backend the bearer, in the Authorization
 	// header, and that is all of the session it gets.
-	forwarded := d.Decide(context.Background(), Request{Host: "console.k.example", Authorization: "Bearer root-token", Cookie: cookies})
+	forwarded := d.Decide(context.Background(), Request{Host: "desktop.k.example", Authorization: "Bearer root-token", Cookie: cookies})
 	if !forwarded.Allow || removes(forwarded, "authorization") {
 		t.Fatalf("a forwardToken route keeps its bearer: %+v", forwarded)
 	}

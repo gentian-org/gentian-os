@@ -40,12 +40,12 @@ func acmeTenantFixture() *gentianov1alpha1.Tenant {
 // The platform tenant's desktop is in the kernel zone: kernel realm, the
 // kernel zone's client and cookie (AD-10), at platform.<kernel>, with its
 // other components one label below. Every other tenant's desktop is in that
-// tenant's own zone, at console.<its domain>.
+// tenant's own zone, at desktop.<its domain>.
 func TestTheDesktopsZoneFollowsTheTenantsRealm(t *testing.T) {
 	r := &ComponentReconciler{KernelDomain: "k.example", KernelRealm: "kernel", TenancyMode: "multi"}
 	comp := &gentianov1alpha1.Component{}
 	comp.Name = "desktop"
-	e := &gentianov1alpha1.ExposureSpec{Name: "web", SubDomain: "console"}
+	e := &gentianov1alpha1.ExposureSpec{Name: "web", SubDomain: "desktop"}
 
 	platform := r.zoneOf(platformTenantFixture())
 	if !platform.kernel || platform.clientID != edgeKernelClientID || platform.cookie != edgeKernelAccessTokenCookie || platform.realm != "kernel" {
@@ -58,8 +58,8 @@ func TestTheDesktopsZoneFollowsTheTenantsRealm(t *testing.T) {
 	if acme.kernel || acme.clientID != "gentian-edge-acme" || acme.realm != "acme" || acme.sectionName != tenantGatewayListenerName("acme") {
 		t.Fatalf("acme zone = %+v", acme)
 	}
-	if got := exposureHost(acme, comp, e); got != "console.acme.k.example" {
-		t.Fatalf("acme console host = %q", got)
+	if got := exposureHost(acme, comp, e); got != "desktop.acme.k.example" {
+		t.Fatalf("acme desktop host = %q", got)
 	}
 }
 
@@ -182,10 +182,10 @@ func TestAComponentRouteCarriesItsQuestion(t *testing.T) {
 	zone := edgeZone{zoneNames: zoneNames{domain: "platform.k.example", kernel: true, apex: "k.example"}, realm: "kernel", cookie: edgeKernelAccessTokenCookie, idCookie: edgeKernelIDTokenCookie, sectionName: tenantGatewayListenerName("platform")}
 	e := &gentianov1alpha1.ExposureSpec{
 		Name: "api", Surface: gentianov1alpha1.SurfaceGateway, AuthMode: gentianov1alpha1.AuthModeOIDC,
-		SubDomain: "console", Paths: []string{"/api", "/healthz"}, ForwardToken: true,
+		SubDomain: "desktop", Paths: []string{"/api", "/healthz"}, ForwardToken: true,
 		Backend: gentianov1alpha1.BackendRef{Service: "desktop-gentian-portal-api", Port: 8000},
 	}
-	route := buildExposureRoute(comp, "desktop-api", "console.k.example", zone, e, exposureAuthz(platformTenantFixture(), comp, launcherProfile(), e.ForwardToken), "k.example", []string{"platform.k.example"})
+	route := buildExposureRoute(comp, "desktop-api", "desktop.k.example", zone, e, exposureAuthz(platformTenantFixture(), comp, launcherProfile(), e.ForwardToken), "k.example", []string{"platform.k.example"})
 	if route.Labels[bouncerRouteLabel] != "true" || route.Annotations[bouncerRelationAnnotation] != "can_enter" ||
 		route.Annotations[bouncerObjectAnnotation] != "tenant:platform" || route.Annotations[bouncerForwardAnnotation] != "true" {
 		t.Fatalf("route question = %v %v", route.Labels, route.Annotations)
@@ -200,8 +200,8 @@ func TestAComponentRouteCarriesItsQuestion(t *testing.T) {
 		t.Fatalf("rules = %+v", route.Spec.Rules)
 	}
 	// A second route on the same host folds into the same table entry.
-	web := buildExposureRoute(comp, "desktop-web", "console.k.example", zone,
-		&gentianov1alpha1.ExposureSpec{Name: "web", Surface: gentianov1alpha1.SurfaceGateway, AuthMode: gentianov1alpha1.AuthModeOIDC, SubDomain: "console",
+	web := buildExposureRoute(comp, "desktop-web", "desktop.k.example", zone,
+		&gentianov1alpha1.ExposureSpec{Name: "web", Surface: gentianov1alpha1.SurfaceGateway, AuthMode: gentianov1alpha1.AuthModeOIDC, SubDomain: "desktop",
 			Backend: gentianov1alpha1.BackendRef{Service: "desktop-gentian-portal-web", Port: 8080}},
 		exposureAuthz(platformTenantFixture(), comp, launcherProfile(), false), "k.example", []string{"platform.k.example"})
 
@@ -223,7 +223,7 @@ func TestAComponentRouteCarriesItsQuestion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(entries) != 1 || entries[0].Host != "console.k.example" || entries[0].Relation != "can_enter" || !entries[0].ForwardToken || entries[0].AuthMode != "oidc" {
+	if len(entries) != 1 || entries[0].Host != "desktop.k.example" || entries[0].Relation != "can_enter" || !entries[0].ForwardToken || entries[0].AuthMode != "oidc" {
 		t.Fatalf("entries = %+v", entries)
 	}
 	// A component's route never keeps the caller's own token, so it never

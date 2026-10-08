@@ -13,4 +13,4 @@ data:
   hosts: |
     admin
     cloud
-    console
+    desktop

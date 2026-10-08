@@ -240,8 +240,8 @@ func TestTheFrontDoorWithAWebsiteOnTheMainAddress(t *testing.T) {
 	// multi: untouched, whatever anybody published.
 	for _, website := range []bool{false, true} {
 		all := specs("multi", website)
-		if got := redirectsOf(all); got["www."+mainKD] != mainKD || got["console."+mainKD] != mainKD {
-			t.Fatalf("multi: www -> %q, console -> %q", got["www."+mainKD], got["console."+mainKD])
+		if got := redirectsOf(all); got["www."+mainKD] != mainKD || got["desktop."+mainKD] != mainKD {
+			t.Fatalf("multi: www -> %q, desktop -> %q", got["www."+mainKD], got["desktop."+mainKD])
 		}
 		if got := bareDomain(all); len(got) != 0 {
 			t.Fatalf("multi: the kernel routes the bare domain: %v", got)
@@ -252,10 +252,10 @@ func TestTheFrontDoorWithAWebsiteOnTheMainAddress(t *testing.T) {
 	// and the address after a withdrawal: the front page and /sign-in lead to
 	// the desktop, and so does www.
 	all := specs("single", false)
-	if got := redirectsOf(all)["www."+mainKD]; got != "console."+mainKD {
+	if got := redirectsOf(all)["www."+mainKD]; got != "desktop."+mainKD {
 		t.Fatalf("single, no website: www -> %q", got)
 	}
-	want := "Exact /, PathPrefix /sign-in -> console." + mainKD
+	want := "Exact /, PathPrefix /sign-in -> desktop." + mainKD
 	if got := bareDomain(all); got[kernelRouteApexPerimeterRedirect] != want || got[kernelRouteApexRedirect] != want {
 		t.Fatalf("single, no website: the bare domain = %v", got)
 	}
@@ -271,13 +271,13 @@ func TestTheFrontDoorWithAWebsiteOnTheMainAddress(t *testing.T) {
 			t.Fatalf("www rewrites the path; a page of the website must stay that page")
 		}
 	}
-	want = "PathPrefix /sign-in -> console." + mainKD
+	want = "PathPrefix /sign-in -> desktop." + mainKD
 	if got := bareDomain(all); got[kernelRouteApexPerimeterRedirect] != want || got[kernelRouteApexRedirect] != want {
 		t.Fatalf("single, website: the bare domain = %v; /sign-in must still lead to the desktop and / must not", got)
 	}
 	// The desktop is still where it was.
-	if to, routed := redirectsOf(all)["console."+mainKD]; routed {
-		t.Fatalf("single, website: console.<kernel> is redirected to %q", to)
+	if to, routed := redirectsOf(all)["desktop."+mainKD]; routed {
+		t.Fatalf("single, website: desktop.<kernel> is redirected to %q", to)
 	}
 }
 
