@@ -64,7 +64,10 @@ type Repository interface {
 	CreateTenant(ctx context.Context, req gitops.NewTenant, meta gitops.Meta) (gitops.Result, error)
 	RetireTenant(ctx context.Context, tenant string, meta gitops.Meta) (gitops.Result, error)
 	RequestTenantPurge(ctx context.Context, tenant string, now time.Time, opts gitops.PurgeOptions, meta gitops.Meta) (gitops.Result, error)
-	DeclareTenant(ctx context.Context, name string, spec *gentianov1alpha1.TenantSpec, origin string, meta gitops.Meta) (gitops.Result, error)
+	DeclareTenant(ctx context.Context, imported gitops.ImportedTenant, meta gitops.Meta) (gitops.Result, error)
+	PendingImport(ctx context.Context, tenant string) (gitops.PendingImport, bool, error)
+	PendingImports(ctx context.Context) ([]gitops.PendingImport, error)
+	FinishImport(ctx context.Context, tenant string, meta gitops.Meta) (gitops.Result, error)
 	PendingPurges(ctx context.Context) ([]string, error)
 	SetTenantDomain(ctx context.Context, tenant, domain string, meta gitops.Meta) (gitops.Result, error)
 	ClusterBranding(ctx context.Context) (*gentianov1alpha1.BrandingSpec, bool, error)
@@ -162,6 +165,9 @@ type Server struct {
 	purging sync.Map
 	// imports holds each import's progress by tenant, for the status route.
 	imports sync.Map
+	// importing holds the tenants whose import is being watched, so that a
+	// repeated request or a restart's resume starts no second watcher.
+	importing sync.Map
 	// retiring holds the unused profiles whose deletion from the cluster is
 	// being waited for, so a repeated request starts no second watcher.
 	retiring sync.Map

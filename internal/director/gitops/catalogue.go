@@ -13,6 +13,7 @@ package gitops
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -110,6 +111,10 @@ type MaterialisedProfile struct {
 	// records it (profilebundle.OriginAnnotation); empty when none is
 	// recorded.
 	Origin string
+	// Digest is the build the directory holds: the digest of the bundle's
+	// bytes as they were committed beside the profile; empty when the profile
+	// has no bundle, as one the installer scaffolded has none.
+	Digest string
 }
 
 // ProfileOnCluster answers whether the cluster's catalogue directory holds a
@@ -157,6 +162,11 @@ func (g *GitOps) materialised(name string) (MaterialisedProfile, error) {
 		return MaterialisedProfile{}, fmt.Errorf("catalogue: the bundle of %s does not parse: %w", name, err)
 	}
 	out.Origin = patch.Metadata.Annotations[profilebundle.OriginAnnotation]
+	if encoded := patch.Metadata.Annotations[profilebundle.Annotation]; encoded != "" {
+		if body, err := base64.StdEncoding.DecodeString(encoded); err == nil {
+			out.Digest = profilebundle.Digest(body)
+		}
+	}
 	return out, nil
 }
 

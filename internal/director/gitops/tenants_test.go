@@ -26,6 +26,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/backup"
 	dt "github.com/gentian-org/gentian-os/internal/director/directortest"
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
 )
@@ -268,7 +269,7 @@ func TestAnImportDeclaresTheTenantFromTheBundlesSpec(t *testing.T) {
 			{Name: "theirs", URL: "https://elsewhere.example.com/apps", AddedBy: "tenant"},
 		}},
 	}
-	res, err := g.DeclareTenant(ctx, "acme", spec, "export nightly of 2026-10-01", tenantMeta())
+	res, err := g.DeclareTenant(ctx, gitops.ImportedTenant{Name: "acme", Spec: spec, Origin: "export nightly of 2026-10-01"}, tenantMeta())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -304,7 +305,7 @@ func TestAnImportDeclaresTheTenantFromTheBundlesSpec(t *testing.T) {
 	if !strings.Contains(text, "imported from a bundle") {
 		t.Fatal("the manifest does not say where it came from")
 	}
-	if _, err := g.DeclareTenant(ctx, "acme", spec, "again", tenantMeta()); !errors.Is(err, gitops.ErrTenantExists) {
+	if _, err := g.DeclareTenant(ctx, gitops.ImportedTenant{Name: "acme", Spec: spec, Origin: "again"}, tenantMeta()); !errors.Is(err, gitops.ErrTenantExists) {
 		t.Fatalf("second import = %v, want ErrTenantExists", err)
 	}
 	tenants, err := g.TenantDetails(ctx)
@@ -379,7 +380,7 @@ func TestASingleTenancyClusterTakesExactlyOneUserTenant(t *testing.T) {
 			t.Errorf("the refusal does not say %q: %v", want, err)
 		}
 	}
-	if _, err := g.DeclareTenant(context.Background(), "acme", &gentianov1alpha1.TenantSpec{DisplayName: "Acme"}, "test", tenantMeta()); !errors.Is(err, gitops.ErrSingleTenancy) {
+	if _, err := g.DeclareTenant(context.Background(), gitops.ImportedTenant{Name: "acme", Spec: &gentianov1alpha1.TenantSpec{DisplayName: "Acme"}, Origin: "test"}, tenantMeta()); !errors.Is(err, gitops.ErrSingleTenancy) {
 		t.Fatalf("import: err = %v", err)
 	}
 	if after := dt.Git(t, "", "--git-dir", remote, "rev-parse", "main"); after != before {
@@ -668,5 +669,133 @@ func TestTheInstallsUserTenantIsTheManifestTheDirectorWrites(t *testing.T) {
 		if ours := dt.RemoteFile(t, remote, filepath.Dir(dt.TenantPath("user"))+"/"+name); strings.TrimSpace(string(theirs)) != ours {
 			t.Fatalf("%s differs.\ninstall:\n%s\ndirector:\n%s", name, theirs, ours)
 		}
+	}
+}
+
+// A bundle's manifest states the names of the tenant it was taken of: its
+// realm, its database prefix, its bucket prefix. An import copied them, so a
+// tenant imported under another name beside the original was a second tenant
+// on the original's realm, databases and buckets -- and the restore that
+// followed replaced them. An imported tenant's names now follow from its own
+// name, by the rule a created tenant's do, whatever the bundle states.
+func TestATenantImportedUnderAnotherNameGetsItsOwnNames(t *testing.T) {
+	ctx := context.Background()
+	remote := dt.Remote(t)
+	g := gitops.NewGitOps(dt.Clone(t, remote), remote, dt.Cluster, director)
+	if _, err := g.CreateTenant(ctx, gitops.NewTenant{Name: "acme", DisplayName: "Acme Ltd"}, tenantMeta()); err != nil {
+		t.Fatal(err)
+	}
+	// What an export of acme writes into its bundle: acme's own spec.
+	var original struct {
+		Spec gentianov1alpha1.TenantSpec `json:"spec"`
+	}
+	if err := yaml.Unmarshal([]byte(dt.RemoteFile(t, remote, dt.TenantPath("acme"))), &original); err != nil {
+		t.Fatal(err)
+	}
+	if original.Spec.Isolation == nil || original.Spec.Isolation.KeycloakRealm != "acme" {
+		t.Fatalf("the fixture does not state acme's names: %+v", original.Spec.Isolation)
+	}
+	original.Spec.Isolation.Namespace = "somewhere-else"
+
+	pending := gitops.PendingImport{Source: "acme", Export: "nightly", Restore: "import-20261008-101500",
+		Bundle: gentianov1alpha1.BundleRef{Bucket: "gentian-imports", Prefix: "20261008-101500-1a2b3c4d"}}
+	if _, err := g.DeclareTenant(ctx, gitops.ImportedTenant{Name: "acme2", Spec: &original.Spec, Origin: "export nightly", Pending: pending}, tenantMeta()); err != nil {
+		t.Fatal(err)
+	}
+	var imported struct {
+		Spec gentianov1alpha1.TenantSpec `json:"spec"`
+	}
+	text := dt.RemoteFile(t, remote, dt.TenantPath("acme2"))
+	if err := yaml.Unmarshal([]byte(text), &imported); err != nil {
+		t.Fatalf("%v\n%s", err, text)
+	}
+	iso := imported.Spec.Isolation
+	if iso == nil || iso.KeycloakRealm != "acme2" || iso.DatabasePrefix != "acme2_" || iso.S3Prefix != "acme2-" || iso.Namespace != "" {
+		t.Fatalf("the imported tenant's names are not its own: %+v\n%s", iso, text)
+	}
+	if iso.Mode != original.Spec.Isolation.Mode || imported.Spec.DisplayName != "Acme Ltd" {
+		t.Errorf("the bundle's settings did not come: %+v", imported.Spec)
+	}
+	// Byte for byte: nothing of acme's names is anywhere in the manifest's spec.
+	if strings.Contains(text, "keycloakRealm: acme\n") || strings.Contains(text, "databasePrefix: acme_\n") || strings.Contains(text, "s3Prefix: acme-\n") {
+		t.Errorf("the original tenant's names are in the imported manifest:\n%s", text)
+	}
+	// And the original is as it was.
+	if after := dt.RemoteFile(t, remote, dt.TenantPath("acme")); !strings.Contains(after, "keycloakRealm: acme\n") {
+		t.Errorf("the original tenant's manifest changed:\n%s", after)
+	}
+
+	// The import is on record with the tenant, in the same commit, without a
+	// key; and is not once it has finished.
+	record := dt.RemoteFile(t, remote, strings.TrimSuffix(dt.TenantPath("acme2"), "tenant.yaml")+gitops.ImportFile)
+	if !strings.Contains(record, `"restore": "import-20261008-101500"`) || !strings.Contains(record, `"source": "acme"`) {
+		t.Fatalf("the record of the import:\n%s", record)
+	}
+	for _, secret := range []string{"passphrase", "identity", "decryption", "AGE-SECRET"} {
+		if strings.Contains(record, secret) {
+			t.Errorf("the record of an import names %q; a bundle's key is never written to git", secret)
+		}
+	}
+	got, err := g.PendingImports(ctx)
+	if err != nil || len(got) != 1 || got[0].Tenant != "acme2" || got[0].Bundle.Prefix != pending.Bundle.Prefix || got[0].Restore != pending.Restore {
+		t.Fatalf("pending imports = %+v, %v", got, err)
+	}
+	if res, err := g.FinishImport(ctx, "acme2", tenantMeta()); err != nil || !res.Changed {
+		t.Fatalf("finish = %+v, %v", res, err)
+	}
+	if got, err := g.PendingImports(ctx); err != nil || len(got) != 0 {
+		t.Fatalf("pending after it finished = %+v, %v", got, err)
+	}
+	if res, err := g.FinishImport(ctx, "acme2", tenantMeta()); err != nil || res.Changed {
+		t.Fatalf("finishing twice = %+v, %v", res, err)
+	}
+	// The tenant's directory is still a kustomization of its manifest alone.
+	if k := dt.RemoteFile(t, remote, strings.TrimSuffix(dt.TenantPath("acme2"), "tenant.yaml")+"kustomization.yaml"); strings.Contains(k, "import") {
+		t.Errorf("the record is listed as a resource:\n%s", k)
+	}
+}
+
+// Independent of how a tenant's names are arrived at: a tenant whose realm,
+// database prefix or bucket prefix is another tenant's is not created and
+// not imported. Nothing reaches git.
+func TestATenantWhoseNamesAreAnothersIsRefused(t *testing.T) {
+	ctx := context.Background()
+	remote := dt.Remote(t)
+	// A tenant that states names that are not its own name's: as the
+	// platform tenant does, and as a hand-written manifest may.
+	dt.Commit(t, remote, map[string]string{
+		dt.TenantPath("legacy"): "apiVersion: gentianos.io/v1alpha1\nkind: Tenant\nmetadata:\n  name: legacy\nspec:\n  displayName: Legacy\n" +
+			"  isolation:\n    keycloakRealm: acme\n    databasePrefix: shared_\n    s3Prefix: Globex-\n",
+	})
+	g := gitops.NewGitOps(dt.Clone(t, remote), remote, dt.Cluster, director)
+	before := dt.Git(t, "", "--git-dir", remote, "rev-parse", "main")
+
+	// By the realm: creating "acme", whose realm would be legacy's.
+	_, err := g.CreateTenant(ctx, gitops.NewTenant{Name: "acme"}, tenantMeta())
+	if !errors.Is(err, backup.ErrNamesTaken) || !strings.Contains(err.Error(), `the realm "acme" is tenant legacy's`) {
+		t.Fatalf("create acme = %v", err)
+	}
+	// By the database prefix, and by the bucket prefix as it is used (lower
+	// case): importing "shared" and "globex".
+	_, err = g.DeclareTenant(ctx, gitops.ImportedTenant{Name: "shared", Spec: &gentianov1alpha1.TenantSpec{DisplayName: "S"}, Origin: "test"}, tenantMeta())
+	if !errors.Is(err, backup.ErrNamesTaken) || !strings.Contains(err.Error(), `the database prefix "shared_" is tenant legacy's`) {
+		t.Fatalf("import shared = %v", err)
+	}
+	_, err = g.DeclareTenant(ctx, gitops.ImportedTenant{Name: "globex", Spec: &gentianov1alpha1.TenantSpec{DisplayName: "G"}, Origin: "test"}, tenantMeta())
+	if !errors.Is(err, backup.ErrNamesTaken) || !strings.Contains(err.Error(), `the bucket prefix "globex-" is tenant legacy's`) {
+		t.Fatalf("import globex = %v", err)
+	}
+	if after := dt.Git(t, "", "--git-dir", remote, "rev-parse", "main"); after != before {
+		t.Fatal("a refused tenant still reached git")
+	}
+	// A tenant whose names are free is created beside it.
+	if res, err := g.CreateTenant(ctx, gitops.NewTenant{Name: "initech"}, tenantMeta()); err != nil || !res.Changed {
+		t.Fatalf("create initech = %+v, %v", res, err)
+	}
+
+	// A manifest that cannot be read is not a tenant without names.
+	dt.Commit(t, remote, map[string]string{dt.TenantPath("broken"): "spec: [this is: not a tenant\n"})
+	if _, err := g.CreateTenant(ctx, gitops.NewTenant{Name: "umbrella"}, tenantMeta()); err == nil || !strings.Contains(err.Error(), "broken") {
+		t.Fatalf("a tenant was created beside a manifest whose names cannot be read: %v", err)
 	}
 }

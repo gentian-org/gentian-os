@@ -21,6 +21,9 @@ SPDX-License-Identifier: MPL-2.0
 package backup
 
 import (
+	"errors"
+	"fmt"
+	"sort"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
@@ -40,15 +43,96 @@ func TenantNamespace(tenant *gentianov1alpha1.Tenant) string {
 	return tenant.NamespaceName()
 }
 
+// TenantNames are the three names everything a tenant owns on the shared
+// services is named from: its realm at the identity provider, and the
+// prefixes of its databases and of its buckets. Two tenants with one of them
+// in common do not have two of the thing: they have one, and each of them
+// provisions into it, restores over it and, when it goes, destroys it.
+type TenantNames struct {
+	Realm          string
+	DatabasePrefix string
+	BucketPrefix   string
+}
+
+// NamesOf is a tenant's names: what its manifest states, or the platform's
+// one rule for a tenant that states nothing -- the realm is the tenant's
+// name, the database prefix the name and an underscore, the bucket prefix the
+// name and a hyphen. As they are used: hyphens are not legal in a database's
+// name and become underscores, and a bucket's name is lower case.
+func NamesOf(tenant *gentianov1alpha1.Tenant) TenantNames {
+	names := TenantNames{Realm: tenant.Name, DatabasePrefix: tenant.Name + "_", BucketPrefix: tenant.Name + "-"}
+	if iso := tenant.Spec.Isolation; iso != nil {
+		if iso.KeycloakRealm != "" {
+			names.Realm = iso.KeycloakRealm
+		}
+		if iso.DatabasePrefix != "" {
+			names.DatabasePrefix = iso.DatabasePrefix
+		}
+		if iso.S3Prefix != "" {
+			names.BucketPrefix = iso.S3Prefix
+		}
+	}
+	names.DatabasePrefix = strings.ReplaceAll(names.DatabasePrefix, "-", "_")
+	names.BucketPrefix = s3Safe(names.BucketPrefix)
+	return names
+}
+
+// RuleIsolation is the isolation block of a tenant named by the platform's
+// one rule: what a tenant created through the director is written with.
+func RuleIsolation(name string, mode gentianov1alpha1.IsolationMode) *gentianov1alpha1.TenantIsolation {
+	return &gentianov1alpha1.TenantIsolation{
+		Mode:           mode,
+		KeycloakRealm:  name,
+		DatabasePrefix: name + "_",
+		S3Prefix:       name + "-",
+	}
+}
+
+// ErrNamesTaken is a tenant one of whose names another tenant already uses.
+var ErrNamesTaken = errors.New("a name this tenant would use is another tenant's")
+
+// NamesTaken answers what is wrong with a tenant's names beside the tenants
+// a cluster already has, or nil. A tenant whose realm, database prefix or
+// bucket prefix is another tenant's is refused before it exists: once it
+// does, provisioning adopts the other's realm, databases and buckets as its
+// own, a restore replaces them, and its deletion destroys them.
+//
+// It is asked wherever a tenant comes into being -- the director, before it
+// commits one, and the admission webhook, before the cluster stores one --
+// and is one function so that they cannot come to different answers.
+func NamesTaken(candidate *gentianov1alpha1.Tenant, others []gentianov1alpha1.Tenant) error {
+	mine := NamesOf(candidate)
+	var clashes []string
+	for i := range others {
+		other := &others[i]
+		if other.Name == candidate.Name {
+			continue
+		}
+		theirs := NamesOf(other)
+		if mine.Realm == theirs.Realm {
+			clashes = append(clashes, fmt.Sprintf("the realm %q is tenant %s's", mine.Realm, other.Name))
+		}
+		if mine.DatabasePrefix == theirs.DatabasePrefix {
+			clashes = append(clashes, fmt.Sprintf("the database prefix %q is tenant %s's", mine.DatabasePrefix, other.Name))
+		}
+		if mine.BucketPrefix == theirs.BucketPrefix {
+			clashes = append(clashes, fmt.Sprintf("the bucket prefix %q is tenant %s's", mine.BucketPrefix, other.Name))
+		}
+	}
+	if len(clashes) == 0 {
+		return nil
+	}
+	sort.Strings(clashes)
+	return fmt.Errorf("%w: tenant %q is refused, because %s. Two tenants with one of these in common share the thing itself; "+
+		"give the tenant names of its own (spec.isolation), or leave them out so that they follow from its name",
+		ErrNamesTaken, candidate.Name, strings.Join(clashes, "; "))
+}
+
 // DatabaseName returns the relational database provisioned for a tenant + app.
 // Honours spec.isolation.databasePrefix, defaulting to "{tenant}_", and
 // replaces hyphens because they are not legal in an unquoted SQL identifier.
 func DatabaseName(tenant *gentianov1alpha1.Tenant, app string) string {
-	prefix := tenant.Name + "_"
-	if tenant.Spec.Isolation != nil && tenant.Spec.Isolation.DatabasePrefix != "" {
-		prefix = tenant.Spec.Isolation.DatabasePrefix
-	}
-	return strings.ReplaceAll(prefix, "-", "_") + strings.ReplaceAll(app, "-", "_")
+	return NamesOf(tenant).DatabasePrefix + strings.ReplaceAll(app, "-", "_")
 }
 
 // PostgresRole returns the PostgreSQL login role for a tenant + app.
@@ -72,11 +156,7 @@ func MariaDBUser(tenantName, app string) string {
 // S3Bucket returns the object-storage bucket provisioned for a tenant + app.
 // Honours spec.isolation.s3Prefix, defaulting to "{tenant}-".
 func S3Bucket(tenant *gentianov1alpha1.Tenant, app string) string {
-	prefix := tenant.Name + "-"
-	if tenant.Spec.Isolation != nil && tenant.Spec.Isolation.S3Prefix != "" {
-		prefix = tenant.Spec.Isolation.S3Prefix
-	}
-	return s3Safe(prefix) + s3Safe(app)
+	return NamesOf(tenant).BucketPrefix + s3Safe(app)
 }
 
 // BackupBucket returns the bucket a tenant's export bundles are written to.
@@ -87,11 +167,7 @@ func S3Bucket(tenant *gentianov1alpha1.Tenant, app string) string {
 // read, and it is built from kernelRequirements, which no profile can use to
 // claim this name.
 func BackupBucket(tenant *gentianov1alpha1.Tenant) string {
-	prefix := tenant.Name + "-"
-	if tenant.Spec.Isolation != nil && tenant.Spec.Isolation.S3Prefix != "" {
-		prefix = tenant.Spec.Isolation.S3Prefix
-	}
-	return s3Safe(prefix) + "gentian-backup"
+	return NamesOf(tenant).BucketPrefix + "gentian-backup"
 }
 
 // RedisACLUser returns the Redis ACL username for a tenant + app.

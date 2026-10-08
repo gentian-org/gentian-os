@@ -25,6 +25,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/backup"
 	"github.com/gentian-org/gentian-os/internal/handover"
 	"github.com/gentian-org/gentian-os/internal/tenancy"
 )
@@ -98,6 +99,18 @@ func (v *TenantValidator) Handle(ctx context.Context, req admission.Request) adm
 	// tenant that is misconfigured, which turns a precaution into a trap.
 	if req.Operation == admissionv1.Create && !v.adoptsKernelRealm(tenant) {
 		if err := v.validateHandover(ctx, tenant); err != nil {
+			return admission.Denied(err.Error())
+		}
+	}
+
+	// Creation only, for the same reason: a tenant that already exists stays
+	// manageable whatever its names are. One that does not yet is refused
+	// when its realm, its database prefix or its bucket prefix is another
+	// tenant's -- the rule the director applies before it commits a tenant
+	// (backup.NamesTaken), here for a Tenant that reaches the cluster by any
+	// other way.
+	if req.Operation == admissionv1.Create {
+		if err := v.validateNames(ctx, tenant); err != nil {
 			return admission.Denied(err.Error())
 		}
 	}
@@ -184,6 +197,17 @@ func (v *TenantValidator) Validate(ctx context.Context, tenant *gentianov1alpha1
 	}
 
 	return nil
+}
+
+// validateNames refuses a new tenant one of whose names another tenant uses.
+// A cluster whose tenants cannot be listed refuses the tenant: admitting it
+// unasked is how one tenant comes to provision into another's databases.
+func (v *TenantValidator) validateNames(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
+	tenants := &gentianov1alpha1.TenantList{}
+	if err := v.Client.List(ctx, tenants); err != nil {
+		return fmt.Errorf("tenant %q: the cluster's tenants could not be listed, so whether its names are free is not known: %w", tenant.Name, err)
+	}
+	return backup.NamesTaken(tenant, tenants.Items)
 }
 
 // InjectDecoder satisfies admission.DecoderInjector so controller-runtime

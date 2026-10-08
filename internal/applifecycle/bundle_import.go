@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -141,7 +142,14 @@ type RestoreRequest struct {
 	Bundle     gentianov1alpha1.BundleRef `json:"bundle"`
 	Decryption Decryption                 `json:"decryption"`
 	Apps       []string                   `json:"apps,omitempty"`
+	// Name names the restore, for a caller that has to find it again: an
+	// import decides it before it begins, so that after a restart it can ask
+	// whether its restore was started and never starts a second. Empty names
+	// it by the time.
+	Name string `json:"name,omitempty"`
 }
+
+var restoreName = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$`)
 
 // RestoreStatus is one restore as the console reads it.
 type RestoreStatus struct {
@@ -181,6 +189,12 @@ func (s *Service) StartRestore(ctx context.Context, tenantName string, req Resto
 	}
 	ns := tenantNamespace(tenant)
 	name := "restore-" + time.Now().UTC().Format("20060102-150405")
+	if req.Name != "" {
+		if !restoreName.MatchString(req.Name) {
+			return nil, fmt.Errorf("name %q is not a name a restore can have: lower-case letters, digits and hyphens, forty at most", req.Name)
+		}
+		name = req.Name
+	}
 	restore := &gentianov1alpha1.TenantRestore{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns,
 			Labels:      map[string]string{"gentianos.io/tenant": tenantName},

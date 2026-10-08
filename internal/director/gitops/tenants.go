@@ -23,6 +23,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/backup"
 	"github.com/gentian-org/gentian-os/internal/tenancy"
 )
 
@@ -330,10 +331,39 @@ type NewTenant struct {
 // by editing the manifest afterwards, which is a second reviewable commit
 // rather than a twenty-field screen nobody fills in correctly the first time.
 func (g *GitOps) CreateTenant(ctx context.Context, req NewTenant, meta Meta) (Result, error) {
-	if !ValidName(req.Name) {
-		return Result{}, fmt.Errorf("%w: tenant %q", ErrInvalidName, req.Name)
+	display := strings.TrimSpace(req.DisplayName)
+	if display == "" {
+		display = req.Name
 	}
-	if err := g.refuseInSingleTenancy(ctx, req.Name); err != nil {
+	requireMFA := req.RequireMFA == nil || *req.RequireMFA
+	return g.createTenant(ctx, req.Name, func() ([]byte, error) {
+		return []byte(tenantManifest(req.Name, display, requireMFA)), nil
+	}, nil, fmt.Sprintf("Add tenant %s", req.Name), "created", meta)
+}
+
+// createTenant is how a tenant comes into being in git, for every way there
+// is of asking for one: a form (CreateTenant) and a bundle (DeclareTenant).
+// They differ in the manifest they write and in nothing else.
+//
+// What is checked here is checked for both, before anything is written: the
+// name, the cluster's tenancy mode, that no tenant of the name exists, and
+// that none of the names the new tenant would use -- its realm, its database
+// prefix, its bucket prefix -- is another tenant's (backup.NamesTaken).
+//
+// manifest is called once those hold, and its answer is committed with the
+// kustomization and with beside, further files of the tenant's directory.
+func (g *GitOps) createTenant(
+	ctx context.Context,
+	name string,
+	manifest func() ([]byte, error),
+	beside map[string][]byte,
+	message, status string,
+	meta Meta,
+) (Result, error) {
+	if !ValidName(name) {
+		return Result{}, fmt.Errorf("%w: tenant %q", ErrInvalidName, name)
+	}
+	if err := g.refuseInSingleTenancy(ctx, name); err != nil {
 		return Result{}, err
 	}
 	g.mu.Lock()
@@ -345,41 +375,96 @@ func (g *GitOps) CreateTenant(ctx context.Context, req NewTenant, meta Meta) (Re
 	if cluster == "" {
 		cluster = "default-cluster"
 	}
-	dir := filepath.Join(g.path, "clusters", cluster, "tenants", req.Name)
+	tenants := filepath.Join(g.path, "clusters", cluster, "tenants")
+	dir := filepath.Join(tenants, name)
 	file := filepath.Join(dir, "tenant.yaml")
 	if _, err := os.Stat(file); err == nil {
-		return Result{}, fmt.Errorf("%w: %q", ErrTenantExists, req.Name)
+		return Result{}, fmt.Errorf("%w: %q", ErrTenantExists, name)
 	}
-	display := strings.TrimSpace(req.DisplayName)
-	if display == "" {
-		display = req.Name
-	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	body, err := manifest()
+	if err != nil {
 		return Result{}, err
 	}
-	requireMFA := req.RequireMFA == nil || *req.RequireMFA
-	if err := os.WriteFile(file, []byte(tenantManifest(req.Name, display, requireMFA)), 0o644); err != nil {
+	candidate := &gentianov1alpha1.Tenant{}
+	if err := yaml.Unmarshal(body, candidate); err != nil {
+		return Result{}, fmt.Errorf("the manifest written for tenant %s does not parse: %w", name, err)
+	}
+	candidate.Name = name
+	others, err := declaredTenants(tenants)
+	if err != nil {
+		return Result{}, err
+	}
+	if err := backup.NamesTaken(candidate, others); err != nil {
+		return Result{}, err
+	}
+
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return Result{}, err
 	}
 	// The kustomization the bootstrap scaffolds for the platform tenant,
 	// written here for every tenant so that the directory is a kustomization
 	// from the start rather than becoming one the day a plan is chosen.
-	kustomization := filepath.Join(dir, "kustomization.yaml")
-	if err := os.WriteFile(kustomization, []byte(tenantKustomization()), 0o644); err != nil {
-		return Result{}, err
+	files := map[string][]byte{"tenant.yaml": body, "kustomization.yaml": []byte(tenantKustomization())}
+	for rel, content := range beside {
+		files[rel] = content
 	}
-	rels := make([]string, 0, 2)
-	for _, f := range []string{file, kustomization} {
-		rel, err := filepath.Rel(g.path, f)
+	rels := make([]string, 0, len(files))
+	for base, content := range files {
+		path := filepath.Join(dir, base)
+		if err := os.WriteFile(path, content, 0o644); err != nil {
+			return Result{}, err
+		}
+		rel, err := filepath.Rel(g.path, path)
 		if err != nil {
 			return Result{}, err
 		}
 		rels = append(rels, rel)
 	}
-	if err := g.commitPaths(ctx, rels, fmt.Sprintf("Add tenant %s", req.Name), meta); err != nil {
+	sort.Strings(rels)
+	if err := g.commitPaths(ctx, rels, message, meta); err != nil {
 		return Result{}, err
 	}
-	return g.landed(ctx, "created")
+	return g.landed(ctx, status)
+}
+
+// declaredTenants reads every tenant git declares, as far as its names go.
+// A manifest that cannot be read is an error and not a tenant without names:
+// what it would have said is exactly what the caller is asking about.
+func declaredTenants(dir string) ([]gentianov1alpha1.Tenant, error) {
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var out []gentianov1alpha1.Tenant
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		raw, err := os.ReadFile(filepath.Join(dir, e.Name(), "tenant.yaml"))
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		var doc struct {
+			Spec struct {
+				Isolation *gentianov1alpha1.TenantIsolation `json:"isolation"`
+			} `json:"spec"`
+		}
+		if err := yaml.Unmarshal(raw, &doc); err != nil {
+			return nil, fmt.Errorf("the manifest of tenant %s does not parse, so which names it uses is not known and no tenant is created beside it: %w",
+				e.Name(), err)
+		}
+		t := gentianov1alpha1.Tenant{}
+		t.Name = e.Name()
+		t.Spec.Isolation = doc.Spec.Isolation
+		out = append(out, t)
+	}
+	return out, nil
 }
 
 // RetireTenant removes a tenant's directory and commits the removal.
