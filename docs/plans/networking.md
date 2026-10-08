@@ -237,6 +237,24 @@ perimeter route skips L1–L2 by declaration**: its `authMode` is the whole
 of its authentication, which is why the field is mandatory and `none` is a
 word someone wrote.
 
+**L5 at the shared stores is one rule with two sides.** A tenant's namespace
+denies egress by default and an app's `kernel-access-<app>` policy opens the
+store its profile declares, on that store's port. Each store -- PostgreSQL,
+MariaDB, Redis, MinIO -- carries the other side, a `store-ingress` policy on
+its server's pods: tenant namespaces, the pods of its own namespace (the
+operator's provisioning and destroy Jobs), and by name the operator, the
+capture and restore pods beside the object store and, for PostgreSQL's
+instance manager, CloudNativePG's operator. The server's side keeps out
+everything that is not a tenant namespace or one of those; the tenant's side
+keeps out the apps that declared no such store. The table of who reaches
+which port, and what stays closed, is
+[security.md §2.7](../design/security.md).
+
+Still open at L5: `system-mail`, `system-mail-dmz`, `system-llm` and
+`kernel-data` admit any source, and no kernel or system namespace denies
+egress -- a pod there is stopped at a store by the store's policy and
+nowhere else by anything.
+
 ## 3. Route classes
 
 | Class | Hostname | `authMode` | L1 | L2 | Backend |

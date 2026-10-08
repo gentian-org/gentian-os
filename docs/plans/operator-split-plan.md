@@ -986,13 +986,17 @@ gives.
    taken the program over. It covers the groups the Cluster claim names and
    no others.
 
-6. **Only the operator's listener has a network policy.** One network policy
-   lets only the director's and the usher's pods reach the listener's port
+6. **Of these programs, only the operator's listener has a network policy.**
+   One network policy lets only the director's and the usher's pods reach the
+   listener's port
    ([networkpolicy.yaml](../../charts/gentian-os/templates/networkpolicy.yaml)).
    The operator's other ports are open to any source, and nothing restricts
    who may connect to the director, the usher, the custodian or the
-   registrar. Each relies on verifying the caller's token. The policy also
-   only works where the cluster's network enforces such policies.
+   registrar. Each relies on verifying the caller's token. The four shared
+   stores have a policy each, which admits the operator by name and none of
+   the other four ([security.md §2.7](../design/security.md)); the kernel's
+   own PostgreSQL, which holds the registrar's record, has none. A policy
+   also only works where the cluster's network enforces such policies.
 
 7. **Whoever can start a pod as the director is the director.** The operator
    knows its callers by service account. Anybody who can create a pod under

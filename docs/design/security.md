@@ -96,7 +96,7 @@ What it does not cover:
 
 - **No transport encryption is required** of an app's connection (no `REQUIRE SSL`, and the server does not set `require_secure_transport`); the account's host is `%`. Neither is new, and neither was changed.
 - **No resource limits** are set on the account (`MAX_USER_CONNECTIONS` and the like): one app can exhaust the server's connections.
-- **The network keeps an app to the server it declared, and no further.** A tenant's namespace denies egress by default. An app's `kernel-access` policy opens the server of the engine its profile declares, on that engine's port: `system-mariadb` on 3306 for a MariaDB app, `system-postgresql` on 5432 for a PostgreSQL one, and nothing of the other. So an app in a tenant's namespace that declared no MariaDB database cannot reach the MariaDB server at all. That is the egress side only: `system-mariadb` has no ingress policy of its own, so what keeps a pod away is the egress policy of the namespace it runs in, and namespaces outside the tenant tier have none. Among the apps that do reach the server, the account's rights above are the only boundary between tenants.
+- **The network keeps an app to the server it declared, and no further.** A tenant's namespace denies egress by default. An app's `kernel-access` policy opens the server of the engine its profile declares, on that engine's port: `system-mariadb` on 3306 for a MariaDB app, `system-postgresql` on 5432 for a PostgreSQL one, and nothing of the other. So an app in a tenant's namespace that declared no MariaDB database cannot reach the MariaDB server at all. The server's side keeps out the rest: its own policy admits tenant namespaces and the platform's named clients, and no other pod of the cluster (§2.7). Among the apps that do reach the server, the account's rights above are the only boundary between tenants.
 - **The admin credential** (`mariadb-admin`, root) is held by the operator's Jobs in `system-mariadb` and is not an app's.
 
 ### 2.6 What a declared store opens
@@ -114,7 +114,36 @@ A tenant's namespace denies egress by default. Policy `kernel-access-<app>` (`in
 | `mail` | `system-mail` and `system-mail-dmz`, every port. Not narrowed: where an app's mail goes depends on the cluster's mail mode |
 | `identity` | The edge and the identity provider's namespace, every port. Not narrowed |
 
-One engine opens nothing of the other. The ports are the ones the app is handed with its credentials (`internal/controller/provisioner`), and a test holds the store charts to them. A namespace named in a profile's `gentianos.io/kernel-egress-namespaces` annotation is opened whole, beside these. The language-model gateway is not a declared service and nothing here opens `system-llm`. This is egress from the tenant's namespace only; the store namespaces have no ingress policy of their own (§3.0).
+One engine opens nothing of the other. The ports are the ones the app is handed with its credentials (`internal/controller/provisioner`), and a test holds the store charts to them. A namespace named in a profile's `gentianos.io/kernel-egress-namespaces` annotation is opened whole, beside these. The language-model gateway is not a declared service and nothing here opens `system-llm`. This is egress from the tenant's namespace; who a store admits is §2.7.
+
+### 2.7 Who may reach a shared store
+
+Each of the four shared stores carries one NetworkPolicy, `store-ingress`, on its server's pods. It is delivered by the engine's own chart (`templates/networkpolicy.yaml` in `kernel/data/tenant-postgres` and `kernel/services/infra-{mariadb,redis,minio}/manifests`), in the Argo CD sync that brings the values the server is installed from, so a server is never up without it. A connection is admitted from the sources below, on the port named, and from nowhere else.
+
+| Server | Port | Admitted |
+| --- | --- | --- |
+| PostgreSQL, `system-postgresql` | 5432 | tenant namespaces; pods of `system-postgresql` itself (the role and destroy Jobs, the cluster's own replicas); the operator's pods in `kernel-control` (a tenant's usage history and notices); capture and restore pods in `system-s3` (`gentianos.io/component=tenant-export`) |
+| | 8000 | CloudNativePG's operator in `kernel-data`, which asks each instance for its state |
+| MariaDB, `system-mariadb` | 3306 | tenant namespaces; pods of `system-mariadb` itself (the setup and destroy Jobs); capture and restore pods in `system-s3` |
+| Redis, `system-cache` | 6379 | tenant namespaces; pods of `system-cache` itself (the ACL and destroy Jobs) |
+| MinIO, `system-s3` | 9000 | tenant namespaces (apps, and the volume capture and restore pods, which run where the claim is); pods of `system-s3` itself (the bucket and destroy Jobs, every other capture and restore Job); the operator's pods in `kernel-control` (a bundle's manifest, download and import) |
+
+Closed, deliberately: PostgreSQL's metrics port (9187) and MinIO's console (9001). Nothing the platform runs uses either; a cluster that brings a Prometheus adds a policy of its own selecting the same pods, since policies add up.
+
+**The rule has two sides, and neither is enough alone.** A server cannot tell one tenant's app from another's pod, so its policy admits every namespace labelled `gentianos.io/tier=tenant`. It keeps out everything that is not a tenant namespace or a client named above: the kernel's other namespaces, the other system namespaces, a tenant's DMZ, a namespace outside the layout. What keeps out an app that declared no such store is the tenant's side (§2.6): `tenant-isolation` denies egress for every pod of a tenant's namespace -- the platform tenant's and a single-tenancy cluster's `user` tenant included, since both are Tenants and the same reconcile writes it -- and `kernel-access-<app>` opens one store's port for the app that declared it. Two things on that side are wider than a declaring app: a component with a database requirement (the desktop) is opened the whole of `system-postgresql`, which the server now narrows to 5432, and a capture pod (`gentian-tenant-export`) is opened the three stores a bundle can hold.
+
+**A pod of the server's own namespace is admitted without a label.** The operator's Jobs there carry none on their pods, and a pod there can mount the store's admin Secret, so a label would keep nobody out. The boundary is who may create a pod in a system namespace.
+
+What this does not cover:
+
+- **Mail, the model gateway and the kernel's own PostgreSQL** (`system-mail`, `system-mail-dmz`, `system-llm`, `kernel-data`) have no ingress policy. Any pod of a namespace without an egress policy can open a connection to them, and their credentials are the only check.
+- **Kernel and system namespaces deny no egress.** A pod in one of them is kept from a store by the store's policy alone, and from everything else by nothing (gap G28).
+- **A tenant's DMZ namespace has no default deny.** Its proxies carry their own egress policy; the stores do not admit that tier.
+- **A CNI that does not enforce NetworkPolicy** makes all of this a description. The kubelet's probes are unaffected either way: traffic from a pod's own node is not subject to a NetworkPolicy.
+
+The clients are written down once, in `scripts/tests/store-clients.yaml`. `make test-store-network-policies` renders each policy and each engine and asserts every client is admitted, every entry it says to refuse is refused, and every port a server's pods declare is listed or recorded as closed; a Go test holds the file to the code that builds each client (`internal/controller/store_clients_test.go`). A new client of a store is added there first.
+
+One switch turns the four off: `storeNetworkPolicies` on the bootstrap chart, which the installer sets from `STORE_NETWORK_POLICIES` (default `true`). Off leaves credentials as the only check on a connection.
 
 ---
 
@@ -135,7 +164,7 @@ changes only when the code does.
 | The session's tokens stop at the edge: a backend gets its own cookies, the identity headers, and a bearer only where its exposure says `forwardToken` | Implemented | `internal/bouncer/cookies.go` rewrites the `Cookie` header without the edge's cookies on every allowed request of a session route; the names come from the route table ([routing.md §4.1](routing.md)) |
 | Tenant namespace + NetworkPolicy default-deny egress | Implemented | `internal/kernel/netpolicy/` — tenant namespaces only |
 | Per-app egress to the stores a profile declares | Implemented, mail and identity not narrowed | `internal/kernel/netpolicy/kernel.go`, policy `kernel-access-<app>`; see §2.6 |
-| NetworkPolicy in kernel, system and shared namespaces | **Target**, with one exception | every builder is tenant-scoped. The exception is one policy in the operator chart, on the operator's pods: its app-lifecycle port admits the director's and the usher's pods only, and its other ports stay open. No other pod in a kernel namespace is selected by a policy (gap G28) |
+| NetworkPolicy in kernel, system and shared namespaces | **Partial**: ingress to five servers, no egress anywhere | One policy in the operator chart, on the operator's pods: its app-lifecycle port admits the director's and the usher's pods only, and its other ports stay open. One on each shared store -- PostgreSQL, MariaDB, Redis, MinIO -- admitting tenant namespaces and the platform's named clients (§2.7). Mail, the model gateway, `kernel-data` and every other kernel pod are selected by no policy, and no kernel or system namespace denies egress (gap G28) |
 | Approval path for profile-declared egress | **Target** | `security.egress` reaches the NetworkPolicy uninspected; `PlatformSecurityPolicy` allowlists MAC waivers only (gap G27) |
 | Pod-security admission (privileged, host ns, non-root, hostPath, caps, priv-esc) | Implemented | `kernel/security/kyverno/policies/` |
 | Gateway rate limit | **Target** | `BackendTrafficPolicy` carries timeouts only |
