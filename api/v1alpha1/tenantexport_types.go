@@ -335,6 +335,14 @@ type TenantExportStatus struct {
 	// +optional
 	Quiesced []string `json:"quiesced,omitempty"`
 
+	// NotIncluded names what the tenant has that this export's bundle does
+	// not hold, beyond what no bundle holds: the data uninstalled apps left
+	// behind, which an export does not capture although deleting the tenant
+	// destroys it. One sentence each. The bundle's manifest carries the same
+	// list.
+	// +optional
+	NotIncluded []string `json:"notIncluded,omitempty"`
+
 	// StartedAt is when the first app began capturing.
 	// +optional
 	StartedAt *metav1.Time `json:"startedAt,omitempty"`

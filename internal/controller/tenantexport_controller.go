@@ -821,6 +821,14 @@ func (r *TenantExportReconciler) complete(
 	tenant *gentianov1alpha1.Tenant,
 	encryption backup.Encryption,
 ) (ctrl.Result, error) {
+	// What the tenant has that this bundle does not hold, found before the
+	// manifest is written, so that the manifest and the result say the same.
+	notIncluded, err := r.notIncluded(ctx, tenant, export)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	export.Status.NotIncluded = notIncluded
+
 	unit, err := r.manifestUnit(export, tenant, encryption)
 	if err != nil {
 		return r.fail(ctx, export, "ManifestFailed", err.Error())
@@ -846,6 +854,11 @@ func (r *TenantExportReconciler) complete(
 	export.Status.CompletedAt = ptrNow()
 	tenantExportTotal.WithLabelValues(tenant.Name, string(gentianov1alpha1.TenantExportPhaseReady)).Inc()
 	captured := fmt.Sprintf("%d app(s) captured", len(export.Status.Apps))
+	// Said in the result and not only in a field: a bundle that does not
+	// hold something the tenant has is not to be read as "all of it".
+	if len(export.Status.NotIncluded) > 0 {
+		captured += "; NOT in the bundle: " + strings.Join(export.Status.NotIncluded, "; ")
+	}
 	// A profile may declare secrets its data is welded to
 	// (spec.backup.boundSecrets). A bundle carries no stored credential, so
 	// they are not in it, and an export that said only "captured" would be
@@ -856,6 +869,61 @@ func (r *TenantExportReconciler) complete(
 	}
 	setExportCondition(export, conditionExportComplete, metav1.ConditionTrue, "Captured", captured)
 	return ctrl.Result{}, r.persist(ctx, export)
+}
+
+// notIncluded is what the tenant has that an export of it does not capture.
+//
+// An export captures the apps that are installed. An app that was uninstalled
+// has left its databases, bucket and files behind, on purpose, and none of
+// that is in a bundle taken afterwards -- while deleting the tenant destroys
+// it. The export does not change that here; it says so, naming the apps the
+// record of what was provisioned still lists, so that nobody takes a bundle
+// for a copy of everything a deletion would destroy.
+func (r *TenantExportReconciler) notIncluded(
+	ctx context.Context,
+	tenant *gentianov1alpha1.Tenant,
+	export *gentianov1alpha1.TenantExport,
+) ([]string, error) {
+	var out []string
+	if r.desktopOnKernelStore(tenant) {
+		out = append(out, desktopNotCaptured)
+	}
+	// Every app the tenant has, whatever this export was asked for.
+	all, err := r.exportAppSet(ctx, tenant, &gentianov1alpha1.TenantExport{})
+	if err != nil {
+		return nil, err
+	}
+	installed := backup.TenantApps(tenant)
+	var unasked []string
+	for _, app := range all {
+		installed[app] = true
+		if len(export.Spec.Apps) > 0 && !slices.Contains(export.Spec.Apps, app) {
+			unasked = append(unasked, app)
+		}
+	}
+	if len(unasked) > 0 {
+		out = append(out, "the installed apps this export was not asked for ("+strings.Join(unasked, ", ")+")")
+	}
+	if r.Reconciler == nil {
+		return out, nil
+	}
+	recorded, err := r.Reconciler.provisionedStores(ctx, tenant.Name)
+	if err != nil {
+		return nil, err
+	}
+	var retained []string
+	for app, entry := range recorded {
+		if backup.IsPlatformStore(app) || installed[app] || entry.Empty() {
+			continue
+		}
+		retained = append(retained, app)
+	}
+	sort.Strings(retained)
+	if len(retained) > 0 {
+		out = append(out, "the data uninstalled apps left behind ("+strings.Join(retained, ", ")+
+			", on the record of what was provisioned and not installed now): an export captures installed apps only, and deleting the tenant destroys this data")
+	}
+	return out, nil
 }
 
 // manifestUnit is the Job that writes the manifest, beside the object store.
@@ -912,11 +980,16 @@ func (r *TenantExportReconciler) buildManifest(
 			// must re-invite rather than pretend the old passwords survived.
 			PasswordsIncluded: false,
 		},
-		Shell: &backup.ManifestStore{
+		NotIncluded: export.Status.NotIncluded,
+	}
+	// The desktop's database, when it was captured: not for the tenant whose
+	// desktop is on the kernel's PostgreSQL (tenantWideUnits).
+	if !r.desktopOnKernelStore(tenant) {
+		m.Shell = &backup.ManifestStore{
 			Kind: bundle.ArtefactPostgres,
 			Name: databaseName(tenant, portalShellAppName),
 			Path: backup.PostgresArtefact(databaseName(tenant, portalShellAppName)),
-		},
+		}
 	}
 	for _, app := range export.Status.Apps {
 		// The tenant-wide captures have their own places in the manifest

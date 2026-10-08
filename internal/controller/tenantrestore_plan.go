@@ -72,6 +72,10 @@ type restorePlan struct {
 	derivation string
 	// schemaVersion is the manifest's.
 	schemaVersion int
+	// notIncluded is what the manifest says the bundle does not hold.
+	notIncluded []string
+	// sourceTenant is the tenant the bundle was taken of.
+	sourceTenant string
 }
 
 // plannedApp is one app that will be restored.
@@ -114,7 +118,8 @@ func planRestore(
 	skipVersionCheck bool,
 	live func(app string) (liveApp, error),
 ) (*restorePlan, error) {
-	plan := &restorePlan{schemaVersion: m.SchemaVersion, derivation: gentianov1alpha1.RestoreNamesFromManifest}
+	plan := &restorePlan{schemaVersion: m.SchemaVersion, derivation: gentianov1alpha1.RestoreNamesFromManifest,
+		notIncluded: m.NotIncluded, sourceTenant: m.Tenant}
 	if !m.NamesArtefacts() {
 		plan.derivation = gentianov1alpha1.RestoreNamesDerived
 	}

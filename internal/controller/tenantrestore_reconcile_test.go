@@ -231,6 +231,30 @@ func TestARestoreRunsFromTheManifestAndReportsWhatItLeftOut(t *testing.T) {
 			t.Errorf("the database is not restored into demo_wiki:\n%s", script)
 		}
 	}
+	// The bundle is of tenant "old": what is named for a tenant comes back
+	// under this one's names. The databases wiki made for itself are told
+	// from the old provisioned name and put under the new; the realm's
+	// groups are renamed from the old tenant's to this one's; and the
+	// result says so.
+	if owned := jobs["tx-demo-r1-wiki-pgor"]; owned != nil {
+		script := owned.Spec.Template.Spec.Containers[0].Args[0]
+		if !strings.Contains(script, "SRC='old_wiki'") || !strings.Contains(script, "DB='demo_wiki'") {
+			t.Errorf("the owned databases are not renamed from old_wiki to demo_wiki:\n%s", script)
+		}
+	}
+	if realm := jobs["tx-demo-r1-gentian-tenant-realmr"]; realm != nil {
+		script := realm.Spec.Template.Spec.Containers[0].Args[0]
+		if !strings.Contains(script, "SRC='old'") || !strings.Contains(script, "DST='demo'") || !strings.Contains(script, "REALM='demo'") {
+			t.Errorf("the realm import is not told it renames from old to demo:\n%s", script[:400])
+		}
+		if realm.Namespace != identityNamespace {
+			t.Errorf("the realm import runs in %s", realm.Namespace)
+		}
+	}
+	if got.Status.SourceTenant != "old" || !strings.Contains(notes, "The bundle is of tenant old, not of this one") {
+		t.Errorf("sourceTenant = %q; the notes do not say the bundle is another tenant's", got.Status.SourceTenant)
+	}
+
 	// The bucket's user and policy are made before its objects are written.
 	if s3 := jobs["tx-demo-r1-wiki-s3r"]; s3 != nil {
 		inits := s3.Spec.Template.Spec.InitContainers

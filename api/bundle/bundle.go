@@ -122,6 +122,14 @@ type Manifest struct {
 	// Shell records the portal shell database, which belongs to the tenant
 	// rather than to any app.
 	Shell *ManifestStore `json:"shell,omitempty"`
+
+	// NotIncluded names what the tenant had when the bundle was taken that
+	// the bundle does not hold, beyond what no bundle ever holds: the data
+	// uninstalled apps left, which an export does not capture, and anything
+	// else an export found and could not carry. One sentence each, for a
+	// person. Empty when the export found nothing of the kind. A reader
+	// repeats them; nothing is decided by them.
+	NotIncluded []string `json:"notIncluded,omitempty"`
 }
 
 // ManifestApp is one app's entry in the bundle index.

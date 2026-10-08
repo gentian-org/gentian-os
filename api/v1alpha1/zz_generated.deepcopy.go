@@ -4045,6 +4045,11 @@ func (in *TenantExportStatus) DeepCopyInto(out *TenantExportStatus) {
 		*out = make([]string, len(*in))
 		copy(*out, *in)
 	}
+	if in.NotIncluded != nil {
+		in, out := &in.NotIncluded, &out.NotIncluded
+		*out = make([]string, len(*in))
+		copy(*out, *in)
+	}
 	if in.StartedAt != nil {
 		in, out := &in.StartedAt, &out.StartedAt
 		*out = (*in).DeepCopy()

@@ -71,7 +71,7 @@ func TestRestoreVerifiesChecksumBeforeLoading(t *testing.T) {
 		"mariadb":  MariaDBRestoreJob(params(), recipientDecryption(), MariaDBArtefact("demo_app"), "demo_app"),
 		"s3":       S3RestoreJob(params(), recipientDecryption(), S3Artefact("demo-app"), "demo-app", ObjectStorageProvisionContainer("provision-bucket", "demo-app", "AK", "SK")),
 		"volume":   VolumeRestoreJob(params(), recipientDecryption(), VolumeArtefact("data"), "data"),
-		"realm":    RealmImportJob(params(), recipientDecryption(), IdentityArtefact, "demo"),
+		"realm":    RealmImportJob(params(), recipientDecryption(), IdentityArtefact, "demo", RealmSource{}),
 	}
 	for name, job := range jobs {
 		fetch := containerByName(job, "fetch")
@@ -174,7 +174,7 @@ func TestVolumeRestoreDoesNotWipeTheTarget(t *testing.T) {
 // leaving an operator to learn it from users who cannot sign in.
 func TestRealmImportRestoresPeopleAndWarnsAboutPasswords(t *testing.T) {
 	script := strings.Join(containerByName(
-		RealmImportJob(params(), recipientDecryption(), IdentityArtefact, "demo"), "realm-import").Args, "\n")
+		RealmImportJob(params(), recipientDecryption(), IdentityArtefact, "demo", RealmSource{}), "realm-import").Args, "\n")
 
 	for _, want := range []string{"partialImport", "users.ndjson", "memberships.ndjson", "OVERWRITE"} {
 		if !strings.Contains(script, want) {

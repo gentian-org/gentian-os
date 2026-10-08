@@ -18,7 +18,6 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/kernel"
-	"github.com/gentian-org/gentian-os/internal/keycloak"
 	"github.com/gentian-org/gentian-os/internal/meta"
 )
 
@@ -143,6 +142,22 @@ func PostgresRestoreJob(p JobParams, d Decryption, artefact, database string) *b
 ROLE=%[1]s
 DB=%[2]s
 
+# Whose database this is, before anything in it is touched. The database a
+# restore loads is the one provisioning made for this app, and provisioning
+# made its role the owner. One that is not there, or is another role's, is
+# not this app's: everything below would hand its objects to this role and
+# replace its contents. Refused, with nothing changed.
+owner="$(psql -v ON_ERROR_STOP=1 -tA -v db="${DB}" -d postgres <<'PSQL'
+SELECT r.rolname FROM pg_database d JOIN pg_roles r ON r.oid = d.datdba WHERE d.datname = :'db';
+PSQL
+)"
+if [ -z "${owner}" ]; then
+  echo "ERROR: database ${DB} is not there; it is made when the app is installed, and a restore does not make it" >&2; exit 1
+fi
+if [ "${owner}" != "${ROLE}" ]; then
+  echo "ERROR: refused: database ${DB} is owned by ${owner}, not by ${ROLE}, the role this restore loads for. Nothing was changed" >&2; exit 1
+fi
+
 # Ownership first. A restore that failed part way leaves objects owned by the
 # admin that ran it, and the next attempt — running as the app, correctly —
 # cannot drop what it does not own. The database then wedges at exactly the
@@ -209,13 +224,25 @@ echo "restored %[4]s"`, shellSingleQuote(p.restoreRole()), shellSingleQuote(data
 // PostgresOwnedRestoreJob puts back the databases an app's role owned
 // besides the provisioned one, from the archive PostgresOwnedDumpJob wrote.
 //
-// Each database in the archive is created if it is not there, owned by the
-// app's role, and loaded the way the provisioned one is: its contents are
-// replaced by the dump's. A database the role owns now that the archive does
-// not hold is left as it is -- the bundle says nothing about it, and a
-// restore does not destroy what its bundle does not cover -- and is named in
-// the Job's output.
-func PostgresOwnedRestoreJob(p JobParams, d Decryption, artefact, database string) *batchv1.Job {
+// Under which name: a database's name is whatever the app chose, and one
+// server holds every tenant's. Restored into the tenant the bundle was taken
+// of -- source and database are the same name -- each keeps its name. Into
+// another tenant it cannot: the name is taken, by the original, on the
+// cluster the bundle came from. So there each is put back under the
+// provisioned database of the tenant restored into, as MariaDB's are: a name
+// that began with the source's provisioned name begins with the target's
+// instead, and any other name is prefixed with it.
+//
+// Each is created if it is not there, owned by the app's role, and loaded
+// the way the provisioned one is: its contents are replaced by the dump's.
+// One that is there and is another role's is not this app's to replace, and
+// fails the restore before anything of it is changed -- under any name,
+// which is what keeps a restore out of another tenant's database whatever
+// the naming did. A database the role owns now that the archive does not
+// hold is left as it is -- the bundle says nothing about it, and a restore
+// does not destroy what its bundle does not cover -- and is named in the
+// Job's output.
+func PostgresOwnedRestoreJob(p JobParams, d Decryption, artefact, source, database string) *batchv1.Job {
 	unpack := corev1.Container{
 		Name:    "unpack-owned",
 		Image:   kernel.KeycloakProvisionerImage(),
@@ -234,11 +261,32 @@ echo "unpacked the archive of owned databases"`, workDir)},
 		Args: []string{fmt.Sprintf(`set -eu
 ROLE=%[1]s
 DB=%[2]s
+SRC=%[5]s
+: > /tmp/restored
 n=0
 while IFS= read -r name; do
   [ -n "${name}" ] || continue
   [ -s "%[3]s/owned/${n}.pgc" ] || { echo "ERROR: the archive lists ${name} and holds no dump of it" >&2; exit 1; }
-  psql -v ON_ERROR_STOP=1 -v db="${name}" -v app_role="${ROLE}" -d postgres <<'PSQL'
+  if [ "${SRC}" = "${DB}" ]; then
+    target="${name}"
+  else
+    case "${name}" in
+      "${SRC}_"*) target="${DB}_${name#"${SRC}_"}" ;;
+      *) target="${DB}_${name}" ;;
+    esac
+  fi
+  # PostgreSQL cuts a longer name short and says so in a notice nobody reads.
+  if [ "$(printf '%%s' "${target}" | wc -c)" -gt 63 ]; then
+    echo "ERROR: ${name} would be restored as ${target}, which is longer than a database name may be" >&2; exit 1
+  fi
+  owner="$(psql -v ON_ERROR_STOP=1 -tA -v db="${target}" -d postgres <<'PSQL'
+SELECT r.rolname FROM pg_database d JOIN pg_roles r ON r.oid = d.datdba WHERE d.datname = :'db';
+PSQL
+)"
+  if [ -n "${owner}" ] && [ "${owner}" != "${ROLE}" ]; then
+    echo "ERROR: refused: ${name} would be restored as ${target}, which is a database ${owner} owns, not ${ROLE}. It was not changed" >&2; exit 1
+  fi
+  psql -v ON_ERROR_STOP=1 -v db="${target}" -v app_role="${ROLE}" -d postgres <<'PSQL'
 SELECT format('CREATE DATABASE %%I OWNER %%I', :'db', :'app_role')
  WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = :'db')
 \gexec
@@ -248,10 +296,12 @@ PSQL
   # script and psql applies it -- to a file first, not through a pipe, so
   # that a pg_restore that fails stops this script rather than handing psql
   # half a dump.
-  pg_restore --role="${ROLE}" --clean --if-exists --no-owner --no-acl -f "%[3]s/owned/${n}.sql" "%[3]s/owned/${n}.pgc"
-  PGDATABASE="${name}" psql -v ON_ERROR_STOP=1 --single-transaction -q -f "%[3]s/owned/${n}.sql" >/dev/null
+  # Neither reads its input: the loop's is the list of names still to do.
+  pg_restore --role="${ROLE}" --clean --if-exists --no-owner --no-acl -f "%[3]s/owned/${n}.sql" "%[3]s/owned/${n}.pgc" </dev/null
+  PGDATABASE="${target}" psql -v ON_ERROR_STOP=1 --single-transaction -q -f "%[3]s/owned/${n}.sql" </dev/null >/dev/null
   rm -f "%[3]s/owned/${n}.sql"
-  echo "restored ${name}"
+  printf '%%s\n' "${target}" >> /tmp/restored
+  echo "restored ${name} as ${target}"
   n=$((n + 1))
 done < %[3]s/owned/INDEX
 echo "restored ${n} database(s) ${ROLE} owned besides ${DB}"
@@ -261,8 +311,10 @@ psql -v ON_ERROR_STOP=1 -tA -v app_role="${ROLE}" -v app_db="${DB}" -d postgres 
 PSQL
 while IFS= read -r name; do
   [ -n "${name}" ] || continue
-  grep -qxF -- "${name}" %[3]s/owned/INDEX     || echo "NOTE: ${ROLE} owns ${name}, which the bundle does not hold; it was left as it is"
-done < /tmp/now`, shellSingleQuote(p.restoreRole()), shellSingleQuote(database), workDir, postgresOwnedSQL)},
+  if ! grep -qxF -- "${name}" /tmp/restored; then
+    echo "NOTE: ${ROLE} owns ${name}, which the bundle does not hold; it was left as it is"
+  fi
+done < /tmp/now`, shellSingleQuote(p.restoreRole()), shellSingleQuote(database), workDir, postgresOwnedSQL, shellSingleQuote(source))},
 		Env:          PostgresAdminEnv(),
 		VolumeMounts: []corev1.VolumeMount{{Name: "work", MountPath: workDir}},
 	}
@@ -383,7 +435,9 @@ echo "restored ${n} database(s) that were ${SRC}'s besides itself"
 SQL
 while IFS= read -r name; do
   [ -n "${name}" ] || continue
-  grep -qxF -- "${name}" /tmp/restored || echo "NOTE: ${name} is ${DB}'s and the bundle does not hold it; it was left as it is"
+  if ! grep -qxF -- "${name}" /tmp/restored; then
+    echo "NOTE: ${name} is ${DB}'s and the bundle does not hold it; it was left as it is"
+  fi
 done < /tmp/now`,
 			shellSingleQuote(source), shellSingleQuote(database), workDir,
 			mariadbOwnedSQL(database, user), mariadbClient, mariadbHeldByAnother("@db", user))
@@ -500,74 +554,152 @@ echo "restored volume %s"`, workDir, claim)},
 	}, restore, []corev1.Volume{target})
 }
 
+// RealmSource is where a realm capture was taken: the tenant and its realm.
+type RealmSource struct {
+	Tenant string
+	Realm  string
+}
+
 // RealmImportJob puts a tenant's realm, its people and their groups back.
 //
 // Passwords are not in the bundle — Keycloak's partial-export omits them — so
 // restored members are created without credentials and have to be sent through
 // a reset. The import is written to say so rather than leave an operator to
 // discover it from members who cannot sign in.
-func RealmImportJob(p JobParams, d Decryption, artefact, realm string) *batchv1.Job {
+//
+// Into the tenant the bundle was taken of, groups, roles and clients are
+// brought back to what the bundle recorded. Into a tenant of another name
+// the bundle's names are the other tenant's:
+//
+//   - the platform's groups are named for their tenant
+//     (gentian:tenant:<tenant>:…), and are put back under this tenant's
+//     names, with the memberships. Left as they were, every person came back
+//     a member of groups nothing here reads, with access to nothing;
+//   - clients are not imported. They are named for the old tenant and carry
+//     its addresses; this tenant's were made when its apps were installed.
+//     With them go the client roles, and the groups' mappings to them, which
+//     provisioning made here for this tenant's own clients;
+//   - the old realm's default role is left out.
+//
+// Nothing is skipped in silence. A person who cannot be created, a group
+// that is not there, a membership that is refused: each is said, the import
+// goes on to the end so that the output names all of them, and the Job
+// fails. It used to pass over each and report the count of what worked.
+func RealmImportJob(p JobParams, d Decryption, artefact, realm string, source RealmSource) *batchv1.Job {
+	if source.Tenant == "" {
+		source.Tenant = p.Tenant
+	}
+	if source.Realm == "" {
+		source.Realm = realm
+	}
 	restore := corev1.Container{
 		Name:    "realm-import",
 		Image:   kernel.KeycloakProvisionerImage(),
 		Command: []string{"/bin/sh", "-c"},
-		Args: []string{keycloak.ProvisionerBootstrap + fmt.Sprintf(`set -eu
-REALM=%[1]s
+		Args: []string{realmScriptPrelude + fmt.Sprintf(`REALM=%[1]s
+SRC=%[3]s
+DST=%[4]s
+SRC_REALM=%[5]s
 API="${KEYCLOAK_URL}/admin/realms/${REALM}"
+OLD="gentian:tenant:${SRC}:"
+NEW="gentian:tenant:${DST}:"
 tar xzf %[2]s/realm.tar.gz -C %[2]s
-
-`+keycloak.ShellAdminToken()+`
-[ -n "${TOKEN}" ] && [ "${TOKEN}" != "null" ] || { echo "ERROR: no admin token" >&2; exit 1; }
-AUTH="Authorization: Bearer ${TOKEN}"
+for f in realm.json users.ndjson memberships.ndjson; do
+  [ -f "%[2]s/${f}" ] || { echo "ERROR: the realm archive holds no ${f}" >&2; exit 1; }
+done
+new_token
 
 # partialImport with OVERWRITE brings groups, roles and clients back to what the
 # bundle recorded. It is scoped to the realm's contents and never recreates the
 # realm itself, which the platform provisions.
-jq '{ifResourceExists:"OVERWRITE", groups:(.groups//[]), roles:(.roles//{}), clients:(.clients//[])}' \
-  %[2]s/realm.json > %[2]s/import.json
-curl -sf --max-time 120 -X POST -H "${AUTH}" -H "Content-Type: application/json" \
-  --data @%[2]s/import.json "${API}/partialImport" >/dev/null
+if [ "${SRC}" = "${DST}" ]; then
+  jq '{ifResourceExists:"OVERWRITE", groups:(.groups//[]), roles:(.roles//{}), clients:(.clients//[])}' \
+    %[2]s/realm.json > %[2]s/import.json
+else
+  jq --arg old "${OLD}" --arg new "${NEW}" --arg default "default-roles-${SRC_REALM}" '
+    def renamed:
+      if ((.name // "") | startswith($old)) then
+        .name as $was | ($new + ($was | ltrimstr($old))) as $now
+        | .name = $now
+        | (.. | objects | select(has("path")) | .path) |=
+            (if startswith("/" + $was) then "/" + $now + ltrimstr("/" + $was) else . end)
+      else . end;
+    {ifResourceExists: "OVERWRITE",
+     groups: [(.groups // [])[] | renamed | del(.. | objects | .clientRoles?)],
+     roles: {realm: [(.roles.realm // [])[] | select(.name != $default) | del(.composites.client?)]}}' \
+    %[2]s/realm.json > %[2]s/import.json
+  echo "the bundle is of tenant ${SRC}: its groups are put back under ${NEW}, its clients are not imported"
+fi
+kc POST "${API}/partialImport" %[2]s/import.json >/dev/null
 echo "imported realm configuration"
 
+enc() { printf '%%s' "$1" | jq -sRr @uri; }
+failed=0
+
 # Users come back one at a time: partialImport does not carry them, and a user
-# that already exists must not be duplicated.
+# that already exists must not be duplicated. A client's service account is
+# the client's, made with it, and is not a person to create.
 restored=0
-while read -r line; do
-  username=$(printf '%%s' "${line}" | jq -r .username)
-  [ -n "${username}" ] && [ "${username}" != "null" ] || continue
-  existing=$(curl -sf --max-time 30 -H "${AUTH}" \
-    "${API}/users?exact=true&username=$(printf '%%s' "${username}" | jq -sRr @uri)" | jq -r '.[0].id // empty')
-  if [ -n "${existing}" ]; then
-    continue
+n=0
+while IFS= read -r line; do
+  [ $((n %% 50)) -ne 0 ] || new_token
+  n=$((n + 1))
+  username=$(printf '%%s' "${line}" | jq -r '.username // empty')
+  if [ -z "${username}" ]; then
+    echo "ERROR: the bundle holds a person without a username" >&2; failed=$((failed + 1)); continue
   fi
+  [ "$(printf '%%s' "${line}" | jq -r '.serviceAccountClientId // empty')" = "" ] || continue
+  if ! kc GET "${API}/users?exact=true&username=$(enc "${username}")" > %[2]s/found.json; then
+    failed=$((failed + 1)); continue
+  fi
+  [ -z "$(jq -r '.[0].id // empty' %[2]s/found.json)" ] || continue
   printf '%%s' "${line}" \
     | jq 'del(.id, .createdTimestamp, .federationLink, .serviceAccountClientId) + {enabled:true}' \
     > %[2]s/user.json
-  if curl -sf --max-time 30 -X POST -H "${AUTH}" -H "Content-Type: application/json" \
-      --data @%[2]s/user.json "${API}/users" >/dev/null; then
+  if kc POST "${API}/users" %[2]s/user.json >/dev/null; then
     restored=$((restored + 1))
+  else
+    echo "ERROR: ${username} could not be created" >&2; failed=$((failed + 1))
   fi
 done < %[2]s/users.ndjson
 
 # Group membership, which lives on the user rather than in the realm export.
-while read -r line; do
+n=0
+while IFS= read -r line; do
+  [ $((n %% 50)) -ne 0 ] || new_token
+  n=$((n + 1))
   uid_old=$(printf '%%s' "${line}" | jq -r .userId)
-  username=$(grep -F "\"id\":\"${uid_old}\"" %[2]s/users.ndjson | head -1 | jq -r .username 2>/dev/null || echo "")
+  username=$(jq -rs --arg id "${uid_old}" '[.[] | select(.id == $id and .serviceAccountClientId == null)][0].username // empty' %[2]s/users.ndjson)
   [ -n "${username}" ] || continue
-  uid=$(curl -sf --max-time 30 -H "${AUTH}" \
-    "${API}/users?exact=true&username=$(printf '%%s' "${username}" | jq -sRr @uri)" | jq -r '.[0].id // empty')
-  [ -n "${uid}" ] || continue
-  printf '%%s' "${line}" | jq -r '.groups[]?.path' | while read -r path; do
+  printf '%%s' "${line}" | jq -r --arg old "/${OLD}" --arg new "/${NEW}" \
+    '.groups[]?.path | select(. != null and . != "") | if startswith($old) then $new + ltrimstr($old) else . end' > %[2]s/paths
+  [ -s %[2]s/paths ] || continue
+  if ! kc GET "${API}/users?exact=true&username=$(enc "${username}")" > %[2]s/found.json; then
+    failed=$((failed + 1)); continue
+  fi
+  uid=$(jq -r '.[0].id // empty' %[2]s/found.json)
+  if [ -z "${uid}" ]; then
+    echo "ERROR: ${username} is not in the realm, so their memberships could not be put back" >&2; failed=$((failed + 1)); continue
+  fi
+  while IFS= read -r path; do
     [ -n "${path}" ] || continue
-    gid=$(curl -sf --max-time 30 -H "${AUTH}" \
-      "${API}/groups?search=$(printf '%%s' "${path##*/}" | jq -sRr @uri)" \
-      | jq -r --arg p "${path}" '.. | objects | select(.path? == $p) | .id' | head -1)
-    [ -n "${gid}" ] || continue
-    curl -sf --max-time 30 -X PUT -H "${AUTH}" "${API}/users/${uid}/groups/${gid}" >/dev/null || true
-  done
+    segments=$(printf '%%s' "${path}" | jq -sRr 'ltrimstr("/") | split("/") | map(@uri) | join("/")')
+    if ! kc GET "${API}/group-by-path/${segments}" > %[2]s/group.json; then
+      echo "ERROR: ${username} was a member of ${path}, which is not in the realm" >&2; failed=$((failed + 1)); continue
+    fi
+    gid=$(jq -r '.id // empty' %[2]s/group.json)
+    if [ -z "${gid}" ] || ! kc PUT "${API}/users/${uid}/groups/${gid}" >/dev/null; then
+      echo "ERROR: ${username} could not be put back into ${path}" >&2; failed=$((failed + 1))
+    fi
+  done < %[2]s/paths
 done < %[2]s/memberships.ndjson
 
-echo "restored ${restored} user(s) WITHOUT credentials - they must be sent a password reset"`, quotedRealm(realm), workDir)},
+if [ "${failed}" -ne 0 ]; then
+  echo "ERROR: ${failed} person(s) or membership(s) could not be put back; each is named above. ${restored} person(s) were created" >&2
+  exit 1
+fi
+echo "restored ${restored} user(s) WITHOUT credentials - they must be sent a password reset"`,
+			quotedRealm(realm), workDir, shellSingleQuote(source.Tenant), shellSingleQuote(p.Tenant), shellSingleQuote(source.Realm))},
 		Env:          keycloakAdminEnv(),
 		VolumeMounts: []corev1.VolumeMount{{Name: "work", MountPath: workDir}},
 	}

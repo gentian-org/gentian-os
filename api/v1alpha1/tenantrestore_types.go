@@ -129,6 +129,14 @@ type TenantRestoreStatus struct {
 	// +optional
 	BundleSchemaVersion int `json:"bundleSchemaVersion,omitempty"`
 
+	// SourceTenant is the tenant the bundle was taken of, as its manifest
+	// records it. When it is not the tenant restored into, the bundle's names
+	// are another tenant's: databases an app made for itself and the
+	// platform's groups are put back under this tenant's names, and the
+	// bundle's sign-in clients are not imported.
+	// +optional
+	SourceTenant string `json:"sourceTenant,omitempty"`
+
 	// NameDerivation says where the restore took the names of what it
 	// restores from. "manifest": the bundle's manifest names each artefact
 	// and what it was captured from (format 2 and later). "derived": the

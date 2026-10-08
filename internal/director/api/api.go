@@ -1120,9 +1120,20 @@ func nameTakenMessage(taken *gitops.ErrProfileNameTaken, tenant string, source v
 	}
 }
 
+// uninstallNote is said with every uninstall that took an app away. The
+// app's data stays, and from then on it is in no backup: an export captures
+// installed apps only, while deleting the tenant destroys what uninstalled
+// apps left. An earlier bundle still holds it.
+const uninstallNote = "The app's data is kept. Backups taken from now on do not include it: " +
+	"only a backup taken while the app was installed holds it. Deleting the tenant, or purging the app, destroys it."
+
 func (s *Server) uninstall(w http.ResponseWriter, r *http.Request, c call) {
 	res, err := s.cfg.Repo.Uninstall(r.Context(), r.PathValue("t"), r.PathValue("p"), c.meta)
-	s.written(w, r, res, err)
+	if err != nil || !res.Changed {
+		s.written(w, r, res, err)
+		return
+	}
+	s.json(w, http.StatusAccepted, map[string]any{"status": res.Status, "commit": res.Commit, "note": uninstallNote})
 }
 
 type addonsRequest struct {

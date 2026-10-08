@@ -308,7 +308,7 @@ func TestExportRestoreAndPurgeAgreeOnWhichDatabasesAreAnApps(t *testing.T) {
 	scripts := map[string]string{
 		"purge":   PostgresDestroyJob(tenant, "wiki", DestroyWithinARequest).Spec.Template.Spec.Containers[0].Command[2],
 		"export":  containerByName(PostgresOwnedDumpJob(p, role, db), "pg-dump-owned").Args[0],
-		"restore": containerByName(PostgresOwnedRestoreJob(p, d, PostgresOwnedArtefact(db), db), "pg-restore-owned").Args[0],
+		"restore": containerByName(PostgresOwnedRestoreJob(p, d, PostgresOwnedArtefact(db), db, db), "pg-restore-owned").Args[0],
 	}
 	for act, script := range scripts {
 		if !strings.Contains(script, postgresOwnedSQL) {

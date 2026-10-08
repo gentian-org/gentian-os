@@ -465,23 +465,11 @@ func RealmExportJob(p JobParams, realm string) *batchv1.Job {
 		Name:    "realm-export",
 		Image:   kernel.KeycloakProvisionerImage(),
 		Command: []string{"/bin/sh", "-c"},
-		Args: []string{keycloak.ProvisionerBootstrap + fmt.Sprintf(`set -eu
-REALM=%[1]s
+		Args: []string{realmScriptPrelude + fmt.Sprintf(`REALM=%[1]s
 API="${KEYCLOAK_URL}/admin/realms/${REALM}"
+new_token
 
-token() {
-  curl -sf --max-time 30 -X POST \
-    "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" \
-    -H "Content-Type: application/x-www-form-urlencoded" \
-    -d "client_id=admin-cli&username=${KEYCLOAK_ADMIN_USERNAME}&password=${KEYCLOAK_ADMIN_PASSWORD}&grant_type=password" \
-    | jq -r .access_token
-}
-TOKEN=$(token)
-[ -n "${TOKEN}" ] && [ "${TOKEN}" != "null" ] || { echo "ERROR: no admin token" >&2; exit 1; }
-AUTH="Authorization: Bearer ${TOKEN}"
-
-curl -sf --max-time 120 -X POST -H "${AUTH}" -H "Content-Type: application/json" \
-  "${API}/partial-export?exportGroupsAndRoles=true&exportClients=true" > %[2]s/realm.json
+kc POST "${API}/partial-export?exportGroupsAndRoles=true&exportClients=true" > %[2]s/realm.json
 
 # Users are paged: Keycloak caps a single response, so a realm larger than one
 # page would otherwise be captured half-empty with no error anywhere.
@@ -489,32 +477,87 @@ first=0
 page_size=100
 : > %[2]s/users.ndjson
 while : ; do
-  page=$(curl -sf --max-time 60 -H "${AUTH}" \
-    "${API}/users?briefRepresentation=false&first=${first}&max=${page_size}")
-  count=$(printf '%%s' "${page}" | jq 'length')
+  new_token
+  kc GET "${API}/users?briefRepresentation=false&first=${first}&max=${page_size}" > %[2]s/page.json
+  count=$(jq 'length' %[2]s/page.json)
   [ "${count}" -eq 0 ] && break
-  printf '%%s' "${page}" | jq -c '.[]' >> %[2]s/users.ndjson
+  jq -c '.[]' %[2]s/page.json >> %[2]s/users.ndjson
   first=$((first + page_size))
   [ "${count}" -lt "${page_size}" ] && break
 done
+rm -f %[2]s/page.json
 
 # Group membership lives on the user, not in the realm export, so it is
 # collected per user. Restoring people without their groups would restore
 # accounts that can sign in and reach nothing.
+#
+# A read that fails fails the export. It used to be recorded as "no groups":
+# a token that expired half-way through a large realm left every later
+# person without memberships, in a bundle that said it was complete.
 : > %[2]s/memberships.ndjson
-while read -r line; do
+n=0
+while IFS= read -r line; do
+  [ $((n %% 50)) -ne 0 ] || new_token
+  n=$((n + 1))
   uid=$(printf '%%s' "${line}" | jq -r .id)
-  groups=$(curl -sf --max-time 30 -H "${AUTH}" "${API}/users/${uid}/groups" || echo '[]')
-  jq -cn --arg id "${uid}" --argjson g "${groups}" '{userId:$id, groups:$g}' >> %[2]s/memberships.ndjson
+  kc GET "${API}/users/${uid}/groups" > %[2]s/groups.json
+  jq -c --arg id "${uid}" '{userId:$id, groups:.}' %[2]s/groups.json >> %[2]s/memberships.ndjson
 done < %[2]s/users.ndjson
+rm -f %[2]s/groups.json
+[ "$(wc -l < %[2]s/memberships.ndjson)" -eq "$(wc -l < %[2]s/users.ndjson)" ] \
+  || { echo "ERROR: the memberships of some people were not recorded" >&2; exit 1; }
 
 tar czf %[2]s/realm.tar.gz -C %[2]s realm.json users.ndjson memberships.ndjson
-echo "exported realm ${REALM} ($(wc -l < %[2]s/users.ndjson) users)"`, quoted, workDir)},
+echo "exported realm ${REALM} (${n} users)"`, quoted, workDir)},
 		Env:          keycloakAdminEnv(),
 		VolumeMounts: []corev1.VolumeMount{{Name: "work", MountPath: workDir}},
 	}
 	return uploadJob(p, "realm.tar.gz", IdentityArtefact, []corev1.Container{export}, nil)
 }
+
+// realmScriptPrelude is what the realm export and the realm import begin
+// with: the tools, the administrator's token, and the one way either talks
+// to the identity provider.
+//
+// kc answers with the body on success and fails, saying what was refused and
+// how, on anything else -- these scripts used curl -sf, which says nothing,
+// and several call sites then discarded the failure. A token lasts about a
+// minute and a realm takes longer: kc asks for a new one when the provider
+// answers 401, and the loops ask for one as they go.
+//
+// Not passed through fmt: it holds curl's own %{http_code}.
+const realmScriptPrelude = keycloak.ProvisionerBootstrap + `set -eu
+new_token() {
+  TOKEN=$(curl -sS --max-time 30 -X POST \
+    "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" \
+    --data-urlencode "client_id=admin-cli" \
+    --data-urlencode "username=${KEYCLOAK_ADMIN_USERNAME}" \
+    --data-urlencode "password=${KEYCLOAK_ADMIN_PASSWORD}" \
+    --data-urlencode "grant_type=password" | jq -r '.access_token // empty')
+  [ -n "${TOKEN}" ] || { echo "ERROR: the identity provider gave no administrator token" >&2; exit 1; }
+}
+# kc METHOD URL [FILE]: the answer's body, or an error that says what was refused.
+kc() {
+  _method="$1"; _url="$2"; _body="${3:-}"; _again=1
+  while : ; do
+    if [ -n "${_body}" ]; then
+      _code=$(curl -sS --max-time 120 -o /tmp/kc.answer -w '%{http_code}' -X "${_method}" \
+        -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/json" --data @"${_body}" "${_url}") \
+        || { echo "ERROR: ${_method} ${_url}: the identity provider did not answer" >&2; return 1; }
+    else
+      _code=$(curl -sS --max-time 120 -o /tmp/kc.answer -w '%{http_code}' -X "${_method}" \
+        -H "Authorization: Bearer ${TOKEN}" "${_url}") \
+        || { echo "ERROR: ${_method} ${_url}: the identity provider did not answer" >&2; return 1; }
+    fi
+    case "${_code}" in
+      2*) cat /tmp/kc.answer; return 0 ;;
+      401) if [ "${_again}" -eq 1 ]; then _again=0; new_token; continue; fi ;;
+    esac
+    echo "ERROR: ${_method} ${_url} answered ${_code}: $(head -c 300 /tmp/kc.answer)" >&2
+    return 1
+  done
+}
+`
 
 // uploadJob wires a producing container to an uploader that puts the artefact
 // in the bundle and records its checksum next to it.
@@ -602,8 +645,20 @@ func BundleDeleteJob(p JobParams) *batchv1.Job {
 mc alias set gentian "${MINIO_ENDPOINT}" "${MINIO_ACCESS_KEY}" "${MINIO_SECRET_KEY}"
 # Nothing there is success, not failure: the bundle may never have been
 # written (a capture that failed before its first upload), the bucket may not
-# exist yet, or a previous attempt already removed the objects.
-if ! mc stat "gentian/${BUNDLE_BUCKET}/${BUNDLE_PREFIX}/" >/dev/null 2>&1; then
+# exist yet, or a previous attempt already removed the objects. But "nothing
+# there" is what the store's listing says, not what a failed question means:
+# a store that cannot be reached fails this Job. A failing "mc stat" used to
+# be read as "nothing to delete", and the bundle was reported deleted.
+if ! listing="$(mc ls "gentian/${BUNDLE_BUCKET}/${BUNDLE_PREFIX}/" 2>&1)"; then
+  case "${listing}" in
+    *"does not exist"*|*NoSuchBucket*)
+      echo "no bucket ${BUNDLE_BUCKET} - nothing to delete"
+      exit 0 ;;
+  esac
+  echo "ERROR: could not list ${BUNDLE_BUCKET}/${BUNDLE_PREFIX}: ${listing}" >&2
+  exit 1
+fi
+if [ -z "${listing}" ]; then
   echo "no objects under ${BUNDLE_BUCKET}/${BUNDLE_PREFIX} - nothing to delete"
   exit 0
 fi

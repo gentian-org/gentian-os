@@ -498,6 +498,14 @@ spec:
                 items:
                   type: string
                 type: array
+              sourceTenant:
+                description: |-
+                  SourceTenant is the tenant the bundle was taken of, as its manifest
+                  records it. When it is not the tenant restored into, the bundle's names
+                  are another tenant's: databases an app made for itself and the
+                  platform's groups are put back under this tenant's names, and the
+                  bundle's sign-in clients are not imported.
+                type: string
               startedAt:
                 format: date-time
                 type: string

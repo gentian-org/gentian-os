@@ -482,6 +482,16 @@ spec:
                       type: string
                     type: array
                 type: object
+              notIncluded:
+                description: |-
+                  NotIncluded names what the tenant has that this export's bundle does
+                  not hold, beyond what no bundle holds: the data uninstalled apps left
+                  behind, which an export does not capture although deleting the tenant
+                  destroys it. One sentence each. The bundle's manifest carries the same
+                  list.
+                items:
+                  type: string
+                type: array
               observedGeneration:
                 description: ObservedGeneration is the spec generation this status
                   was computed from.

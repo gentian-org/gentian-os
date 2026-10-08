@@ -469,10 +469,19 @@ func (r *TenantRestoreReconciler) restoreUnits(
 			units = append(units, captureUnit{Kind: a.Kind, Name: a.Target, JobName: p.Name,
 				Job: backup.PostgresRestoreJob(p, pgD, a.Path, a.Target)})
 		case bundle.ArtefactPostgresOwned:
+			// The provisioned database the bundle's app had, which the names
+			// in the archive are told from: the manifest names it on the
+			// app's own database artefact.
+			source := a.Target
+			for _, sibling := range entry.Artefacts {
+				if sibling.Kind == bundle.ArtefactPostgres && sibling.Name != "" {
+					source = sibling.Name
+				}
+			}
 			p = pgParams
 			p.Name = name("pgor")
 			units = append(units, captureUnit{Kind: a.Kind, Name: a.Target, JobName: p.Name,
-				Job: backup.PostgresOwnedRestoreJob(p, pgD, a.Path, a.Target)})
+				Job: backup.PostgresOwnedRestoreJob(p, pgD, a.Path, source, a.Target)})
 		case bundle.ArtefactMariaDB:
 			p = mariaParams
 			p.Name = name("myr")
@@ -533,7 +542,8 @@ func (r *TenantRestoreReconciler) tenantWideRestoreUnits(
 			p, unitD := r.placeRestoreUnit(restore, params, d, identityNamespace)
 			p.Name = exportJobName(tenant.Name, restore.Name, backupTenantComponent, "realmr")
 			units = append(units, captureUnit{Kind: a.Kind, Name: a.Target, JobName: p.Name,
-				Job: backup.RealmImportJob(p, unitD, a.Path, a.Target)})
+				Job: backup.RealmImportJob(p, unitD, a.Path, a.Target,
+					backup.RealmSource{Tenant: restore.Status.SourceTenant, Realm: a.Name})})
 		case bundle.ArtefactPostgres:
 			p, unitD := r.placeRestoreUnit(restore, params, d, postgresNamespace)
 			p.Name = exportJobName(tenant.Name, restore.Name, backupTenantComponent, "shellr")
@@ -821,9 +831,14 @@ func (r *TenantRestoreReconciler) bundleKey(ctx context.Context, restore *gentia
 // and why, and what no restore brings back.
 func recordPlan(restore *gentianov1alpha1.TenantRestore, plan *restorePlan) {
 	restore.Status.BundleSchemaVersion = plan.schemaVersion
+	restore.Status.SourceTenant = plan.sourceTenant
 	restore.Status.NameDerivation = plan.derivation
 	restore.Status.NotRestored = plan.notRestored
 	restore.Status.Notes = restoreLimits(plan.derivation)
+	// What the export that wrote the bundle found and did not capture.
+	for _, missing := range plan.notIncluded {
+		restore.Status.Notes = append(restore.Status.Notes, "The bundle says it does not hold "+missing+".")
+	}
 	restore.Status.Apps = nil
 	for _, app := range plan.apps {
 		entry := appStatus(&restore.Status.Apps, app.name)
@@ -838,6 +853,11 @@ func recordPlan(restore *gentianov1alpha1.TenantRestore, plan *restorePlan) {
 	wide := appStatus(&restore.Status.Apps, backupTenantComponent)
 	wide.Artefacts = plan.tenantWide
 	wide.Stores = artefactKinds(plan.tenantWide)
+	if plan.sourceTenant != "" && plan.sourceTenant != tenantNameFromNamespace(restore.Namespace) {
+		restore.Status.Notes = append(restore.Status.Notes, "The bundle is of tenant "+plan.sourceTenant+
+			", not of this one. Every store is restored under this tenant's own names: a database an app made for itself is put back under this tenant's database name, "+
+			"the platform's groups under this tenant's, with their members. The bundle's sign-in clients are not imported; this tenant's own were made when its apps were installed.")
+	}
 }
 
 // plannedApps are the apps the recorded plan restores, in its order.
