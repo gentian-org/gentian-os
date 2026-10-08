@@ -164,6 +164,7 @@ For the current baseline design of the system, refer to [architecture.md](archit
   - `[ ]` Verify `compositionRef` resolves to a Composition that exists.
 
 ### 1.14 Agent Identities & Token Delegation (RFC 8693) (***)
+Design: see docs/plans/agents.md
 * **Target Domain**: Identity & Authorization
 * **Context**: In-cluster autonomous agents need to perform actions on behalf of users. Currently, they lack a secure delegation model.
 * **Proposed Solution**: Implement OAuth 2.0 Token Exchange (RFC 8693) in the Keycloak composite configuration to allow agents to obtain down-scoped, user-delegated access tokens.
