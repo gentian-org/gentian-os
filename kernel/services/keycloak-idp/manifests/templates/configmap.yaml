@@ -10,6 +10,13 @@ metadata:
 data:
   values.yaml: |
     replicas: 1
+    # The Keycloak the platform runs. Named here because the keycloakx chart
+    # trails upstream: 7.3.2, the chart the suze composition installs, still
+    # defaults to 26.7.4. The event listener is compiled against this version
+    # (keycloak.version in kernel/extensions/keycloak-event-listener/pom.xml)
+    # and the two move together: the SPIs it implements are internal.
+    image:
+      tag: {{ .Values.keycloakVersion | quote }}
     command:
       - "/opt/keycloak/bin/kc.sh"
     args:
@@ -74,8 +81,8 @@ data:
     # mounts would work but put a copy of the file list in these values, so every
     # new template would need editing in two places.
     #
-    # The init container reuses the chart's own image so the Keycloak version is
-    # not pinned a second time here; extraInitContainers is tpl'd by the chart.
+    # The init container reuses the image named above so the Keycloak version
+    # is not pinned a second time here; extraInitContainers is tpl'd by the chart.
     extraInitContainers: |
       - name: expand-theme
         image: "{{ "{{" }} .Values.image.repository }}:{{ "{{" }} .Values.image.tag | default .Chart.AppVersion }}"

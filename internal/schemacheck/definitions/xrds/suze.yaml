@@ -59,7 +59,7 @@ spec:
                       default: gentian-idp-keycloak
                     chartVersion:
                       type: string
-                      default: "7.0.1"
+                      default: "7.3.2"
             status:
               type: object
               properties:

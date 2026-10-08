@@ -21,6 +21,10 @@ kernelRealm: kernel
 # The database host. v4: the InfraData Postgres; v5: kernel-postgres in kernel-data.
 dbHost: ""   # empty: gentian-postgresql-<env>.gentian-infra-<env> (v4); v5 sets kernel-postgres-rw.kernel-data
 
+# The Keycloak image tag. One version for the server, the theme's init
+# container and the event listener's build; see templates/configmap.yaml.
+keycloakVersion: "26.8.0"
+
 # The event listener that keeps OpenFGA's memberships equal to Keycloak's.
 #
 # Keycloak is the only place a membership changes; the director holds a

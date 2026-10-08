@@ -13,7 +13,7 @@
 
   <properties>
     <!-- Must match the Keycloak the platform runs: the event SPI is private API. -->
-    <keycloak.version>26.0.7</keycloak.version>
+    <keycloak.version>26.8.0</keycloak.version>
     <maven.compiler.release>17</maven.compiler.release>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
   </properties>

@@ -58,5 +58,8 @@ openssl pkey -in listener.pem -pubout -outform DER | tail -c 32 | base64
 mvn package        # target/gentian-keycloak-event-listener.jar
 ```
 
-`keycloak.version` in `pom.xml` must match the Keycloak the platform runs: the
-event listener SPI is private API and is not stable across major versions.
+`keycloak.version` in `pom.xml` must match the Keycloak the platform runs
+(`keycloakVersion` in `kernel/services/keycloak-idp/manifests/values.yaml`): the
+SPIs it implements are internal and move between minor releases too (the
+admin permission classes the activation link uses changed package between
+26.0 and 26.8). Bump both together and build before pushing.

@@ -32,7 +32,7 @@ spec:
 
             {{- $kcSpec := default dict $spec.keycloak }}
             {{- $kcRelease := default "gentian-idp-keycloak" $kcSpec.helmReleaseName }}
-            {{- $kcVersion := default "7.0.1" $kcSpec.chartVersion }}
+            {{- $kcVersion := default "7.3.2" $kcSpec.chartVersion }}
 
             {{- /* ── OpenFGA (ReBAC PDP) ─────────────────────────────────────── */}}
             ---

@@ -32,8 +32,8 @@ import org.keycloak.services.managers.AuthenticationManager.AuthResult;
 import org.keycloak.services.resource.RealmResourceProvider;
 import org.keycloak.services.resources.LoginActionsService;
 import org.keycloak.services.resources.admin.AdminAuth;
-import org.keycloak.services.resources.admin.permissions.AdminPermissionEvaluator;
-import org.keycloak.services.resources.admin.permissions.AdminPermissions;
+import org.keycloak.services.resources.admin.fgap.AdminPermissionEvaluator;
+import org.keycloak.services.resources.admin.fgap.AdminPermissions;
 
 /**
  * Returns the link Keycloak would otherwise only mail.
@@ -174,8 +174,8 @@ public class ActivationLinkResource implements RealmResourceProvider {
         if (auth == null) {
             return null;
         }
-        ClientModel client = tokenRealm.getClientByClientId(auth.getToken().getIssuedFor());
-        AdminAuth admin = new AdminAuth(tokenRealm, auth.getToken(), auth.getUser(), client);
+        ClientModel client = tokenRealm.getClientByClientId(auth.token().getIssuedFor());
+        AdminAuth admin = new AdminAuth(tokenRealm, auth.token(), auth.user(), client);
         return AdminPermissions.evaluator(session, target, admin);
     }
 
