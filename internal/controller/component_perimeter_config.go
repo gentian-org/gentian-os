@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/addresses"
 )
 
 // The publishing proxy's configuration (AD-6).
@@ -167,21 +168,10 @@ var perimeterStrippedIdentityHeaders = []string{
 	"X-Gentian-Subject",
 }
 
-// perimeterPrefixes are the path prefixes this exposure publishes, sorted so
-// the generated configuration does not churn between reconciles.
-//
-// An exposure that declares none publishes NOTHING. That is deliberate and it
-// is the opposite of the gateway surface, where empty paths mean the whole
-// host: on the perimeter, "I did not say" must never resolve to "everything".
+// perimeterPrefixes are the path prefixes this exposure publishes: none for an
+// entry that declares none (addresses.Prefixes).
 func perimeterPrefixes(e *gentianov1alpha1.ExposureSpec) []string {
-	out := make([]string, 0, len(e.Paths))
-	for _, p := range e.Paths {
-		if p = strings.TrimSpace(p); p != "" && strings.HasPrefix(p, "/") {
-			out = append(out, p)
-		}
-	}
-	sort.Strings(out)
-	return out
+	return addresses.Prefixes(e)
 }
 
 // perimeterDenied are the paths refused even where a prefix admits them.

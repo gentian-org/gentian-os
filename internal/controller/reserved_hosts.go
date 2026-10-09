@@ -12,6 +12,7 @@ package controller
 
 import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/addresses"
 	"github.com/gentian-org/gentian-os/internal/hostnames"
 )
 
@@ -42,8 +43,5 @@ func reservedHostRefusal(comp *gentianov1alpha1.Component, profile *gentianov1al
 // whether that is the cluster's own. The platform tenant's is not -- its
 // hosts are below platform.<kernel>.
 func reservedHostZone(zone zoneNames, kernelDomain string) hostnames.Zone {
-	return hostnames.Zone{
-		Domain:          zone.domain,
-		OnClusterDomain: !zone.kernel && servedByKernelEdge(zone.domain, kernelDomain),
-	}
+	return addresses.ReservedZone(zone.shared(), kernelDomain)
 }

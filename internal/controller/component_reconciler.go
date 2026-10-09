@@ -36,6 +36,7 @@ import (
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/addresses"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"github.com/gentian-org/gentian-os/internal/layout"
 	"github.com/gentian-org/gentian-os/internal/profilebundle"
@@ -786,14 +787,16 @@ type zoneNames struct {
 	apex string
 }
 
-// zoneNamesOf is where one tenant's hosts are, under this cluster's mode.
+// zoneNamesOf is where one tenant's hosts are, under this cluster's mode. The
+// rule is internal/addresses, which the director asks as well.
 func zoneNamesOf(tenant *gentianov1alpha1.Tenant, kernelDomain, tenancyMode, kernelRealm string) zoneNames {
-	names := zoneNames{domain: tenant.EffectiveDomain(kernelDomain, tenancyMode)}
-	if tenantAdoptsKernelRealm(tenant, kernelRealm) {
-		names.kernel = true
-		names.apex = kernelDomain
-	}
-	return names
+	zone := addresses.ZoneOf(tenant, kernelDomain, tenancyMode, kernelRealm)
+	return zoneNames{domain: zone.Domain, kernel: zone.Kernel, apex: zone.Apex}
+}
+
+// shared is the zone as internal/addresses takes it.
+func (z zoneNames) shared() addresses.Zone {
+	return addresses.Zone{Domain: z.domain, Kernel: z.kernel, Apex: z.apex}
 }
 
 // platformDesktopHost is where the platform administrator's desktop answers,
@@ -891,7 +894,7 @@ func (r *ComponentReconciler) zoneOf(tenant *gentianov1alpha1.Tenant) edgeZone {
 }
 
 func tenantAdoptsKernelRealm(tenant *gentianov1alpha1.Tenant, kernelRealm string) bool {
-	return kernelRealm != "" && keycloakRealmName(tenant) == kernelRealm
+	return addresses.AdoptsKernelRealm(tenant, kernelRealm)
 }
 
 func (r *ComponentReconciler) kernelRealm() string {
@@ -1216,35 +1219,12 @@ func exposureHost(zone edgeZone, comp *gentianov1alpha1.Component, e *gentianov1
 }
 
 // exposureHostIn is where an entry answers: a label under the zone's domain,
-// the entry's own or the component's name.
-//
-// Two entries are not a label under the domain.
-//
-// The desktop's, in the platform tenant's zone, answers on the zone's domain
-// itself: platform.<kernel> is the platform administrator's desktop, and
-// desktop.<kernel> is not the platform's at all -- it is the user tenant's
-// desktop on a single-tenancy cluster and an alias of the bare domain on a
-// multi-tenancy one.
-//
-// An apex entry answers on the cluster's bare domain, and only where the zone
-// has it (zoneNames.apex). It has no host anywhere else, which is the empty
-// string here and "not published" to every caller: a tenant's bare domain is
-// its own to route.
+// the entry's own or the component's name, with the two exceptions
+// addresses.Host states -- the platform's desktop, on its zone's own domain,
+// and an apex entry, on the cluster's bare domain where the zone has it and
+// nowhere otherwise.
 func exposureHostIn(zone zoneNames, component string, e *gentianov1alpha1.ExposureSpec) string {
-	if zone.domain == "" {
-		return ""
-	}
-	if e.Apex {
-		return zone.apex
-	}
-	sub := e.SubDomain
-	if sub == "" {
-		sub = component
-	}
-	if zone.kernel && sub == desktopSubdomain {
-		return zone.domain
-	}
-	return sub + "." + zone.domain
+	return addresses.Host(zone.shared(), component, e)
 }
 
 // exposureAuthz is the L2 question a component's routes ask (networking.md

@@ -25,6 +25,7 @@ import (
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/addresses"
 	"github.com/gentian-org/gentian-os/internal/modelgateway"
 )
 
@@ -59,7 +60,7 @@ const (
 	// assumes it. The platform tenant's desktop is the one exception: the
 	// same entry answers on the zone's own name, platform.<kernel>
 	// (exposureHostIn).
-	desktopSubdomain = "desktop"
+	desktopSubdomain = addresses.DesktopLabel
 
 	argocdServerServiceName = "argocd-server"
 	headlampServiceName     = "headlamp"

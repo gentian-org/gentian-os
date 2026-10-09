@@ -32,6 +32,7 @@ import (
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/addresses"
 	"github.com/gentian-org/gentian-os/internal/kernel"
 	"github.com/gentian-org/gentian-os/internal/layout"
 )
@@ -119,20 +120,10 @@ func livePerimeterExposures(
 		if on.ExpiresAt != nil && !now.Before(on.ExpiresAt.Time) {
 			continue
 		}
-		host := exposureHost(zone, comp, spec)
-		website := false
-		if !zone.kernel {
-			// The main address takes two people saying so: the profile's
-			// author (apex on the entry) and the approver (apex on the
-			// enablement). One without the other publishes nothing, here or
-			// under the tenant's own hosts.
-			if spec.Apex != on.Apex {
-				continue
-			}
-			if spec.Apex && main.entry == spec.Name {
-				host, website = main.host, true
-			}
-		}
+		// Where it answers, by the rule the director shows an approver the
+		// address with (addresses.PerimeterHost): the main address takes the
+		// profile's author and the approver both saying so.
+		host, website := addresses.PerimeterHost(zone.shared(), comp.Name, spec, on.Apex, main.entry, main.host)
 		if host == "" {
 			// An entry with nowhere to answer in this zone: the bare domain,
 			// asked for by a tenant that does not hold it.
