@@ -175,6 +175,7 @@ Design: see [docs/design/agentic-ai.md](design/agentic-ai.md), Scope
   - `[x]` The rights check is served whichever way a component is delivered.
   - `[x]` Vouching: a declared issuer per component in the tenant's realm, linking on the person's own token, unlinking by the person, an administrator or the component.
   - `[ ]` A scope for an app that signs people in with a client of its own, whose audience is that client, so that a vouched token is accepted there.
+  - `[ ]` Clean up after a vouching component that was removed. Its issuer entry, its client and every person's link to it stay in the realm, still trusting keys at that Service name: they are kept on purpose while the component is installed, because deleting the issuer deletes every link, and a reconcile that lost sight of the component for a moment would take everybody's consent with it. A removal that is known to be one — the Component is gone, not merely unread — should remove all three.
 
 ### 1.15 Gateway External Authentication (AuthZEN PEP) (**)
 * **Target Domain**: Gateway Security
