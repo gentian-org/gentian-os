@@ -46,14 +46,14 @@ CALLS="${SANDBOX}/calls"
 printf '{"access_token":"t","refresh_token":"r","expires_at":%s,"refresh_expires_at":%s}\n' \
     "$(( $(date +%s) + 3600 ))" "$(( $(date +%s) + 3600 ))" > "${SANDBOX}/home/.gentian/cli-token-c1.json"
 
-# kubectl: one director, in gentian-system, serving cluster c1; a port-forward
+# kubectl: one director, in kernel-control, serving cluster c1; a port-forward
 # that forwards nothing and waits to be ended.
 cat > "${SANDBOX}/bin/kubectl" <<'STUB'
 #!/usr/bin/env bash
 case "$*" in
     "config current-context") echo test ;;
-    "get deploy -A -l app.kubernetes.io/component=director"*) echo "gentian-system director" ;;
-    "get deploy director -n gentian-system -o json")
+    "get deploy -A -l app.kubernetes.io/component=director"*) echo "kernel-control director" ;;
+    "get deploy director -n kernel-control -o json")
         echo '{"spec":{"template":{"spec":{"containers":[{"env":[
             {"name":"DIRECTOR_ISSUER_BASE_URL","value":"https://id.k.example"},
             {"name":"GENTIAN_DEPLOYMENTS_CLUSTER_ID","value":"c1"}]}]}}}}' ;;

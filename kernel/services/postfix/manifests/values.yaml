@@ -4,8 +4,8 @@ env: dev
 
 # The namespace the kernel mail stack runs in.
 #
-# This MUST match the operator's SERVICES_NAMESPACE (charts/gentian-os/values.yaml
-# servicesNamespace, default platform-kernel). The operator writes
+# This MUST match where the operator addresses mail (layout.System("mail")).
+# The operator writes
 # postfix-kernel-virtual-mailbox-maps there and hands every tenant app
 # postfix-<env>.<servicesNamespace>.svc.cluster.local as its SMTP host, and a Pod
 # can only mount a ConfigMap from its own namespace — so Postfix has to live where
@@ -14,7 +14,7 @@ env: dev
 # Postfix never read: mail worked for whatever tenants existed at install and
 # every later tenant was rejected with "554 Recipient address rejected", with
 # nothing logged, because the domain simply was not one of Postfix's own.
-servicesNamespace: platform-kernel
+servicesNamespace: system-mail
 # storageClass empty = use the cluster's default StorageClass. Set per
 # stage in values-<env>.yaml only where a stage genuinely differs.
 storageClass: ""

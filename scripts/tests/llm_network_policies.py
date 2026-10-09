@@ -277,9 +277,6 @@ def check_wiring():
     if "app.kubernetes.io/name: envoy" not in proxy:
         raise Failure("the edge chart no longer selects the Gateway's pods by app.kubernetes.io/name=envoy; "
                       "read what Envoy Gateway labels them with before trusting the gateway's rule for the edge")
-    # v4 puts the chart in the namespace everything shares; no policy there.
-    if policies_of(helm("llm", app["path"])):
-        raise Failure("the chart renders NetworkPolicies on the v4 layout, where the clients are not where the rules say")
 
 
 def check_off():

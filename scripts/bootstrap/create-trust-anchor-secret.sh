@@ -10,7 +10,7 @@ set -euo pipefail
 ENV="${ENV:-dev}"
 NAMESPACE="${1:-${SERVICES_NAMESPACE:-gentian-${ENV}}}"
 SECRET_NAME="gentian-trust-anchor-tls"
-CERT_NS="${CERT_MANAGER_NS:-cert-manager}"
+CERT_NS="${CERT_MANAGER_NS:-kernel-edge}"
 LEAF_SECRET="${KERNEL_TLS_SECRET:-wildcard-kernel-tls}"
 
 TMPDIR="$(mktemp -d)"

@@ -23,7 +23,7 @@ spec:
             {{- $spec := $xr.spec }}
             {{- $name := $xr.metadata.name }}
             {{- $env := $spec.environment }}
-            {{- $ns := default "platform-kernel" $spec.idpNamespace }}
+            {{- $ns := default "kernel-authentication" $spec.idpNamespace }}
             {{- $fgaNs := default $ns $spec.fgaNamespace }}
 
             {{- $fgaSpec := default dict $spec.openfga }}

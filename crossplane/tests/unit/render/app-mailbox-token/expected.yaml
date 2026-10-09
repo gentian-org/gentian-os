@@ -191,7 +191,7 @@ spec:
     clientSecretSecretRef:
       key: client-secret
       name: render-demo-app-fixture-oidc-client-creds
-      namespace: crossplane-system
+      namespace: kernel-provisioning
     directAccessGrantsEnabled: false
     fullScopeAllowed: false
     name: Demo App
@@ -327,7 +327,7 @@ spec:
       kind: ExternalSecret
       metadata:
         name: render-demo-app-fixture-oidc-client-creds
-        namespace: crossplane-system
+        namespace: kernel-provisioning
       spec:
         data:
         - remoteRef:

@@ -86,7 +86,7 @@ try_load_creds_from_openbao() {
     info "Checking whether OpenBao already holds this cluster's credentials..."
 
     local bao_addr
-    if ! bao_addr=$(gentian_service_addr openbao "${OPENBAO_NAMESPACE:-openbao}" 8200 https 2>/dev/null) \
+    if ! bao_addr=$(gentian_service_addr openbao "${OPENBAO_NAMESPACE:-$(ns_kernel secrets)}" 8200 https 2>/dev/null) \
         || [[ -z "${bao_addr}" ]]; then
         info "  OpenBao is not reachable yet — asking for the credentials instead."
         return 0
@@ -218,8 +218,8 @@ init_openbao_transit() {
     # silently took an early-return path on a stale state), fail fast here
     # so subsequent steps don't proceed against a half-initialised transit.
     local missing=()
-    kubectl get secret -n "${TRANSIT_NAMESPACE:-openbao}" openbao-transit-token  >/dev/null 2>&1 || missing+=(openbao-transit-token)
-    kubectl get secret -n "${TRANSIT_NAMESPACE:-openbao}" openbao-transit-unseal >/dev/null 2>&1 || missing+=(openbao-transit-unseal)
+    kubectl get secret -n "${TRANSIT_NAMESPACE:-$(ns_kernel seal)}" openbao-transit-token  >/dev/null 2>&1 || missing+=(openbao-transit-token)
+    kubectl get secret -n "${TRANSIT_NAMESPACE:-$(ns_kernel seal)}" openbao-transit-unseal >/dev/null 2>&1 || missing+=(openbao-transit-unseal)
     if (( ${#missing[@]} > 0 )); then
         error "Transit init reported success but required Secrets are missing: ${missing[*]}"
         error "Re-run init-openbao-transit.sh manually and re-run install.sh."
@@ -234,7 +234,7 @@ init_openbao() {
 
     info "Waiting for openbao service (up to 2 min)..."
     local i=0
-    until kubectl get svc openbao -n "${OPENBAO_NAMESPACE:-openbao}" &>/dev/null; do
+    until kubectl get svc openbao -n "${OPENBAO_NAMESPACE:-$(ns_kernel secrets)}" &>/dev/null; do
         echo -n "."; sleep 5; i=$((i + 5))
         [[ $i -lt 120 ]] || { error "Timed out."; exit 1; }
     done
@@ -248,12 +248,12 @@ init_openbao() {
     # to five minutes, and say why it is waiting.
     local BAO_HTTP="" waited=0 phase
     info "Waiting for openbao-0 to answer (up to 5 min)..."
-    until BAO_HTTP=$(gentian_service_addr openbao "${OPENBAO_NAMESPACE:-openbao}" 8200 https 2>/dev/null); do
+    until BAO_HTTP=$(gentian_service_addr openbao "${OPENBAO_NAMESPACE:-$(ns_kernel secrets)}" 8200 https 2>/dev/null); do
         if (( waited >= 300 )); then
-            phase="$(kubectl get pod openbao-0 -n "${OPENBAO_NAMESPACE:-openbao}" -o jsonpath='{.status.phase}' 2>/dev/null || true)"
+            phase="$(kubectl get pod openbao-0 -n "${OPENBAO_NAMESPACE:-$(ns_kernel secrets)}" -o jsonpath='{.status.phase}' 2>/dev/null || true)"
             error "Could not reach the openbao Service on :8200 within 5 minutes (openbao-0: ${phase:-absent})."
             error "  Neither the ClusterIP nor a kubectl port-forward responded."
-            error "  kubectl describe pod openbao-0 -n ${OPENBAO_NAMESPACE:-openbao}   says why."
+            error "  kubectl describe pod openbao-0 -n ${OPENBAO_NAMESPACE:-$(ns_kernel secrets)}   says why."
             exit 1
         fi
         echo -n "."; sleep 10; waited=$((waited + 10))
@@ -296,14 +296,14 @@ init_openbao() {
                         "${BAO_HTTP}/v1/auth/token/lookup-self" >/dev/null; then
                     info "Bootstrap token: live, in ${OPENBAO_INIT_FILE} (mode 600)."
                     if [[ "$(kubectl get configmap gentian-handover \
-                            -n "${GENTIAN_SYSTEM_NAMESPACE:-gentian-system}" \
+                            -n "${GENTIAN_SYSTEM_NAMESPACE:-$(ns_kernel control)}" \
                             -o jsonpath='{.data.recoveryKitExported}' 2>/dev/null)" != "true" ]]; then
                         warn "  No recovery kit is on record yet. Run:"
                         warn "    ./install.sh --export-recovery-kit"
                     fi
                     export BAO_TOKEN="$stored_token"
                 elif [[ "$(kubectl get configmap gentian-handover \
-                        -n "${GENTIAN_SYSTEM_NAMESPACE:-gentian-system}" \
+                        -n "${GENTIAN_SYSTEM_NAMESPACE:-$(ns_kernel control)}" \
                         -o jsonpath='{.data.bootstrapCredentialRevoked}' 2>/dev/null)" == "true" ]]; then
                     info "Bootstrap token: revoked at handover (E-03)."
                     info "  Day-2 writes go through OIDC; steps that need an OpenBao"
@@ -379,7 +379,7 @@ init_openbao() {
             -H "Content-Type: application/json" \
             -d '{"secret_shares": 1, "secret_threshold": 1}') || {
             error "OpenBao init request failed against ${BAO_HTTP}."
-            error "The openbao-0 pod likely has no Ready endpoints (check 'kubectl get pod -n ${OPENBAO_NAMESPACE:-openbao}')."
+            error "The openbao-0 pod likely has no Ready endpoints (check 'kubectl get pod -n ${OPENBAO_NAMESPACE:-$(ns_kernel secrets)}')."
             error "Common cause: the openbao-transit-token Secret is missing, leaving openbao-0 in CreateContainerConfigError."
             exit 1
         }
@@ -572,7 +572,7 @@ _resolve_bao_token() {
 #
 # Returns non-zero when OpenBao cannot be reached, leaving BAO_TOKEN unset.
 resolve_openbao_access() {
-    if ! BAO_ADDR=$(gentian_service_addr openbao "${OPENBAO_NAMESPACE:-openbao}" 8200 https); then
+    if ! BAO_ADDR=$(gentian_service_addr openbao "${OPENBAO_NAMESPACE:-$(ns_kernel secrets)}" 8200 https); then
         warn "Could not reach the openbao Service on :8200."
         warn "  Neither the ClusterIP nor a kubectl port-forward responded."
         return 1
@@ -586,7 +586,7 @@ resolve_openbao_access() {
 seed_secrets() {
     banner "Seeding kernel secrets"
 
-    if ! BAO_ADDR=$(gentian_service_addr openbao "${OPENBAO_NAMESPACE:-openbao}" 8200 https); then
+    if ! BAO_ADDR=$(gentian_service_addr openbao "${OPENBAO_NAMESPACE:-$(ns_kernel secrets)}" 8200 https); then
         error "Could not reach the openbao Service on :8200."
         error "  Neither the ClusterIP nor a kubectl port-forward responded."
         exit 1

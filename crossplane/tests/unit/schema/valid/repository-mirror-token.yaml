@@ -3,7 +3,7 @@
 kind: Repository
 apiVersion: gentianos.io/v1alpha1
 metadata:
-  namespace: crossplane-system
+  namespace: kernel-provisioning
   name: schema-valid-repository-mirror-token
 spec:
   type: git

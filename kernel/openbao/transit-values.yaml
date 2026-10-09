@@ -55,7 +55,7 @@ server:
 
   # Inject the Shamir unseal key from the openbao-transit-unseal k8s Secret.
   # Created once by: kubectl create secret generic openbao-transit-unseal \
-  #   -n openbao --from-literal=unseal-key=<key-from-bitwarden>
+  #   -n kernel-seal --from-literal=unseal-key=<key-from-bitwarden>
   extraSecretEnvironmentVars:
     - envName: TRANSIT_UNSEAL_KEY
       secretName: openbao-transit-unseal

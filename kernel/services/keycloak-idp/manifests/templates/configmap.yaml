@@ -51,7 +51,7 @@ data:
       enabled: false
     database:
       vendor: postgres
-      hostname: {{ .Values.dbHost | default (printf "gentian-postgresql-%s.gentian-infra-%s.svc.cluster.local" .Values.env .Values.env) }}
+      hostname: {{ .Values.dbHost | default "kernel-postgres-rw.kernel-data.svc.cluster.local" }}
       port: 5432
       database: keycloak
       username: keycloak_user

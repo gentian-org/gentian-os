@@ -206,7 +206,7 @@ spec:
         labels:
           gentianos.io/tenant: user
         name: keycloak-admin-user
-        namespace: platform-kernel
+        namespace: kernel-authentication
       spec:
         template:
           spec:
@@ -241,7 +241,7 @@ spec:
         labels:
           gentianos.io/tenant: user
         name: keycloak-realm-user
-        namespace: platform-kernel
+        namespace: kernel-authentication
       spec:
         template:
           spec:
@@ -335,7 +335,7 @@ spec:
     clientSecretSecretRef:
       key: oidc_client_secret
       name: dovecot-admin
-      namespace: platform-kernel
+      namespace: system-mail
     directAccessGrantsEnabled: false
     enabled: true
     fullScopeAllowed: false

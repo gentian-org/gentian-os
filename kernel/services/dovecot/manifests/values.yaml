@@ -2,12 +2,12 @@
 # only matters for `helm template` run by hand.
 env: dev
 
-# The namespace the kernel mail stack runs in. MUST match the operator's
-# SERVICES_NAMESPACE (charts/gentian-os/values.yaml servicesNamespace) and the
-# same value in kernel/services/postfix — Postfix reaches Dovecot at
+# The namespace the kernel mail stack runs in. MUST match where the operator
+# addresses mail (layout.System("mail")) and the same value in
+# kernel/services/postfix — Postfix reaches Dovecot at
 # dovecot-<env>.<servicesNamespace>.svc.cluster.local:24 over LMTP, and the
 # operator writes dovecot-tenant-oidc-values into that namespace.
-servicesNamespace: platform-kernel
+servicesNamespace: system-mail
 # storageClass empty = use the cluster's default StorageClass. Set per
 # stage in values-<env>.yaml only where a stage genuinely differs.
 storageClass: ""

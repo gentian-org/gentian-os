@@ -415,7 +415,7 @@ _kit_gather() {
         _kit_from_json "${TRANSIT_INIT_FILE:-${HOME}/.gentian/openbao-transit-init.json}" \
             '(.unseal_keys_base64 // .unseal_keys_b64 // [])[0]' || true)}"
     if [[ -z "${TRANSIT_UNSEAL_KEY}" ]]; then
-        TRANSIT_UNSEAL_KEY="$(kubectl get secret openbao-transit-unseal -n openbao \
+        TRANSIT_UNSEAL_KEY="$(kubectl get secret openbao-transit-unseal -n "${TRANSIT_NAMESPACE:-$(ns_kernel seal)}" \
             -o jsonpath='{.data.unseal-key}' 2>/dev/null | base64 -d 2>/dev/null || true)"
     fi
 
@@ -642,7 +642,7 @@ export_recovery_kit() {
 # property of the file — so this warns rather than fails the export.
 _record_kit_export_proof() {
     local out="${1:-}"
-    local ns="${GENTIAN_SYSTEM_NAMESPACE:-gentian-system}"
+    local ns="${GENTIAN_SYSTEM_NAMESPACE:-$(ns_kernel control)}"
     local now; now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
     # The path is recorded too, so a later step can name the file rather than

@@ -56,18 +56,16 @@
   The kubelet's probes come from the pod's own node and are not subject to a
   NetworkPolicy.
 
-  NOT covered: real vLLM instances. Their chart (kernel/services/llm/chart)
-  names the v4 namespace and nothing in this repository installs it on the
-  v5 layout, so there is no pod here to select; a cluster that runs one in
+  NOT covered: real vLLM instances. Nothing in this repository installs
+  their chart (kernel/services/llm/chart), so there is no pod here to select;
+  a cluster that runs one in
   this namespace gets no policy for it from this file, and its pods stay
   open until one is written with it.
 
-  Rendered on the v5 layout only: on v4 this chart lands in platform-kernel,
-  the one namespace everything shares, where the clients named here are
-  somewhere else. Sync wave -1, with the Secret the pods mount: before the
-  Deployments and the Cluster, so that no server is up without its policy.
+  Sync wave -1, with the Secret the pods mount: before the Deployments and
+  the Cluster, so that no server is up without its policy.
 */ -}}
-{{- if and (ne .Values.servicesNamespace "platform-kernel") (ne (toString .Values.networkPolicy.enabled) "false") }}
+{{- if ne (toString .Values.networkPolicy.enabled) "false" }}
 {{- $np := .Values.networkPolicy }}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy

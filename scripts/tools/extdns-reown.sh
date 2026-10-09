@@ -60,7 +60,7 @@ TXT_PREFIX="${TXT_PREFIX:-_extdns-%{record_type\}.}"
 OLD_TXT_PREFIX="${OLD_TXT_PREFIX:-_extdns.}"
 # Where the token lives when it is not already in the environment: the Secret
 # external-dns itself reads, so this needs no second credential.
-TOKEN_NS="${TOKEN_NS:-external-dns}"
+TOKEN_NS="${TOKEN_NS:-kernel-edge}"
 TOKEN_SECRET="${TOKEN_SECRET:-cloudflare-api-token}"
 TOKEN_KEY="${TOKEN_KEY:-cloudflare_api_token}"
 

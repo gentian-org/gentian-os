@@ -254,7 +254,7 @@ spec:
                       type: string
                       description: >
                         OpenBao service address reachable from within the cluster.
-                      default: "http://openbao.openbao.svc.cluster.local:8200"
+                      default: "http://openbao.kernel-secrets.svc.cluster.local:8200"
                     kvMount:
                       type: string
                       description: Path of the KV v2 secret engine mount.
@@ -274,7 +274,7 @@ spec:
                     namespace:
                       type: string
                       description: Namespace where ArgoCD is deployed.
-                      default: "argocd"
+                      default: "kernel-gitops"
                     sourceRepos:
                       type: array
                       description: Extra source repositories to allow in the tenants AppProject.
@@ -287,7 +287,7 @@ spec:
                     namespace:
                       type: string
                       description: Namespace where ESO is deployed.
-                      default: "external-secrets"
+                      default: "kernel-secrets"
                     serviceAccount:
                       type: string
                       description: ServiceAccount name used by ESO.
@@ -919,7 +919,7 @@ spec:
                           default: gentian-root-ca-tls
                         namespace:
                           type: string
-                          default: cert-manager
+                          default: kernel-edge
 
                 # ── Mail ─────────────────────────────────────────────────────
                 mail:

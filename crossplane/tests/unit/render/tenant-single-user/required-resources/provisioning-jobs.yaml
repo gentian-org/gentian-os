@@ -2,7 +2,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: tenant-user-provisioning-jobs
-  namespace: platform-kernel
+  namespace: kernel-provisioning
   labels:
     gentianos.io/config-type: tenant-provisioning-jobs
     gentianos.io/tenant: user
@@ -14,7 +14,7 @@ data:
         "kind": "Job",
         "metadata": {
           "name": "keycloak-realm-user",
-          "namespace": "platform-kernel",
+          "namespace": "kernel-authentication",
           "labels": {
             "gentianos.io/tenant": "user"
           }
@@ -38,7 +38,7 @@ data:
         "kind": "Job",
         "metadata": {
           "name": "keycloak-admin-user",
-          "namespace": "platform-kernel",
+          "namespace": "kernel-authentication",
           "labels": {
             "gentianos.io/tenant": "user"
           }

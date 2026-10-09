@@ -32,6 +32,8 @@ esac
 STUB
 chmod +x "${STUB_DIR}/helm"
 PATH="${STUB_DIR}:${PATH}"
+# Where the release is looked for; the library asks the layout when this is unset.
+export CERT_MANAGER_NAMESPACE=kernel-edge
 
 # The real XRD default, not a copy of it.
 xrd_default() {

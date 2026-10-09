@@ -2,7 +2,7 @@
 {{- $stage := .Values.stage | default "dev" -}}
 {{- $keycloakInternal := $ks.keycloakInternalURL -}}
 {{- if not $keycloakInternal -}}
-{{- $keycloakInternal = printf "http://gentian-idp-keycloak-keycloakx-http.platform-kernel.svc.cluster.local:8080" -}}
+{{- $keycloakInternal = printf "http://gentian-idp-keycloak-keycloakx-http.%s.svc.cluster.local:8080" (.Values.layout.authentication | default "kernel-authentication") -}}
 {{- end -}}
 {{- /*
   Cluster-service hostnames follow a fixed naming convention

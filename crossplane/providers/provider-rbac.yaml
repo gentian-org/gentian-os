@@ -12,10 +12,10 @@
 #
 # Without the bindings below, every composed Object fails at the observe step:
 #
-#   observe failed: cannot get object: namespaces "gentian-system" is forbidden:
-#   User "system:serviceaccount:crossplane-system:provider-kubernetes-<hash>"
+#   observe failed: cannot get object: namespaces "kernel-control" is forbidden:
+#   User "system:serviceaccount:kernel-provisioning:provider-kubernetes-<hash>"
 #   cannot get resource "namespaces" in API group "" in the namespace
-#   "gentian-system"
+#   "kernel-control"
 #
 # The XCluster then sits at Ready=False/Creating until the install times out —
 # or, since composed_permission_errors landed (scripts/lib/bootstrap.sh), the
@@ -109,7 +109,7 @@ metadata:
 subjects:
   - kind: ServiceAccount
     name: provider-kubernetes
-    namespace: crossplane-system
+    namespace: kernel-provisioning
 roleRef:
   kind: ClusterRole
   name: gentian-provider-kubernetes
@@ -124,7 +124,7 @@ metadata:
 subjects:
   - kind: ServiceAccount
     name: provider-helm
-    namespace: crossplane-system
+    namespace: kernel-provisioning
 roleRef:
   kind: ClusterRole
   name: cluster-admin

@@ -72,16 +72,15 @@ console:
 
 # The namespace LLM serving runs in.
 #
-# Empty keeps v4's answer, platform-kernel, which is v4's one namespace for
-# everything. v5 passes system-llm, which the Cluster claim composes when
-# llm.enabled is true — LLM serving is a system-tier function of its own
-# (namespace-cleanup.md §2.2).
+# system-llm, which the Cluster claim composes when llm.enabled is true —
+# LLM serving is a system-tier function of its own. The ApplicationSet passes
+# the same name.
 #
 # The operator has to agree: app_reconciler.go reads the LiteLLM master key
 # from here and addresses the proxy at litellm-proxy.<this>, and the kernel
 # gateway routes llm.<kernelDomain> to the same place. Both take it from
 # layout.System("llm"), so this is that name.
-servicesNamespace: platform-kernel
+servicesNamespace: system-llm
 
 # Who may connect to the pods of this namespace
 # (templates/networkpolicy.yaml): one NetworkPolicy per server pod set.

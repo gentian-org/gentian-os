@@ -34,7 +34,7 @@ spec:
       kind: AppProject
       metadata:
         name: gentianos-tenants
-        namespace: argocd
+        namespace: kernel-gitops
       spec:
         clusterResourceWhitelist:
         - group: ""
@@ -45,7 +45,7 @@ spec:
         destinations:
         - namespace: tenant-*
           server: https://kubernetes.default.svc
-        - namespace: argocd
+        - namespace: kernel-gitops
           server: https://kubernetes.default.svc
         sourceRepos:
         - https://github.com/gentian-org/gentian-os
@@ -85,14 +85,14 @@ spec:
                 role: eso
                 serviceAccountRef:
                   name: external-secrets
-                  namespace: external-secrets
+                  namespace: kernel-secrets
             caProvider:
               key: tls.crt
               name: openbao-tls
               namespace: kernel-secrets
               type: Secret
             path: secret
-            server: https://openbao.openbao.svc.cluster.local:8200
+            server: https://openbao.kernel-secrets.svc.cluster.local:8200
             version: v2
   providerConfigRef:
     name: kubernetes
@@ -122,7 +122,7 @@ spec:
         identity.kernelRealm: ""
         identity.namespace: kernel-authentication
         kernel.controlNamespace: kernel-control
-        kernel.gitopsNamespace: argocd
+        kernel.gitopsNamespace: kernel-gitops
         llm.console.enabled: "false"
         llm.enabled: "false"
         mail.egressHost: ""
@@ -779,7 +779,7 @@ spec:
     boundServiceAccountNames:
     - external-secrets
     boundServiceAccountNamespaces:
-    - external-secrets
+    - kernel-secrets
     roleName: eso
     tokenPolicies:
     - eso-read

@@ -69,7 +69,7 @@ spec:
     dataJsonSecretRef:
       key: data.json
       name: render-demo-app-fixture-app-secret-seed
-      namespace: crossplane-system
+      namespace: kernel-provisioning
     mount: secret
     name: gentian-os/tenants/demo/apps/demo-app/internal/app_secret
   managementPolicies:
@@ -100,7 +100,7 @@ spec:
       kind: Secret
       metadata:
         name: render-demo-app-fixture-app-secret-seed
-        namespace: crossplane-system
+        namespace: kernel-provisioning
       stringData:
         data.json: '{"value":"45f87a79809b39e7e8c25a22890552f3cb0acbf3ea6e29b80e86afd1f7217bff"}'
       type: Opaque
@@ -243,7 +243,7 @@ spec:
     dataJsonSecretRef:
       key: data.json
       name: render-demo-app-fixture-other-secret-seed
-      namespace: crossplane-system
+      namespace: kernel-provisioning
     mount: secret
     name: gentian-os/tenants/demo/apps/demo-app/internal/other_secret
   managementPolicies:
@@ -274,7 +274,7 @@ spec:
       kind: Secret
       metadata:
         name: render-demo-app-fixture-other-secret-seed
-        namespace: crossplane-system
+        namespace: kernel-provisioning
       stringData:
         data.json: '{"value":"892f0a72679e3ec2addd2a36bba079c80dde8f892fc2ed171009ab2af2b60a5f"}'
       type: Opaque

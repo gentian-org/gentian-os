@@ -40,9 +40,9 @@ because `result_failure = continue` moves on to the next realm.
 | Item | Value |
 | ------ | ------- |
 | Manifests | `kernel/services/dovecot/manifests/` (env-parameterised) |
-| Namespace | `platform-kernel` — the operator's `SERVICES_NAMESPACE` |
+| Namespace | `system-mail` — where the operator addresses mail |
 | Deployment / Service | `dovecot-<env>` (e.g. `dovecot-dev`) |
-| LMTP DNS | `dovecot-dev.platform-kernel.svc.cluster.local:24` |
+| LMTP DNS | `dovecot-dev.system-mail.svc.cluster.local:24` |
 | Argo CD | ApplicationSet `gentian-infra-helm` (wave 9) |
 | Bootstrap | `install.sh` step `D-04-mail` when `MAIL_SERVICE_MODE=system` |
 

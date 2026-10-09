@@ -188,7 +188,8 @@ resolve_argocd_url() {
         echo "https://argocd.${KERNEL_DOMAIN}"
         return 0
     fi
-    local ingress_host svc_type node_port lb_host lb_ip
+    local ingress_host svc_type node_port lb_host lb_ip argo_ns
+    argo_ns="$(gentian_argocd_namespace)"
 
     _pick_node_ip() {
         local detected
@@ -215,26 +216,26 @@ resolve_argocd_url() {
         return 0
     }
 
-    ingress_host=$(kubectl get ingress -n argocd \
+    ingress_host=$(kubectl get ingress -n "${argo_ns}" \
         -o jsonpath='{.items[0].spec.rules[0].host}' 2>/dev/null || true)
     if [[ -n "$ingress_host" ]]; then
         echo "https://${ingress_host}"
         return 0
     fi
 
-    svc_type=$(kubectl get svc argocd-server -n argocd \
+    svc_type=$(kubectl get svc argocd-server -n "${argo_ns}" \
         -o jsonpath='{.spec.type}' 2>/dev/null || true)
-    node_port=$(kubectl get svc argocd-server -n argocd \
+    node_port=$(kubectl get svc argocd-server -n "${argo_ns}" \
         -o jsonpath='{range .spec.ports[?(@.name=="https")]}{.nodePort}{end}' 2>/dev/null || true)
     if [[ -z "$node_port" ]]; then
-        node_port=$(kubectl get svc argocd-server -n argocd \
+        node_port=$(kubectl get svc argocd-server -n "${argo_ns}" \
             -o jsonpath='{range .spec.ports[0]}{.nodePort}{end}' 2>/dev/null || true)
     fi
 
     if [[ "$svc_type" == "LoadBalancer" ]]; then
-        lb_host=$(kubectl get svc argocd-server -n argocd \
+        lb_host=$(kubectl get svc argocd-server -n "${argo_ns}" \
             -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)
-        lb_ip=$(kubectl get svc argocd-server -n argocd \
+        lb_ip=$(kubectl get svc argocd-server -n "${argo_ns}" \
             -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)
         if [[ -n "$lb_host" ]]; then
             echo "https://${lb_host}"
@@ -252,7 +253,7 @@ resolve_argocd_url() {
     fi
 
     # ClusterIP or unresolved external endpoint.
-    echo "kubectl port-forward -n argocd svc/argocd-server 8080:443"
+    echo "kubectl port-forward -n ${argo_ns} svc/argocd-server 8080:443"
 }
 
 # Configure ArgoCD OIDC settings and group mapping.
@@ -352,6 +353,7 @@ g, /${platform_admin_group}, role:admin"
 
 verify_argocd_apps() {
     banner "Verify — ArgoCD Applications"
+    local argo_ns; argo_ns="$(gentian_argocd_namespace)"
 
     # Restart the application-controller once to clear any stale resource
     # health cached during the OpenBao seal-migration window (when ESO
@@ -360,9 +362,9 @@ verify_argocd_apps() {
     # Degraded indefinitely because ArgoCD doesn't re-evaluate cached
     # resource health unless the resource generation changes.
     info "Restarting argocd-application-controller to clear stale health cache..."
-    kubectl rollout restart statefulset -n argocd argocd-application-controller \
+    kubectl rollout restart statefulset -n "${argo_ns}" argocd-application-controller \
         >/dev/null 2>&1 || true
-    kubectl rollout status  statefulset -n argocd argocd-application-controller \
+    kubectl rollout status  statefulset -n "${argo_ns}" argocd-application-controller \
         --timeout=120s >/dev/null 2>&1 || warn "application-controller rollout did not become ready in 120s; continuing."
 
     local timeout=${VERIFY_TIMEOUT:-600}
@@ -374,7 +376,7 @@ verify_argocd_apps() {
     while true; do
         # If no Applications exist yet, keep waiting (root ApplicationSet may
         # still be generating children).
-        total=$(kubectl get applications -n argocd --no-headers 2>/dev/null | wc -l)
+        total=$(kubectl get applications -n "${argo_ns}" --no-headers 2>/dev/null | wc -l)
         if [[ "$total" -eq 0 ]]; then
             if [[ $elapsed -ge $timeout ]]; then
                 warn "No ArgoCD Applications appeared within ${timeout}s."
@@ -386,17 +388,17 @@ verify_argocd_apps() {
             continue
         fi
 
-        synced=$(kubectl get applications -n argocd \
+        synced=$(kubectl get applications -n "${argo_ns}" \
             -o jsonpath='{range .items[?(@.status.sync.status=="Synced")]}{.metadata.name}{"\n"}{end}' \
             2>/dev/null | wc -l)
         # Bootstrap operator / ApplicationSet parent: kube-defaulted fields or
         # Argo tracking annotations can leave apps OutOfSync while Healthy.
         while IFS= read -r _app; do
             [[ -n "$_app" ]] && synced=$((synced + 1))
-        done < <(kubectl get applications -n argocd \
+        done < <(kubectl get applications -n "${argo_ns}" \
             -o jsonpath='{range .items[?(@.status.sync.status=="OutOfSync" && @.status.health.status=="Healthy")]}{.metadata.name}{"\n"}{end}' \
             2>/dev/null | grep -E '^(gentian-os|gentian-appsets)$' || true)
-        healthy=$(kubectl get applications -n argocd \
+        healthy=$(kubectl get applications -n "${argo_ns}" \
             -o jsonpath='{range .items[?(@.status.health.status=="Healthy")]}{.metadata.name}{"\n"}{end}' \
             2>/dev/null | wc -l)
 
@@ -411,7 +413,7 @@ verify_argocd_apps() {
         fi
 
         if [[ $elapsed -ge $timeout ]]; then
-            bad_lines=$(kubectl get applications -n argocd \
+            bad_lines=$(kubectl get applications -n "${argo_ns}" \
                 -o custom-columns='NAME:.metadata.name,SYNC:.status.sync.status,HEALTH:.status.health.status' \
                 --no-headers 2>/dev/null | awk '$2!="Synced" || $3!="Healthy"')
             warn "Timed out after ${timeout}s with ${total} Applications, ${synced} Synced, ${healthy} Healthy."

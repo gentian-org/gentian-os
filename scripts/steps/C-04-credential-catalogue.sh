@@ -21,9 +21,8 @@
 # absent DNS, registry or repository credential was invisible in that noise
 # until its consumer failed.
 #
-# The manifest is v4's, applied with the layout's namespace substituted, the
-# same way B-05 applies the providers. Seventeen `namespace: gentian-system`
-# lines in one file are not worth a second copy of the file.
+# The manifest is generated with the probes in the control namespace
+# (scripts/gen/gen-credential-requirements.py reads kernel/namespaces.yaml).
 
 _cc_ns() { ns_kernel control; }
 
@@ -31,18 +30,16 @@ _catalogue_file() { echo "${SCRIPT_DIR}/kernel/credentials/credential-requiremen
 
 # The catalogue with this cluster's addresses in it.
 #
-# Two substitutions. The namespace, because the file is v4's. And the four
-# repository hosts, because a git-https probe has no endpoint of its own --
-# username and password do not carry one -- so a requirement without a host
-# cannot be validated at all, and a write that asked to be validated was
-# refused rather than stored.
+# The repository hosts are substituted, because a git-https probe has no
+# endpoint of its own -- username and password do not carry one -- so a
+# requirement without a host cannot be validated at all, and a write that
+# asked to be validated was refused rather than stored.
 #
 # The addresses are this cluster's, which is why they are not in the file.
 # Defaults match the public repositories, so a cluster that mirrors none of
 # them still gets a probe that reaches something.
 _cc_render() {
-    sed -e "s/^  namespace: gentian-system$/  namespace: $(_cc_ns)/" \
-        -e "s#__GENTIAN_DEPLOYMENTS_REPO__#${GENTIAN_DEPLOYMENTS_REPO:-https://github.com/gentian-org/gentian-deployments}#" \
+    sed -e "s#__GENTIAN_DEPLOYMENTS_REPO__#${GENTIAN_DEPLOYMENTS_REPO:-https://github.com/gentian-org/gentian-deployments}#" \
         -e "s#__GENTIAN_OS_REPO__#${GENTIAN_OS_REPO:-https://github.com/gentian-org/gentian-os}#" \
         -e "s#__GENTIAN_UI_REPO__#${GENTIAN_UI_REPO:-https://github.com/gentian-org/gentian-ui}#" \
         "$(_catalogue_file)"

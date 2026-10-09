@@ -2,16 +2,16 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: gentian-cluster-config
-  namespace: crossplane-system
+  namespace: kernel-provisioning
   labels:
     gentianos.io/config-type: cluster-config
 data:
   identity.kernelRealm: "kernel"
   network.edgeNamespace: "kernel-edge"
-  identity.internalUrl: "http://gentian-idp-keycloak-keycloakx-http.platform-kernel.svc.cluster.local:8080/auth"
-  network.infraNamespace: gentian-infra-dev
-  network.servicesNamespace: gentian-dev
-  network.openbaoNamespace: openbao
+  identity.internalUrl: "http://gentian-idp-keycloak-keycloakx-http.kernel-authentication.svc.cluster.local:8080/auth"
+  network.infraNamespace: kernel-authentication
+  network.servicesNamespace: kernel-edge
+  network.openbaoNamespace: kernel-secrets
   network.routingMode: gateway
   network.kubeApiServerCidr: 10.96.0.0/12
   network.kubeApiServerEndpointIp: 10.96.0.1

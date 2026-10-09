@@ -60,7 +60,7 @@ import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 INSTALLER = ROOT / "scripts/lib/argocd.sh"
-NAMESPACE = "argocd"
+NAMESPACE = "kernel-gitops"
 
 RED = "\033[0;31m"
 GREEN = "\033[0;32m"

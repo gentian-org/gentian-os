@@ -34,7 +34,7 @@ spec:
     dataJsonSecretRef:
       key: data.json
       name: render-demo-app-fixture-admin-password-seed
-      namespace: crossplane-system
+      namespace: kernel-provisioning
     mount: secret
     name: gentian-os/tenants/acme/apps/demo-app/internal/admin_password
   managementPolicies:
@@ -65,7 +65,7 @@ spec:
       kind: Secret
       metadata:
         name: render-demo-app-fixture-admin-password-seed
-        namespace: crossplane-system
+        namespace: kernel-provisioning
       stringData:
         data.json: '{"value":"0c872744d729b26421a470dc9d285c3fcf85d849d9f6704d5ade94ed0cbb6c31"}'
       type: Opaque
@@ -255,7 +255,7 @@ spec:
     clientSecretSecretRef:
       key: client-secret
       name: render-demo-app-fixture-oidc-client-creds
-      namespace: crossplane-system
+      namespace: kernel-provisioning
     directAccessGrantsEnabled: false
     fullScopeAllowed: false
     name: Demo App
@@ -448,7 +448,7 @@ spec:
     dataJsonSecretRef:
       key: data.json
       name: render-demo-app-fixture-mcp-service-password-seed
-      namespace: crossplane-system
+      namespace: kernel-provisioning
     mount: secret
     name: gentian-os/tenants/acme/apps/demo-app-mcp/internal/service_password
   managementPolicies:
@@ -479,7 +479,7 @@ spec:
       kind: Secret
       metadata:
         name: render-demo-app-fixture-mcp-service-password-seed
-        namespace: crossplane-system
+        namespace: kernel-provisioning
       stringData:
         data.json: '{"value":"2ec8b2732400ff1b7589edbda917557c9dd441505d6247a566d2e90b421776c3"}'
       type: Opaque
@@ -542,7 +542,7 @@ spec:
       kind: ExternalSecret
       metadata:
         name: render-demo-app-fixture-oidc-client-creds
-        namespace: crossplane-system
+        namespace: kernel-provisioning
       spec:
         data:
         - remoteRef:

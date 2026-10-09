@@ -44,7 +44,7 @@ _cert_manager_extra_args_json() {
 
 # _cert_manager_release_extra_args — extraArgs as the release holds them.
 _cert_manager_release_extra_args() {
-    helm get values cert-manager -n cert-manager -o json 2>/dev/null |
+    helm get values cert-manager -n "${CERT_MANAGER_NAMESPACE:-$(ns_kernel edge)}" -o json 2>/dev/null |
         jq -c '.extraArgs // []' 2>/dev/null || echo '[]'
 }
 
@@ -52,7 +52,7 @@ _cert_manager_release_extra_args() {
 # with exactly the DNS-01 flags the claim asks for. Read from the release, not
 # the Deployment, because the release is what an upgrade would change.
 cert_manager_dns01_converged() {
-    helm status cert-manager -n cert-manager >/dev/null 2>&1 || return 0
+    helm status cert-manager -n "${CERT_MANAGER_NAMESPACE:-$(ns_kernel edge)}" >/dev/null 2>&1 || return 0
     local current desired
     current="$(_cert_manager_release_extra_args)"
     desired="$(_cert_manager_extra_args_json "${current}")"
@@ -111,7 +111,7 @@ gentian_cert_manager_namespace() {
         CERT_MANAGER_NAMESPACE="${detected}"
         export CERT_MANAGER_NAMESPACE
     fi
-    echo "${CERT_MANAGER_NAMESPACE:-cert-manager}"
+    echo "${CERT_MANAGER_NAMESPACE:-$(ns_kernel edge)}"
 }
 
 gentian_dns_credential_vault_path() {
@@ -193,7 +193,7 @@ apply_gentian_cluster_issuers() {
         exit 1
     fi
 
-    if ! kubectl get deploy cert-manager-webhook -n "${CERT_MANAGER_NAMESPACE:-cert-manager}" &>/dev/null; then
+    if ! kubectl get deploy cert-manager-webhook -n "${CERT_MANAGER_NAMESPACE:-$(ns_kernel edge)}" &>/dev/null; then
         local detected_ns=""
         detected_ns=$(kubectl get deploy -A -o json 2>/dev/null \
             | jq -r '.items[] | select(.metadata.name=="cert-manager-webhook") | .metadata.namespace' \
@@ -204,7 +204,7 @@ apply_gentian_cluster_issuers() {
         fi
     fi
 
-    if ! kubectl get deploy cert-manager-webhook -n "${CERT_MANAGER_NAMESPACE:-cert-manager}" &>/dev/null; then
+    if ! kubectl get deploy cert-manager-webhook -n "${CERT_MANAGER_NAMESPACE:-$(ns_kernel edge)}" &>/dev/null; then
         error "cert-manager webhook not found; cannot apply ClusterIssuers."
         exit 1
     fi
@@ -549,7 +549,7 @@ print_gateway_tunnel_hints() {
         return 0
     fi
     local ns; ns="$(gentian_services_namespace)"
-    local envoy_ns="${ENVOY_GATEWAY_NAMESPACE:-envoy-gateway-system}"
+    local envoy_ns="${ENVOY_GATEWAY_NAMESPACE:-$(ns_kernel edge)}"
     info "Gateway API tunnel wiring (${NETWORK_MODE:-tunnel}):"
     info "  Point Cloudflare Tunnel (or your edge proxy) at the Envoy Gateway data plane Service"
     info "  in namespace ${envoy_ns}, not a legacy Ingress controller."
@@ -566,7 +566,7 @@ _reconcile_kernel_https_coredns_hairpin() {
     [[ "${ROUTING_MODE:-gateway}" == "gateway" ]] || return 0
     [[ -n "${KERNEL_DOMAIN:-}" ]] || return 0
 
-    local envoy_ns="${ENVOY_GATEWAY_NAMESPACE:-envoy-gateway-system}"
+    local envoy_ns="${ENVOY_GATEWAY_NAMESPACE:-$(ns_kernel edge)}"
     local mail_domain="mail.${KERNEL_DOMAIN}"
     local edge_ip
     edge_ip=$(kubectl get svc -n "${envoy_ns}" \

@@ -92,7 +92,7 @@ kernelRealm: ""
 # this defaults on; a deployer without Suze/OpenFGA can still disable it.
 authzBridge:
   enabled: true
-  openfgaURL: "http://gentian-openfga.platform-kernel.svc.cluster.local:8080"
+  openfgaURL: "http://gentian-openfga.kernel-authorization.svc.cluster.local:8080"
   # The token is read from a Secret, never given here. A literal value used to
   # be accepted and was rendered straight into the Deployment as an env value,
   # while the installer pinned the same string into the Argo CD Application's
@@ -359,7 +359,7 @@ kernelServices:
   s3Endpoint: ""
   mysqlHost: ""
   redisHost: ""
-  # Empty → http://gentian-idp-keycloak-keycloakx-http.platform-kernel.svc.cluster.local:8080
+  # Empty → http://gentian-idp-keycloak-keycloakx-http.<authentication namespace>.svc.cluster.local:8080
   keycloakInternalURL: ""
   # In-cluster Postfix submission host for shared mail mode (operator MAIL_SMTP_HOST).
   smtpHost: ""
@@ -370,7 +370,7 @@ kernelServices:
   # in the cluster's own gentian-deployments values (or via a
   # GENTIAN_KERNEL_SERVICE_FOO env var at install time).
   # This is a plain ConfigMap, readable by anything with get access to
-  # gentian-system/platform-kernel — put only values you are willing to expose
+  # the namespaces it is mirrored into — put only values you are willing to expose
   # at that blast radius here. Credentials belong in OpenBao + ExternalSecret.
   extra: {}
 
@@ -504,7 +504,7 @@ cloudflare:
 
 # OpenBao / Vault integration
 openbao:
-  address: "https://openbao.openbao.svc.cluster.local:8200"
+  address: "https://openbao.kernel-secrets.svc.cluster.local:8200"
   authPath: "kubernetes"
   # Kubernetes auth role used by the operator to log in to OpenBao for the
   # Inc 21a seeding subsystem. Must exist in OpenBao with the operator-write
@@ -516,13 +516,13 @@ openbao:
   # destroys its stored credentials instead of skipping it.
   role: "gentian-os-operator"
 
-# Shared CloudNativePG cluster in platform-kernel (Database CR spec.cluster.name).
+# Shared CloudNativePG cluster in system-postgresql (Database CR spec.cluster.name).
 database:
   clusterName: postgres
 
 # ArgoCD integration
 argocd:
-  namespace: "argocd"
+  namespace: "kernel-gitops"
   project: "gentianos-tenants"
 
 # Provisioner images for operator-managed data-plane Jobs (postgres/mariadb/redis/memcached).

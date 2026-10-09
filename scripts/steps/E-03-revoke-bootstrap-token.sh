@@ -76,13 +76,13 @@ _revoke_export_layout() {
 # Kubernetes, not from OpenBao, so --status can answer it with no token — which
 # is the whole reason it is a ConfigMap and not a fact only OpenBao knows.
 _handover_proven() {
-    local ns="${GENTIAN_SYSTEM_NAMESPACE:-gentian-system}"
+    local ns="${GENTIAN_SYSTEM_NAMESPACE:-$(ns_kernel control)}"
     [[ "$(kubectl get configmap gentian-handover -n "${ns}" \
         -o jsonpath='{.data.writePathProven}' 2>/dev/null || true)" == "true" ]]
 }
 
 _handover_proof_detail() {
-    local ns="${GENTIAN_SYSTEM_NAMESPACE:-gentian-system}"
+    local ns="${GENTIAN_SYSTEM_NAMESPACE:-$(ns_kernel control)}"
     kubectl get configmap gentian-handover -n "${ns}" \
         -o jsonpath='{.data.provenBy} at {.data.provenAt}' 2>/dev/null || true
 }
@@ -97,13 +97,13 @@ _handover_proof_detail() {
 # reads its own fact, from Kubernetes rather than from OpenBao, so --status
 # can answer it with no token.
 _kit_exported() {
-    local ns="${GENTIAN_SYSTEM_NAMESPACE:-gentian-system}"
+    local ns="${GENTIAN_SYSTEM_NAMESPACE:-$(ns_kernel control)}"
     [[ "$(kubectl get configmap gentian-handover -n "${ns}" \
         -o jsonpath='{.data.recoveryKitExported}' 2>/dev/null || true)" == "true" ]]
 }
 
 _kit_exported_detail() {
-    local ns="${GENTIAN_SYSTEM_NAMESPACE:-gentian-system}"
+    local ns="${GENTIAN_SYSTEM_NAMESPACE:-$(ns_kernel control)}"
     kubectl get configmap gentian-handover -n "${ns}" \
         -o jsonpath='{.data.recoveryKitExportedAt}' 2>/dev/null || true
 }
@@ -111,7 +111,7 @@ _kit_exported_detail() {
 # _revoked_at_detail — when, if the record says so. Formatted for the middle of
 # a sentence, and empty rather than "unknown" when the record is not there.
 _revoked_at_detail() {
-    local ns="${GENTIAN_SYSTEM_NAMESPACE:-gentian-system}" at
+    local ns="${GENTIAN_SYSTEM_NAMESPACE:-$(ns_kernel control)}" at
     at="$(kubectl get configmap gentian-handover -n "${ns}" \
         -o jsonpath='{.data.revokedAt}' 2>/dev/null || true)"
     [[ -n "${at}" ]] && printf ' at %s' "${at}"
@@ -208,7 +208,7 @@ _token_is_root() {
 # last one is what distinguishes "deployed" from "working", and it needs no
 # in-cluster pod and no credential.
 _custodian_ready() {
-    local ns="${GENTIAN_SYSTEM_NAMESPACE:-gentian-system}"
+    local ns="${GENTIAN_SYSTEM_NAMESPACE:-$(ns_kernel control)}"
     local svc port
 
     svc="$(kubectl get svc -n "${ns}" \
@@ -387,7 +387,7 @@ _wait_for_sign_in() {
     # so this names the file E-02 actually wrote.
     local kit_path
     kit_path="$(kubectl get configmap gentian-handover \
-        -n "${GENTIAN_SYSTEM_NAMESPACE:-gentian-system}" \
+        -n "${GENTIAN_SYSTEM_NAMESPACE:-$(ns_kernel control)}" \
         -o jsonpath='{.data.recoveryKitPath}' 2>/dev/null || true)"
 
     warn "  1. MOVE THE RECOVERY KIT SOMEWHERE SAFE"
@@ -711,7 +711,7 @@ apply() {
     # an operator asks about a cluster are "can my admin write" and "is the
     # installer's key gone" — and a cluster that answers yes to the first and no
     # to the second is unfinished rather than broken.
-    local ns="${GENTIAN_SYSTEM_NAMESPACE:-gentian-system}"
+    local ns="${GENTIAN_SYSTEM_NAMESPACE:-$(ns_kernel control)}"
     gentian_run kubectl patch configmap gentian-handover -n "${ns}" --type=merge \
         -p "{\"data\":{\"bootstrapCredentialRevoked\":\"true\",\"revokedAt\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}}" \
         2>/dev/null || warn "Could not record the revocation in ${ns}/gentian-handover."

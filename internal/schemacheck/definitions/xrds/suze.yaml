@@ -35,7 +35,7 @@ spec:
                 idpNamespace:
                   type: string
                   description: Namespace for Keycloak (and, unless fgaNamespace says otherwise, OpenFGA).
-                  default: platform-kernel
+                  default: kernel-authentication
                 fgaNamespace:
                   type: string
                   description: >

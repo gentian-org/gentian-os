@@ -2202,41 +2202,17 @@ gentian_report_abort() {
 # =============================================================================
 # gentian_services_namespace — where the kernel SERVICES live
 #
-# Kernel services (the public Gateway, Keycloak, OpenFGA, the portal) live in
-# platform-kernel. That is the operator's servicesNamespace, whose chart default
-# is platform-kernel (charts/gentian-os/values.yaml) and which it uses to place
-# the Gateway, so it is the authoritative value.
+# The edge: the Gateways, their routes and their reference grants. That is the
+# operator's servicesNamespace (charts/gentian-os/values.yaml), which it uses
+# to place the Gateway, so it is the authoritative value.
 #
-# The shell half used to default to "gentian-<env>" instead, so the two halves
+# The shell half used to answer a namespace of its own, so the two halves
 # disagreed about which namespace was "services". That is what made the wildcard
 # certificate land somewhere the Gateway could not see it, leaving the cluster
 # serving nothing. Both halves now resolve to the same place.
-#
-# The mail namespace resolves to the same place — see gentian_mail_namespace
-# below. It used to be deliberately different, and this line used to say so.
 # =============================================================================
 gentian_services_namespace() {
-    echo "${SERVICES_NAMESPACE:-platform-kernel}"
-}
-
-# =============================================================================
-# gentian_mail_namespace — where kernel Postfix/Dovecot live
-#
-# The services namespace, resolved identically to gentian_services_namespace
-# above: kernel Postfix and Dovecot are kernel services and are deployed
-# alongside the others.
-#
-# The two must agree, and agreeing is not enough — they have to be one
-# resolution. When this returned gentian-<env> while the mail charts deployed
-# into platform-kernel, D-04 looked for its own ConfigMap in an empty namespace
-# and reported a working mail stack missing. The operator wrote the map to the
-# services namespace and was right; the lookup was wrong.
-#
-# _mail_kernel_namespace in mail-lib.sh delegates here for that reason. One
-# definition, so a future move cannot leave half the callers behind.
-# =============================================================================
-gentian_mail_namespace() {
-    echo "${KERNEL_NAMESPACE:-${SERVICES_NAMESPACE:-platform-kernel}}"
+    echo "${SERVICES_NAMESPACE:-$(ns_kernel edge)}"
 }
 
 # =============================================================================
@@ -2312,26 +2288,12 @@ gentian_licence_report_enabled() {
 gentian_cluster_derivation_salt() {
     local salt
     salt="$(kubectl get secret gentian-os-master-password \
-        -n "${CROSSPLANE_NAMESPACE:-crossplane-system}" \
+        -n "${CROSSPLANE_NAMESPACE:-$(ns_kernel provisioning)}" \
         -o jsonpath='{.data.salt}' 2>/dev/null | base64 -d 2>/dev/null || true)"
     [[ -n "${salt}" ]] || return 1
     printf '%s' "${salt}"
 }
 
-# =============================================================================
-# gentian_kernel_namespaces — the namespaces the installer owns, in one place.
-#
-# A-03 checks this list and create_namespaces creates it. They used to be two
-# hand-kept lists and had drifted apart in both directions: the check demanded
-# gentian-infra-<stage>, which nothing created, so the step reported unsatisfied
-# on every run forever while cheerfully announcing that all nine namespaces
-# already existed; and gentian-<stage> was created by nothing at all, so the
-# mail step failed applying a ConfigMap into a namespace that did not exist.
-#
-# The stage-scoped pair is deliberately here and not on the Cluster XR, which
-# composes only gentian-system and platform-kernel. Two owners for one namespace
-# is worse than one owner in the wrong phase.
-# =============================================================================
 # =============================================================================
 # load_status_context — the configuration a read-only pass needs, and no more.
 #
@@ -2354,20 +2316,6 @@ load_status_context() {
     # stage, and a dozen namespace and hostname lookups are built from it.
     ENV="${ENV:-${GENTIAN_DEPLOYMENTS_STAGE:-dev}}"
     export ENV
-}
-
-gentian_kernel_namespaces() {
-    local ns seen=""
-    for ns in openbao external-secrets argocd gentian-system platform-kernel \
-              "${INFRA_NAMESPACE:-gentian-infra-${ENV:-dev}}" \
-              "$(gentian_services_namespace)" \
-              "$(gentian_mail_namespace)"; do
-        # SERVICES_NAMESPACE defaults to platform-kernel, so the list can name
-        # the same namespace twice.
-        case " ${seen} " in *" ${ns} "*) continue ;; esac
-        seen="${seen} ${ns}"
-    done
-    echo "${seen# }"
 }
 
 # =============================================================================

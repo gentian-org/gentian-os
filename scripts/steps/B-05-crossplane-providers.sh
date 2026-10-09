@@ -5,10 +5,6 @@
 # provides: the activation policy naming the provider resource types the platform uses, from this checkout, and those types as established CRDs; Crossplane providers kubernetes, helm and vault with their ProviderConfigs, in the provisioning namespace
 # mutates: the ManagedResourceActivationPolicy gentian-platform, Provider packages, cluster-scoped RBAC for the providers, ProviderConfigs
 
-# The provider manifests in crossplane/providers/ name v4's namespaces and the
-# vault's v4 address. They are applied here with the layout's names substituted
-# rather than duplicated: one set of manifests, two layouts, until v4 goes.
-
 # The CRDs the three providers install, which their ProviderConfigs are
 # instances of. Named rather than discovered: a list that is written down is
 # one a reader can check against provider-configs.yaml.
@@ -107,13 +103,10 @@ _v5_function_names() {
         "${SCRIPT_DIR}/crossplane/providers/providers.yaml"
 }
 
+# The provider manifests name the provisioning namespace and the vault's
+# address as kernel/namespaces.yaml has them.
 _v5_providers_apply() {
-    local file="$1" prov secrets
-    prov="$(ns_kernel provisioning)"; secrets="$(ns_kernel secrets)"
-    sed -e "s/namespace: crossplane-system/namespace: ${prov}/g" \
-        -e "s/serviceaccount:crossplane-system:/serviceaccount:${prov}:/g" \
-        -e "s#https://openbao\.openbao\.svc\.cluster\.local:8200#https://openbao.${secrets}.svc.cluster.local:8200#g" \
-        "${SCRIPT_DIR}/crossplane/providers/${file}" | _kubectl_retry apply -f -
+    _kubectl_retry apply -f - < "${SCRIPT_DIR}/crossplane/providers/${1:?file}"
 }
 
 check() {

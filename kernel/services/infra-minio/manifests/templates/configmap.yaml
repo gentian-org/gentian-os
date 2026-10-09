@@ -7,7 +7,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: minio-env-values
-  namespace: {{ .Values.namespace | default (printf "gentian-infra-%s" .Values.env) }}
+  namespace: {{ .Values.namespace | default "system-s3" }}
   annotations:
     argocd.argoproj.io/sync-wave: "-1"
 data:
@@ -31,7 +31,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: minio-base-values
-  namespace: {{ .Values.namespace | default (printf "gentian-infra-%s" .Values.env) }}
+  namespace: {{ .Values.namespace | default "system-s3" }}
   annotations:
     argocd.argoproj.io/sync-wave: "-1"
 data:
@@ -118,7 +118,7 @@ metadata:
        Release's valuesFrom without knowing the stage -- the claim does
        not carry one. */}}
   name: {{ if .Values.namespace }}minio-cluster-values{{ else }}minio-{{ .Values.env }}-values{{ end }}
-  namespace: {{ .Values.namespace | default (printf "gentian-infra-%s" .Values.env) }}
+  namespace: {{ .Values.namespace | default "system-s3" }}
   annotations:
     argocd.argoproj.io/sync-wave: "-1"
 data:

@@ -13,9 +13,9 @@ yet configured — see `kernel/services/dovecot/README.md`.
 | Item | Value |
 | ------ | ------- |
 | Manifests | `kernel/services/postfix/manifests/` (env-parameterised) |
-| Namespace | `platform-kernel` — the operator's `SERVICES_NAMESPACE` |
+| Namespace | `system-mail` — where the operator addresses mail |
 | Release name | `postfix-<env>` (e.g. `postfix-dev`) |
-| Service DNS | `postfix-dev.platform-kernel.svc.cluster.local:587` |
+| Service DNS | `postfix-dev.system-mail.svc.cluster.local:587` |
 | Argo CD | ApplicationSet `gentian-infra-helm` (wave 9) |
 | Bootstrap | `install.sh` step `D-04-mail` when `MAIL_SERVICE_MODE=system` |
 

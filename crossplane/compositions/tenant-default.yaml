@@ -1633,7 +1633,7 @@ spec:
                 fullScopeAllowed: false
                 clientSecretSecretRef:
                   name: dovecot-admin
-                  namespace: platform-kernel
+                  namespace: system-mail
                   key: oidc_client_secret
               providerConfigRef:
                 name: keycloak

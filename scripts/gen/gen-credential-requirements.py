@@ -106,8 +106,14 @@ HEADER = """# GENERATED FILE — DO NOT EDIT.
 OPTIONAL_SPEC_KEYS = ("description", "optional", "validate", "consumedBy")
 
 
-# Namespace holding the satisfaction probes. Nothing else lives there.
-PROBE_NAMESPACE = "gentian-system"
+# Namespace holding the satisfaction probes: the control namespace, where the
+# custodian that reads them runs. Read from the layout, so the generated file
+# follows kernel/namespaces.yaml.
+PROBE_NAMESPACE = next(
+    ns["name"]
+    for ns in yaml.safe_load((ROOT / "kernel" / "namespaces.yaml").read_text())["kernel"]
+    if ns["function"] == "control"
+)
 
 
 def build_probe(req):

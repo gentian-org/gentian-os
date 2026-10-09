@@ -32,7 +32,7 @@ GENTIAN_BOOTSTRAP_LOADED=1
 bootstrap_openbao_for_crossplane() {
     banner "OpenBao bootstrap for Crossplane (mount, policy, token)"
 
-    if ! VAULT_ADDR=$(gentian_service_addr openbao "${OPENBAO_NAMESPACE:-openbao}" 8200 https); then
+    if ! VAULT_ADDR=$(gentian_service_addr openbao "${OPENBAO_NAMESPACE:-$(ns_kernel secrets)}" 8200 https); then
         error "Could not reach the openbao Service on :8200."
         error "  Neither the ClusterIP nor a kubectl port-forward responded."
         exit 1
@@ -659,11 +659,11 @@ apply_cluster_xr() {
     local xr_name=""
     local deadline=$((SECONDS + 60))
     until [[ -n "${xr_name}" ]]; do
-        xr_name=$(kubectl get cluster.gentianos.io "${claim_name}" -n "${CROSSPLANE_NAMESPACE:-crossplane-system}" \
+        xr_name=$(kubectl get cluster.gentianos.io "${claim_name}" -n "${CROSSPLANE_NAMESPACE:-$(ns_kernel provisioning)}" \
             -o jsonpath='{.spec.resourceRef.name}' 2>/dev/null || true)
         if (( SECONDS > deadline )); then
             error "Claim ${claim_name} was never bound to a composite after 60s."
-            error "  kubectl describe cluster.gentianos.io ${claim_name} -n ${CROSSPLANE_NAMESPACE:-crossplane-system}"
+            error "  kubectl describe cluster.gentianos.io ${claim_name} -n ${CROSSPLANE_NAMESPACE:-$(ns_kernel provisioning)}"
             exit 1
         fi
         [[ -n "${xr_name}" ]] || sleep 3
@@ -919,7 +919,7 @@ resync_credential_consumers() {
     # and cert-manager does not watch a solver's Secret, so nothing retries:
     # the DNS-01 issuer stayed failed after a finished install.
     local cm_ns secret deadline
-    cm_ns="$(gentian_cert_manager_namespace 2>/dev/null || echo "${CERT_MANAGER_NAMESPACE:-cert-manager}")"
+    cm_ns="$(gentian_cert_manager_namespace 2>/dev/null || echo "${CERT_MANAGER_NAMESPACE:-$(ns_kernel edge)}")"
     deadline=$(( SECONDS + 90 ))
     while read -r secret; do
         [[ -n "${secret}" ]] || continue
@@ -993,14 +993,14 @@ print_summary_cp() {
     # install has not completed and nothing here should say otherwise.
     _gentian_handover_done=""
     if [[ "$(kubectl get configmap gentian-handover \
-                -n "${GENTIAN_SYSTEM_NAMESPACE:-gentian-system}" \
+                -n "${GENTIAN_SYSTEM_NAMESPACE:-$(ns_kernel control)}" \
                 -o jsonpath='{.data.bootstrapCredentialRevoked}' 2>/dev/null)" == "true" ]]; then
         _gentian_handover_done=1
     fi
 
     local claim_name
     claim_name="$(gentian_cluster_claim_name)"
-    xr_name=$(kubectl get cluster.gentianos.io "${claim_name}" -n "${CROSSPLANE_NAMESPACE:-crossplane-system}" \
+    xr_name=$(kubectl get cluster.gentianos.io "${claim_name}" -n "${CROSSPLANE_NAMESPACE:-$(ns_kernel provisioning)}" \
         -o jsonpath='{.spec.resourceRef.name}' 2>/dev/null || true)
     xr_name="${xr_name:-${claim_name}}"
 
@@ -1028,7 +1028,7 @@ print_summary_cp() {
     infra_minio_ready=$(_release_ready minio)
     local suze_ready openfga_ready keycloak_ready suze_xr
     suze_ready=$(kubectl get xsuze -o jsonpath='{.items[0].status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "unknown")
-    suze_xr=$(kubectl get suze.gentianos.io "$(gentian_suze_claim_name)" -n "${CROSSPLANE_NAMESPACE:-crossplane-system}" \
+    suze_xr=$(kubectl get suze.gentianos.io "$(gentian_suze_claim_name)" -n "${CROSSPLANE_NAMESPACE:-$(ns_kernel provisioning)}" \
         -o jsonpath='{.spec.resourceRef.name}' 2>/dev/null || gentian_suze_claim_name)
     # `|| true` on both: grep exits 1 when the release is absent, which is the
     # normal state until phase D deploys Suze. Under pipefail and the ERR trap
@@ -1085,7 +1085,7 @@ print_summary_cp() {
     print_roles_summary
     echo ""
     echo -e "${GREEN}  Inspect authz stack:${NC}"
-    echo -e "${GREEN}    kubectl get xsuze,suze -n ${CROSSPLANE_NAMESPACE:-crossplane-system}${NC}"
+    echo -e "${GREEN}    kubectl get xsuze,suze -n ${CROSSPLANE_NAMESPACE:-$(ns_kernel provisioning)}${NC}"
     echo ""
     echo -e "${GREEN}  Inspect Crossplane managed resources:${NC}"
     echo -e "${GREEN}    kubectl get managed -l crossplane.io/composite=${xr_name}${NC}"
@@ -1139,7 +1139,7 @@ print_summary_cp() {
 # copy is exactly the wrong reflex, and "moved" is indistinguishable from
 # "copied and left" from here.
 report_recovery_kit_left_behind() {
-    local ns="${GENTIAN_SYSTEM_NAMESPACE:-gentian-system}"
+    local ns="${GENTIAN_SYSTEM_NAMESPACE:-$(ns_kernel control)}"
     local path found=""
 
     path="$(kubectl get configmap gentian-handover -n "${ns}" \
@@ -1173,7 +1173,7 @@ report_recovery_kit_left_behind() {
 }
 
 print_handover_summary() {
-    local ns="${GENTIAN_SYSTEM_NAMESPACE:-gentian-system}"
+    local ns="${GENTIAN_SYSTEM_NAMESPACE:-$(ns_kernel control)}"
     local proven revoked kit
     proven="$(kubectl get configmap gentian-handover -n "${ns}" \
         -o jsonpath='{.data.writePathProven}' 2>/dev/null || true)"
@@ -1381,7 +1381,7 @@ _claim_cluster_fields() {
     if [[ "${im}" == "private-ca" ]]; then
         printf '    caBundleSecretRef:\n'
         printf '      name: %s\n' "${CA_BUNDLE_SECRET_NAME:-gentian-root-ca-tls}"
-        printf '      namespace: %s\n' "${CA_BUNDLE_SECRET_NAMESPACE:-cert-manager}"
+        printf '      namespace: %s\n' "${CA_BUNDLE_SECRET_NAMESPACE:-$(ns_kernel edge)}"
     else
         printf '    # caBundleSecretRef:         only read when issuerMode is private-ca\n'
     fi
@@ -2104,7 +2104,7 @@ apiVersion: gentianos.io/v1alpha1
 kind: Cluster
 metadata:
   name: ${cluster}-${stage}
-  namespace: ${CROSSPLANE_NAMESPACE:-crossplane-system}
+  namespace: ${CROSSPLANE_NAMESPACE:-$(ns_kernel provisioning)}
 spec:
   kernelDomain: ${domain}
   # Who administers this cluster, by the Keycloak group they are in. The
@@ -2128,7 +2128,7 @@ apiVersion: gentianos.io/v1alpha1
 kind: Suze
 metadata:
   name: ${cluster}-${stage}-suze
-  namespace: ${CROSSPLANE_NAMESPACE:-crossplane-system}
+  namespace: ${CROSSPLANE_NAMESPACE:-$(ns_kernel provisioning)}
 spec:
   environment: ${stage}
   idpNamespace: kernel-authentication
@@ -2166,7 +2166,7 @@ apiVersion: gentianos.io/v1alpha1
 kind: Repository
 metadata:
   name: deployments
-  namespace: ${CROSSPLANE_NAMESPACE:-crossplane-system}
+  namespace: ${CROSSPLANE_NAMESPACE:-$(ns_kernel provisioning)}
 spec:
   type: git
   role: deployments
@@ -2238,7 +2238,7 @@ apiVersion: gentianos.io/v1alpha1
 kind: Repository
 metadata:
   name: ${_repo_role}
-  namespace: ${CROSSPLANE_NAMESPACE:-crossplane-system}
+  namespace: ${CROSSPLANE_NAMESPACE:-$(ns_kernel provisioning)}
 spec:
   type: git
   role: ${_repo_role}

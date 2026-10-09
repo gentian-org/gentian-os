@@ -1,4 +1,4 @@
-namespace: envoy-gateway-system
+namespace: kernel-edge
 
 # The address DNS points at. Empty leaves the cloud controller to allocate one,
 # which is what NETWORK_MODE=tunnel wants.

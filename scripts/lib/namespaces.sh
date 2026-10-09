@@ -5,6 +5,7 @@
 #
 #   ns_kernel <function>        → the namespace name
 #   ns_kernel_all               → every kernel namespace name, in order
+#   ns_system_all               → every system namespace name, in order
 #   ns_labels <name>            → "gentianos.io/tier=… gentianos.io/function=…"
 #   ns_ensure <name>            → create if absent, then apply the labels
 #   ns_ensure_kernel            → all kernel namespaces, plus labels on the platform's own
@@ -61,6 +62,16 @@ ns_system() {
 
 ns_kernel_all() {
     _ns_table | awk '$2 == "kernel" && $1 ~ /^kernel-/ { print $1 }'
+}
+
+# The system namespaces the layout names, whether or not this cluster's claim
+# composes them.
+ns_system_all() {
+    awk '
+        /^system:/  { in_sys = 1; next }
+        /^[a-z]/    { in_sys = 0; next }
+        in_sys && /^  - name:/ { print $NF }
+    ' "${NAMESPACES_FILE}"
 }
 
 ns_labels() {

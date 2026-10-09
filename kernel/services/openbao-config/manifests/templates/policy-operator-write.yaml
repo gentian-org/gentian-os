@@ -11,7 +11,7 @@ apiVersion: vault.vault.upbound.io/v1alpha1
 kind: Policy
 metadata:
   name: openbao-policy-operator-write
-  namespace: crossplane-system
+  namespace: kernel-provisioning
   annotations:
     argocd.argoproj.io/sync-wave: "2"
 spec:

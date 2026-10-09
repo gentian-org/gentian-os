@@ -15,7 +15,7 @@
 #
 # Optional env vars:
 #   TRANSIT_INIT_FILE  — where to save init output (default: ~/.gentian/openbao-transit-init.json)
-#   TRANSIT_NAMESPACE  — k8s namespace (default: openbao)
+#   TRANSIT_NAMESPACE  — k8s namespace (default: kernel-seal)
 # =============================================================================
 
 set -euo pipefail
@@ -27,7 +27,7 @@ warn()    { echo -e "${YELLOW}[WARN]${NC}  $*"; }
 error()   { echo -e "${RED}[ERROR]${NC} $*" >&2; }
 
 TRANSIT_INIT_FILE="${TRANSIT_INIT_FILE:-${HOME}/.gentian/openbao-transit-init.json}"
-TRANSIT_NS="${TRANSIT_NAMESPACE:-openbao}"
+TRANSIT_NS="${TRANSIT_NAMESPACE:-kernel-seal}"
 
 # ─── Resolve transit address ─────────────────────────────────────────────────
 # Prefer the Service's ClusterIP when this host can route to it, otherwise fall
