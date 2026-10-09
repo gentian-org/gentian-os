@@ -22,7 +22,7 @@ CROSSPLANE_IMAGE ?= xpkg.crossplane.io/crossplane/crossplane:$(CROSSPLANE_CLI_VE
 KUBEBUILDER_ASSETS ?= /tmp/envtest-bins/k8s/1.32.0-linux-amd64
 export KUBEBUILDER_ASSETS
 
-.PHONY: verify all build generate manifests test lint docker-build clean install-plugin uninstall-plugin validate-steps gen-credentials gen-authz-model check-credentials lint-cluster-config-keys lint-rbac-coverage lint-marker-ascii test-bootstrap-token-classification test-cert-manager-dns01-args test-step0-sync test-user-tenant-scaffold test-catalogue-default test-kubectl-gentian test-bootstrap-switches test-operator-network-policy test-store-network-policies test-kernel-network-policies gen-kernel-network-policies test-wildcard-cache test-dns-credential-single-writer lint-composed-resource-names lint-sequencer-targets lint-eso-readable-paths lint-template-placeholders lint-portability lint-image-digests check-render-fixtures lint-resolvable lint-unreachable lint-bootstrap-apps lint-step-contracts lint-job-scripts lint-claim-defaults lint-live-identifiers lint-password-schemes test-policy test-policy-openbao test-policy-authz verify-authz-vocabulary test-director-contract run-director-dev lint-namespace-layout verify-claim-applied verify-argocd-config verify-image-updates gen-provider-rbac lint-provider-rbac lint-provider-activation test-provider-activation refresh-provider-types test-default-profile-digest lint-credential-validators lint-credential-catalogue test-openbao-cli-download verify-openbao-cli-release lint-image-pins test-argocd-repo-credentials test-signing-key-lookup test-dry-run-changes-nothing
+.PHONY: verify all build generate manifests test lint docker-build clean install-plugin uninstall-plugin validate-steps gen-credentials gen-authz-model check-credentials lint-cluster-config-keys lint-rbac-coverage lint-marker-ascii test-bootstrap-token-classification test-cert-manager-dns01-args test-step0-sync test-user-tenant-scaffold test-catalogue-default test-kubectl-gentian test-bootstrap-switches test-operator-network-policy test-store-network-policies test-kernel-network-policies gen-kernel-network-policies test-wildcard-cache test-dns-credential-single-writer lint-composed-resource-names lint-sequencer-targets lint-eso-readable-paths lint-template-placeholders lint-portability lint-image-digests check-render-fixtures lint-resolvable lint-unreachable lint-bootstrap-apps lint-step-contracts lint-job-scripts lint-claim-defaults lint-live-identifiers lint-password-schemes test-policy test-policy-openbao test-policy-authz verify-authz-vocabulary test-director-contract run-director-dev lint-namespace-layout verify-claim-applied verify-argocd-config verify-image-updates gen-provider-rbac lint-provider-rbac lint-provider-activation test-provider-activation refresh-provider-types test-default-profile-digest lint-credential-validators lint-credential-catalogue test-openbao-cli-download verify-openbao-cli-release lint-image-pins test-argocd-repo-credentials test-signing-key-lookup test-secret-mode test-dry-run-changes-nothing
 
 all: generate build test
 
@@ -161,7 +161,7 @@ lint-yaml:
 ## The file list and flags must match CI exactly: -x follows sourced files, and no
 ## -S filter means info/style findings fail the build too. Hand-rolling a narrower
 ## invocation is how an SC2153 reached develop green-looking.
-lint-shell: validate-steps lint-step-contracts lint-resolvable lint-unreachable lint-bootstrap-apps lint-credential-fields lint-credential-validators lint-credential-catalogue lint-claim-defaults lint-live-identifiers lint-cluster-config-keys lint-template-placeholders lint-provider-rbac lint-provider-activation lint-password-schemes lint-rbac-coverage lint-composed-resource-names lint-sequencer-targets lint-eso-readable-paths lint-marker-ascii lint-scaffold-schemas lint-plan-defaults lint-legacy-profile-fields lint-step-order test-bootstrap-token-classification test-cert-manager-dns01-args test-step0-sync test-user-tenant-scaffold test-catalogue-default test-kubectl-gentian test-bootstrap-switches test-operator-network-policy test-store-network-policies test-kernel-network-policies test-wildcard-cache test-dns-credential-single-writer test-openbao-cli-download lint-image-pins test-argocd-repo-credentials test-signing-key-lookup test-dry-run-changes-nothing test-provider-activation test-default-profile-digest
+lint-shell: validate-steps lint-step-contracts lint-resolvable lint-unreachable lint-bootstrap-apps lint-credential-fields lint-credential-validators lint-credential-catalogue lint-claim-defaults lint-live-identifiers lint-cluster-config-keys lint-template-placeholders lint-provider-rbac lint-provider-activation lint-password-schemes lint-rbac-coverage lint-composed-resource-names lint-sequencer-targets lint-eso-readable-paths lint-marker-ascii lint-scaffold-schemas lint-plan-defaults lint-legacy-profile-fields lint-step-order test-bootstrap-token-classification test-cert-manager-dns01-args test-step0-sync test-user-tenant-scaffold test-catalogue-default test-kubectl-gentian test-bootstrap-switches test-operator-network-policy test-store-network-policies test-kernel-network-policies test-wildcard-cache test-dns-credential-single-writer test-openbao-cli-download lint-image-pins test-argocd-repo-credentials test-signing-key-lookup test-secret-mode test-dry-run-changes-nothing test-provider-activation test-default-profile-digest
 	@git ls-files -z -- '*.sh' | xargs -0 shellcheck -x scripts/kubectl-gentian
 
 ## Round-trip the recovery kit: export one, load it back, prove every value
@@ -275,6 +275,16 @@ test-dry-run-changes-nothing:
 ## directory; skips when gpg is absent.
 test-signing-key-lookup:
 	@bash scripts/tests/test-signing-key-lookup.sh
+
+## secretMode: the installer makes a credential once and keeps it, in both
+## modes. seed-openbao.sh runs for real against a stand-in for the vault's KV
+## API: derived gives values written down in the test, on every run; random
+## gives others and the same ones on the second run, the model gateway's path
+## included, which that script rewrites every time. The client secrets the
+## installer makes are read back from the vault or from the Secret their
+## reader mounts before a new one is drawn. No cluster.
+test-secret-mode:
+	@bash scripts/tests/test-secret-mode.sh
 
 ## The default profile step 0 places (the Operations Console) is written only
 ## when it hashes to the digest the catalogue's index lists, or to a pin given

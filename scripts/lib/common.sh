@@ -1556,7 +1556,7 @@ prompt_cluster_settings() {
         _decided "llm.gpuAcceleration: not asked — this cluster serves no models."
     fi
     if [[ "${SECRET_MODE:-derived}" == "random" ]]; then
-        _decided "secretMode random: a rebuild cannot reproduce these credentials — keep the recovery kit."
+        _decided "secretMode random: generated credentials exist only in OpenBao, and nothing backs it up — snapshot OpenBao yourself."
     fi
     return 0
 }

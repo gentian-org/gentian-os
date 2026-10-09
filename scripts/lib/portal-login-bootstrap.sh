@@ -72,19 +72,37 @@ ensure_keycloak_listener_keypair() {
     success "Keycloak event listener key ${key_id} in place."
 }
 
+# _portal_random_secret <field> <namespace> <secret> <key> — a client secret
+# under secretMode random: drawn once, then the same on every later call.
+#
+# Nothing reproduces a random secret, so it is looked for in the two places
+# that hold it before a new one is drawn: the vault, under <field>, and the
+# Kubernetes Secret its reader mounts. The vault alone was not enough. This
+# shell has a vault token only while it is the run that seeded the vault; a
+# run resumed at this step has none, every read came back empty, and each call
+# drew a new secret -- so Headlamp's kubeconfig, written by a later call than
+# the one that configured Keycloak, named a secret Keycloak had never seen.
+_portal_random_secret() {
+    local field="$1" ns="$2" name="$3" key="$4" value stored
+    stored=$(bao kv get -mount=secret -field="${field}" identity/portal-admin 2>/dev/null || true)
+    value="${stored}"
+    if [[ -z "${value}" ]]; then
+        value=$(kubectl get secret "${name}" -n "${ns}" -o "jsonpath={.data.${key}}" 2>/dev/null \
+            | base64 -d 2>/dev/null || true)
+    fi
+    if [[ -z "${value}" ]]; then
+        value=$(openssl rand -hex 24)
+    fi
+    if [[ -z "${stored}" ]]; then
+        bao kv patch -mount=secret identity/portal-admin "${field}=${value}" >/dev/null 2>&1 || \
+            bao kv put -mount=secret identity/portal-admin "${field}=${value}" >/dev/null 2>&1 || true
+    fi
+    echo -n "${value}"
+}
+
 _headlamp_derive_secret() {
     if [[ "${SECRET_MODE:-derived}" == "random" ]]; then
-        local existing_sec
-        existing_sec=$(bao kv get -mount=secret -field=headlamp_client_secret identity/portal-admin 2>/dev/null || true)
-        if [[ -n "${existing_sec}" ]]; then
-            echo -n "${existing_sec}"
-            return 0
-        fi
-        local new_sec
-        new_sec=$(openssl rand -hex 24)
-        bao kv patch -mount=secret identity/portal-admin headlamp_client_secret="${new_sec}" >/dev/null 2>&1 || \
-            bao kv put -mount=secret identity/portal-admin headlamp_client_secret="${new_sec}" >/dev/null 2>&1
-        echo -n "${new_sec}"
+        _portal_random_secret headlamp_client_secret "$(_pl_observability_ns)" headlamp-oidc OIDC_CLIENT_SECRET
         return 0
     fi
     echo -n "portal-bootstrap:headlamp_client_secret" | openssl dgst -sha256 -hmac "${MASTER_PASSWORD}${DERIVATION_SALT:-}" | awk '{print $2}'
@@ -189,17 +207,8 @@ ensure_headlamp_oidc_secret() {
 
 _argocd_oidc_derive_secret() {
     if [[ "${SECRET_MODE:-derived}" == "random" ]]; then
-        local existing_sec
-        existing_sec=$(bao kv get -mount=secret -field=argocd_client_secret identity/portal-admin 2>/dev/null || true)
-        if [[ -n "${existing_sec}" ]]; then
-            echo "${existing_sec}"
-        else
-            local new_sec
-            new_sec=$(openssl rand -hex 24)
-            bao kv patch -mount=secret identity/portal-admin argocd_client_secret="${new_sec}" >/dev/null 2>&1 || \
-            bao kv put -mount=secret identity/portal-admin argocd_client_secret="${new_sec}" >/dev/null 2>&1
-            echo "${new_sec}"
-        fi
+        _portal_random_secret argocd_client_secret "$(_pl_edge_ns)" gentian-argocd client_secret
+        echo
     else
         echo -n "portal-bootstrap:argocd_client_secret" | openssl dgst -sha256 -hmac "${MASTER_PASSWORD}${DERIVATION_SALT:-}" | awk '{print $2}'
     fi
@@ -207,17 +216,8 @@ _argocd_oidc_derive_secret() {
 
 _litellm_sso_derive_secret() {
     if [[ "${SECRET_MODE:-derived}" == "random" ]]; then
-        local existing_sec
-        existing_sec=$(bao kv get -mount=secret -field=litellm_sso_client_secret identity/portal-admin 2>/dev/null || true)
-        if [[ -n "${existing_sec}" ]]; then
-            echo "${existing_sec}"
-        else
-            local new_sec
-            new_sec=$(openssl rand -hex 24)
-            bao kv patch -mount=secret identity/portal-admin litellm_sso_client_secret="${new_sec}" >/dev/null 2>&1 || \
-            bao kv put -mount=secret identity/portal-admin litellm_sso_client_secret="${new_sec}" >/dev/null 2>&1
-            echo "${new_sec}"
-        fi
+        _portal_random_secret litellm_sso_client_secret "$(ns_system llm)" litellm-dashboard-sso client_secret
+        echo
     else
         echo -n "portal-bootstrap:litellm_sso_client_secret" | openssl dgst -sha256 -hmac "${MASTER_PASSWORD}${DERIVATION_SALT:-}" | awk '{print $2}'
     fi
@@ -457,7 +457,7 @@ _keycloak_smtp_settings() {
             KC_SMTP_FROM="noreply@${kernel_domain}"
             ;;
         kernel)
-            if ! declare -F _derive >/dev/null 2>&1; then
+            if ! declare -F _derived >/dev/null 2>&1; then
                 return 1
             fi
             # The PUBLIC name, with STARTTLS. Postfix offers AUTH only after
@@ -472,7 +472,10 @@ _keycloak_smtp_settings() {
             KC_SMTP_HOST="mail.${kernel_domain}"
             KC_SMTP_PORT="587"
             KC_SMTP_USER="gentian-system@${kernel_domain}"
-            KC_SMTP_PASSWORD="$(_derive smtp password)"
+            # Derived under secretMode random too: this is asked for twice
+            # in one run, by the realm bootstrap and by the Secret the mail
+            # server registers the login from, and both must hold one value.
+            KC_SMTP_PASSWORD="$(_derived smtp password)"
             KC_SMTP_SSL="false"
             KC_SMTP_STARTTLS="true"
             KC_SMTP_FROM="noreply@${kernel_domain}"
