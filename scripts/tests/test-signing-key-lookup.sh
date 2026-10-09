@@ -46,12 +46,8 @@ fi
 # socket path has a length limit.
 SB="$(mktemp -d "${TMPDIR:-/tmp}/gsk.XXXXXX")"
 GPGHOME="${SB}/g"
-# shellcheck disable=SC2329 # invoked by the trap below
-cleanup() {
-    gpgconf --homedir "${GPGHOME}" --kill all >/dev/null 2>&1 || true
-    rm -rf "${SB}"
-}
-trap cleanup EXIT
+# The agent gpg starts for this keyring is stopped before the directory goes.
+trap 'gpgconf --homedir "${GPGHOME}" --kill all >/dev/null 2>&1; rm -rf "${SB}"' EXIT
 g() { git -c user.name=t -c user.email=t@t -c init.defaultBranch=main -c commit.gpgsign=false "$@" >/dev/null 2>&1; }
 raw_gpg() { gpg --homedir "${GPGHOME}" --batch --yes --quiet --pinentry-mode loopback --passphrase '' "$@"; }
 fpr_of() { raw_gpg --list-keys --with-colons "$1" 2>/dev/null | awk -F: '$1=="fpr" {print $10; exit}'; }
