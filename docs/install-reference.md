@@ -417,7 +417,9 @@ is in both and is never counted.
 **How the user tenant of a single-tenancy cluster comes to exist.** Step 0
 scaffolds `clusters/<cluster-id>/tenants/user` beside the platform tenant's
 and commits both, signed. The manifest is the one the director writes for any
-new tenant; nothing in it admits the tenant early. The cluster refuses it
+new tenant, with one switch on: the user admin may approve the tenant's
+public addresses (`spec.perimeter.adminsApprove: true`). Nothing in it admits
+the tenant early. The cluster refuses it
 until the platform admin has signed in once (the handover gate), so through
 the whole install the Argo CD Application `tenant-user` fails and, after ten
 retries over about a quarter of an hour, stops retrying. `E-03` ends the
@@ -459,18 +461,23 @@ A website at the cluster's main address (`https://<kernel-domain>/` and
 --acknowledge-main-address-rule` publishes it; the director refuses that
 approval for any tenant but the user tenant of a single-tenancy cluster.
 
-Who approves in the user tenant is as in any tenant. The platform admin
-does, and so does a member of the group `gentian:tenant:user:perimeter`,
-which the tenant is created with, empty. The user admin does not: the install
-writes the user tenant with neither of the two switches a tenant can be
-created with. After the handover the platform admin turns them on where that
-is wanted:
+Who approves in the user tenant: the platform admin, a member of the group
+`gentian:tenant:user:perimeter`, which the tenant is created with, empty, and
+the user admin. The user admin approves because the install writes the user
+tenant with that switch on (`spec.perimeter.adminsApprove: true`); every
+other tenant, on a multi-tenancy cluster, starts with it off. The second
+switch a tenant can be created with, adding catalogues, is off here as
+everywhere. Both are the platform admin's to change after the handover:
 
 ```bash
-kubectl gentian tenants set user --admins-approve-public-addresses=true   # the user admin approves public addresses
+kubectl gentian tenants set user --admins-approve-public-addresses=false  # the user admin no longer approves public addresses
 kubectl gentian tenants set user --admins-add-catalogues=true             # the user admin adds catalogues
 kubectl gentian tenants show user
 ```
+
+A user tenant that an earlier install wrote keeps its manifest as it is, with
+the switch off, and so does one created later with `kubectl gentian tenants
+create user`, unless `--admins-approve-public-addresses` is given.
 
 The platform tenant's admin console is two labels under the cluster's domain,
 so it has a wildcard certificate of its own, `*.platform.<kernel-domain>`,

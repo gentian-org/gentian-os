@@ -11,9 +11,10 @@
 #
 #   - multi: nothing is written and nothing later waits for a tenant, whatever
 #     the tree holds -- a tenant named user there is an ordinary one;
-#   - single: tenants/user, the manifest the director would write and nothing
-#     more -- no annotation admits it before the handover -- every field of it
-#     on the Tenant CRD;
+#   - single: tenants/user, the manifest the director would write with its
+#     administrators allowed to approve public addresses, and nothing more --
+#     no annotation admits it before the handover, and it may add no
+#     catalogues -- every field of it on the Tenant CRD;
 #   - a tenant that exists, a cluster that already has another user tenant, a
 #     tenant that was removed: never rewritten, never brought back;
 #   - the mode is the claim's when there is a claim, and what the run was told
@@ -147,6 +148,8 @@ checks = {
     "second factor on": s["admin"]["requireMFA"] is True,
     "retain": s["deletionPolicy"] == "Retain",
     "no apps": s["apps"] == [],
+    "its administrators approve public addresses": s.get("perimeter") == {"adminsApprove": True},
+    "its administrators add no catalogues": "catalogue" not in s,
     "no handover override": "gentianos.io/handover-override" not in m["annotations"],
     "only the sync wave": list(m["annotations"]) == ["argocd.argoproj.io/sync-wave"] and m["annotations"]["argocd.argoproj.io/sync-wave"] == "2",
 }

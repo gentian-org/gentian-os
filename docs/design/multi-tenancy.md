@@ -95,6 +95,12 @@ the sign-in side and the table of addresses):
    tenant to be Ready and issues its administrator's activation link. A run
    that ends before that sign-in is finished later with
    `./install.sh --only E-04`. The step does nothing on a `multi` cluster.
+   The install writes this tenant with `spec.perimeter.adminsApprove: true`,
+   so its administrators may approve and withdraw its public addresses
+   ([security.md §2.14](security.md)). A tenant of a `multi` cluster starts
+   with that off, and the platform tenant never has it. The cluster's
+   administrator can turn it off for the user tenant as for any other; a
+   user tenant whose manifest already exists is not rewritten.
 
 **A website on the main address** is the user tenant's alone, and only under
 `single`. It is published when all of this holds

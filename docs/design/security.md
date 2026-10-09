@@ -526,7 +526,7 @@ What follows from this: OpenFGA is reachable from the programs that ask it and f
 | --- | --- | --- |
 | The members of `gentian:tenant:<t>:perimeter` | The tenant's composition creates the group with the tenant, empty; the operator projects it as `perimeter_approver` | Taking the person out of the group |
 | The cluster's administrator | The model: `admin from operated_by`, in every tenant the cluster operates. No tuple of its own, and no kernel-realm person in a tenant-realm group | The tenant withdrawing `operated_by`. Never for the platform tenant |
-| The tenant's own administrators | **Only where the cluster's administrator switched it on**: `Tenant.spec.perimeter.adminsApprove`, off by default. The operator writes the admins group into `perimeter_approver` while the manifest says so and deletes it when it does not, including one written by hand | Removing the line from the manifest |
+| The tenant's own administrators | **Only where the manifest says so**: `Tenant.spec.perimeter.adminsApprove`. Off by default and switched on by the cluster's administrator, except for the user tenant of a single-tenancy cluster, which the install creates with it on. The operator writes the admins group into `perimeter_approver` while the manifest says so and deletes it when it does not, including one written by hand | Removing the line from the manifest |
 
 The switch is set through the director by `can_configure` on the cluster alone, at tenant creation and on `PUT`/`DELETE /v1/clusters/{c}/tenants/{t}/perimeter-delegation`; there is no such route under a tenant, and an imported tenant does not carry it. It stands beside `spec.catalogue.delegated`, the switch for a tenant's administrators adding catalogues (AD-14), which is set the same way.
 

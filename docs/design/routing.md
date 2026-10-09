@@ -843,9 +843,10 @@ a request. Whoever holds `can_expose` on the tenant approves it: a member of
 the tenant's group `gentian:tenant:<t>:perimeter`, which is created with the
 tenant and starts empty; the cluster's administrator, in a tenant its cluster
 operates (`operated_by`); and the tenant's own administrators only where the
-cluster's administrator switched that on for the tenant
-(`Tenant.spec.perimeter.adminsApprove`, off by default;
-[security.md §2.10](security.md)). The director commits it to the tenant's registry in git with its owner, its
+tenant's manifest says so (`Tenant.spec.perimeter.adminsApprove`: off by
+default and switched on by the cluster's administrator, and on from the
+start for the user tenant the install creates on a single-tenancy cluster;
+[security.md §2.14](security.md)). The director commits it to the tenant's registry in git with its owner, its
 publish date and its review date; the operator then gives it a proxy in the
 tenant's DMZ, a listener for exactly its host and a route (§2.1).
 

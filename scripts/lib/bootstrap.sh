@@ -2549,8 +2549,11 @@ gentian_user_tenant() {
 # single-tenancy cluster. Returns 0 when it wrote something.
 #
 # The manifest is the one the director writes for a new tenant (tenantManifest
-# in internal/director/gitops/tenants.go) and nothing more: no annotation
-# admits it ahead of the handover. Under multi nothing is written. Under
+# in internal/director/gitops/tenants.go) with one switch on, and nothing
+# more: no annotation admits it ahead of the handover. The switch is
+# spec.perimeter.adminsApprove, which lets the user admin approve what the
+# tenant puts on the internet. Every other tenant starts with it off; here
+# the cluster has one tenant for users. Under multi nothing is written. Under
 # single, three cases write nothing as well, and each says why:
 #
 #   - The tenant has a manifest already. Never rewritten: a second run finds
@@ -2641,6 +2644,12 @@ spec:
     memory: 32Gi
     storage: 50Gi
     maxApps: 20
+  # Whether the user admin may approve and withdraw this tenant's public
+  # addresses. The install turns it on, because this cluster has one tenant
+  # for users; the switch is the platform admin's:
+  #   kubectl gentian tenants set ${name} --admins-approve-public-addresses=true|false
+  perimeter:
+    adminsApprove: true
   # Apps are installed through the director, which appends to this list.
   apps: []
 EOF
