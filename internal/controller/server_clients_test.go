@@ -22,6 +22,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/backup"
 	"github.com/gentian-org/gentian-os/internal/controller/provisioner"
 	"github.com/gentian-org/gentian-os/internal/kernel/netpolicy"
 	"github.com/gentian-org/gentian-os/internal/layout"
@@ -104,6 +105,19 @@ func TestTheKernelDatabaseAndMailClientsAreWhereTheirNetworkPoliciesExpectThem(t
 		"kernel-realm-desktop-database": func(t *testing.T) builtClient {
 			np := buildComponentNetworkPolicy(desktop(platform), r.componentEgressNamespaces(desktopProfile, platform), nil)
 			return egressClient(t, np, layout.Namespace(layout.Data), provisioner.PostgresPort)
+		},
+		// The units of a backup of the tenant that adopts the kernel realm,
+		// and the Job its deletion runs: beside the server, as the
+		// database's owner.
+		"export-kernel-desktop-dump": func(*testing.T) builtClient {
+			return jobClient(backup.KernelDesktopDumpJob(backup.JobParams{Namespace: backup.KernelPostgresNamespace(), Name: "j", Tenant: platform.Name}))
+		},
+		"restore-kernel-desktop": func(*testing.T) builtClient {
+			return jobClient(backup.KernelDesktopRestoreJob(backup.JobParams{Namespace: backup.KernelPostgresNamespace(), Name: "j", Tenant: platform.Name},
+				backup.Decryption{}, "postgres/portal_shell.pgc"))
+		},
+		"kernel-desktop-destroy-job": func(*testing.T) builtClient {
+			return jobClient(backup.KernelDesktopDestroyJob(platform.Name, backup.DestroyInTheBackground))
 		},
 		// By the Service's name, straight to the server...
 		"tenant-app-mail-smtp": mailApp(mailNamespace, int32(submission)),

@@ -96,7 +96,7 @@ func TestMariaDBExportRestoreAndTeardownCoverEveryDatabaseOfTheApp(t *testing.T)
 	}
 	export.Status.Apps = []gentianov1alpha1.AppExportStatus{{Name: "shop", ChartVersion: "2.0.0", Artefacts: want}}
 	if m := r.buildManifest(export, tenant); len(m.Apps) != 1 || m.Apps[0].DatabaseEngine != "mariadb" || len(m.Apps[0].Stores) != 2 ||
-		m.Apps[0].Stores[1].Kind != "mariadbOwned" || m.SchemaVersion != 2 {
+		m.Apps[0].Stores[1].Kind != "mariadbOwned" || m.SchemaVersion != 3 {
 		t.Errorf("manifest = %+v", m)
 	}
 	// The question each act asks, of this app's database and user: under
@@ -114,7 +114,7 @@ func TestMariaDBExportRestoreAndTeardownCoverEveryDatabaseOfTheApp(t *testing.T)
 		}},
 	}}
 	profiles := map[string]*gentianov1alpha1.ComponentProfile{"shop": profile}
-	plan, err := planRestore(manifest, tenant, nil, false, liveFrom(tenant, profiles, nil))
+	plan, err := planRestore(manifest, tenant, nil, false, targetOf(tenant), liveFrom(tenant, profiles, nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +151,7 @@ func TestMariaDBExportRestoreAndTeardownCoverEveryDatabaseOfTheApp(t *testing.T)
 	// app without it: it refuses the app and says why. That is what a
 	// reader of format 2 from before this kind does with mariadbOwned.
 	manifest.Apps[0].Stores[1].Kind = "somethingNewer"
-	if _, err = planRestore(manifest, tenant, nil, false, liveFrom(tenant, profiles, nil)); err == nil ||
+	if _, err = planRestore(manifest, tenant, nil, false, targetOf(tenant), liveFrom(tenant, profiles, nil)); err == nil ||
 		!strings.Contains(err.Error(), `shop has an artefact of kind "somethingNewer" in the bundle, which this platform does not know how to restore`) {
 		t.Errorf("an unknown kind of artefact was not refused: %v", err)
 	}

@@ -52,7 +52,10 @@ import (
 // runNamespaces are every namespace a run of this tenant can have a Job or a
 // staged Secret in.
 func runNamespaces(tenantNamespace string) []string {
-	return dedupe(s3Namespace, postgresNamespace, mariadbNamespace, identityNamespace, tenantNamespace)
+	return dedupe(s3Namespace, postgresNamespace, mariadbNamespace, identityNamespace, tenantNamespace,
+		// The mailboxes' unit, beside the mail server's volume, and the unit
+		// of a desktop database that is on the kernel's PostgreSQL.
+		mailNamespace, backup.KernelPostgresNamespace())
 }
 
 // stagedSecretName names an export's staged copy; the same name in every

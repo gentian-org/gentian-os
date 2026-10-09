@@ -379,6 +379,11 @@ var inClusterAddressFiles = map[string][]kernelAddress{
 	"cmd/main.go": {{"kernel-secrets", 8200}},
 	// The desktop's database: kernel-postgres or the tenants' server.
 	"internal/controller/component_desktop.go": {{"kernel-data", 5432}},
+	// The same database, for the units of a backup and the Job of a deletion
+	// that run beside kernel-postgres as the database's owner.
+	"internal/backup/desktop.go": {{"kernel-data", 5432}},
+	// The tenants' MariaDB, in a system namespace.
+	"internal/controller/tenantrestore_retained.go": {},
 	// The proxy's upstream is a tenant's Service.
 	"internal/controller/component_perimeter.go": {},
 	// The addresses a component is handed: director, usher, custodian, registrar.

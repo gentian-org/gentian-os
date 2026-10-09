@@ -164,6 +164,24 @@ spec:
                   the ordinary path: the export already knows its bucket, prefix and how it
                   was encrypted.
                 type: string
+              intoNewTenant:
+                description: |-
+                  IntoNewTenant says the tenant restored into was made new for this
+                  bundle: an import. It changes two things, and nothing else.
+
+                  The data of an app the bundle holds as uninstalled with its data kept
+                  is brought with stores made for it, as retained. Without this such
+                  data is put back only where the tenant still holds it: an app purged
+                  since the bundle was taken stays purged.
+
+                  And the rights the bundle records as granted beyond the defaults are
+                  not granted: a right somebody granted in one tenant is not carried
+                  into another by a file. The restore names each in its result. What the
+                  bundle records as withdrawn is withdrawn here too.
+
+                  The same holds, whatever this says, when the bundle was taken of a
+                  tenant of another name or on another cluster.
+                type: boolean
               skipVersionCheck:
                 description: |-
                   SkipVersionCheck permits restoring an app's data into a build of the
@@ -199,9 +217,44 @@ spec:
                           BundleArtefact is one artefact of a bundle: a database dump, a bucket's
                           archive, a volume's archive.
                         properties:
+                          claim:
+                            description: |-
+                              Claim is the volume claim a volume was captured from, as far as making
+                              it again takes. Recorded for the volumes of an app that was uninstalled
+                              with its data kept: where such an app's data is brought into a tenant
+                              that never had it, the claim is not there and is made from this.
+                            properties:
+                              accessModes:
+                                description: AccessModes are the claim's.
+                                items:
+                                  type: string
+                                type: array
+                                x-kubernetes-list-type: atomic
+                              annotations:
+                                additionalProperties:
+                                  type: string
+                                type: object
+                              labels:
+                                additionalProperties:
+                                  type: string
+                                description: |-
+                                  Labels and Annotations are the ones that say whose the claim is: the
+                                  release it records is how the next install and a purge find it.
+                                type: object
+                              size:
+                                description: Size is the storage the claim asked for.
+                                type: string
+                              storageClass:
+                                description: StorageClass is the class the claim named,
+                                  empty for the default.
+                                type: string
+                            required:
+                            - size
+                            type: object
                           kind:
-                            description: Kind is postgres, postgresOwned, mariadb,
-                              mariadbOwned, s3 or volume.
+                            description: |-
+                              Kind is postgres, postgresOwned, mariadb, mariadbOwned, s3 or volume;
+                              for what is the tenant's own also identity, mailboxes or rights.
                             type: string
                           name:
                             description: |-
@@ -306,6 +359,13 @@ spec:
                         export costs a tenant, and the evidence that the pause is per app.
                       format: date-time
                       type: string
+                    retained:
+                      description: |-
+                        Retained says the app is not installed: it was uninstalled and its
+                        data kept. An export captures that data as it captures an installed
+                        app's, without pausing anything; a restore puts it back as retained and
+                        installs nothing.
+                      type: boolean
                     stores:
                       description: |-
                         Stores lists the kinds captured for this app (postgres, mariadb, s3,
@@ -498,6 +558,47 @@ spec:
                 items:
                   type: string
                 type: array
+              rights:
+                description: |-
+                  Rights is what this restore does with the entries of the rights store
+                  the bundle holds: the ones it grants, the ones it withdraws, and the
+                  ones it does not bring. Decided before anything is changed.
+                properties:
+                  applied:
+                    description: Applied says the store holds what Grant and Withdraw
+                      say.
+                    type: boolean
+                  grant:
+                    description: |-
+                      Grant are written to the store: rights the bundle's tenant had been
+                      granted beyond what follows from its entry in git.
+                    items:
+                      type: string
+                    type: array
+                    x-kubernetes-list-type: atomic
+                  notBrought:
+                    description: |-
+                      NotBrought are entries the bundle holds that this restore does not
+                      write, each with the reason.
+                    items:
+                      type: string
+                    type: array
+                    x-kubernetes-list-type: atomic
+                  waitingSince:
+                    description: |-
+                      WaitingSince is when the restore began to wait for the operator to
+                      attach the tenant in the rights store, which has to come first.
+                    format: date-time
+                    type: string
+                  withdraw:
+                    description: |-
+                      Withdraw are removed from the store: defaults the bundle's tenant no
+                      longer held.
+                    items:
+                      type: string
+                    type: array
+                    x-kubernetes-list-type: atomic
+                type: object
               sourceTenant:
                 description: |-
                   SourceTenant is the tenant the bundle was taken of, as its manifest

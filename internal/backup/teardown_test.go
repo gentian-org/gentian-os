@@ -21,6 +21,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	"github.com/gentian-org/gentian-os/api/bundle"
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/modelgateway"
 )
@@ -394,12 +395,21 @@ func TestABucketIsProvisionedBeforeItsObjectsAreRestored(t *testing.T) {
 	}
 }
 
-// What a tenant has that is no app's, and lies outside what a deletion
-// sweeps by default, has to say what removes it under each policy. The mail
-// records, the client in the kernel realm and the model gateway's team were
-// each left behind for want of exactly that.
-func TestWhatATenantOwnsSaysWhatItsDeletionDoesWithIt(t *testing.T) {
+// What a tenant has that is no app's has to say what every act does with
+// it: what makes it, whether a bundle carries it and as what, what a restore
+// and an import do with what was carried, and what a deletion does under
+// each policy. The mail records, the client in the kernel realm and the
+// model gateway's team were each left behind for want of the last; the
+// mailboxes, the desktop's database on the kernel's PostgreSQL and the
+// rights nobody can derive were in no backup for want of the rest.
+//
+// The directions are held together here: a thing carried is a thing with a
+// kind of artefact, a restore and an import; a kind of artefact a bundle
+// can hold for a tenant is some thing's on this list; and what a deletion
+// does not take away says so. Adding to one direction only fails.
+func TestWhatATenantOwnsSaysWhatEveryActDoesWithIt(t *testing.T) {
 	seen := map[string]bool{}
+	carried := map[string]string{}
 	for _, rule := range TenantOwned {
 		if rule.What == "" || seen[rule.What] {
 			t.Fatalf("%q is empty or listed twice", rule.What)
@@ -410,36 +420,140 @@ func TestWhatATenantOwnsSaysWhatItsDeletionDoesWithIt(t *testing.T) {
 				t.Errorf("%s: nothing is said for %s", rule.What, field)
 			}
 		}
+		if rule.Artefact == "" {
+			// Not in a bundle: there is nothing for a restore to do, and a
+			// rule that describes one describes what does not happen.
+			if rule.Restore != "" || rule.Import != "" {
+				t.Errorf("%s: no bundle carries it, and it says what a restore or an import does with it", rule.What)
+			}
+			if strings.HasPrefix(rule.Export, "carried") {
+				t.Errorf("%s: an export is said to carry it, as no kind of artefact", rule.What)
+			}
+		} else {
+			if !slices.Contains(bundle.TenantArtefacts, rule.Artefact) {
+				t.Errorf("%s: carried as %q, which is not a kind of artefact a bundle holds for a tenant", rule.What, rule.Artefact)
+			}
+			if other, taken := carried[rule.Artefact]; taken {
+				t.Errorf("%s and %s are both carried as %q", rule.What, other, rule.Artefact)
+			}
+			carried[rule.Artefact] = rule.What
+			if !strings.HasPrefix(rule.Export, "carried") {
+				t.Errorf("%s: it has a kind of artefact and an export is not said to carry it: %q", rule.What, rule.Export)
+			}
+			if rule.Restore == "" || rule.Import == "" {
+				t.Errorf("%s: a bundle carries it, and nothing says what a restore and an import do with it", rule.What)
+			}
+		}
+		// What a deletion leaves says so in so many words, and nothing else
+		// does: a reader of the list is not left to infer it.
+		if rule.Destroyed == strings.HasPrefix(rule.Delete, "NOT removed") {
+			t.Errorf("%s: destroyed = %v, and the deletion says %q", rule.What, rule.Destroyed, rule.Delete)
+		}
+	}
+	// Every kind of artefact a bundle can hold for a tenant is some thing's.
+	for _, kind := range bundle.TenantArtefacts {
+		if carried[kind] == "" {
+			t.Errorf("a bundle can hold a tenant's %q, and nothing the tenant owns is carried as it", kind)
+			continue
+		}
+		if TenantRuleFor(kind).Artefact != kind {
+			t.Errorf("TenantRuleFor(%s) = %+v", kind, TenantRuleFor(kind))
+		}
 	}
 	all := ""
 	for _, rule := range TenantOwned {
 		all += rule.What + "\n"
 	}
 	for _, must := range []string{"kernel realm", "model gateway", "mail DNS records", "vault subtree", "namespace", "backup bucket", "record of what was provisioned",
-		"mailboxes", "membership tuples"} {
+		"mailboxes", "membership tuples", "rights tuples", "desktop's database"} {
 		if !strings.Contains(all, must) {
 			t.Errorf("the list of what a tenant owns does not name its %s", must)
 		}
 	}
 }
 
+// The four things a backup did not hold and now does, each in both
+// directions: carried, put back by a restore and by an import, and -- but
+// for the rights, which nothing removes from the store yet -- destroyed
+// with the tenant.
+func TestTheMailboxesTheDesktopAndTheRightsAreCarriedAndPutBack(t *testing.T) {
+	for kind, destroyed := range map[string]bool{
+		bundle.ArtefactMailboxes: true,
+		bundle.ArtefactPostgres:  true,
+		bundle.ArtefactIdentity:  true,
+		bundle.ArtefactRights:    false,
+	} {
+		rule := TenantRuleFor(kind)
+		if rule.Destroyed != destroyed {
+			t.Errorf("%s: destroyed with the tenant = %v", rule.What, rule.Destroyed)
+		}
+	}
+	// An import brings no right that was granted: the rule says so, where
+	// whoever reads the inventory looks.
+	if rights := TenantRuleFor(bundle.ArtefactRights); !strings.Contains(rights.Import, "NOT brought") {
+		t.Errorf("an import of rights: %q", rights.Import)
+	}
+}
+
 // What no act removes is on the list as that, in so many words: a reader of
 // the inventory, and the page written from it, is not left to infer from a
-// missing row that a deleted tenant's mail and memberships are gone.
+// missing row that a deleted tenant's memberships and rights are gone.
 func TestWhatNoDeletionRemovesIsSaidToStay(t *testing.T) {
-	for _, what := range []string{"mailboxes", "membership tuples"} {
+	for _, what := range []string{"membership tuples", "rights tuples"} {
 		found := false
 		for _, rule := range TenantOwned {
 			if !strings.Contains(rule.What, what) {
 				continue
 			}
 			found = true
-			if !strings.HasPrefix(rule.Delete, "NOT removed") || !strings.HasPrefix(rule.Export, "not carried") {
-				t.Errorf("%s: delete = %q, export = %q", what, rule.Delete, rule.Export)
+			if rule.Destroyed || !strings.HasPrefix(rule.Delete, "NOT removed") {
+				t.Errorf("%s: delete = %q", what, rule.Delete)
 			}
 		}
 		if !found {
 			t.Errorf("the tenant's %s are not on the list", what)
+		}
+	}
+}
+
+// An app that was uninstalled with its data kept is carried by a bundle as
+// an installed one is: the same kinds, by the same artefacts. So every kind
+// an artefact carries is one an uninstall keeps -- there is then something
+// to carry -- and every kind of artefact a bundle can hold for an app is
+// some kind's.
+func TestWhatABundleCarriesOfAnAppIsWhatAnUninstallKeeps(t *testing.T) {
+	claimed := map[string]Kind{}
+	for _, rule := range AppKinds {
+		for _, artefact := range rule.Artefacts {
+			if other, taken := claimed[artefact]; taken {
+				t.Errorf("%s and %s are both carried as %q", rule.Kind, other, artefact)
+			}
+			claimed[artefact] = rule.Kind
+		}
+		if len(rule.Artefacts) == 0 {
+			continue
+		}
+		if rule.Export != Carries {
+			t.Errorf("%s has artefacts and an export does not carry it", rule.Kind)
+		}
+		if rule.Uninstall != Keeps || rule.AppPurge != Destroys {
+			t.Errorf("%s is carried as %v, and an uninstall does not keep it for a purge to destroy: a retained app's would be in no bundle", rule.Kind, rule.Artefacts)
+		}
+	}
+	for _, artefact := range bundle.AppArtefacts {
+		if claimed[artefact] == "" {
+			t.Errorf("a bundle can hold an app's %q, and no kind an app owns is carried as it", artefact)
+		}
+	}
+	for artefact := range claimed {
+		if !slices.Contains(bundle.AppArtefacts, artefact) {
+			t.Errorf("%s is carried as %q, which is not a kind of artefact a bundle holds for an app", claimed[artefact], artefact)
+		}
+	}
+	// What is carried and has no artefact of its own is inside the realm's.
+	for _, rule := range AppKinds {
+		if rule.Export == Carries && len(rule.Artefacts) == 0 && !strings.Contains(rule.ExportNote, "inside the realm export") {
+			t.Errorf("%s: carried, by no artefact, and not inside the realm's", rule.Kind)
 		}
 	}
 }

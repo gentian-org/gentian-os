@@ -129,6 +129,7 @@ func newPlacementWorld(t *testing.T, external bool) *placementWorld {
 		{Name: backupTenantComponent, Artefacts: []gentianov1alpha1.BundleArtefact{
 			{Kind: bundle.ArtefactIdentity, Name: "acme", Path: backup.IdentityArtefact, Target: "acme"},
 			{Kind: bundle.ArtefactPostgres, Name: "acme_portal_shell", Path: "postgres/acme_portal_shell.pgc", Target: "acme_portal_shell"},
+			{Kind: bundle.ArtefactMailboxes, Name: "acme.k.example", Path: backup.MailboxesArtefact, Target: "acme.k.example"},
 		}},
 	}
 
@@ -144,6 +145,9 @@ func newPlacementWorld(t *testing.T, external bool) *placementWorld {
 		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: externalDestinationSecret, Namespace: s3Namespace},
 			Data: map[string][]byte{backup.DestinationAccessKeyField: []byte("ext-key"), backup.DestinationSecretKeyField: []byte("EXT-SECRET")}},
 	}
+	// The cluster runs its own mail server: the tenant has mailboxes, and a
+	// unit beside the server's volume.
+	objects = append(objects, mailCluster()...)
 	for _, s := range adminSecrets() {
 		data := map[string][]byte{}
 		for k, v := range s.data {
@@ -153,7 +157,7 @@ func newPlacementWorld(t *testing.T, external bool) *placementWorld {
 	}
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objects...).
 		WithStatusSubresource(&gentianov1alpha1.TenantRestore{}, &gentianov1alpha1.TenantExport{}).Build()
-	tr := &TenantReconciler{Client: c, Scheme: scheme}
+	tr := &TenantReconciler{Client: c, Scheme: scheme, KernelDomain: "k.example", MailServiceMode: mailServiceModeSystem}
 	er := &TenantExportReconciler{Client: c, Scheme: scheme, Reconciler: tr}
 	return &placementWorld{c: c, tenant: tenant, export: export, restore: restore, er: er,
 		rr: &TenantRestoreReconciler{Client: c, Scheme: scheme, Tenant: tr, Reconciler: er}}
@@ -186,8 +190,12 @@ func (w *placementWorld) exportUnits(t *testing.T, mode gentianov1alpha1.ExportE
 		}
 		units = append(units, more...)
 	}
-	units = append(units, w.er.tenantWideUnits(w.tenant, w.export, enc)...)
-	manifest, err := w.er.manifestUnit(w.export, w.tenant, enc)
+	wide, err := w.er.tenantWideUnits(context.Background(), w.tenant, w.export, enc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	units = append(units, wide...)
+	manifest, err := w.er.manifestUnit(w.export, w.tenant, enc, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -214,7 +222,11 @@ func (w *placementWorld) restoreUnits(t *testing.T, mode gentianov1alpha1.Export
 		}
 		units = append(units, more...)
 	}
-	units = append(units, w.rr.tenantWideRestoreUnits(w.tenant, w.restore, d)...)
+	wideUnits, err := w.rr.tenantWideRestoreUnits(context.Background(), w.tenant, w.restore, d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	units = append(units, wideUnits...)
 	if err := w.rr.stageFor(ctx, w.restore, units, d); err != nil {
 		t.Fatalf("stageFor: %v", err)
 	}
@@ -355,6 +367,7 @@ func TestEveryUnitFindsWhatItsPodReadsWhereItRuns(t *testing.T) {
 					s3Namespace:       {bundle.ArtefactS3, "manifest"},
 					"tenant-acme":     {bundle.ArtefactVolume},
 					identityNamespace: {bundle.ArtefactIdentity},
+					mailNamespace:     {bundle.ArtefactMailboxes},
 				}
 				if got := unitsByNamespace(exports); fmt.Sprint(got) != fmt.Sprint(wantExport) {
 					t.Errorf("export units run in\n  %v\nwant\n  %v", got, wantExport)
@@ -368,6 +381,7 @@ func TestEveryUnitFindsWhatItsPodReadsWhereItRuns(t *testing.T) {
 					s3Namespace:       {bundle.ArtefactS3},
 					"tenant-acme":     {bundle.ArtefactVolume},
 					identityNamespace: {bundle.ArtefactIdentity},
+					mailNamespace:     {bundle.ArtefactMailboxes},
 				}
 				if got := unitsByNamespace(restores); fmt.Sprint(got) != fmt.Sprint(wantRestore) {
 					t.Errorf("restore units run in\n  %v\nwant\n  %v", got, wantRestore)

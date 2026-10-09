@@ -373,7 +373,10 @@ func (s *Server) finishImport(background context.Context, pending gitops.Pending
 			}
 		}
 		status, body, err := s.cfg.Lifecycle.Do(ctx, "/v1/tenants/"+url.PathEscape(name)+"/actions/restore", actor,
-			map[string]any{"bundle": pending.Bundle, "decryption": key, "name": pending.Restore})
+			// intoNewTenant: the tenant was made for this bundle. The data of
+			// apps the bundle holds as uninstalled comes with stores made for
+			// it, and no right granted in the bundle's tenant is granted here.
+			map[string]any{"bundle": pending.Bundle, "decryption": key, "name": pending.Restore, "intoNewTenant": true})
 		if background.Err() != nil {
 			return
 		}

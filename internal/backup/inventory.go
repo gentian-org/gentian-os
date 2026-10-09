@@ -195,7 +195,7 @@ const backupStore = "gentian-backup"
 // an app must refuse such a name -- it would drop the desktop's database --
 // and a list of what uninstalled apps left behind must not show it.
 func IsPlatformStore(name string) bool {
-	return name == DesktopStore || name == backupStore
+	return name == DesktopStore || name == backupStore || name == mailStore
 }
 
 // AppRelease is the Helm release an app is installed as in its tenant's

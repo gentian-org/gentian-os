@@ -35,6 +35,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/backup"
 	"github.com/gentian-org/gentian-os/internal/catalogue"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"github.com/gentian-org/gentian-os/internal/layout"
@@ -225,8 +226,10 @@ func (r *ComponentReconciler) ensureDatabaseRequirement(ctx context.Context, com
 	var target map[string]interface{}
 	var data []interface{}
 	if tenantAdoptsKernelRealm(tenant, r.KernelRealm) {
-		host := fmt.Sprintf("kernel-postgres-rw.%s.svc.cluster.local", r.componentDatabaseNamespace(tenant))
-		target = databaseSecretTemplate(host, "5432", "portal_shell", "portal_shell_user", "{{ .password }}")
+		// The names the kernel's chart declares, which a backup of this
+		// tenant captures by too (backup/desktop.go).
+		target = databaseSecretTemplate(backup.KernelPostgresHost(), backup.KernelPostgresPort,
+			backup.KernelDesktopDatabase, backup.KernelDesktopRole, "{{ .password }}")
 		data = []interface{}{
 			map[string]interface{}{
 				"secretKey": "password",
@@ -269,32 +272,43 @@ func databaseSecretTemplate(host, port, database, username, password string) map
 // Once that resource has been applied the Job is not run again: the role
 // exists with the seeded password, and the record is write-once.
 func (r *ComponentReconciler) ensureTenantDatabase(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ready bool, reason, message string, err error) {
+	return ensurePostgresStore(ctx, r.Client, r.Seeder, tenant, portalShellAppName, gentianov1alpha1.SchemaPreferenceAppSchema, false)
+}
+
+// ensurePostgresStore makes one database on the tenant postgres, with its
+// role, its vault record and the Database resource that records it, for a
+// name that is no installed app's -- an installed app's are made through the
+// tenant's Composition (tenant_data_plane_manifests.go), with these same
+// pieces. Two callers: the desktop's database, and the database of an app
+// whose data a restore brings back as retained into a tenant that has none.
+func ensurePostgresStore(ctx context.Context, c client.Client, seeder *secrets.Seeder, tenant *gentianov1alpha1.Tenant, appName string,
+	schemaPref gentianov1alpha1.SchemaPreference, allowCreateDB bool) (ready bool, reason, message string, err error) {
 	cluster := &unstructured.Unstructured{}
 	cluster.SetGroupVersionKind(schema.GroupVersionKind{Group: cnpgGroup, Version: cnpgVersion, Kind: "Cluster"})
-	if err := r.Get(ctx, types.NamespacedName{Name: cnpgClusterName, Namespace: postgresNamespace}, cluster); err != nil {
+	if err := c.Get(ctx, types.NamespacedName{Name: cnpgClusterName, Namespace: postgresNamespace}, cluster); err != nil {
 		if errors.IsNotFound(err) || meta.IsNoMatchError(err) {
 			return false, "DatabaseUnavailable",
 				fmt.Sprintf("this cluster composes no tenant postgres (%s/%s); the requirement waits", postgresNamespace, cnpgClusterName), nil
 		}
 		return false, "", "", err
 	}
-	if r.Seeder == nil {
+	if seeder == nil {
 		return false, "DatabaseUnavailable", "the operator has no vault to seed the database credential in; the requirement waits", nil
 	}
-	dbName := databaseName(tenant, portalShellAppName)
-	creds, err := r.Seeder.SeedDatabase(ctx, tenant.Name, portalShellAppName, secrets.DatabaseCreds{
+	dbName := databaseName(tenant, appName)
+	creds, err := seeder.SeedDatabase(ctx, tenant.Name, appName, secrets.DatabaseCreds{
 		Host: fmt.Sprintf("%s-rw.%s.svc.cluster.local", cnpgClusterName, postgresNamespace),
 		Port: "5432",
 		Name: dbName,
-		User: roleUserName(tenant.Name, portalShellAppName),
+		User: roleUserName(tenant.Name, appName),
 	})
 	if err != nil {
-		return false, "", "", fmt.Errorf("seed the desktop database credential: %w", err)
+		return false, "", "", fmt.Errorf("seed the database credential of %s: %w", appName, err)
 	}
 
 	db := &unstructured.Unstructured{}
 	db.SetGroupVersionKind(schema.GroupVersionKind{Group: cnpgGroup, Version: cnpgVersion, Kind: cnpgDatabaseKind})
-	err = r.Get(ctx, types.NamespacedName{Name: databaseCRName(tenant.Name, portalShellAppName), Namespace: postgresNamespace}, db)
+	err = c.Get(ctx, types.NamespacedName{Name: databaseCRName(tenant.Name, appName), Namespace: postgresNamespace}, db)
 	if err == nil {
 		if cnpgDatabaseIsReady(db) {
 			return true, "", "", nil
@@ -305,8 +319,8 @@ func (r *ComponentReconciler) ensureTenantDatabase(ctx context.Context, tenant *
 		return false, "", "", err
 	}
 
-	desired := makeRoleJob(tenant, tenantNamespaceName(tenant), dbName, portalShellAppName, creds.Password,
-		gentianov1alpha1.SchemaPreferenceAppSchema, false)
+	desired := makeRoleJob(tenant, tenantNamespaceName(tenant), dbName, appName, creds.Password,
+		schemaPref, allowCreateDB)
 	// What was asked for, as a hash on the Job. The live Job cannot be
 	// compared with the desired one field by field: the API server fills in
 	// defaults, so the two never match, and a comparison that never matches
@@ -317,10 +331,10 @@ func (r *ComponentReconciler) ensureTenantDatabase(ctx context.Context, tenant *
 	}
 	desired.Annotations[roleJobHashAnnotation] = wanted
 	job := &batchv1.Job{}
-	err = r.Get(ctx, types.NamespacedName{Name: roleJobName(tenant.Name, portalShellAppName), Namespace: postgresNamespace}, job)
+	err = c.Get(ctx, types.NamespacedName{Name: roleJobName(tenant.Name, appName), Namespace: postgresNamespace}, job)
 	switch {
 	case errors.IsNotFound(err):
-		if err := r.Create(ctx, desired); err != nil && !errors.IsAlreadyExists(err) {
+		if err := c.Create(ctx, desired); err != nil && !errors.IsAlreadyExists(err) {
 			return false, "", "", err
 		}
 		return false, "DatabaseProvisioning", "the database role is being created", nil
@@ -332,13 +346,13 @@ func (r *ComponentReconciler) ensureTenantDatabase(ctx context.Context, tenant *
 		// the namespace refuses is no pod at all -- waiting on it is waiting
 		// for ever. Replaced, and made again on the next pass.
 		prop := metav1.DeletePropagationBackground
-		if err := r.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &prop}); err != nil && !errors.IsNotFound(err) {
+		if err := c.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &prop}); err != nil && !errors.IsNotFound(err) {
 			return false, "", "", err
 		}
 		return false, "DatabaseProvisioning", "the database role Job is replaced by the current one", nil
 	case jobIsFailed(job):
 		prop := metav1.DeletePropagationBackground
-		if err := r.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &prop}); err != nil && !errors.IsNotFound(err) {
+		if err := c.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &prop}); err != nil && !errors.IsNotFound(err) {
 			return false, "", "", err
 		}
 		return false, "DatabaseProvisioning", "the database role Job failed and is retried", nil
@@ -346,7 +360,7 @@ func (r *ComponentReconciler) ensureTenantDatabase(ctx context.Context, tenant *
 		return false, "DatabaseProvisioning", "the database role is being created", nil
 	}
 
-	if err := r.Create(ctx, buildDatabaseCR(tenant, tenantNamespaceName(tenant), dbName, portalShellAppName)); err != nil && !errors.IsAlreadyExists(err) {
+	if err := c.Create(ctx, buildDatabaseCR(tenant, tenantNamespaceName(tenant), dbName, appName)); err != nil && !errors.IsAlreadyExists(err) {
 		return false, "", "", err
 	}
 	return false, "DatabaseProvisioning", "the database is being created", nil

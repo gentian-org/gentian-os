@@ -186,6 +186,13 @@ const IdentityArtefact = "identity/realm.tar.gz"
 // pg_restore consumes, and it allows a selective restore of individual tables
 // later without re-running the whole export.
 func PostgresDumpJob(p JobParams, database string) *batchv1.Job {
+	return postgresDumpJob(p, database, PostgresAdminEnv())
+}
+
+// postgresDumpJob is the dump of one database, as whoever env connects as:
+// the server's administrator, or the database's owner where a server has no
+// administrator's Secret (KernelDesktopDumpJob).
+func postgresDumpJob(p JobParams, database string, env []corev1.EnvVar) *batchv1.Job {
 	artefact := PostgresArtefact(database)
 	dump := corev1.Container{
 		Name:    "pg-dump",
@@ -196,7 +203,7 @@ func PostgresDumpJob(p JobParams, database string) *batchv1.Job {
 # owner would only pin the dump to this cluster's role names.
 pg_dump --format=custom --no-owner --no-acl --dbname=%s --file=%s/dump.pgc
 echo "dumped %s"`, shellSingleQuote(database), workDir, database)},
-		Env:          PostgresAdminEnv(),
+		Env:          env,
 		VolumeMounts: []corev1.VolumeMount{{Name: "work", MountPath: workDir}},
 	}
 	return uploadJob(p, "dump.pgc", artefact, []corev1.Container{dump}, nil)

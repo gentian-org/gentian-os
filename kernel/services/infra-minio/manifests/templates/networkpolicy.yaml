@@ -27,9 +27,14 @@
                         beside PostgreSQL or MariaDB, the realm's in the
                         identity namespace (tenantexport_placement.go) --
                         and write to or read from the bundle here. Admitted
+                        the mailboxes' beside the mail server's volume
+                        (backup/mailboxes.go), the desktop's database of the
+                        tenant that adopts the kernel realm beside the
+                        kernel's PostgreSQL (backup/desktop.go) --
+                        and write to or read from the bundle here. Admitted
                         by the label every such pod carries,
                         gentianos.io/component=tenant-export, from those
-                        three namespaces alone; no other pod of them is.
+                        five namespaces alone; no other pod of them is.
     the operator        reads a bundle's manifest, streams a bundle to the
                         person downloading it and writes an imported one
                         (internal/bundlestore, applifecycle/bundle_*.go).
@@ -74,7 +79,7 @@ spec:
             matchLabels:
               app.kubernetes.io/name: gentian-os
               app.kubernetes.io/component: operator
-        {{- range $fn := list "postgresql" "mariadb" "authentication" }}
+        {{- range $fn := list "postgresql" "mariadb" "authentication" "mail" "data" }}
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: {{ index $np.namespaces $fn | quote }}

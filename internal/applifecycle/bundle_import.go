@@ -147,6 +147,11 @@ type RestoreRequest struct {
 	// whether its restore was started and never starts a second. Empty names
 	// it by the time.
 	Name string `json:"name,omitempty"`
+	// IntoNewTenant says the tenant was made new for this bundle: what an
+	// import sets (TenantRestore spec.intoNewTenant). The data of apps the
+	// bundle holds as uninstalled is then brought with stores made for it,
+	// and the rights the bundle records as granted are not granted.
+	IntoNewTenant bool `json:"intoNewTenant,omitempty"`
 }
 
 var restoreName = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$`)
@@ -203,6 +208,7 @@ func (s *Service) StartRestore(ctx context.Context, tenantName string, req Resto
 			Bundle:        &req.Bundle,
 			Apps:          req.Apps,
 			ConfirmTenant: tenantName,
+			IntoNewTenant: req.IntoNewTenant,
 		},
 	}
 	if err := s.client.Create(ctx, restore); err != nil {

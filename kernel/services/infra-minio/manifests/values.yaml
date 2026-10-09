@@ -34,3 +34,8 @@ networkPolicy:
     postgresql: system-postgresql
     mariadb: system-mariadb
     authentication: kernel-authentication
+    # The unit that copies a tenant's mailboxes runs beside the mail server's
+    # volume, and the unit of a desktop database that is on the kernel's
+    # PostgreSQL beside that server.
+    mail: system-mail
+    data: kernel-data

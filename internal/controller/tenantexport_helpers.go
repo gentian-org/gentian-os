@@ -23,6 +23,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/gentian-org/gentian-os/api/bundle"
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/backup"
 )
@@ -228,7 +229,7 @@ func unitArtefacts(units []captureUnit) []gentianov1alpha1.BundleArtefact {
 	out := make([]gentianov1alpha1.BundleArtefact, 0, len(units))
 	for _, unit := range units {
 		out = append(out, gentianov1alpha1.BundleArtefact{
-			Kind: unit.Kind, Name: unit.Name, Path: unit.Path, Release: unit.Release,
+			Kind: unit.Kind, Name: unit.Name, Path: unit.Path, Release: unit.Release, Claim: unit.Claim,
 		})
 	}
 	return out
@@ -239,9 +240,25 @@ func unitArtefacts(units []captureUnit) []gentianov1alpha1.BundleArtefact {
 func manifestStores(app gentianov1alpha1.AppExportStatus) []backup.ManifestStore {
 	stores := make([]backup.ManifestStore, 0, len(app.Artefacts))
 	for _, a := range app.Artefacts {
-		stores = append(stores, backup.ManifestStore{Kind: a.Kind, Name: a.Name, Path: a.Path, Release: a.Release})
+		stores = append(stores, backup.ManifestStore{Kind: a.Kind, Name: a.Name, Path: a.Path, Release: a.Release, Claim: manifestClaim(a.Claim)})
 	}
 	return stores
+}
+
+// manifestClaim and statusClaim are one record of a claim in its two
+// places: the bundle's manifest and a run's status.
+func manifestClaim(c *gentianov1alpha1.BundleClaim) *bundle.ManifestClaim {
+	if c == nil {
+		return nil
+	}
+	return &bundle.ManifestClaim{Size: c.Size, AccessModes: c.AccessModes, StorageClass: c.StorageClass, Labels: c.Labels, Annotations: c.Annotations}
+}
+
+func statusClaim(c *bundle.ManifestClaim) *gentianov1alpha1.BundleClaim {
+	if c == nil {
+		return nil
+	}
+	return &gentianov1alpha1.BundleClaim{Size: c.Size, AccessModes: c.AccessModes, StorageClass: c.StorageClass, Labels: c.Labels, Annotations: c.Annotations}
 }
 
 // tenantAppDigest is the digest the tenant pins the app's build to, "" when

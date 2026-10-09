@@ -262,6 +262,34 @@ clients:
     built: restore-realm-fetch
     proof: internal/controller/tenantrestore_controller.go tenantWideRestoreUnits, internal/backup/restore_jobs.go RealmImportJob
   - store: s3
+    client: the copy of a tenant's mailboxes in a tenant export, uploading to the bundle
+    namespace: system-mail
+    podLabels: {gentianos.io/component: tenant-export}
+    port: 9000
+    built: export-mailboxes-upload
+    proof: internal/controller/tenantexport_controller.go tenantWideUnits, internal/backup/mailboxes.go MailboxBackupJob
+  - store: s3
+    client: the load of a tenant's mailboxes in a tenant restore, fetching from the bundle
+    namespace: system-mail
+    podLabels: {gentianos.io/component: tenant-export}
+    port: 9000
+    built: restore-mailboxes-fetch
+    proof: internal/controller/tenantrestore_controller.go tenantWideRestoreUnits, internal/backup/mailboxes.go MailboxRestoreJob
+  - store: s3
+    client: pg_dump of the desktop database on the kernel's PostgreSQL in a tenant export, uploading to the bundle
+    namespace: kernel-data
+    podLabels: {gentianos.io/component: tenant-export}
+    port: 9000
+    built: export-kernel-desktop-upload
+    proof: internal/controller/tenantexport_controller.go tenantWideUnits, internal/backup/desktop.go KernelDesktopDumpJob
+  - store: s3
+    client: pg_restore of the desktop database on the kernel's PostgreSQL in a tenant restore, fetching from the bundle
+    namespace: kernel-data
+    podLabels: {gentianos.io/component: tenant-export}
+    port: 9000
+    built: restore-kernel-desktop-fetch
+    proof: internal/controller/tenantrestore_controller.go tenantWideRestoreUnits, internal/backup/desktop.go KernelDesktopRestoreJob
+  - store: s3
     client: the operator, reading a bundle's manifest, streaming a download and writing an import
     namespace: kernel-control
     podLabels: {app.kubernetes.io/name: gentian-os, app.kubernetes.io/instance: gentian-os, app.kubernetes.io/component: operator}
@@ -492,8 +520,18 @@ denied:
     port: 9000
   - store: s3
     client: a capture pod in a namespace no unit runs in
-    namespace: kernel-data
+    namespace: kernel-authorization
     podLabels: {gentianos.io/component: tenant-export}
+    port: 9000
+  - store: s3
+    client: a pod beside the kernel's PostgreSQL that is no unit of an export or a restore
+    namespace: kernel-data
+    podLabels: {cnpg.io/cluster: kernel-postgres}
+    port: 9000
+  - store: s3
+    client: the mail server, which is no unit of an export or a restore
+    namespace: system-mail
+    podLabels: {app.kubernetes.io/name: dovecot}
     port: 9000
   - store: s3
     client: a capture pod of an export on the console port
@@ -716,6 +754,30 @@ servers:
       built: kernel-realm-desktop-database
       evidence: proven
       proof: internal/controller/component_desktop.go componentDatabaseNamespace, component_network_policy.go
+    - server: kernel-postgres
+      client: pg_dump of the desktop database of the tenant that adopts the kernel realm, in a tenant export
+      namespace: kernel-data
+      podLabels: {gentianos.io/component: tenant-export}
+      port: 5432
+      built: export-kernel-desktop-dump
+      evidence: proven
+      proof: internal/controller/tenantexport_controller.go tenantWideUnits, internal/backup/desktop.go KernelDesktopDumpJob
+    - server: kernel-postgres
+      client: pg_restore of that database, in a tenant restore
+      namespace: kernel-data
+      podLabels: {gentianos.io/component: tenant-export}
+      port: 5432
+      built: restore-kernel-desktop
+      evidence: proven
+      proof: internal/controller/tenantrestore_controller.go tenantWideRestoreUnits, internal/backup/desktop.go KernelDesktopRestoreJob
+    - server: kernel-postgres
+      client: the Job that empties that database when the tenant is deleted
+      namespace: kernel-data
+      podLabels: {}
+      port: 5432
+      built: kernel-desktop-destroy-job
+      evidence: proven
+      proof: internal/controller/tenant_mailboxes.go deleteKernelDesktop, internal/backup/desktop.go KernelDesktopDestroyJob
     - server: kernel-postgres
       client: a replica or a join Job of the cluster itself, streaming from the primary
       namespace: kernel-data

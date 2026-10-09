@@ -95,6 +95,8 @@ spec:
               value: 'sys.mariadb.placeholder'
             - name: networkPolicy.namespaces.authentication
               value: 'ns.authentication.placeholder'
+            - name: networkPolicy.namespaces.mail
+              value: 'sys.mail.placeholder'
       destination:
         server: https://kubernetes.default.svc
         namespace: '{{.namespace}}'

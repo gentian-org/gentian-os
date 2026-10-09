@@ -1362,9 +1362,8 @@ func (r *TenantReconciler) ensureDovecotAuthReload(ctx context.Context) error {
 	}
 	want := hex.EncodeToString(h.Sum(nil))[:16]
 
-	stage := envOrDefault("GENTIAN_STAGE", envOrDefault("ENV", "dev"))
 	deploy := &appsv1.Deployment{}
-	name := fmt.Sprintf("dovecot-%s", stage)
+	name := mailServerName()
 	if err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: mailNamespace}, deploy); err != nil {
 		// Not an error: on a cluster where kernel mail is not deployed there is no
 		// Dovecot to reload, and tenant reconcile must not block on its absence.

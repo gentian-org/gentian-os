@@ -417,7 +417,8 @@ type BundleRef struct {
 // BundleArtefact is one artefact of a bundle: a database dump, a bucket's
 // archive, a volume's archive.
 type BundleArtefact struct {
-	// Kind is postgres, postgresOwned, mariadb, mariadbOwned, s3 or volume.
+	// Kind is postgres, postgresOwned, mariadb, mariadbOwned, s3 or volume;
+	// for what is the tenant's own also identity, mailboxes or rights.
 	Kind string `json:"kind"`
 	// Name is what the artefact was captured from: the database, bucket or
 	// volume claim, by its name in the tenant the bundle was taken of.
@@ -433,10 +434,42 @@ type BundleArtefact struct {
 	// differently when the tenant is. Set by a restore only.
 	// +optional
 	Target string `json:"target,omitempty"`
+	// Claim is the volume claim a volume was captured from, as far as making
+	// it again takes. Recorded for the volumes of an app that was uninstalled
+	// with its data kept: where such an app's data is brought into a tenant
+	// that never had it, the claim is not there and is made from this.
+	// +optional
+	Claim *BundleClaim `json:"claim,omitempty"`
+}
+
+// BundleClaim is a volume claim, as much of it as making it again takes.
+type BundleClaim struct {
+	// Size is the storage the claim asked for.
+	Size string `json:"size"`
+	// AccessModes are the claim's.
+	// +optional
+	// +listType=atomic
+	AccessModes []string `json:"accessModes,omitempty"`
+	// StorageClass is the class the claim named, empty for the default.
+	// +optional
+	StorageClass string `json:"storageClass,omitempty"`
+	// Labels and Annotations are the ones that say whose the claim is: the
+	// release it records is how the next install and a purge find it.
+	// +optional
+	Labels map[string]string `json:"labels,omitempty"`
+	// +optional
+	Annotations map[string]string `json:"annotations,omitempty"`
 }
 
 // AppExportStatus reports the capture of one app.
 type AppExportStatus struct {
+	// Retained says the app is not installed: it was uninstalled and its
+	// data kept. An export captures that data as it captures an installed
+	// app's, without pausing anything; a restore puts it back as retained and
+	// installs nothing.
+	// +optional
+	Retained bool `json:"retained,omitempty"`
+
 	// Name is the installed profile name.
 	// +optional
 	Name string `json:"name,omitempty"`

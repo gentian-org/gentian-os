@@ -78,6 +78,24 @@ type TenantRestoreSpec struct {
 	// Set it only when you know the specific migration is reversible.
 	// +optional
 	SkipVersionCheck bool `json:"skipVersionCheck,omitempty"`
+
+	// IntoNewTenant says the tenant restored into was made new for this
+	// bundle: an import. It changes two things, and nothing else.
+	//
+	// The data of an app the bundle holds as uninstalled with its data kept
+	// is brought with stores made for it, as retained. Without this such
+	// data is put back only where the tenant still holds it: an app purged
+	// since the bundle was taken stays purged.
+	//
+	// And the rights the bundle records as granted beyond the defaults are
+	// not granted: a right somebody granted in one tenant is not carried
+	// into another by a file. The restore names each in its result. What the
+	// bundle records as withdrawn is withdrawn here too.
+	//
+	// The same holds, whatever this says, when the bundle was taken of a
+	// tenant of another name or on another cluster.
+	// +optional
+	IntoNewTenant bool `json:"intoNewTenant,omitempty"`
 }
 
 // RestoreDecryption names the key material that opens a bundle.
@@ -96,6 +114,34 @@ type RestoreDecryption struct {
 	// Storing it permanently in the cluster would defeat the escrow.
 	// +optional
 	IdentitySecretRef *SecretKeyRef `json:"identitySecretRef,omitempty"`
+}
+
+// RestoreRights is what a restore does with the entries of the rights store
+// a bundle holds. Each entry is written "<who> <relation> <what>", under the
+// names of the tenant restored into.
+type RestoreRights struct {
+	// Grant are written to the store: rights the bundle's tenant had been
+	// granted beyond what follows from its entry in git.
+	// +optional
+	// +listType=atomic
+	Grant []string `json:"grant,omitempty"`
+	// Withdraw are removed from the store: defaults the bundle's tenant no
+	// longer held.
+	// +optional
+	// +listType=atomic
+	Withdraw []string `json:"withdraw,omitempty"`
+	// NotBrought are entries the bundle holds that this restore does not
+	// write, each with the reason.
+	// +optional
+	// +listType=atomic
+	NotBrought []string `json:"notBrought,omitempty"`
+	// Applied says the store holds what Grant and Withdraw say.
+	// +optional
+	Applied bool `json:"applied,omitempty"`
+	// WaitingSince is when the restore began to wait for the operator to
+	// attach the tenant in the rights store, which has to come first.
+	// +optional
+	WaitingSince *metav1.Time `json:"waitingSince,omitempty"`
 }
 
 // TenantRestoreStatus reports progress and what was decided during preflight.
@@ -163,6 +209,12 @@ type TenantRestoreStatus struct {
 	// +optional
 	// +listType=atomic
 	Notes []string `json:"notes,omitempty"`
+
+	// Rights is what this restore does with the entries of the rights store
+	// the bundle holds: the ones it grants, the ones it withdraws, and the
+	// ones it does not bring. Decided before anything is changed.
+	// +optional
+	Rights *RestoreRights `json:"rights,omitempty"`
 
 	// ImportRemoved records that the uploaded bundle this restore read was
 	// removed from the import bucket, which happens once the restore has run

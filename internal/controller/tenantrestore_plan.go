@@ -55,6 +55,16 @@ import (
 //     restorable: otherwise the restore is refused before anything is
 //     changed. A person who names an app is not answered with the others.
 //
+//  5. An app the manifest holds as retained -- uninstalled when the bundle
+//     was taken, its data kept -- is put back as retained: into the stores
+//     the tenant still holds for it, with nothing installed and nothing
+//     paused. Where the tenant holds none of it any more, it was purged, and
+//     a purge is for good: the app is not restored and is named. Only into a
+//     tenant made new for the bundle (spec.intoNewTenant) are its stores
+//     made, so that an import brings what the tenant it was taken of had.
+//     Where the tenant has since installed the app again, the data is the
+//     installed app's and is restored by rule 2.
+//
 // Where an artefact is, and what it was captured from, is the manifest's to
 // say (format 2). Where it goes is the tenant's: the database, bucket or
 // claim of that kind the installed app has, by the inventory's names -- which
@@ -76,6 +86,31 @@ type restorePlan struct {
 	notIncluded []string
 	// sourceTenant is the tenant the bundle was taken of.
 	sourceTenant string
+	// rights is what is done with the bundle's entries of the rights store.
+	rights *gentianov1alpha1.RestoreRights
+	// notes are said on the result: what of the tenant's own the bundle
+	// holds and this restore does not put back, and why.
+	notes []string
+}
+
+// planTarget is the tenant restored into, as far as the plan needs to know
+// it beyond its apps: where what is the tenant's own goes.
+type planTarget struct {
+	// intoNewTenant is spec.intoNewTenant: an import.
+	intoNewTenant bool
+	// desktopDatabase is the desktop's database: the tenant's on the
+	// tenants' PostgreSQL, or the kernel's for the tenant that adopts the
+	// kernel realm.
+	desktopDatabase string
+	// mailDomain is the tenant's mail domain where the cluster keeps its
+	// mailboxes and they are the tenant's alone; noMailboxes says why not,
+	// where it is empty.
+	mailDomain  string
+	noMailboxes string
+	// cluster is this cluster's id in the rights store, and haveRights
+	// whether the operator has a store to write to.
+	cluster    string
+	haveRights bool
 }
 
 // plannedApp is one app that will be restored.
@@ -85,6 +120,9 @@ type plannedApp struct {
 	// note is said on the app's entry: something true about this restore of
 	// it that whoever ran it should know.
 	note string
+	// retained says the app is put back as retained: not installed, not
+	// paused, its stores made where the plan says so.
+	retained bool
 }
 
 // liveApp is an app as the tenant has it now.
@@ -96,6 +134,9 @@ type liveApp struct {
 	// claims are the volume claims that are the app's (backup.AppVolumes, or
 	// the profile's explicit list).
 	claims []string
+	// held is what the tenant holds for an app that is not installed: the
+	// stores (backup.HeldStores); the claims are in claims.
+	held backup.Stores
 }
 
 // errRestoreRefused is a restore that is not begun.
@@ -116,6 +157,7 @@ func planRestore(
 	tenant *gentianov1alpha1.Tenant,
 	wanted []string,
 	skipVersionCheck bool,
+	target planTarget,
 	live func(app string) (liveApp, error),
 ) (*restorePlan, error) {
 	plan := &restorePlan{schemaVersion: m.SchemaVersion, derivation: gentianov1alpha1.RestoreNamesFromManifest,
@@ -144,7 +186,17 @@ func planRestore(
 		if err != nil {
 			return nil, err
 		}
-		artefacts, note, why, err := planApp(m, source, tenant, app, now, skipVersionCheck)
+		var artefacts []gentianov1alpha1.BundleArtefact
+		var note, why string
+		retained := app.Retained && !now.installed
+		if retained {
+			artefacts, note, why, err = planRetained(tenant, app, now, target.intoNewTenant)
+		} else {
+			artefacts, note, why, err = planApp(m, source, tenant, app, now, skipVersionCheck)
+			if app.Retained && why == "" {
+				note = joinNotes(note, "the bundle holds its data as an uninstalled app's, and the app is installed here now: the data is restored into the installed app")
+			}
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -152,7 +204,7 @@ func planRestore(
 			plan.notRestored = append(plan.notRestored, gentianov1alpha1.RestoreOmission{App: app.Name, Reason: why})
 			continue
 		}
-		plan.apps = append(plan.apps, plannedApp{name: app.Name, artefacts: artefacts, note: note})
+		plan.apps = append(plan.apps, plannedApp{name: app.Name, artefacts: artefacts, note: note, retained: retained})
 	}
 
 	// An app asked for by name is restored or the restore is refused.
@@ -178,25 +230,57 @@ func planRestore(
 		}
 	}
 
-	// The tenant's own: the realm and the desktop's database, each where
-	// the manifest says it is.
-	if m.Identity != nil && m.Identity.Path != "" {
-		if err := cleanArtefactPath(m.Identity.Path); err != nil {
-			return nil, err
+	// The tenant's own, each where the manifest says it is, kind by kind
+	// (bundle.TenantArtefacts).
+	for _, kind := range bundle.TenantArtefacts {
+		switch kind {
+		case bundle.ArtefactPostgres:
+			if m.Shell == nil || m.Shell.Path == "" {
+				continue
+			}
+			if err := cleanArtefactPath(m.Shell.Path); err != nil {
+				return nil, err
+			}
+			plan.tenantWide = append(plan.tenantWide, gentianov1alpha1.BundleArtefact{
+				Kind: kind, Name: m.Shell.Name, Path: m.Shell.Path, Target: target.desktopDatabase,
+			})
+		case bundle.ArtefactMailboxes:
+			if m.Mailboxes == nil || m.Mailboxes.Path == "" {
+				continue
+			}
+			if err := cleanArtefactPath(m.Mailboxes.Path); err != nil {
+				return nil, err
+			}
+			if target.mailDomain == "" {
+				// Said, not dropped: the bundle holds mail this restore
+				// has nowhere to put.
+				why := target.noMailboxes
+				if why == "" {
+					why = "this cluster runs no mail server of its own, so there are no mailboxes to put them into"
+				}
+				plan.notes = append(plan.notes, "The bundle holds the mailboxes of "+m.Mailboxes.Name+", and they were NOT put back: "+why+".")
+				continue
+			}
+			plan.tenantWide = append(plan.tenantWide, gentianov1alpha1.BundleArtefact{
+				Kind: kind, Name: m.Mailboxes.Name, Path: m.Mailboxes.Path, Target: target.mailDomain,
+			})
+		case bundle.ArtefactIdentity:
+			if m.Identity == nil || m.Identity.Path == "" {
+				continue
+			}
+			if err := cleanArtefactPath(m.Identity.Path); err != nil {
+				return nil, err
+			}
+			plan.tenantWide = append(plan.tenantWide, gentianov1alpha1.BundleArtefact{
+				Kind: kind, Name: m.Identity.Realm, Path: m.Identity.Path, Target: keycloakRealmName(tenant),
+			})
+		case bundle.ArtefactRights:
+			plan.rights = rightsPlan(m, tenant, target.cluster, target.intoNewTenant, target.haveRights)
+		default:
+			// A kind added to the list and not here is a kind a bundle
+			// would hold and no restore put back.
+			return nil, fmt.Errorf("a restore does not know what to do with a tenant's %q", kind)
 		}
-		plan.tenantWide = append(plan.tenantWide, gentianov1alpha1.BundleArtefact{
-			Kind: bundle.ArtefactIdentity, Name: m.Identity.Realm, Path: m.Identity.Path,
-			Target: keycloakRealmName(tenant),
-		})
-	}
-	if m.Shell != nil && m.Shell.Path != "" {
-		if err := cleanArtefactPath(m.Shell.Path); err != nil {
-			return nil, err
-		}
-		plan.tenantWide = append(plan.tenantWide, gentianov1alpha1.BundleArtefact{
-			Kind: bundle.ArtefactPostgres, Name: m.Shell.Name, Path: m.Shell.Path,
-			Target: databaseName(tenant, portalShellAppName),
-		})
 	}
 
 	if len(plan.apps) == 0 {
@@ -297,6 +381,99 @@ func planApp(
 	}
 	if len(untouched) > 0 {
 		note = joinNotes(note, "the bundle holds nothing for its "+strings.Join(untouched, ", its ")+"; left as it is")
+	}
+	return artefacts, note, "", nil
+}
+
+// planRetained decides an app the bundle holds as retained and the tenant
+// does not have installed: its artefacts with where each goes, or why it is
+// not put back.
+//
+// Each artefact goes into the store of that kind the tenant holds for the
+// app, by the inventory's names. A store the tenant does not hold is made
+// only for a tenant made new for the bundle; anywhere else it was purged
+// since the bundle was taken, and the app -- whole, as every app is
+// restored whole or not at all -- stays as it is.
+func planRetained(
+	tenant *gentianov1alpha1.Tenant,
+	app backup.ManifestApp,
+	now liveApp,
+	intoNewTenant bool,
+) (artefacts []gentianov1alpha1.BundleArtefact, note, why string, err error) {
+	holdsNothing := now.held == (backup.Stores{}) && len(now.claims) == 0
+	if holdsNothing && !intoNewTenant {
+		return nil, "", "was uninstalled with its data kept when the bundle was taken, and this tenant holds none of that data any more: it was purged since, " +
+			"and a purge is for good. Install the app, then restore it by naming it in spec.apps", nil
+	}
+	if now.profile == nil && intoNewTenant {
+		return nil, "", "was uninstalled with its data kept when the bundle was taken, and has no ComponentProfile on this cluster: " +
+			"nothing says how its stores are to be made here. Add the app's definition to a catalogue of this cluster and restore it by naming it in spec.apps", nil
+	}
+	declared := backup.ProfileStores(now.profile)
+	gone := func(what string) string {
+		return fmt.Sprintf("was uninstalled with its data kept when the bundle was taken, and this tenant no longer holds its %s: it was purged since, and a purge is for good", what)
+	}
+	for _, s := range app.Stores {
+		if err := cleanArtefactPath(s.Path); err != nil {
+			return nil, "", "", fmt.Errorf("app %s: %w", app.Name, err)
+		}
+		a := gentianov1alpha1.BundleArtefact{Kind: s.Kind, Name: s.Name, Path: s.Path, Release: s.Release}
+		engine := gentianov1alpha1.DatabaseEngine("")
+		switch s.Kind {
+		case bundle.ArtefactPostgres, bundle.ArtefactPostgresOwned:
+			engine = gentianov1alpha1.DatabaseEnginePostgreSQL
+		case bundle.ArtefactMariaDB, bundle.ArtefactMariaDBOwned:
+			engine = gentianov1alpha1.DatabaseEngineMariaDB
+		}
+		switch {
+		case engine != "":
+			switch {
+			case now.held.Database == engine:
+			case now.held.Database != "":
+				return nil, "", fmt.Sprintf("has a %s database in the bundle and this tenant holds %s for it", engine, engineText(now.held.Database)), nil
+			case !intoNewTenant:
+				return nil, "", gone("database"), nil
+			case declared.Database != engine:
+				// Made here it would be a database the app, installed
+				// later, does not look for.
+				return nil, "", fmt.Sprintf("has a %s database in the bundle and its definition on this cluster declares %s", engine, engineText(declared.Database)), nil
+			}
+			a.Target = backup.DatabaseName(tenant, app.Name)
+		case s.Kind == bundle.ArtefactS3:
+			switch {
+			case now.held.S3:
+			case !intoNewTenant:
+				return nil, "", gone("bucket"), nil
+			case !declared.S3:
+				return nil, "", "has a bucket in the bundle and its definition on this cluster declares no object storage", nil
+			}
+			a.Target = backup.S3Bucket(tenant, app.Name)
+		case s.Kind == bundle.ArtefactVolume:
+			a.Target = s.Name
+			if !slices.Contains(now.claims, s.Name) {
+				switch {
+				case !intoNewTenant:
+					return nil, "", gone("volume claim " + s.Name), nil
+				case s.Claim == nil || s.Claim.Size == "":
+					return nil, "", fmt.Sprintf("has the volume claim %s in the bundle, which this tenant does not have, and the bundle does not say how to make it", s.Name), nil
+				}
+				// To be made, from what the bundle recorded of it.
+				a.Claim = statusClaim(s.Claim)
+			}
+		default:
+			return nil, "", fmt.Sprintf("has an artefact of kind %q in the bundle, which this platform does not know how to restore", s.Kind), nil
+		}
+		artefacts = append(artefacts, a)
+	}
+	if len(artefacts) == 0 {
+		return nil, "", "is in the bundle as an uninstalled app, with no data", nil
+	}
+	note = "its data was put back as an uninstalled app's: the app is not installed, and installing it finds the data"
+	for _, a := range artefacts {
+		if a.Claim != nil {
+			note = joinNotes(note, "its volume claims were made here, on this cluster's default storage class")
+			break
+		}
 	}
 	return artefacts, note, "", nil
 }
@@ -433,7 +610,7 @@ func restoreLimits(derivation string) []string {
 		"Stored credentials are not in a bundle. The ones the platform seeds were made for this tenant when it was provisioned and a restore changes none of them. " +
 			"Credentials a person entered -- a repository's password, an SMTP relay's, an API key typed into an app's settings in the vault -- did not come back and have to be entered again.",
 		"Data an app encrypted with a secret the platform generated for it can be read only where that secret is the same: on the cluster the bundle was taken on, or one built from its recovery kit.",
-		"Members came back without passwords and have to be sent a reset. Mail, app grants, integration bindings and the cache are not in a bundle: grants and bindings are declared state and come from where the tenant is declared.",
+		"Members came back without passwords and have to be sent a reset. App grants, integration bindings and the cache are not in a bundle: grants and bindings are declared state and come from where the tenant is declared.",
 	}
 	if derivation == gentianov1alpha1.RestoreNamesDerived {
 		notes = append(notes, "This bundle's manifest is of format 1, which names apps and kinds only: the artefact names were derived from the tenant the manifest records, "+

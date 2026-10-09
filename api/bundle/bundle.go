@@ -44,7 +44,20 @@ import (
 // manifest still reads: its apps name no artefact, which is how a reader
 // tells (Manifest.NamesArtefacts), and a restore of one falls back to
 // deriving the names and says so in its result.
-const SchemaVersion = 2
+//
+// Version 3 adds what a version 2 bundle did not hold, and renames nothing:
+// an app that was uninstalled with its data kept (ManifestApp.Retained, and
+// per volume the claim it was captured from, ManifestStore.Claim, so that the
+// claim can be made again where it is not); the mailboxes of the tenant's
+// mail domain (Manifest.Mailboxes); and the entries of the rights store that
+// follow from nothing else (Manifest.Rights). A version 2 manifest has none
+// of them and reads as before: a restore of one puts back what it holds.
+//
+// The version is bumped, although only fields were added, because a reader
+// of version 2 would take a retained app for an installed one and would say
+// nothing of the mailboxes and the rights it left out. A reader refuses a
+// version newer than its own.
+const SchemaVersion = 3
 
 // OldestReadableSchemaVersion is the oldest manifest a restore still reads.
 const OldestReadableSchemaVersion = 1
@@ -83,7 +96,31 @@ const (
 	ArtefactVolume = "volume"
 	// ArtefactIdentity is the realm export.
 	ArtefactIdentity = "identity"
+	// ArtefactMailboxes is an archive of the mailboxes of one mail domain.
+	// Inside it, INDEX names the mailboxes one per line, by the part of the
+	// address before the @, and <line number, from 0>/ is each one's mail as
+	// a Maildir++ tree, written by the mail server's own synchronisation
+	// (doveadm backup): every folder, every message, with its flags and its
+	// identifiers. Since version 3.
+	ArtefactMailboxes = "mailboxes"
+	// ArtefactRights is no file: the entries are in the manifest itself
+	// (Manifest.Rights). The name is what the inventory and a restore's
+	// result call them by. Since version 3.
+	ArtefactRights = "rights"
 )
+
+// AppArtefacts are the kinds of artefact an app's data is carried as, for
+// an installed app and for one that was uninstalled with its data kept
+// alike.
+var AppArtefacts = []string{ArtefactPostgres, ArtefactPostgresOwned, ArtefactMariaDB, ArtefactMariaDBOwned, ArtefactS3, ArtefactVolume}
+
+// TenantArtefacts are the kinds of artefact that are a tenant's own and no
+// app's. A restore puts the rights back last, after the realm whose groups
+// they name. A kind added here has to be captured, planned,
+// restored and destroyed, or the tests of the inventory fail.
+//
+// The desktop's database is on the list as the PostgreSQL dump it is.
+var TenantArtefacts = []string{ArtefactIdentity, ArtefactPostgres, ArtefactMailboxes, ArtefactRights}
 
 // Manifest is the index of a bundle, and the only part of it a restore reads
 // before deciding whether it can proceed.
@@ -123,10 +160,20 @@ type Manifest struct {
 	// rather than to any app.
 	Shell *ManifestStore `json:"shell,omitempty"`
 
+	// Mailboxes records the capture of the tenant's mailboxes, when the
+	// cluster keeps them and one was taken. Name is the mail domain they
+	// were captured from. Since version 3.
+	Mailboxes *ManifestStore `json:"mailboxes,omitempty"`
+
+	// Rights records the entries of the rights store that are the tenant's
+	// and follow from nothing else. Present, though it may list nothing,
+	// whenever the store was read. Since version 3.
+	Rights *ManifestRights `json:"rights,omitempty"`
+
 	// NotIncluded names what the tenant had when the bundle was taken that
-	// the bundle does not hold, beyond what no bundle ever holds: the data
-	// uninstalled apps left, which an export does not capture, and anything
-	// else an export found and could not carry. One sentence each, for a
+	// the bundle does not hold, beyond what no bundle ever holds: an app the
+	// export was not asked for, and anything else an export found and could
+	// not carry. One sentence each, for a
 	// person. Empty when the export found nothing of the kind. A reader
 	// repeats them; nothing is decided by them.
 	NotIncluded []string `json:"notIncluded,omitempty"`
@@ -147,6 +194,13 @@ type ManifestApp struct {
 	// Releases are the Helm releases the app was installed as. Since
 	// version 2.
 	Releases []string `json:"releases,omitempty"`
+
+	// Retained says the app was not installed when the bundle was taken: it
+	// had been uninstalled and its data kept. The artefacts are the same as
+	// an installed app's. No build is recorded, because none was running;
+	// a restore puts the data back as retained and installs nothing. Since
+	// version 3.
+	Retained bool `json:"retained,omitempty"`
 
 	// Stores lists what was captured. In version 1 each entry is a kind and
 	// the app's name; since version 2 it is one entry per artefact, with the
@@ -178,7 +232,7 @@ func (m *Manifest) NamesArtefacts() bool {
 // ManifestStore is one captured artefact.
 type ManifestStore struct {
 	// Kind is one of the Artefact kinds: postgres, postgresOwned, mariadb,
-	// mariadbOwned, s3, volume or identity.
+	// mariadbOwned, s3, volume, identity or mailboxes.
 	Kind string `json:"kind"`
 	// Name is the database, bucket or claim captured; for postgresOwned,
 	// the role whose databases the archive holds; for mariadbOwned, the
@@ -191,6 +245,55 @@ type ManifestStore struct {
 	// captured. Volumes only, and only when the claim recorded one. Since
 	// version 2.
 	Release string `json:"release,omitempty"`
+	// Claim is the volume claim an artefact was captured from, as far as
+	// making it again needs: volumes of a retained app only. Since version
+	// 3.
+	Claim *ManifestClaim `json:"claim,omitempty"`
+}
+
+// ManifestClaim is a volume claim, as much of it as making it again takes.
+//
+// A claim an uninstall kept is found again, by the next install and by a
+// purge, through the release it records. That record is in its labels and
+// annotations, which is why they are here.
+type ManifestClaim struct {
+	// Size is the storage the claim asked for, as a quantity ("10Gi").
+	Size string `json:"size"`
+	// AccessModes are the claim's.
+	AccessModes []string `json:"accessModes,omitempty"`
+	// StorageClass is the class the claim named, "" for the default.
+	StorageClass string `json:"storageClass,omitempty"`
+	// Labels and Annotations are the ones that say whose the claim is.
+	Labels      map[string]string `json:"labels,omitempty"`
+	Annotations map[string]string `json:"annotations,omitempty"`
+}
+
+// ManifestRights is what a bundle holds of the rights store.
+//
+// The store is mostly a projection: who is whose member follows from the
+// realm, which apps a tenant has and which groups hold its roles follow from
+// the tenant's entry in git, and all of that is made again wherever the
+// tenant is. What is here is the rest: entries on the tenant and on its apps
+// that the projection would not write (Granted), and entries the projection
+// writes once and that were since taken away (Withdrawn) -- a tenant that
+// no longer lets its cluster administer it.
+type ManifestRights struct {
+	// Cluster is the name of the cluster the entries were read on. An entry
+	// that names the cluster names this one.
+	Cluster string `json:"cluster,omitempty"`
+	// Granted are entries the store held that follow from nothing else.
+	Granted []RightsTuple `json:"granted,omitempty"`
+	// Withdrawn are entries the tenant starts with that the store no
+	// longer held.
+	Withdrawn []RightsTuple `json:"withdrawn,omitempty"`
+}
+
+// RightsTuple is one entry of the rights store: who holds which relation
+// to what.
+type RightsTuple struct {
+	User     string `json:"user"`
+	Relation string `json:"relation"`
+	Object   string `json:"object"`
 }
 
 // ManifestIdentity records the realm capture.

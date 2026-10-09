@@ -228,6 +228,11 @@ type TenantReconciler struct {
 	// definitions would drop fields it writes (internal/schemacheck). Nil
 	// holds nothing.
 	Definitions *crdcheck.Holder
+	// Rights is the rights store, for the entries of it a backup carries
+	// and a restore puts back (tenant_rights.go). Nil on a cluster that runs
+	// none. ClusterID is the id the cluster has in it.
+	Rights    RightsStore
+	ClusterID string
 	// Exec runs commands inside app pods (see AppExecer), so a profile's maintenance-mode and
 	// restore hooks can run. Optional: without it those fall back to scaling.
 	Exec AppExecer
@@ -740,6 +745,15 @@ func (r *TenantReconciler) reconcileDelete(ctx context.Context, tenant *gentiano
 	// Clean up mail resources (Application CRs always; Secrets under DeletionPolicy=Delete).
 	if err := r.deleteMail(ctx, tenant); err != nil {
 		return ctrl.Result{}, err
+	}
+	// And then what the tenant has that is no app's and holds what people
+	// stored (backup.TenantOwned): its mailboxes, now that nothing routes
+	// mail to them, and the desktop's database where it is the kernel's.
+	// Each by a Job that has to succeed, like a store's.
+	for _, step := range []func(context.Context, *gentianov1alpha1.Tenant) error{r.deleteMailboxes, r.deleteKernelDesktop} {
+		if requeue, res, err := awaitJob(step(ctx, tenant)); requeue {
+			return res, err
+		}
 	}
 
 	// Delete the XTenant composite so Crossplane cascades deletion of

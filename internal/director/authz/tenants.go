@@ -64,15 +64,16 @@ func (c *OpenFGA) ReconcileTenants(ctx context.Context, cluster string, tenants 
 				writes = append(writes, Tuple{User: clusterObj, Relation: "operated_by", Object: obj})
 			}
 		}
-		for _, role := range tenantRoleGroups {
-			group, err := Group("gentian:tenant:" + tenant + ":" + role.suffix)
-			if err != nil {
-				return fmt.Errorf("tenant %s: %w", tenant, err)
-			}
-			t := Tuple{User: group + "#member", Relation: role.relation, Object: obj}
+		// The role tuples, by the list a backup tells the store's own
+		// entries from the derived ones by (tenantDefaults).
+		standing, _, err := tenantDefaults(cluster, tenant)
+		if err != nil {
+			return err
+		}
+		for _, t := range standing[1:] {
 			have, err := c.Read(ctx, t)
 			if err != nil {
-				return fmt.Errorf("read %s on %s: %w", role.relation, obj, err)
+				return fmt.Errorf("read %s on %s: %w", t.Relation, obj, err)
 			}
 			if len(have) == 0 {
 				writes = append(writes, t)

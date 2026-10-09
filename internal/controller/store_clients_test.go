@@ -204,6 +204,17 @@ func TestTheStoresClientsAreWhereTheirNetworkPoliciesExpectThem(t *testing.T) {
 		"restore-volume":         unit(restores, bundle.ArtefactVolume),
 		"export-realm-upload":    unit(exports, bundle.ArtefactIdentity),
 		"restore-realm-fetch":    unit(restores, bundle.ArtefactIdentity),
+		// The two units that are not beside a store of the system tier, made
+		// as the reconcilers place them: beside the mail server's volume, and
+		// beside the kernel's PostgreSQL.
+		"export-mailboxes-upload": job(backup.MailboxBackupJob(
+			backup.JobParams{Namespace: mailNamespace, Name: "j", Tenant: tenant.Name}, "dovecot-dev-mail", "acme.example")),
+		"restore-mailboxes-fetch": job(backup.MailboxRestoreJob(
+			backup.JobParams{Namespace: mailNamespace, Name: "j", Tenant: tenant.Name}, backup.Decryption{}, backup.MailboxesArtefact, "dovecot-dev-mail", "acme.example")),
+		"export-kernel-desktop-upload": job(backup.KernelDesktopDumpJob(
+			backup.JobParams{Namespace: backup.KernelPostgresNamespace(), Name: "j", Tenant: tenant.Name})),
+		"restore-kernel-desktop-fetch": job(backup.KernelDesktopRestoreJob(
+			backup.JobParams{Namespace: backup.KernelPostgresNamespace(), Name: "j", Tenant: tenant.Name}, backup.Decryption{}, "postgres/portal_shell.pgc")),
 	}
 
 	// The data port of each store: what an app is handed and what the

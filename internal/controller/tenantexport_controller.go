@@ -12,6 +12,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"sort"
@@ -34,6 +35,7 @@ import (
 	"github.com/gentian-org/gentian-os/api/bundle"
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/backup"
+	"github.com/gentian-org/gentian-os/internal/director/authz"
 	"github.com/gentian-org/gentian-os/internal/meta"
 	"github.com/gentian-org/gentian-os/internal/schemacheck/crdcheck"
 )
@@ -112,9 +114,15 @@ type TenantExportReconciler struct {
 // an app is uninstalled. No verb here is speculative — get is the purge's
 // wait-for-gone poll, delete is the purge itself.
 //
+// create is a restore's, and only for one case: the data of an app that was
+// uninstalled with its data kept, brought into a tenant made new for the
+// bundle. The claim it was on is not there, no install will make it -- the
+// app stays uninstalled -- and its files have nowhere else to go
+// (ensureRetainedClaim).
+//
 // No watch: nothing reads this type through the manager's cache, and after
 // appVolumes stopped doing so, granting it would only invite the read back.
-// +kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=get;list;delete
+// +kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=get;list;create;delete
 
 // pods/log, to read why a capture container failed. Without it a failure can
 // report that a Job did not succeed and nothing about why, while the reason
@@ -242,6 +250,17 @@ func (r *TenantExportReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	if err != nil {
 		return ctrl.Result{}, err
 	}
+	// And the apps that were uninstalled with their data kept, after the
+	// installed ones: what a deletion of the tenant would destroy with them.
+	retained, retainedNames, err := r.retainedSet(ctx, tenant, export)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	for _, name := range retainedNames {
+		if !slices.Contains(apps, name) {
+			apps = append(apps, name)
+		}
+	}
 
 	// Resume anything paused that is not the app currently being captured. This
 	// is the crash-recovery path: after a restart the controller has no memory
@@ -252,13 +271,17 @@ func (r *TenantExportReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	}
 
 	if current != "" {
+		if app, ok := retained[current]; ok {
+			return r.captureRetained(ctx, export, tenant, app, encryption)
+		}
 		return r.captureApp(ctx, export, tenant, current, encryption, logger)
 	}
 
 	// Every app is done; capture what belongs to the tenant rather than to an
-	// app. Neither is quiesced: the realm and the shell database are low-write
-	// and internally consistent, and pausing identity would lock every member
-	// out of every app for the duration.
+	// app. None of it is quiesced: the realm and the desktop's database are
+	// low-write and internally consistent, a mailbox is copied under the mail
+	// server's own locks, and pausing identity or mail would lock every
+	// member out for the duration.
 	if done, err := r.captureTenantWide(ctx, export, tenant, encryption); err != nil {
 		return ctrl.Result{}, err
 	} else if !done {
@@ -380,6 +403,8 @@ type captureUnit struct {
 	Path string
 	// Release is the Helm release a volume claim records, when it does.
 	Release string
+	// Claim is the claim itself, recorded for an uninstalled app's volume.
+	Claim   *gentianov1alpha1.BundleClaim
 	JobName string
 	Job     *batchv1.Job
 }
@@ -394,7 +419,30 @@ func (r *TenantExportReconciler) captureUnits(
 	export *gentianov1alpha1.TenantExport,
 	encryption backup.Encryption,
 ) ([]captureUnit, error) {
-	stores := backup.ProfileStores(profile)
+	spec := profileBackupSpec(profile)
+	claims, _, err := r.appVolumesAndReleases(ctx, tenant, appName, profile, spec)
+	if err != nil {
+		return nil, err
+	}
+	return r.unitsFor(ctx, tenant, appName, profile, backup.ProfileStores(profile), claims, false, export, encryption)
+}
+
+// unitsFor is the capture of one app's stores and claims, installed or not:
+// one set of units, so that what a bundle holds of an uninstalled app's data
+// is what it would hold of the same app installed. recordClaims says to
+// record each claim itself beside its archive, which is what lets the data
+// of an uninstalled app be brought to a tenant that has no such claim.
+func (r *TenantExportReconciler) unitsFor(
+	ctx context.Context,
+	tenant *gentianov1alpha1.Tenant,
+	appName string,
+	profile *gentianov1alpha1.ComponentProfile,
+	stores backup.Stores,
+	claims []string,
+	recordClaims bool,
+	export *gentianov1alpha1.TenantExport,
+	encryption backup.Encryption,
+) ([]captureUnit, error) {
 	spec := profileBackupSpec(profile)
 	params := r.jobParams(tenant, appName, export, encryption)
 	staged := stagedSecretName(tenant.Name, export.Name)
@@ -461,7 +509,7 @@ func (r *TenantExportReconciler) captureUnits(
 	// Their credentials come from the staged copy (see ensureStagedSecret),
 	// which also carries the passphrase for a passphrase-mode export.
 	volParams := placeExportUnit(params, backup.TenantNamespace(tenant), staged)
-	claims, releases, err := r.appVolumesAndReleases(ctx, tenant, appName, profile, spec)
+	live, err := r.tenantClaims(ctx, tenant)
 	if err != nil {
 		return nil, err
 	}
@@ -472,12 +520,38 @@ func (r *TenantExportReconciler) captureUnits(
 		// paused by scaling down releases its volume, and then the scheduler
 		// may place this anywhere.
 		p.Node = r.nodeHoldingClaim(ctx, p.Namespace, claim)
-		units = append(units, captureUnit{
-			Kind: bundle.ArtefactVolume, Name: claim, Path: backup.VolumeArtefact(claim), Release: releases[claim],
+		unit := captureUnit{
+			Kind: bundle.ArtefactVolume, Name: claim, Path: backup.VolumeArtefact(claim),
 			JobName: p.Name, Job: backup.VolumeArchiveJob(p, claim, spec.ExcludedPaths()),
-		})
+		}
+		if pvc, ok := live[claim]; ok {
+			unit.Release = backup.ClaimRelease(*pvc)
+			if recordClaims {
+				unit.Claim = claimRecord(pvc)
+			}
+		}
+		units = append(units, unit)
 	}
 	return units, nil
+}
+
+// tenantClaims are the volume claims in the tenant's namespace, by name,
+// read as appVolumes reads them.
+func (r *TenantExportReconciler) tenantClaims(ctx context.Context, tenant *gentianov1alpha1.Tenant) (map[string]*corev1.PersistentVolumeClaim, error) {
+	namespace := backup.TenantNamespace(tenant)
+	reader := client.Reader(r.Client)
+	if r.VolumeReader != nil {
+		reader = r.VolumeReader
+	}
+	pvcs := &corev1.PersistentVolumeClaimList{}
+	if err := reader.List(ctx, pvcs, client.InNamespace(namespace)); err != nil {
+		return nil, fmt.Errorf("list claims in %s: %w", namespace, err)
+	}
+	out := make(map[string]*corev1.PersistentVolumeClaim, len(pvcs.Items))
+	for i := range pvcs.Items {
+		out[pvcs.Items[i].Name] = &pvcs.Items[i]
+	}
+	return out, nil
 }
 
 // appVolumes resolves which claims to capture: the profile's explicit list when
@@ -651,21 +725,26 @@ func (r *TenantExportReconciler) ensureCaptureJob(
 	return false, nil
 }
 
-// tenantWideUnits are the captures that are the tenant's and no app's: the
-// realm, taken in the identity namespace with the identity provider's
-// administrator Secret, and the desktop's database, taken beside the tenants'
-// PostgreSQL.
+// tenantWideUnits are the captures that are the tenant's and no app's, each
+// taken where the credential it works with is: the realm in the identity
+// namespace, with the identity provider's administrator Secret; the
+// desktop's database beside the PostgreSQL it is on; the mailboxes beside
+// the mail server's volume, where the cluster runs a mail server.
 //
-// The tenant that adopts the kernel realm keeps its desktop's database on the
-// kernel's own PostgreSQL, not the tenants', and nothing there holds an
-// administrator credential a capture could run with. Its database is not
-// captured, and the export and the bundle say so (desktopNotCaptured) rather
-// than dumping a database of that name from a server that does not have it.
+// The desktop's database of the tenant that adopts the kernel realm is on
+// the kernel's own PostgreSQL, not the tenants'. It is captured there, as
+// the database's owner (backup.KernelDesktopDumpJob): an export used to
+// leave it out and say so, for want of a credential beside that server.
+//
+// The entries of the rights store are the tenant's own too and are no unit:
+// they are read by the operator and written into the manifest
+// (storeOnlyRights).
 func (r *TenantExportReconciler) tenantWideUnits(
+	ctx context.Context,
 	tenant *gentianov1alpha1.Tenant,
 	export *gentianov1alpha1.TenantExport,
 	encryption backup.Encryption,
-) []captureUnit {
+) ([]captureUnit, error) {
 	params := r.jobParams(tenant, backupTenantComponent, export, encryption)
 	staged := stagedSecretName(tenant.Name, export.Name)
 
@@ -677,16 +756,35 @@ func (r *TenantExportReconciler) tenantWideUnits(
 		JobName: realmParams.Name, Job: backup.RealmExportJob(realmParams, realm),
 	}}
 
-	if r.desktopOnKernelStore(tenant) {
-		return units
-	}
-	shellParams := placeExportUnit(params, postgresNamespace, staged)
+	shellDB, shellNamespace := r.desktopDatabase(tenant)
+	shellParams := placeExportUnit(params, shellNamespace, staged)
 	shellParams.Name = exportJobName(tenant.Name, export.Name, backupTenantComponent, "shell")
-	shellDB := databaseName(tenant, portalShellAppName)
-	return append(units, captureUnit{
+	shellJob := backup.PostgresDumpJob(shellParams, shellDB)
+	if r.desktopOnKernelStore(tenant) {
+		shellJob = backup.KernelDesktopDumpJob(shellParams)
+	}
+	units = append(units, captureUnit{
 		Kind: bundle.ArtefactPostgres, Name: shellDB, Path: backup.PostgresArtefact(shellDB),
-		JobName: shellParams.Name, Job: backup.PostgresDumpJob(shellParams, shellDB),
+		JobName: shellParams.Name, Job: shellJob,
 	})
+
+	if r.Reconciler == nil {
+		return units, nil
+	}
+	boxes, _, err := r.Reconciler.mailboxesOf(ctx, tenant)
+	if err != nil {
+		return nil, err
+	}
+	if boxes != nil {
+		mailParams := placeExportUnit(params, mailNamespace, staged)
+		mailParams.Name = exportJobName(tenant.Name, export.Name, backupTenantComponent, "mail")
+		mailParams.Node = boxes.Node
+		units = append(units, captureUnit{
+			Kind: bundle.ArtefactMailboxes, Name: boxes.Domain, Path: backup.MailboxesArtefact,
+			JobName: mailParams.Name, Job: backup.MailboxBackupJob(mailParams, boxes.Claim, boxes.Domain),
+		})
+	}
+	return units, nil
 }
 
 // desktopOnKernelStore reports whether the tenant's desktop keeps its
@@ -696,8 +794,14 @@ func (r *TenantExportReconciler) desktopOnKernelStore(tenant *gentianov1alpha1.T
 	return r.Reconciler != nil && r.Reconciler.adoptsKernelRealm(tenant)
 }
 
-// desktopNotCaptured is what an export of such a tenant says.
-const desktopNotCaptured = "the desktop's database: this tenant's is on the kernel's PostgreSQL, which no export captures"
+// desktopDatabase is the tenant's desktop database and the namespace of the
+// server it is on: where its capture and its restore run.
+func (r *TenantExportReconciler) desktopDatabase(tenant *gentianov1alpha1.Tenant) (database, namespace string) {
+	if r.desktopOnKernelStore(tenant) {
+		return backup.KernelDesktopDatabase, backup.KernelPostgresNamespace()
+	}
+	return databaseName(tenant, portalShellAppName), postgresNamespace
+}
 
 // tenantWideExhausted answers why the tenant-wide captures are given up, once
 // they have failed or stalled as often as an app's may. Without a bound the
@@ -707,7 +811,7 @@ func tenantWideExhausted(export *gentianov1alpha1.TenantExport) string {
 	if entry.Attempts <= exportMaxAttempts {
 		return ""
 	}
-	why := fmt.Sprintf("the realm, the desktop's database or the manifest: capture did not succeed after %d attempts", entry.Attempts)
+	why := fmt.Sprintf("the realm, the desktop's database, the mailboxes or the manifest: capture did not succeed after %d attempts", entry.Attempts)
 	if entry.LastFailure != "" {
 		why += " — " + entry.LastFailure
 	}
@@ -716,14 +820,24 @@ func tenantWideExhausted(export *gentianov1alpha1.TenantExport) string {
 	return why
 }
 
-// captureTenantWide captures the realm and the portal shell database.
+// captureTenantWide captures the realm, the desktop's database and the
+// mailboxes.
 func (r *TenantExportReconciler) captureTenantWide(
 	ctx context.Context,
 	export *gentianov1alpha1.TenantExport,
 	tenant *gentianov1alpha1.Tenant,
 	encryption backup.Encryption,
 ) (bool, error) {
-	units := r.tenantWideUnits(tenant, export, encryption)
+	units, err := r.tenantWideUnits(ctx, tenant, export, encryption)
+	if err != nil {
+		// What cannot be found is not found by waiting either: counted, and
+		// said. The mail server's volume missing where there is a mail server
+		// is the case.
+		entry := appStatus(&export.Status.Apps, backupTenantComponent)
+		entry.LastFailure = err.Error()
+		entry.Attempts++
+		return false, nil
+	}
 	if err := r.stageFor(ctx, export, units, encryption); err != nil {
 		// Counted, like a capture that failed: what cannot be staged now is
 		// not staged by waiting, and the export must end.
@@ -834,7 +948,25 @@ func (r *TenantExportReconciler) complete(
 	}
 	export.Status.NotIncluded = notIncluded
 
-	unit, err := r.manifestUnit(export, tenant, encryption)
+	// The entries of the rights store that follow from nothing else, read
+	// now and written into the manifest.
+	rights, err := r.storeOnlyRights(ctx, tenant)
+	if err != nil {
+		if errors.Is(err, authz.ErrNotProjected) {
+			// The operator has not attached the tenant yet; it does so
+			// within moments of the tenant existing.
+			entry := appStatus(&export.Status.Apps, backupTenantComponent)
+			entry.LastFailure = err.Error()
+			entry.Attempts++
+			if why := tenantWideExhausted(export); why != "" {
+				return r.fail(ctx, export, "CaptureFailed", why)
+			}
+			return r.requeueExport(ctx, export, tenant)
+		}
+		return ctrl.Result{}, err
+	}
+
+	unit, err := r.manifestUnit(export, tenant, encryption, rights)
 	if err != nil {
 		return r.fail(ctx, export, "ManifestFailed", err.Error())
 	}
@@ -876,57 +1008,57 @@ func (r *TenantExportReconciler) complete(
 	return ctrl.Result{}, r.persist(ctx, export)
 }
 
-// notIncluded is what the tenant has that an export of it does not capture.
+// notIncluded is what the tenant has that an export of it does not capture,
+// beyond what no bundle ever holds.
 //
-// An export captures the apps that are installed. An app that was uninstalled
-// has left its databases, bucket and files behind, on purpose, and none of
-// that is in a bundle taken afterwards -- while deleting the tenant destroys
-// it. The export does not change that here; it says so, naming the apps the
-// record of what was provisioned still lists, so that nobody takes a bundle
-// for a copy of everything a deletion would destroy.
+// An export captures every app the tenant has, installed or uninstalled
+// with its data kept, unless it was asked for some of them only; and what
+// is the tenant's own. What it leaves out of that it names here, so that
+// nobody takes a bundle for a copy of everything a deletion would destroy.
 func (r *TenantExportReconciler) notIncluded(
 	ctx context.Context,
 	tenant *gentianov1alpha1.Tenant,
 	export *gentianov1alpha1.TenantExport,
 ) ([]string, error) {
 	var out []string
-	if r.desktopOnKernelStore(tenant) {
-		out = append(out, desktopNotCaptured)
+	if r.Reconciler != nil {
+		// Mailboxes on a domain that is not the tenant's alone.
+		if _, shared, err := r.Reconciler.mailboxesOf(ctx, tenant); err != nil {
+			return nil, err
+		} else if shared != "" {
+			out = append(out, shared)
+		}
+	}
+	if len(export.Spec.Apps) == 0 {
+		return out, nil
 	}
 	// Every app the tenant has, whatever this export was asked for.
 	all, err := r.exportAppSet(ctx, tenant, &gentianov1alpha1.TenantExport{})
 	if err != nil {
 		return nil, err
 	}
-	installed := backup.TenantApps(tenant)
 	var unasked []string
 	for _, app := range all {
-		installed[app] = true
-		if len(export.Spec.Apps) > 0 && !slices.Contains(export.Spec.Apps, app) {
+		if !slices.Contains(export.Spec.Apps, app) {
 			unasked = append(unasked, app)
 		}
 	}
 	if len(unasked) > 0 {
 		out = append(out, "the installed apps this export was not asked for ("+strings.Join(unasked, ", ")+")")
 	}
-	if r.Reconciler == nil {
-		return out, nil
-	}
-	recorded, err := r.Reconciler.provisionedStores(ctx, tenant.Name)
+	retained, err := r.retainedApps(ctx, tenant)
 	if err != nil {
 		return nil, err
 	}
-	var retained []string
-	for app, entry := range recorded {
-		if backup.IsPlatformStore(app) || installed[app] || entry.Empty() {
-			continue
+	var kept []string
+	for _, app := range retained {
+		if !slices.Contains(export.Spec.Apps, app.name) {
+			kept = append(kept, app.name)
 		}
-		retained = append(retained, app)
 	}
-	sort.Strings(retained)
-	if len(retained) > 0 {
-		out = append(out, "the data uninstalled apps left behind ("+strings.Join(retained, ", ")+
-			", on the record of what was provisioned and not installed now): an export captures installed apps only, and deleting the tenant destroys this data")
+	if len(kept) > 0 {
+		out = append(out, "the data of uninstalled apps this export was not asked for ("+strings.Join(kept, ", ")+
+			"): deleting the tenant destroys this data")
 	}
 	return out, nil
 }
@@ -936,12 +1068,15 @@ func (r *TenantExportReconciler) manifestUnit(
 	export *gentianov1alpha1.TenantExport,
 	tenant *gentianov1alpha1.Tenant,
 	encryption backup.Encryption,
+	rights *bundle.ManifestRights,
 ) (captureUnit, error) {
 	params := r.jobParams(tenant, backupTenantComponent, export, encryption)
 	params.Name = exportJobName(tenant.Name, export.Name, backupTenantComponent, "manifest")
 
 	info := backup.NewBundleInfo(tenant.Name, export.Name, timeOrNow(export.Status.StartedAt), encryption)
-	job, err := backup.ManifestJob(params, r.buildManifest(export, tenant), info)
+	manifest := r.buildManifest(export, tenant)
+	manifest.Rights = rights
+	job, err := backup.ManifestJob(params, manifest, info)
 	if err != nil {
 		return captureUnit{}, err
 	}
@@ -987,13 +1122,20 @@ func (r *TenantExportReconciler) buildManifest(
 		},
 		NotIncluded: export.Status.NotIncluded,
 	}
-	// The desktop's database, when it was captured: not for the tenant whose
-	// desktop is on the kernel's PostgreSQL (tenantWideUnits).
-	if !r.desktopOnKernelStore(tenant) {
-		m.Shell = &backup.ManifestStore{
-			Kind: bundle.ArtefactPostgres,
-			Name: databaseName(tenant, portalShellAppName),
-			Path: backup.PostgresArtefact(databaseName(tenant, portalShellAppName)),
+	// What is the tenant's own, from what the status says was captured: the
+	// desktop's database and, where the cluster keeps them, the mailboxes.
+	for _, app := range export.Status.Apps {
+		if app.Name != backupTenantComponent {
+			continue
+		}
+		for _, a := range app.Artefacts {
+			store := &backup.ManifestStore{Kind: a.Kind, Name: a.Name, Path: a.Path}
+			switch a.Kind {
+			case bundle.ArtefactPostgres:
+				m.Shell = store
+			case bundle.ArtefactMailboxes:
+				m.Mailboxes = store
+			}
 		}
 	}
 	for _, app := range export.Status.Apps {
@@ -1012,6 +1154,9 @@ func (r *TenantExportReconciler) buildManifest(
 			QuiesceEnd:   timeOrEmpty(app.QuiesceEnd),
 			QuiesceMode:  app.QuiesceMode,
 			Stores:       manifestStores(app),
+			// Uninstalled, its data kept: no build wrote it that is running
+			// now, so none is recorded.
+			Retained: app.Retained,
 		}
 		// What the app was, by the inventory: the engine and the releases a
 		// restore checks the installed app against.

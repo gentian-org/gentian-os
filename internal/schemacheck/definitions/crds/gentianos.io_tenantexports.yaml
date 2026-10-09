@@ -236,9 +236,44 @@ spec:
                           BundleArtefact is one artefact of a bundle: a database dump, a bucket's
                           archive, a volume's archive.
                         properties:
+                          claim:
+                            description: |-
+                              Claim is the volume claim a volume was captured from, as far as making
+                              it again takes. Recorded for the volumes of an app that was uninstalled
+                              with its data kept: where such an app's data is brought into a tenant
+                              that never had it, the claim is not there and is made from this.
+                            properties:
+                              accessModes:
+                                description: AccessModes are the claim's.
+                                items:
+                                  type: string
+                                type: array
+                                x-kubernetes-list-type: atomic
+                              annotations:
+                                additionalProperties:
+                                  type: string
+                                type: object
+                              labels:
+                                additionalProperties:
+                                  type: string
+                                description: |-
+                                  Labels and Annotations are the ones that say whose the claim is: the
+                                  release it records is how the next install and a purge find it.
+                                type: object
+                              size:
+                                description: Size is the storage the claim asked for.
+                                type: string
+                              storageClass:
+                                description: StorageClass is the class the claim named,
+                                  empty for the default.
+                                type: string
+                            required:
+                            - size
+                            type: object
                           kind:
-                            description: Kind is postgres, postgresOwned, mariadb,
-                              mariadbOwned, s3 or volume.
+                            description: |-
+                              Kind is postgres, postgresOwned, mariadb, mariadbOwned, s3 or volume;
+                              for what is the tenant's own also identity, mailboxes or rights.
                             type: string
                           name:
                             description: |-
@@ -343,6 +378,13 @@ spec:
                         export costs a tenant, and the evidence that the pause is per app.
                       format: date-time
                       type: string
+                    retained:
+                      description: |-
+                        Retained says the app is not installed: it was uninstalled and its
+                        data kept. An export captures that data as it captures an installed
+                        app's, without pausing anything; a restore puts it back as retained and
+                        installs nothing.
+                      type: boolean
                     stores:
                       description: |-
                         Stores lists the kinds captured for this app (postgres, mariadb, s3,

@@ -95,6 +95,41 @@ func (r *TenantReconciler) recordProvisionedStores(ctx context.Context, tenant *
 	return nil
 }
 
+// recordProvisioned adds what is about to be made for one app to the
+// tenant's record: for a store that is made outside an install -- by a
+// restore that brings an uninstalled app's data into a tenant that has none.
+// It only adds, like recordProvisionedStores.
+func (r *TenantReconciler) recordProvisioned(ctx context.Context, tenantName, app string, made backup.Provisioned) error {
+	if made.Empty() {
+		return nil
+	}
+	key := backup.ProvisionedRecordKey(tenantName)
+	record := &corev1.ConfigMap{}
+	err := r.Get(ctx, key, record)
+	create := errors.IsNotFound(err)
+	if create {
+		record = backup.NewProvisionedRecord(tenantName)
+	} else if err != nil {
+		return fmt.Errorf("read the record of what was provisioned for %s: %w", tenantName, err)
+	}
+	original := record.DeepCopy()
+	changed, err := backup.RecordProvisioned(record, app, made)
+	if err != nil {
+		return err
+	}
+	switch {
+	case create:
+		if err := r.Create(ctx, record); err != nil {
+			return fmt.Errorf("write the record of what was provisioned for %s: %w", tenantName, err)
+		}
+	case changed:
+		if err := r.Patch(ctx, record, client.MergeFromWithOptions(original, client.MergeFromWithOptimisticLock{})); err != nil {
+			return fmt.Errorf("update the record of what was provisioned for %s: %w", tenantName, err)
+		}
+	}
+	return nil
+}
+
 // provisionedStores reads the tenant's record. A tenant without one has had
 // nothing recorded. It reads the API server when it can: this is what a
 // deletion decides what to destroy by, and a cache that has not seen the

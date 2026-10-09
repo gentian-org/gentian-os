@@ -264,6 +264,12 @@ func TestAnImportUnderAnotherNameBesideTheOriginalLeavesTheOriginalAlone(t *test
 		if !strings.HasPrefix(asked, "/v1/tenants/demo2/actions/restore ") {
 			t.Errorf("restore %s was asked for at %s: not in the new tenant", name, asked)
 		}
+		// And said to be into a tenant made new: that is what brings the data
+		// of uninstalled apps with stores made for it, and what keeps a right
+		// granted in the bundle's tenant from being granted here.
+		if !strings.Contains(asked, `"intoNewTenant":true`) {
+			t.Errorf("restore %s was not asked for as one into a tenant made new: %s", name, asked)
+		}
 	}
 	originalAfter, err := gitShow(h.remote, "clusters/"+dt.Cluster+"/tenants/demo/tenant.yaml")
 	if err != nil || originalAfter != originalBefore {

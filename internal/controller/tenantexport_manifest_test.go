@@ -78,10 +78,13 @@ func TestAnExportCapturesWhatAPurgeDestroysAndTheManifestNamesIt(t *testing.T) {
 	// The manifest, from what the status recorded.
 	export.Status.Apps = []gentianov1alpha1.AppExportStatus{
 		{Name: "wiki", ChartVersion: "2.0.0", Digest: "sha256:aaa", QuiesceMode: "scaleDown", Artefacts: got, Stores: unitKinds(units)},
-		{Name: backupTenantComponent, Artefacts: []gentianov1alpha1.BundleArtefact{{Kind: bundle.ArtefactIdentity, Name: "demo", Path: backup.IdentityArtefact}}},
+		{Name: backupTenantComponent, Artefacts: []gentianov1alpha1.BundleArtefact{
+			{Kind: bundle.ArtefactIdentity, Name: "demo", Path: backup.IdentityArtefact},
+			{Kind: bundle.ArtefactPostgres, Name: "demo_shell", Path: backup.PostgresArtefact("demo_shell")},
+		}},
 	}
 	m := r.buildManifest(export, tenant)
-	if m.SchemaVersion != 2 || !m.NamesArtefacts() {
+	if m.SchemaVersion != 3 || !m.NamesArtefacts() {
 		t.Fatalf("schemaVersion = %d", m.SchemaVersion)
 	}
 	if len(m.Apps) != 1 || m.Apps[0].Name != "wiki" {
@@ -108,7 +111,7 @@ func TestAnExportCapturesWhatAPurgeDestroysAndTheManifestNamesIt(t *testing.T) {
 
 	// And a restore of that manifest into the same tenant plans exactly what
 	// was captured: the two ends of the format agree.
-	plan, err := planRestore(m, tenant, nil, false, liveFrom(tenant,
+	plan, err := planRestore(m, tenant, nil, false, targetOf(tenant), liveFrom(tenant,
 		map[string]*gentianov1alpha1.ComponentProfile{"wiki": profile},
 		map[string][]string{"wiki": {"wiki-release-data"}}))
 	if err != nil {
@@ -121,90 +124,5 @@ func TestAnExportCapturesWhatAPurgeDestroysAndTheManifestNamesIt(t *testing.T) {
 		if a.Path != want[i].Path || a.Target == "" {
 			t.Errorf("planned %d = %+v", i, a)
 		}
-	}
-}
-
-// An export captures installed apps only. What an uninstalled app left
-// behind is in no bundle taken afterwards, and deleting the tenant destroys
-// it. The export does not pretend otherwise: its result and the bundle's
-// manifest name the apps on the record of what was provisioned that are not
-// installed -- and the desktop's database of the tenant whose desktop is on
-// the kernel's PostgreSQL, which no export captures.
-func TestAnExportSaysWhatItDoesNotHold(t *testing.T) {
-	scheme := deleteGapsScheme()
-	tenant := planTenant("demo", "wiki", "drive")
-	record := backup.NewProvisionedRecord("demo")
-	for app, made := range map[string]backup.Provisioned{
-		"wiki":              {DatabaseEngine: gentianov1alpha1.DatabaseEnginePostgreSQL, Database: "demo_wiki"},
-		"notes":             {DatabaseEngine: gentianov1alpha1.DatabaseEngineMariaDB, Database: "demo_notes"},
-		"crm":               {Bucket: "demo-crm"},
-		backup.DesktopStore: {DatabaseEngine: gentianov1alpha1.DatabaseEnginePostgreSQL, Database: "demo_shell"},
-	} {
-		if _, err := backup.RecordProvisioned(record, app, made); err != nil {
-			t.Fatal(err)
-		}
-	}
-	export := &gentianov1alpha1.TenantExport{
-		ObjectMeta: metav1.ObjectMeta{Name: "nightly", Namespace: "tenant-demo"},
-		Spec:       gentianov1alpha1.TenantExportSpec{Apps: []string{"wiki"}},
-		Status: gentianov1alpha1.TenantExportStatus{
-			Bundle: &gentianov1alpha1.BundleRef{Bucket: "demo-gentian-backup", Prefix: "nightly"},
-		},
-	}
-	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(tenant, export, record).Build()
-	r := &TenantExportReconciler{Client: c, Scheme: scheme, Reconciler: &TenantReconciler{Client: c, Scheme: scheme}}
-
-	got, err := r.notIncluded(context.Background(), tenant, export)
-	if err != nil {
-		t.Fatal(err)
-	}
-	said := strings.Join(got, "\n")
-	if !strings.Contains(said, "uninstalled apps left behind (crm, notes,") {
-		t.Errorf("the retained apps are not named:\n%s", said)
-	}
-	if strings.Contains(said, backup.DesktopStore+",") || strings.Contains(said, "(wiki") {
-		t.Errorf("an installed app or the desktop's own store is named as left behind:\n%s", said)
-	}
-	if !strings.Contains(said, "not asked for (drive)") {
-		t.Errorf("the installed app the export was not asked for is not named:\n%s", said)
-	}
-	if strings.Contains(said, "kernel's PostgreSQL") {
-		t.Errorf("an ordinary tenant's desktop is said not to be captured:\n%s", said)
-	}
-
-	// The manifest carries it, and has the desktop's database.
-	export.Status.NotIncluded = got
-	m := r.buildManifest(export, tenant)
-	if len(m.NotIncluded) != len(got) || m.Shell == nil {
-		t.Errorf("manifest: notIncluded = %v, shell = %v", m.NotIncluded, m.Shell)
-	}
-
-	// The tenant that adopts the kernel realm: no desktop unit, no desktop
-	// entry in the manifest, and said.
-	r.Reconciler.KernelRealm = "kernel"
-	platform := planTenant("platform")
-	platform.Spec.Isolation = &gentianov1alpha1.TenantIsolation{KeycloakRealm: "kernel"}
-	for _, u := range r.tenantWideUnits(platform, export, backup.Encryption{}) {
-		if u.Kind == bundle.ArtefactPostgres {
-			t.Errorf("a desktop database is dumped for the tenant whose desktop is on the kernel's PostgreSQL: %s", u.JobName)
-		}
-	}
-	got, err = r.notIncluded(context.Background(), platform, &gentianov1alpha1.TenantExport{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(got) != 1 || !strings.Contains(got[0], "kernel's PostgreSQL") {
-		t.Errorf("notIncluded = %v", got)
-	}
-	export.Status.NotIncluded = got
-	if m := r.buildManifest(export, platform); m.Shell != nil {
-		t.Error("the manifest names a desktop database that was not captured")
-	}
-
-	// A restore repeats what its bundle says it does not hold.
-	restore := &gentianov1alpha1.TenantRestore{}
-	recordPlan(restore, &restorePlan{notIncluded: []string{"the data uninstalled apps left behind (crm)"}})
-	if notes := strings.Join(restore.Status.Notes, "\n"); !strings.Contains(notes, "The bundle says it does not hold the data uninstalled apps left behind (crm).") {
-		t.Errorf("the restore's notes do not repeat it:\n%s", notes)
 	}
 }

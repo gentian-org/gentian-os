@@ -266,8 +266,14 @@ func (r *TenantExportReconciler) nodeHoldingClaim(
 	ctx context.Context,
 	namespace, claim string,
 ) string {
+	return nodeHoldingClaim(ctx, r.Client, namespace, claim)
+}
+
+// nodeHoldingClaim is the node a running pod holds a claim on, "" when none
+// does.
+func nodeHoldingClaim(ctx context.Context, c client.Reader, namespace, claim string) string {
 	pods := &corev1.PodList{}
-	if err := r.List(ctx, pods, client.InNamespace(namespace)); err != nil {
+	if err := c.List(ctx, pods, client.InNamespace(namespace)); err != nil {
 		return ""
 	}
 	for i := range pods.Items {

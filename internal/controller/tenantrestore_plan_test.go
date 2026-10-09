@@ -29,6 +29,12 @@ func chartProfile(name, version string, engine gentianov1alpha1.DatabaseEngine, 
 	return p
 }
 
+// targetOf is where what is a tenant's own goes, for a tenant on a cluster
+// with no mail server and no rights store: its desktop's database.
+func targetOf(tenant *gentianov1alpha1.Tenant) planTarget {
+	return planTarget{desktopDatabase: databaseName(tenant, portalShellAppName)}
+}
+
 func planTenant(name string, apps ...string) *gentianov1alpha1.Tenant {
 	t := &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: name}}
 	for _, a := range apps {
@@ -90,7 +96,7 @@ func TestARestoreGoesByTheBundlesManifest(t *testing.T) {
 	}
 	claims := map[string][]string{"wiki": {"wiki-release-data"}, "notes": {"notes-release-data"}, "drive": {"drive-release-data"}}
 
-	plan, err := planRestore(wikiManifest(), tenant, nil, false, liveFrom(tenant, profiles, claims))
+	plan, err := planRestore(wikiManifest(), tenant, nil, false, targetOf(tenant), liveFrom(tenant, profiles, claims))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,7 +171,7 @@ func TestWhatARestoreDoesNotPutBackIsNamedWithTheReason(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			tenant, profiles, claims := base()
 			c.change(tenant, profiles, claims)
-			plan, err := planRestore(wikiManifest(), tenant, nil, c.skip, liveFrom(tenant, profiles, claims))
+			plan, err := planRestore(wikiManifest(), tenant, nil, c.skip, targetOf(tenant), liveFrom(tenant, profiles, claims))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -179,7 +185,7 @@ func TestWhatARestoreDoesNotPutBackIsNamedWithTheReason(t *testing.T) {
 
 			// Asked for by name, the same app refuses the whole restore
 			// before anything is changed.
-			_, err = planRestore(wikiManifest(), tenant, []string{"wiki", "notes"}, c.skip, liveFrom(tenant, profiles, claims))
+			_, err = planRestore(wikiManifest(), tenant, []string{"wiki", "notes"}, c.skip, targetOf(tenant), liveFrom(tenant, profiles, claims))
 			var refused *errRestoreRefused
 			if !errors.As(err, &refused) || refused.reason != "CannotRestoreAsAsked" || !strings.Contains(err.Error(), c.says) {
 				t.Errorf("named in spec.apps: err = %v, want a refusal saying …%s…", err, c.says)
@@ -233,7 +239,7 @@ func TestAStoreTheBundleDoesNotCoverIsLeftAndSaid(t *testing.T) {
 	claims := map[string][]string{"notes": {"notes-release-data", "notes-release-index"}}
 	m := wikiManifest()
 	m.Apps = m.Apps[1:]
-	plan, err := planRestore(m, tenant, nil, false, liveFrom(tenant, profiles, claims))
+	plan, err := planRestore(m, tenant, nil, false, targetOf(tenant), liveFrom(tenant, profiles, claims))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -270,7 +276,7 @@ func TestAFormat1BundleRestoresByDerivationAndSaysSo(t *testing.T) {
 	profiles := map[string]*gentianov1alpha1.ComponentProfile{
 		"wiki": chartProfile("wiki", "2.0.0", gentianov1alpha1.DatabaseEnginePostgreSQL, true),
 	}
-	plan, err := planRestore(old, tenant, nil, false, liveFrom(tenant, profiles, map[string][]string{"wiki": {"wiki-release-data"}}))
+	plan, err := planRestore(old, tenant, nil, false, targetOf(tenant), liveFrom(tenant, profiles, map[string][]string{"wiki": {"wiki-release-data"}}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -308,7 +314,7 @@ func TestAManifestPathThatLeavesTheBundleRefusesTheRestore(t *testing.T) {
 			"wiki":  chartProfile("wiki", "2.0.0", gentianov1alpha1.DatabaseEnginePostgreSQL, true),
 			"notes": chartProfile("notes", "1.0.0", "", false),
 		}
-		_, err := planRestore(m, tenant, nil, false, liveFrom(tenant, profiles, map[string][]string{"wiki": {"wiki-release-data"}, "notes": {"notes-release-data"}}))
+		_, err := planRestore(m, tenant, nil, false, targetOf(tenant), liveFrom(tenant, profiles, map[string][]string{"wiki": {"wiki-release-data"}, "notes": {"notes-release-data"}}))
 		var refused *errRestoreRefused
 		if !errors.As(err, &refused) || refused.reason != "BundleUnusable" {
 			t.Errorf("path %q: err = %v, want the restore refused", bad, err)
@@ -331,7 +337,7 @@ func TestAManifestPathThatLeavesTheBundleRefusesTheRestore(t *testing.T) {
 // Nothing restorable is a refusal that names why, not an empty success.
 func TestARestoreWithNothingToPutBackIsRefused(t *testing.T) {
 	tenant := planTenant("demo")
-	_, err := planRestore(wikiManifest(), tenant, nil, false, liveFrom(tenant, nil, nil))
+	_, err := planRestore(wikiManifest(), tenant, nil, false, targetOf(tenant), liveFrom(tenant, nil, nil))
 	var refused *errRestoreRefused
 	if !errors.As(err, &refused) || refused.reason != "NothingToRestore" ||
 		!strings.Contains(err.Error(), "wiki is not installed") || !strings.Contains(err.Error(), "notes is not installed") {
@@ -342,7 +348,7 @@ func TestARestoreWithNothingToPutBackIsRefused(t *testing.T) {
 	profiles := map[string]*gentianov1alpha1.ComponentProfile{
 		"wiki": chartProfile("wiki", "2.0.0", gentianov1alpha1.DatabaseEnginePostgreSQL, true),
 	}
-	_, err = planRestore(wikiManifest(), tenant, []string{"drive"}, false, liveFrom(tenant, profiles, map[string][]string{"wiki": {"wiki-release-data"}}))
+	_, err = planRestore(wikiManifest(), tenant, []string{"drive"}, false, targetOf(tenant), liveFrom(tenant, profiles, map[string][]string{"wiki": {"wiki-release-data"}}))
 	if !errors.As(err, &refused) || !strings.Contains(err.Error(), "drive is not in the bundle") {
 		t.Fatalf("err = %v", err)
 	}

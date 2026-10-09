@@ -18,6 +18,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	"github.com/gentian-org/gentian-os/api/bundle"
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/kernel"
 	"github.com/gentian-org/gentian-os/internal/layout"
@@ -110,6 +111,10 @@ type KindRule struct {
 	Export Disposition
 	// ExportNote says how it is carried, or why it is not.
 	ExportNote string
+	// Artefacts are the kinds of bundle artefact the kind is carried as
+	// (bundle.Artefact...). Empty for a kind no artefact of its own carries:
+	// one an export omits, and one carried inside the realm's.
+	Artefacts []string
 	// Uninstall is what removing the app from the tenant does.
 	Uninstall Disposition
 	// AppPurge is what purging the uninstalled app does.
@@ -173,12 +178,14 @@ var AppKinds = []KindRule{
 	{
 		Kind: KindDatabase, MadeBy: "the tenant reconciler: a role Job and a CloudNativePG Database, or a MariaDB setup Job",
 		Export: Carries, ExportNote: "a dump of the provisioned database, and of every other database that is the app's, which is what a purge drops: on PostgreSQL the ones the app's role owns, on MariaDB the ones named with the provisioned name as a prefix",
+		Artefacts: []string{bundle.ArtefactPostgres, bundle.ArtefactPostgresOwned, bundle.ArtefactMariaDB, bundle.ArtefactMariaDBOwned},
 		Uninstall: Keeps, AppPurge: Destroys, TenantDelete: Destroys,
 		FoundBy: "the tenant's record of what was provisioned; for PostgreSQL also the CloudNativePG Database object",
 	},
 	{
 		Kind: KindObjectStorage, MadeBy: "the tenant reconciler's bucket Job",
 		Export: Carries, ExportNote: "the bucket's objects; a restore makes the bucket, its user and its policy with the code install uses, then writes the objects",
+		Artefacts: []string{bundle.ArtefactS3},
 		Uninstall: Keeps, AppPurge: Destroys, TenantDelete: Destroys,
 		FoundBy: "the tenant's record of what was provisioned",
 	},
@@ -214,84 +221,114 @@ var AppKinds = []KindRule{
 	{
 		Kind: KindFiles, MadeBy: "the app's chart, as volume claims of its release",
 		Export: Carries, ExportNote: "an archive of each volume claim that is the app's, by the rule a purge deletes by (AppVolumes)",
+		Artefacts: []string{bundle.ArtefactVolume},
 		Uninstall: Keeps, AppPurge: Destroys, TenantDelete: Destroys,
 		TenantDeleteNote: "with the tenant's namespace",
 		FoundBy:          "the volume claims in the tenant's namespace, by the release each records (AppVolumes)",
 	},
 }
 
-// TenantRule is one thing a tenant has that is no app's, and what deleting
-// the tenant does with it.
+// TenantRule is one thing a tenant has that is no app's, and what each act
+// does with it.
 type TenantRule struct {
 	// What is the thing, as a person would name it.
 	What string
 	// MadeBy says what makes it.
 	MadeBy string
-	// Export says what an export does with it.
+	// Artefact is the kind of bundle artefact the thing is carried as
+	// (bundle.TenantArtefacts), "" when no bundle holds it.
+	Artefact string
+	// Export says what an export does with it: how it is carried, or why it
+	// is not.
 	Export string
+	// Restore says what a restore into the tenant the bundle was taken of
+	// does with it, and Import what an import into a new tenant does: the
+	// same as a restore unless it says otherwise. Both are required of what
+	// a bundle carries.
+	Restore string
+	Import  string
 	// Retain and Delete say what deleting the tenant does with it under each
 	// deletion policy, and by what.
 	Retain string
 	Delete string
+	// Destroyed says whether deleting the tenant with deletionPolicy: Delete
+	// takes it away. False for what no act removes, which Delete then says
+	// in so many words ("NOT removed").
+	Destroyed bool
 }
 
-// TenantOwned is what deleting a tenant removes besides what its apps own.
+// TenantOwned is what a tenant has besides what its apps own.
+//
 // The list exists because several of these lie outside everything a deletion
 // sweeps by default -- outside the tenant's namespace, its realm and its
 // vault subtree, and without the tenant's label -- which is how each of them
-// came to be left behind. Written down, each has to say what removes it.
+// came to be left behind; and outside what an export finds by going through
+// the tenant's apps, which is how each came to be in no backup. Written
+// down, each has to say what a backup, a restore, an import and a deletion
+// do with it, and the package's tests hold the code to what it says.
 var TenantOwned = []TenantRule{
 	{
-		What: "the tenant's namespace, with every workload and volume in it", MadeBy: "the tenant's Composition",
-		Export: "volumes: per app; workloads: not carried",
-		Retain: "kept; its Components and the operator's quota, limits and network policy are removed",
-		Delete: "deleted, and the deletion waits until it is gone",
-	},
-	{
-		What: "the tenant's realm", MadeBy: "the tenant's identity Job and its Composition",
-		Export: "carried: configuration, people and memberships, no passwords",
-		Retain: "disabled",
-		Delete: "deleted; never when it is the kernel realm, which a tenant only adopts",
-	},
-	{
-		What: "the client the tenant's realm signs in to the kernel realm as (broker-<realm>), and the mapper on it", MadeBy: "the tenant's identity Job; the mapper by its Composition",
-		Export: "not carried; made again with the realm",
-		Retain: "kept",
-		Delete: "removed from the kernel realm, by the Job that deletes the realm",
+		What: "the record of what was provisioned", MadeBy: "the tenant reconciler",
+		Export: "not carried: the tenant restored into has its own",
+		Retain: "kept, because the stores are",
+		Delete: "deleted, last", Destroyed: true,
 	},
 	{
 		What: "the tenant's vault subtree", MadeBy: "the tenant reconciler's seeder, and people",
 		Export: "not carried: a bundle holds no stored credential",
 		Retain: "kept",
-		Delete: "deleted; an operator with no vault that was not told to run without one fails here",
+		Delete: "deleted; an operator with no vault that was not told to run without one fails here", Destroyed: true,
+	},
+	{
+		What: "the tenant's namespace, with every workload and volume in it", MadeBy: "the tenant's Composition",
+		Export: "volumes: per app; workloads: not carried",
+		Retain: "kept; its Components and the operator's quota, limits and network policy are removed",
+		Delete: "deleted, and the deletion waits until it is gone", Destroyed: true,
+	},
+	{
+		What: "the tenant's realm", MadeBy: "the tenant's identity Job and its Composition",
+		Artefact: bundle.ArtefactIdentity,
+		Export:   "carried: configuration, people and memberships, no passwords",
+		Restore:  "groups, roles and clients put back; missing people added, enabled and without a password",
+		Import:   "the same, into the realm made for the new tenant; the platform's groups under the new tenant's names, the bundle's sign-in clients not imported",
+		Retain:   "disabled",
+		Delete:   "deleted; never when it is the kernel realm, which a tenant only adopts", Destroyed: true,
+	},
+	{
+		What: "the client the tenant's realm signs in to the kernel realm as (broker-<realm>), and the mapper on it", MadeBy: "the tenant's identity Job; the mapper by its Composition",
+		Export: "not carried; made again with the realm",
+		Retain: "kept",
+		Delete: "removed from the kernel realm, by the Job that deletes the realm", Destroyed: true,
+	},
+	{
+		What: "the desktop's database: what people set up on the tenant's desktop, and its notices", MadeBy: "the component reconciler, on the tenants' PostgreSQL; for the tenant that adopts the kernel realm it is the one the kernel declares on its own PostgreSQL",
+		Artefact: bundle.ArtefactPostgres,
+		Export:   "carried: a dump of the database, taken beside the server it is on, with the credential that is there -- the administrator's on the tenants' PostgreSQL, the database's owner's on the kernel's",
+		Restore:  "replaced by the dump",
+		Import:   "replaced by the dump, in the database made for the new tenant's desktop",
+		Retain:   "kept",
+		Delete:   "destroyed: on the tenants' PostgreSQL the database and its role are dropped, with the apps' databases; on the kernel's the database is the kernel's to keep and is emptied", Destroyed: true,
 	},
 	{
 		What: "the tenant's team at the model gateway", MadeBy: "the tenant reconciler",
 		Export: "not carried",
 		Retain: "kept",
-		Delete: "removed, after the keys of its apps",
+		Delete: "removed, after the keys of its apps", Destroyed: true,
 	},
 	{
-		What: "the tenant's mail routing, its submission and IMAP credentials, and its mail DNS records (DNSEndpoint mail-<tenant>)", MadeBy: "the tenant reconciler, in the mail namespaces",
-		Export: "not carried",
-		Retain: "removed: a retired tenant must stop receiving and sending",
-		Delete: "removed; and its DKIM key and SMTP credentials",
+		What: "the entries in the rights store that follow from the tenant's entry in git: its attachment to the cluster, the groups that hold its roles, its apps and the groups entitled to them", MadeBy: "the operator's projection, from the Tenant",
+		Export: "not carried: they are derived again from the tenant wherever it is",
+		Retain: "the apps' removed; the tenant's own kept",
+		Delete: "NOT removed: the apps' go, the entries on the tenant itself stay",
 	},
 	{
-		What: "the tenant's edge: gateway, routes, wildcard certificate, edge routes and edge DNS records", MadeBy: "the tenant reconciler",
-		Export: "not carried",
-		Retain: "removed",
-		Delete: "removed; a route that cannot be removed fails the deletion",
-	},
-	// The two below are on the list for what it is for: each lies outside
-	// everything a deletion sweeps, and nothing removes either. They say so.
-	// Deleting mail is a kind of destruction no act performs today; whether a
-	// tenant's deletion should is not decided here.
-	{
-		What: "the tenant's mailboxes: the mail its people received and filed, on the mail server's own volume", MadeBy: "the mail server, as mail arrives; where the cluster runs its own",
-		Export: "not carried: no bundle holds mail",
-		Retain: "kept; the tenant's addresses stop receiving",
-		Delete: "NOT removed: nothing deletes a mailbox, and they stay on the mail server's volume after the tenant is gone",
+		What: "the entries in the rights store on the tenant and its apps that follow from nothing else: a right granted there beyond the defaults, and a default since withdrawn (rights tuples)", MadeBy: "a person, through the store",
+		Artefact: bundle.ArtefactRights,
+		Export:   "carried, in the manifest: exactly the entries the projection would not write, and the defaults the store no longer holds",
+		Restore:  "put back after the projection has run and the realm is back: what was granted is granted, what was withdrawn is withdrawn",
+		Import:   "what was withdrawn is withdrawn under the new tenant's names; what was granted is NOT brought, and the result names each entry",
+		Retain:   "kept",
+		Delete:   "NOT removed: they stay on the tenant's name in the store",
 	},
 	{
 		What: "the entries in the rights store that say who is the tenant's member (membership tuples)", MadeBy: "the membership service, from the identity provider's events",
@@ -300,17 +337,44 @@ var TenantOwned = []TenantRule{
 		Delete: "NOT removed: the tenant's app grants go, the entries naming people as its members stay",
 	},
 	{
+		What: "the tenant's edge: gateway, routes, wildcard certificate, edge routes and edge DNS records", MadeBy: "the tenant reconciler",
+		Export: "not carried",
+		Retain: "removed",
+		Delete: "removed; a route that cannot be removed fails the deletion", Destroyed: true,
+	},
+	{
+		What: "the tenant's mail routing, its submission and IMAP credentials, and its mail DNS records (DNSEndpoint mail-<tenant>)", MadeBy: "the tenant reconciler, in the mail namespaces",
+		Export: "not carried",
+		Retain: "removed: a retired tenant must stop receiving and sending",
+		Delete: "removed; and its DKIM key and SMTP credentials", Destroyed: true,
+	},
+	{
+		What: "the tenant's mailboxes: the mail its people received and filed, on the mail server's own volume", MadeBy: "the mail server, as mail arrives; where the cluster runs its own",
+		Artefact: bundle.ArtefactMailboxes,
+		Export:   "carried, where the cluster runs its own mail server and the mail domain is the tenant's alone: every mailbox of the domain, copied by the mail server's own synchronisation beside its volume",
+		Restore:  "put back on top: a message the bundle holds and the mailbox lacks is added with its flags, a message that arrived since stays",
+		Import:   "the same, into the mailboxes of the new tenant's mail domain, by the part of each address before the @",
+		Retain:   "kept; the tenant's addresses stop receiving",
+		Delete:   "destroyed, once the tenant's mail routing is gone so that nothing is delivered meanwhile; a mail domain the tenant shares with the cluster is not the tenant's to destroy and is left", Destroyed: true,
+	},
+	{
 		What: "the tenant's backup bucket", MadeBy: "the first export",
 		Export: "it is where exports go",
 		Retain: "kept",
-		Delete: "destroyed, unless the tenant keeps its bundles (keepBundles)",
+		Delete: "destroyed, unless the tenant keeps its bundles (keepBundles)", Destroyed: true,
 	},
-	{
-		What: "the record of what was provisioned", MadeBy: "the tenant reconciler",
-		Export: "not carried",
-		Retain: "kept, because the stores are",
-		Delete: "deleted, last",
-	},
+}
+
+// TenantRuleFor is the rule of what a tenant's own artefact kind is carried
+// for. It panics on a kind no rule carries: an artefact nothing on the list
+// accounts for is a programming error.
+func TenantRuleFor(artefact string) TenantRule {
+	for _, rule := range TenantOwned {
+		if rule.Artefact == artefact {
+			return rule
+		}
+	}
+	panic("backup: nothing a tenant owns is carried as " + artefact)
 }
 
 // ProvisionOrder is the kinds in the order they are made.

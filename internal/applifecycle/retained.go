@@ -147,14 +147,17 @@ func (s *Service) RetainedApps(ctx context.Context, tenantName string) (*Retaine
 	src := s.retainedSources(ctx, tenant, ns)
 	profiles := s.profileLookup(ctx)
 
-	// Every name something is held under. A name that is an extension's key
-	// or release is folded into the app that declares the extension; any
-	// other name stands for itself, which is also how a purge would treat it.
+	// Every name something is held under. The names data is held under --
+	// a store on record, a volume claim -- are read by the one rule an
+	// export copies that data by (backup.DataHolders); credentials and
+	// access groups are added here, which hold no data a bundle carries. A
+	// name that is an extension's key or release is folded into the app that
+	// declares the extension; any other name stands for itself, which is
+	// also how a purge would treat it.
 	names := map[string]bool{}
-	for name := range src.databases {
-		names[name] = true
-	}
-	for name := range src.provisioned {
+	for _, name := range backup.DataHolders(tenant, backup.Held{
+		Provisioned: src.provisioned, Databases: src.databases, Claims: src.claims,
+	}, backup.Profiles(profiles)) {
 		names[name] = true
 	}
 	for key := range src.groups {
@@ -162,23 +165,6 @@ func (s *Service) RetainedApps(ctx context.Context, tenantName string) (*Retaine
 	}
 	for key := range src.credentials {
 		names[extensionOwner(key, profiles)] = true
-	}
-	for i := range src.claims {
-		c := &src.claims[i]
-		if app := c.Labels["gentianos.io/app"]; app != "" {
-			names[app] = true
-		}
-		// A claim an uninstall kept still names the release it was made by,
-		// in Helm's annotation; one a StatefulSet made carries the release
-		// in the instance label its template gave it.
-		for _, release := range []string{c.Annotations["meta.helm.sh/release-name"], c.Labels["app.kubernetes.io/instance"]} {
-			if app, ok := strings.CutSuffix(release, "-release"); ok && app != "" {
-				names[extensionOwner(app, profiles)] = true
-			}
-			if app, ok := strings.CutPrefix(release, ns+"-"); ok && app != "" {
-				names[app] = true
-			}
-		}
 	}
 
 	out := &RetainedApps{Tenant: tenantName, Apps: []RetainedApp{}, Unknown: map[string]string{}}
@@ -394,30 +380,8 @@ func (s *Service) profileLookup(ctx context.Context) func(string) (*gentianov1al
 	}
 }
 
-// extensionOwner returns the app a key belongs to: the app that declares an
-// extension the key is made from ("{app}-{extension}"), or the key itself.
-//
-// Only a declaration folds a key into an app. A purge deletes an extension's
-// path when the profile declares the extension and not otherwise, so a key
-// that merely begins with another app's name is reported under its own: that
-// is the name a purge would have to be asked for to remove it.
+// extensionOwner returns the app a key belongs to: the shared inventory's
+// rule (backup.ExtensionOwner).
 func extensionOwner(key string, profiles func(string) (*gentianov1alpha1.ComponentProfile, error)) string {
-	if own, err := profiles(key); err == nil && own != nil {
-		return key
-	}
-	for i := len(key) - 1; i > 0; i-- {
-		if key[i] != '-' {
-			continue
-		}
-		profile, err := profiles(key[:i])
-		if err != nil || profile == nil {
-			continue
-		}
-		for _, ext := range backup.SidecarNames(profile) {
-			if ext == key[i+1:] {
-				return key[:i]
-			}
-		}
-	}
-	return key
+	return backup.ExtensionOwner(key, profiles)
 }

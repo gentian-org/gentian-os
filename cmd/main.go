@@ -484,6 +484,11 @@ func main() {
 	// that was wrong. Off entirely when no OpenFGA address is configured,
 	// which is what a cluster with no authorization service runs.
 	if graph := authorizationGraph(setupLog); graph != nil {
+		// The same client, for the entries of the store a tenant's backup
+		// carries and a restore puts back: read and written by the operator,
+		// which is the store's one writer.
+		tenantReconciler.Rights = graph
+		tenantReconciler.ClusterID = os.Getenv("GENTIAN_DEPLOYMENTS_CLUSTER_ID")
 		if err := (&controller.AuthzProjectionReconciler{
 			Client:  mgr.GetClient(),
 			Cluster: os.Getenv("GENTIAN_DEPLOYMENTS_CLUSTER_ID"),
