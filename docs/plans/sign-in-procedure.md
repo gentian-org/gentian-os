@@ -1153,9 +1153,10 @@ which passes it to the platform's services. No second sign-in exists.
 Everything above is about a person at a browser. It does not apply to a
 command line tool, a script or an agent. Those do not pass the Gateway's
 session at all. The command line tool signs in as the person and reaches
-the platform's services another way; see [commands.md](../commands.md). How
-an agent gets an identity and rights of its own is the subject of
-[agents.md](agents.md), which is being written.
+the platform's services another way; see [commands.md](../commands.md). A
+program that acts for a person who is not at a browser is not part of this
+document either; what the kernel offers such a program is in
+[agentic-ai.md](../design/agentic-ai.md).
 
 **In short:** browser sign-in does not apply to programs.
 

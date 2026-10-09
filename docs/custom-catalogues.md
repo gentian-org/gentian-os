@@ -287,6 +287,17 @@ key, no Secret and no network path to the gateway, whatever the cluster runs. Wi
 that serves no models, the app is held and its Component says why
 ([app-customization.md §1.1](app-customization.md)).
 
+**A component that acts for a person who is not at a browser** has no session the edge could
+check, and must still not act for somebody who may no longer use an app. It declares the rights
+check (`spec.requires.services.rights: {}`) and receives, in the Secret `rights-check-<profile>`,
+an address (`RIGHTS_CHECK_URL`) and a key of its own (`RIGHTS_CHECK_KEY`). With them it can ask one
+question, `POST` with `{"person": "<subject>", "app": "<profile name>"}` and the key as bearer:
+may this person use that app of this tenant. The answer is `{"allowed": true|false}`. The key
+cannot write, cannot list, and cannot name another tenant's app, and the component holds no
+credential of the authorization store. The answer says who in the tenant may use what, so the
+declaration needs `trustTier: platform`. It is served for a component the operator installs
+directly, not for one delivered through the app Composition.
+
 **An app that opens mailboxes with the person's sign-in token** (IMAP XOAUTH2) declares
 `spec.requires.services.mail.imap.tokenSignIn: true`, beside the sign-in client it needs
 (`spec.requires.services.identity.oidc`). Its client is given the optional scope `mailbox`; a token

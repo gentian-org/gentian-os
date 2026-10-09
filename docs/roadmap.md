@@ -163,15 +163,16 @@ For the current baseline design of the system, refer to [architecture.md](archit
   - `[ ]` Reject profiles specifying unauthorized sidecars or privileged configurations.
   - `[ ]` Verify `compositionRef` resolves to a Composition that exists.
 
-### 1.14 Agent Identities & Token Delegation (RFC 8693) (***)
-Design: see docs/plans/agents.md
+### 1.14 Hooks for a Component That Acts for a Person (***)
+Design: see [docs/design/agentic-ai.md](design/agentic-ai.md), Scope
 * **Target Domain**: Identity & Authorization
-* **Context**: In-cluster autonomous agents need to perform actions on behalf of users. Currently, they lack a secure delegation model.
-* **Proposed Solution**: Implement OAuth 2.0 Token Exchange (RFC 8693) in the Keycloak composite configuration to allow agents to obtain down-scoped, user-delegated access tokens.
+* **Context**: A program that acts for a person who is not at a browser is not part of the kernel. A component that does it needs a few things only the kernel can give, and must get them without the authorization store's credential or a person's token.
+* **Proposed Solution**: Generic hooks a profile declares, each narrow enough to hand to a component: the rights check, and contracts between apps of a tenant that carry traffic and tell the provider which consumer is calling.
 * **Backlog Items**:
-  - `[ ]` Configure token exchange policies within the Keycloak composite.
-  - `[ ]` Implement down-scoped client scopes for agent authorization.
-  - `[ ]` Wire the portal shell to delegate token exchange requests for registered agents.
+  - `[x]` The rights check: `requires.services.rights`, a key per component for one question at the bouncer.
+  - `[ ]` Contracts between apps open the provider's side as well as the consumer's, for both ways a component is delivered.
+  - `[ ]` A contract tells the provider which consumer is calling.
+  - `[ ]` Serve the rights check for a component delivered through the app Composition.
 
 ### 1.15 Gateway External Authentication (AuthZEN PEP) (**)
 * **Target Domain**: Gateway Security
@@ -1124,12 +1125,12 @@ does not exist yet that something cannot be the Composition.
 
 ### 4.2 Interactive Portal Assistant & Cross-App Aggregation (***)
 * **Target Domain**: AI Agents & Portal
-* **Context**: Users cannot interact with their system or perform cross-application query aggregations from a single chat window.
-* **Proposed Solution**: Deploy a chat assistant inside the portal shell. Leverage OIDC token exchange to securely verify user identity and aggregate data across multiple tenant databases.
+* **Context**: A person at the desktop can ask the assistant, and the assistant can only answer from what the model knows.
+* **Proposed Solution**: Give the desktop's assistant the tenant's `read`-scope MCP capabilities, for the person who is signed in and for as long as they are. It reads and answers; it changes nothing and keeps no permission between sessions.
 * **Backlog Items**:
-  - `[ ]` Build the interactive portal chat UI component in the shell.
-  - `[ ]` Configure OIDC token exchange client mappings for the chat assistant.
-  - `[ ]` Build query routers to aggregate data from multiple tenant applications.
+  - `[x]` The chat assistant in the desktop, behind the model gateway.
+  - `[ ]` Let the assistant call `read`-scope capabilities from the MCP registry.
+  - `[ ]` Settle how such a call reaches an app as the signed-in person.
 
 ### 4.3 Automated Workflow Agents & Code Generation (***)
 * **Target Domain**: AI Agents

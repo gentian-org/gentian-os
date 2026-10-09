@@ -4,6 +4,29 @@
 
 ---
 
+## Scope: what the kernel carries, and what it leaves to a component
+
+The kernel carries what every participant needs and nobody should rebuild:
+the protocol apps expose their operations through (MCP), a gateway to
+language models, and an assistant a person can ask while they are at the
+desktop.
+
+The kernel does not carry a program that **acts for a person who is not
+there**: one that works under a standing permission, on a timer or a
+trigger, and changes data without the person clicking. That needs a record
+of what the person allowed, a check on every call, and a journal, and it is
+the work of a component a cluster may or may not install. The kernel offers
+such a component generic hooks and no more:
+
+| Hook | What it gives a component | Where |
+|---|---|---|
+| The rights check | One question: may this person use that app of my tenant. No credential of the authorization store. | `requires.services.rights`, [custom-catalogues.md](../custom-catalogues.md) |
+| The model gateway | A key of its own at the gateway. | `requires.services.llm` |
+| Contracts between apps | A declared, grantable relation to another app of the tenant. | `provides`, `integrations`, `AppGrant` (§2) |
+
+A cluster with no such component installed runs no unattended agent, and
+loses nothing else described here.
+
 ## 1. Why MCP Belongs in the Kernel
 
 Gentian OS treats the **Model Context Protocol (MCP)** the same way a
@@ -64,9 +87,10 @@ When the Composition reconciles the app, it also:
 1. Registers the app's MCP endpoint with the **MCP registry**
    (a kernel service exposing the catalogue of all live MCP
    endpoints in the cluster, scoped per tenant).
-2. Configures the OIDC client so MCP calls authenticate via Keycloak
-   token exchange — agents present the user's token, the app trusts
-   the kernel issuer.
+2. Leaves who is calling to the caller's side of the call. How a call
+   through MCP reaches an app as one particular person is not settled here:
+   no app is handed a person's token (AD-13), and the identity provider is
+   not configured to exchange one.
 3. Publishes the capability list under the tenant's namespace,
    discoverable via `kubectl get mcpcapabilities -n tenant-{name}`.
 
@@ -75,21 +99,21 @@ treats them as agent-opaque but still useful.
 
 ## 4. Shell AI Assistant
 
-A built-in **shell assistant** (Gentian Portal extension) can be
-enabled per tenant. When a user asks "show me my open tasks across
-all my apps", the assistant:
+The desktop has an assistant: a person asks, a language model behind the
+model gateway answers. It works **while the person is at the desktop** and
+ends with their session.
 
-1. Queries the MCP registry for the tenant's apps with `read`-scope
-   capabilities matching `tasks`.
-2. Performs OIDC token exchange to obtain per-app access tokens
-   on behalf of the user.
-3. Calls `searchTasks` on each matching app via MCP.
-4. Aggregates and returns the results.
+Giving it tools is the planned next step: the assistant queries the MCP
+registry for the tenant's `read`-scope capabilities and calls them to
+answer a question such as "where is retention configured" from the
+documentation an app exposes. It reads; it does not change anything, it
+keeps no permission between sessions, and it never has a privilege the
+person lacks. Cross-tenant queries are structurally impossible because the
+registry, the issuer and the network policies are all tenant-scoped.
 
-The assistant is itself an agent that runs **as the user** — it has
-no privileges the user doesn't have. Cross-tenant queries are
-structurally impossible because the registry, OIDC issuer, and
-network policies are all tenant-scoped.
+Anything beyond that — acting while the person is away, changing data
+unattended, running on a trigger — is not the assistant's and not the
+kernel's (see Scope).
 
 ## 5. Automation Hooks (`spec.automationHooks`)
 
@@ -325,9 +349,10 @@ Automation hooks milestones:
 
 ## 8. Security Model
 
-- **No agent or workflow has privileges the calling user lacks.**
-  OIDC token exchange enforces this end-to-end — both for MCP
-  calls and automation hook invocations.
+- **No agent or workflow has privileges the calling user lacks.** For a
+  component that acts for a person who is away, the rights check is how it
+  holds itself to that: the person's own right to use the app is asked on
+  every call, of the same store the edge asks.
 - **Capability scopes** (`read` / `write` / `admin`) are declared
   per capability and enforced by the app, with the platform validating
   the declaration matches the underlying API surface.
