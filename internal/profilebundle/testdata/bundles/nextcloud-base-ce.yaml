@@ -357,7 +357,18 @@ spec:
           postLogoutRedirectUris:
             - https://cloud.${TENANT_DOMAIN}/
             - https://portal.${KERNEL_DOMAIN}/
-          backchannelLogoutUrl: https://cloud.${TENANT_DOMAIN}/apps/user_oidc/backchannel-logout/gentian
+          # Where the realm tells Nextcloud that a person signed out: this
+          # path, at the Service and port of the entry "web", inside the
+          # cluster. user_oidc checks the token's signature against the
+          # realm's keys, its audience, its event and its session before it
+          # ends anything. "gentian" is the provider's name in the
+          # post-installation hook above. The realm calls Nextcloud by its
+          # Service's name, which needs no entry under trustedDomains: with
+          # overwritehost set (gentian-proxy.config.php above) Nextcloud does
+          # not hold a request to that list.
+          backchannelLogout:
+            exposure: web
+            path: /apps/user_oidc/backchannel-logout/gentian
       database:
         engine: postgresql
         databasePerTenant: true

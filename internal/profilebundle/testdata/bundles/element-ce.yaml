@@ -75,16 +75,21 @@ spec:
             - "https://matrix.${TENANT_DOMAIN}/_synapse/client/oidc/callback"
           postLogoutRedirectUris:
             - "https://chat.${TENANT_DOMAIN}/*"
-        # Synapse is the relying party here, not Element, so the notification
-        # goes to the homeserver — it owns the session Element is holding.
-        #
-        # INCOMPLETE: Synapse ignores this endpoint unless its own provider
-        # config carries backchannel_logout_enabled: true, which this profile
-        # does not set today. Keycloak will POST and be refused until it does,
-        # which is harmless but achieves nothing. The flag belongs next to the
-        # oidc_issuer value this profile already maps.
             - "https://portal.${KERNEL_DOMAIN}/*"
-          backchannelLogoutUrl: "https://matrix.${TENANT_DOMAIN}/_synapse/client/oidc/backchannel_logout"
+        # No backchannelLogout: a sign-out at the platform does not end the
+        # session Synapse holds for Element. Two things are missing, and
+        # declaring the field here would supply neither:
+        #
+        #   - This profile is rendered by its own Composition
+        #     (composition.yaml), and the address the realm is told to call is
+        #     built by the platform's. Nothing registers one for this client.
+        #   - Synapse is the relying party, not Element, and it answers
+        #     /_synapse/client/oidc/backchannel_logout only when its provider
+        #     settings carry backchannel_logout_enabled: true, which this
+        #     profile's Composition does not write.
+        #
+        # The address, once both are done, is that path at the Service and
+        # port of the entry "matrix" inside the cluster. It has not been run.
       database:
         engine: postgresql
         databasePerTenant: true

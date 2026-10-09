@@ -54,7 +54,7 @@ const (
 	// It is built by gentian-apps, from images/gentian-sidecar-sso-saml. A
 	// build of that repository's develop branch is develop-<commit>; a
 	// release is its version.
-	DefaultSignInSidecarImage = "ghcr.io/gentian-org/sidecar-sso-saml:develop-9cdb51a@sha256:623d425da55c5243df706fb3863ea02b6a91692c080f002c4344e3b6f910d245"
+	DefaultSignInSidecarImage = "ghcr.io/gentian-org/sidecar-sso-saml:develop-6c430b6@sha256:99b6f7547e58f446c00dc0764fedfcb22661dc50eaf50ca82b9f467f84df8a38"
 )
 
 func PostgresProvisionerImage() string {

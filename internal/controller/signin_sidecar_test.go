@@ -14,6 +14,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -266,9 +267,17 @@ func TestTheSidecarsAddressesAreTheTenants(t *testing.T) {
 		if !reflect.DeepEqual(got, want) {
 			t.Errorf("%s:\n got %v\nwant %v", c.name, got, want)
 		}
-		// The Composition is told where the app answers and nothing else.
-		if !reflect.DeepEqual(sidecar.claim, map[string]interface{}{"host": c.host}) {
-			t.Errorf("%s: the claim carries %v, want the host alone", c.name, sidecar.claim)
+		// The Composition is told where the app answers, and the port of
+		// the sidecar's Service on which it is told of a sign-out. Nothing
+		// else: no address.
+		if !reflect.DeepEqual(sidecar.claim, map[string]interface{}{"host": c.host, "logoutPort": int64(signInSidecarPort)}) {
+			t.Errorf("%s: the claim carries %v, want the host and the sign-out port", c.name, sidecar.claim)
+		}
+		// Where the realm tells the sidecar of a sign-out is the sidecar's
+		// own Service in the tenant's namespace, whatever the tenant's
+		// domain or realm: never a public address.
+		if want := "http://notes-sign-in.tenant-" + tn.Name + ".svc.cluster.local:8081/sso/logout"; sidecar.logoutURL != want {
+			t.Errorf("%s: the sidecar is told of a sign-out at %s, want %s", c.name, sidecar.logoutURL, want)
 		}
 	}
 }
@@ -344,8 +353,8 @@ func TestTheSidecarsTwoPathsAreRoutedApart(t *testing.T) {
 	h.reconcile()
 
 	// The claim carries the sidecar for the Composition.
-	if got := h.claimSignIn(); !reflect.DeepEqual(got, map[string]interface{}{"host": "notes.acme.k.example"}) {
-		t.Fatalf("the App claim's signInSidecar = %v, want where the app answers", got)
+	if got := h.claimSignIn(); !reflect.DeepEqual(got, map[string]interface{}{"host": "notes.acme.k.example", "logoutPort": int64(signInSidecarPort)}) {
+		t.Fatalf("the App claim's signInSidecar = %v, want where the app answers and the sign-out port", got)
 	}
 
 	app := h.route("notes-web")
@@ -383,6 +392,11 @@ func TestTheSidecarsTwoPathsAreRoutedApart(t *testing.T) {
 	}
 	if ruleFor(app, signInACSPath) != nil {
 		t.Fatal("the answer's path is a rule of the route behind the session, where no answer could arrive")
+	}
+	// The path the realm tells the sidecar of a sign-out on is on no route
+	// at all: the realm calls the sidecar inside the cluster.
+	if ruleFor(app, signInLogoutPath) != nil {
+		t.Fatal("the sign-out path is a rule of the app's route: it is not for anything outside the cluster")
 	}
 
 	acs := h.route(signInACSRouteName("notes", "web"))
@@ -598,6 +612,53 @@ func TestTheSignInSidecarImageIsOneBuild(t *testing.T) {
 	}
 }
 
+// The sidecar refuses a sign-out request that is not addressed to exactly
+// the address it was told, and the realm addresses its request to exactly
+// the address the Composition registered. One is written here and the other
+// in app-default.yaml, from the same parts: the app's name, its namespace and
+// the sidecar's port. This holds the two to the same string, by rendering
+// the Composition (its golden file) for the app the fixture names.
+func TestTheSidecarAndTheRealmAgreeOnTheSignOutAddress(t *testing.T) {
+	dir := filepath.Join("..", "..", "crossplane", "tests", "unit", "render", "app-sign-in-sidecar")
+	xr, err := os.ReadFile(filepath.Join(dir, "xr.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// What the operator puts on the claim.
+	if want := fmt.Sprintf("logoutPort: %d", signInSidecarPort); !strings.Contains(string(xr), want) {
+		t.Fatalf("the fixture's claim does not carry %q, which is what the operator writes", want)
+	}
+	rendered, err := os.ReadFile(filepath.Join(dir, "expected.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The fixture's app is demo-app in tenant-demo.
+	want := "logoutServicePostBindingUrl: " + signInLogoutURL("demo-app", "tenant-demo")
+	if !strings.Contains(string(rendered), want) {
+		t.Fatalf("the Composition does not register %q with the realm", want)
+	}
+	if got := strings.Count(string(rendered), "logoutServicePostBindingUrl:"); got != 1 {
+		t.Fatalf("%d sign-out addresses are registered, want the one", got)
+	}
+	// And asks the browser for nothing at sign-out: the realm calls the
+	// sidecar itself.
+	if !strings.Contains(string(rendered), "frontChannelLogout: false") {
+		t.Fatal("the sidecar's client is not told to be signed out server to server")
+	}
+
+	// An app whose claim carries no port -- an operator that runs a sidecar
+	// with no sign-out path -- has no address registered at all.
+	for _, other := range []string{"app-sign-in-sidecar-not-served", "app-sign-in-sidecar-undeclared", "app-sign-in-sidecar-withdrawn"} {
+		out, err := os.ReadFile(filepath.Join("..", "..", "crossplane", "tests", "unit", "render", other, "expected.yaml"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(out), "logoutServicePostBindingUrl") {
+			t.Fatalf("%s: a sign-out address is registered for a sidecar that is not there", other)
+		}
+	}
+}
+
 // The profiles of the catalogue that declare a sign-in sidecar, as
 // gentian-apps publishes them (internal/profilebundle/testdata/bundles), are
 // served: each brings its handler, names its own secrets and stands on its
@@ -745,6 +806,7 @@ func TestTheSidecarIsWrittenBesideTheApp(t *testing.T) {
 		"SSO_ENTITY_ID":          "https://notes.acme.k.example/sso",
 		"SSO_ACS_URL":            "https://notes.acme.k.example/sso/acs",
 		"SSO_LOGIN_PATH":         "/sso/login",
+		"SSO_LOGOUT_URL":         "http://notes-sign-in.tenant-acme.svc.cluster.local:8081/sso/logout",
 		"SSO_IDP_ENTITY_ID":      "https://id.k.example/auth/realms/acme",
 		"SSO_IDP_SSO_URL":        "https://id.k.example/auth/realms/acme/protocol/saml",
 		"SSO_IDP_DESCRIPTOR_URL": "http://gentian-idp-keycloak-keycloakx-http." + layout.Namespace(layout.Authentication) + ".svc.cluster.local:8080/auth/realms/acme/protocol/saml/descriptor",

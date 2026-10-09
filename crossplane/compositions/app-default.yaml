@@ -956,6 +956,57 @@ spec:
             {{- range $uri := (default list $oidcCl.postLogoutRedirectUris) }}
             {{- $postLogout = append $postLogout ($uri | replace "${TENANT_DOMAIN}" $domain) }}
             {{- end }}
+            {{- /* ── Where the realm tells the app that a person signed out ───────
+                 requires.services.identity.oidc.backchannelLogout: a path, and
+                 which of the profile's entries it belongs to. The address the
+                 realm posts its logout token to is built here and nowhere
+                 else:
+
+                   http://<the entry's backend Service>.<this namespace>.svc.cluster.local:<its port><path>
+
+                 The app's own Service, inside the cluster. Not the app's public
+                 address: every path there is behind a session, and the realm
+                 has none, so its request would be answered with a redirect to
+                 the sign-in and never arrive.
+
+                 A profile states no address, because the realm sends a request
+                 to whatever is registered here -- so what is registered is
+                 only ever the Service this component's own entry routes to.
+                 Each part is held to what it has to be, here as in the
+                 definition's own rules (a profile reaches this Composition
+                 only through them, and this does not rely on that):
+
+                   - the entry is one of this profile's, by name, and routes to
+                     this component's own Service (no backend.component);
+                   - the Service's name is a name: one DNS label, so nothing in
+                     it can end the host or begin a path;
+                   - the namespace is this install's, from the claim;
+                   - the path is a plain path: segments of letters, digits,
+                     "_", "~" and "-" with single dots inside them, so no
+                     query, no fragment, no "..", no "//".
+
+                 Anything else registers no address at all, which is a client
+                 the realm tells nothing: the app's session then lasts as long
+                 as the app keeps it.
+
+                 The old free-form backchannelLogoutUrl is not read. */}}
+            {{- $signOutNotice := "" }}
+            {{- $bcl := default dict $oidcCl.backchannelLogout }}
+            {{- $bclPath := default "" $bcl.path }}
+            {{- $bclBackend := dict }}
+            {{- if $bcl.exposure }}
+            {{- range $e := (dig "expose" list $pSpec) }}
+              {{- if and (eq (dig "name" "" $e) $bcl.exposure) (not (dig "backend" "component" "" $e)) }}
+                {{- $bclBackend = dig "backend" dict $e }}
+              {{- end }}
+            {{- end }}
+            {{- end }}
+            {{- $bclService := dig "service" "" $bclBackend }}
+            {{- $bclPort := dig "port" 0 $bclBackend | int }}
+            {{- $dnsLabel := "^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$" }}
+            {{- if and (regexMatch $dnsLabel $bclService) (regexMatch $dnsLabel $ns) (gt $bclPort 0) (le $bclPort 65535) (le (len $bclPath) 256) (regexMatch "^(/[A-Za-z0-9_~-]+(\\.[A-Za-z0-9_~-]+)*)+/?$" $bclPath) (not (contains ".." $bclPath)) (not (contains "//" $bclPath)) }}
+            {{- $signOutNotice = printf "http://%s.%s.svc.cluster.local:%d%s" $bclService $ns $bclPort $bclPath }}
+            {{- end }}
             {{- /* provider-keycloak Client reads clientSecretSecretRef from this Secret;
                  it must match the OpenBao path XWiki consumes via ExternalSecret. */}}
             {{- if eq (default "PUBLIC" $oidcCl.accessType) "CONFIDENTIAL" }}
@@ -1037,8 +1088,8 @@ spec:
                 validPostLogoutRedirectUris:
                   {{ toYaml $postLogout | nindent 18 }}
                 {{- end }}
-                {{- if and $oidcCl.backchannelLogoutUrl (ne $oidcCl.backchannelLogoutUrl "") }}
-                backchannelLogoutUrl: {{ $oidcCl.backchannelLogoutUrl | replace "${TENANT_DOMAIN}" $domain | quote }}
+                {{- if $signOutNotice }}
+                backchannelLogoutUrl: {{ $signOutNotice | quote }}
                 backchannelLogoutSessionRequired: true
                 {{- end }}
                 {{- if eq (default "PUBLIC" $oidcCl.accessType) "CONFIDENTIAL" }}
@@ -1408,6 +1459,19 @@ spec:
             {{- if and $signInDeclared $signIn.host }}
             {{- $signInEntity := printf "https://%s/sso" $signIn.host }}
             {{- $signInACS := printf "https://%s/sso/acs" $signIn.host }}
+            {{- /* Where the realm tells the sidecar that a person signed out:
+                 the sidecar's own Service inside the cluster, which the
+                 operator names "<app>-sign-in" in this namespace. The claim
+                 says the port and nothing else of the address, so no claim
+                 makes the realm call anything but this app's sidecar; a claim
+                 that says none is an operator that runs a sidecar without a
+                 sign-out path, and the realm is then told to call nothing. */}}
+            {{- $signInLogoutPort := default 0 $signIn.logoutPort | int }}
+            {{- $signInLogout := "" }}
+            {{- $signInLabel := "^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$" }}
+            {{- if and (gt $signInLogoutPort 0) (le $signInLogoutPort 65535) (regexMatch $signInLabel (printf "%s-sign-in" $app)) (regexMatch $signInLabel $ns) }}
+            {{- $signInLogout = printf "http://%s-sign-in.%s.svc.cluster.local:%d/sso/logout" $app $ns $signInLogoutPort }}
+            {{- end }}
             ---
             apiVersion: samlclient.keycloak.crossplane.io/v1alpha1
             kind: Client
@@ -1440,7 +1504,16 @@ spec:
                 forceNameIdFormat: true
                 nameIdFormat: email
                 includeAuthnStatement: true
+                {{- /* Sign-out: the realm posts a signed LogoutRequest to the
+                     sidecar itself, server to server, and asks the browser
+                     for nothing (frontChannelLogout false). The sidecar
+                     accepts it only signed by the realm and addressed to
+                     exactly this address. Not a public address: /sso/logout
+                     is on none of the app's routes. */}}
                 frontChannelLogout: false
+                {{- if $signInLogout }}
+                logoutServicePostBindingUrl: {{ $signInLogout | quote }}
+                {{- end }}
                 fullScopeAllowed: false
                 validRedirectUris:
                   - {{ $signInACS | quote }}

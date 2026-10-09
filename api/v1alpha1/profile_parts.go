@@ -394,6 +394,8 @@ type SAMLClientSpec struct {
 // Keycloak realm by the Crossplane composition. Adding this block to an
 // AppProfile is all that is needed to get automatic client registration for
 // any new app — no manual Keycloak setup required per tenant.
+//
+// +kubebuilder:validation:XValidation:rule="!has(self.backchannelLogoutUrl) || self.backchannelLogoutUrl.size() == 0",message="backchannelLogoutUrl is withdrawn: declare backchannelLogout (exposure and path) instead. The platform builds the address from the entry's own Service inside the cluster; a profile no longer names one"
 type OIDCClientSpec struct {
 	// ClientID is the OIDC client identifier registered in Keycloak.
 	// +kubebuilder:validation:Required
@@ -423,10 +425,27 @@ type OIDCClientSpec struct {
 	// +optional
 	PostLogoutRedirectURIs []string `json:"postLogoutRedirectUris,omitempty"`
 
-	// BackchannelLogoutURL is the endpoint Keycloak calls for backchannel logout
-	// notifications (RFC 7009). Supports ${TENANT_DOMAIN} substitution.
+	// BackchannelLogoutURL is withdrawn and refused: declare BackchannelLogout
+	// instead.
+	//
+	// It was an address of the profile's own writing, which the realm then
+	// posted a logout token to when a person signed out. Two things were
+	// wrong with that. Every profile wrote the app's public address, where
+	// every path is behind a session, so the realm's own request was answered
+	// with a redirect to the sign-in and never arrived. And it let a
+	// catalogue entry make the identity provider send a request to any
+	// address at all, inside the cluster or outside it.
+	//
+	// The field stays in the definition so that a profile which still
+	// carries it is refused and told why, where an unknown field would be
+	// dropped without a word.
 	// +optional
 	BackchannelLogoutURL string `json:"backchannelLogoutUrl,omitempty"`
+
+	// BackchannelLogout says where in the app the realm tells it that a
+	// person signed out (OpenID Connect Back-Channel Logout).
+	// +optional
+	BackchannelLogout *BackchannelLogoutSpec `json:"backchannelLogout,omitempty"`
 
 	// DirectAccessGrantsEnabled enables the Resource Owner Password Credentials
 	// grant (legacy / CLI apps). Defaults to false.
@@ -437,6 +456,60 @@ type OIDCClientSpec struct {
 	// pack key differs from clientId. When empty, clientId is used as the pack key.
 	// +optional
 	OIDCPackRef string `json:"oidcPackRef,omitempty"`
+}
+
+// BackchannelLogoutSpec declares where an app with its own OIDC client is
+// told that a person signed out.
+//
+// When a person signs out at the platform, the realm ends its session and
+// posts a logout token -- a JWT it signs, naming the client, the person and
+// the session -- to every client of that session which registered an address
+// for it. The app checks the token and ends its own session for that person,
+// which otherwise outlives the sign-out: the next person at the same browser
+// would open the app as the one before.
+//
+// A profile states a path and which of its entries the path belongs to. It
+// states no address. The platform builds one from the entry's own backend:
+//
+//	http://<backend.service>.<the component's namespace>.svc.cluster.local:<backend.port><path>
+//
+// So the realm calls the app inside the cluster, server to server, at the
+// app's own Service. It does not call the app's public address, where the
+// front door would ask the realm for a session it does not have; and it can
+// be made to call nothing but the Service this component's own entry routes
+// to -- no other namespace, no address outside the cluster.
+//
+// Nothing is opened for it. The realm's namespace is already admitted to a
+// tenant's pods, and the path is no more public than before.
+//
+// What the app has to do is its own, and the profile's author checks it: the
+// app must verify the token's signature against the realm's keys, its issuer,
+// that its audience is this client, and that it carries the back-channel
+// logout event, before it ends a session. An app that ends a session on an
+// unverified token lets whoever can reach that path sign people out -- never
+// in -- so say in the profile's customization record what the app checks.
+//
+// The realm posts once, when a person signs out or an administrator ends
+// their session. It does not post again if the app did not answer, and not
+// when a session merely runs out.
+type BackchannelLogoutSpec struct {
+	// Exposure names the entry of this profile (spec.expose) whose backend
+	// the path is served by. The entry must route to this component's own
+	// Service: one that names another component's (backend.component) is
+	// refused, and so is a name the profile has no entry for.
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	// +kubebuilder:validation:MaxLength=40
+	Exposure string `json:"exposure"`
+
+	// Path is the app's back-channel logout endpoint: a plain path. One or
+	// more segments of letters, digits, "_", "~" and "-", which may have
+	// single dots inside them. So no query and no fragment, no empty segment
+	// ("//", which begins a host), no ".." and no segment that begins or ends
+	// with a dot, and nothing else that could be read as part of an address.
+	// +kubebuilder:validation:MinLength=2
+	// +kubebuilder:validation:MaxLength=256
+	// +kubebuilder:validation:Pattern=`^(/[A-Za-z0-9_~-]+(\.[A-Za-z0-9_~-]+)*)+/?$`
+	Path string `json:"path"`
 }
 
 // DatabaseRequirement specifies a relational database need.

@@ -401,8 +401,16 @@ namespaces:
     egress: open
     egressWhy: >-
       Keycloak calls its database, the mail relay, the operator's membership
-      listener, tenants' back-channel logout endpoints and brokered identity
-      providers; its Jobs install packages from the internet.
+      listener and brokered identity providers; its Jobs install packages from
+      the internet. And it tells tenants' apps of a sign-out, inside the
+      cluster: a logout token to an app's own Service, on that entry's backend
+      port and the path its profile declares
+      (crossplane/compositions/app-default.yaml, backchannelLogoutUrl), and a
+      SAML logout request to an app's sign-in sidecar on port 8081
+      (internal/controller/signin_sidecar.go, signInLogoutURL). The tenant's
+      baseline admits this namespace to its pods
+      (internal/kernel/netpolicy/baseline.go). A rule that restricted this
+      namespace's egress would have to keep both.
     workloads:
       - name: keycloak
         installedBy: composition:suze

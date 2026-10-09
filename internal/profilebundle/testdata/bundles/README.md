@@ -4,11 +4,7 @@ Profile bundles exactly as gentian-apps publishes them: the output of its
 `scripts/build-catalogue-source.py` (`dist/catalogue/profiles/<name>.yaml`),
 copied here unchanged so that these tests need no other repository.
 
-Built from gentian-apps commit `f52a204` (branch `develop`), as published at
-`https://gentian-org.github.io/gentian-apps/develop` -- except `activepieces-me`,
-`docmost-ce` and `openproject-ce`, which are from commit `9cdb51a` of the same
-branch: the three that declare the sign-in sidecar, with the handlers that
-settle who administers the app, and `docmost-ce` with its post-install job.
+Built from gentian-apps commit `c65ae1e` (branch `develop`), all nine.
 
 They are fixtures for what the two repositories have to agree on: each must be
 a bundle the director accepts and the operator verifies

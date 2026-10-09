@@ -12,9 +12,3 @@ spec:
     name: demo-app
   tenantNamespace: tenant-demo
   domain: demo.platform.example.test
-  # What the operator puts on the claim for an install pinned to a digest
-  # whose bundle brings the handler: where the app answers, and the port of
-  # the sidecar's Service on which the realm tells it of a sign-out.
-  signInSidecar:
-    host: demo.demo.platform.example.test
-    logoutPort: 8081

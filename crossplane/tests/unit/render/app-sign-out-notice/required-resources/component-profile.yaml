@@ -1,0 +1,46 @@
+# An app with its own OIDC client that can be told of a sign-out: it says the
+# path and which of its entries serves it. The realm is registered with the
+# entry's own Service inside the cluster -- demo-app-web.tenant-demo, port
+# 8080 -- and not with the app's public address.
+apiVersion: gentianos.io/v1alpha1
+kind: ComponentProfile
+metadata:
+  name: demo-app
+  labels:
+    gentianos.io/profile-name: demo-app
+spec:
+  classes:
+    - app
+  launch: none
+  trustTier: certified
+  version: "1.0.0"
+  package:
+    chart:
+      repository: oci://example.invalid/demo-app
+      name: demo-app
+      version: "1.0.0"
+    valueMapping:
+      oidc:
+        clientSecretKey: demo-app.oidc.secret
+  requires:
+    services:
+      identity:
+        oidc:
+          clientId: catalogue-test-client
+          name: Demo App
+          accessType: CONFIDENTIAL
+          redirectUris:
+            - "https://demo.${TENANT_DOMAIN}/oidc/callback"
+          postLogoutRedirectUris:
+            - "https://demo.${TENANT_DOMAIN}/"
+          backchannelLogout:
+            exposure: web
+            path: /oidc/backchannel-logout
+  expose:
+    - name: web
+      surface: gateway
+      authMode: oidc
+      subDomain: demo
+      backend:
+        service: demo-app-web
+        port: 8080

@@ -68,6 +68,18 @@ spec:
                         Where the app answers. The sidecar's name at the realm
                         is https://<host>/sso, and the one address the realm
                         may post its answer to is https://<host>/sso/acs.
+                    logoutPort:
+                      type: integer
+                      minimum: 1
+                      maximum: 65535
+                      description: >
+                        The port of the sidecar's own Service on which it is
+                        told that a person signed out. The realm is given the
+                        address
+                        http://<app>-sign-in.<tenantNamespace>.svc.cluster.local:<logoutPort>/sso/logout
+                        to post its logout request to: inside the cluster,
+                        and nothing of it but the port is said here. Omitted,
+                        the realm is told to call nothing.
                 mailboxTokenSignIn:
                   type: boolean
                   description: >

@@ -112,7 +112,20 @@ spec:
           postLogoutRedirectUris:
             - "https://files.${TENANT_DOMAIN}/"
             - "https://portal.${KERNEL_DOMAIN}/"
-          backchannelLogoutUrl: "https://files.${TENANT_DOMAIN}/apps/user_oidc/backchannel-logout/opendesk"
+          # Where the realm tells Nextcloud that a person signed out: this
+          # path, at the Service and port of the entry "web", inside the
+          # cluster. "opendesk" is the provider's name in user_oidc.
+          #
+          # NOT PROVEN for this edition. The same declaration is proven for
+          # nextcloud-base-ce against its own image (e2e/oidc-sign-out). This
+          # edition runs another image, configured by another chart, and
+          # whether that image answers under its Service's name -- Nextcloud
+          # refuses a name it does not trust unless overwritehost is set --
+          # and has the provider "opendesk" registered has not been run. Until
+          # it has, a sign-out may leave this app's session as it is.
+          backchannelLogout:
+            exposure: web
+            path: /apps/user_oidc/backchannel-logout/opendesk
       database:
         engine: postgresql
         databasePerTenant: true

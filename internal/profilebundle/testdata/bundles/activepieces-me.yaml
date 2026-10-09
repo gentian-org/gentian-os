@@ -223,6 +223,14 @@ spec:
       # entry named none, so the app was published under the profile's name
       # and told another: links it writes itself led nowhere.
       subDomain: auto
+      # Activepieces' page keeps its session as a token in localStorage and
+      # sends it to its own API in the Authorization header. On an ordinary
+      # entry the front door replaces that header and removes it, so every
+      # call after sign-in would reach Activepieces with no token. This asks
+      # that the header be left as the page sent it. It is a request to the
+      # tenant's perimeter approver and takes effect once approved; sign-in
+      # and the right to use the app are required either way.
+      clientAuthorization: app
       # Activepieces' own ways in, refused at the front door: signing in and
       # up with a password, its one-time codes, and the paid single sign-on's
       # calls. Nobody has a password, so nothing is lost. The handler's one

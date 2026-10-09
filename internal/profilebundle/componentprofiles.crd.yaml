@@ -71,6 +71,12 @@ spec:
               A service may expose -- a console is not a contract surface -- but only on
               the gateway. The perimeter has no session, and a service console published
               there is never what anybody meant.
+              The address the realm posts a logout token to is built from an entry's
+              backend, so the entry has to be this profile's, has to route to this
+              component's own Service, and that Service's name has to be a name and
+              nothing else: it becomes the host of the address.
+              An extension's client is not told of a sign-out: nothing builds an address
+              for it, and a declaration that did nothing would read as one that works.
               One delivery, and nothing outside package to reach for. The OR this replaces
               admitted a chart beside an API integration, and deploymentMethod could
               contradict whichever was set.
@@ -769,6 +775,7 @@ spec:
                           minimum: 1
                           type: integer
                         service:
+                          maxLength: 63
                           minLength: 1
                           type: string
                       required:
@@ -1220,10 +1227,51 @@ spec:
                                   - PUBLIC
                                   - CONFIDENTIAL
                                   type: string
+                                backchannelLogout:
+                                  description: |-
+                                    BackchannelLogout says where in the app the realm tells it that a
+                                    person signed out (OpenID Connect Back-Channel Logout).
+                                  properties:
+                                    exposure:
+                                      description: |-
+                                        Exposure names the entry of this profile (spec.expose) whose backend
+                                        the path is served by. The entry must route to this component's own
+                                        Service: one that names another component's (backend.component) is
+                                        refused, and so is a name the profile has no entry for.
+                                      maxLength: 40
+                                      pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                                      type: string
+                                    path:
+                                      description: |-
+                                        Path is the app's back-channel logout endpoint: a plain path. One or
+                                        more segments of letters, digits, "_", "~" and "-", which may have
+                                        single dots inside them. So no query and no fragment, no empty segment
+                                        ("//", which begins a host), no ".." and no segment that begins or ends
+                                        with a dot, and nothing else that could be read as part of an address.
+                                      maxLength: 256
+                                      minLength: 2
+                                      pattern: ^(/[A-Za-z0-9_~-]+(\.[A-Za-z0-9_~-]+)*)+/?$
+                                      type: string
+                                  required:
+                                  - exposure
+                                  - path
+                                  type: object
                                 backchannelLogoutUrl:
                                   description: |-
-                                    BackchannelLogoutURL is the endpoint Keycloak calls for backchannel logout
-                                    notifications (RFC 7009). Supports ${TENANT_DOMAIN} substitution.
+                                    BackchannelLogoutURL is withdrawn and refused: declare BackchannelLogout
+                                    instead.
+
+                                    It was an address of the profile's own writing, which the realm then
+                                    posted a logout token to when a person signed out. Two things were
+                                    wrong with that. Every profile wrote the app's public address, where
+                                    every path is behind a session, so the realm's own request was answered
+                                    with a redirect to the sign-in and never arrived. And it let a
+                                    catalogue entry make the identity provider send a request to any
+                                    address at all, inside the cluster or outside it.
+
+                                    The field stays in the definition so that a profile which still
+                                    carries it is refused and told why, where an unknown field would be
+                                    dropped without a word.
                                   type: string
                                 clientId:
                                   description: ClientID is the OIDC client identifier
@@ -1262,6 +1310,14 @@ spec:
                               required:
                               - clientId
                               type: object
+                              x-kubernetes-validations:
+                              - message: 'backchannelLogoutUrl is withdrawn: declare
+                                  backchannelLogout (exposure and path) instead. The
+                                  platform builds the address from the entry''s own
+                                  Service inside the cluster; a profile no longer
+                                  names one'
+                                rule: '!has(self.backchannelLogoutUrl) || self.backchannelLogoutUrl.size()
+                                  == 0'
                             saml:
                               description: SAML describes the SAML client to register
                                 in the tenant's Keycloak realm.
@@ -2786,10 +2842,51 @@ spec:
                                 - PUBLIC
                                 - CONFIDENTIAL
                                 type: string
+                              backchannelLogout:
+                                description: |-
+                                  BackchannelLogout says where in the app the realm tells it that a
+                                  person signed out (OpenID Connect Back-Channel Logout).
+                                properties:
+                                  exposure:
+                                    description: |-
+                                      Exposure names the entry of this profile (spec.expose) whose backend
+                                      the path is served by. The entry must route to this component's own
+                                      Service: one that names another component's (backend.component) is
+                                      refused, and so is a name the profile has no entry for.
+                                    maxLength: 40
+                                    pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                                    type: string
+                                  path:
+                                    description: |-
+                                      Path is the app's back-channel logout endpoint: a plain path. One or
+                                      more segments of letters, digits, "_", "~" and "-", which may have
+                                      single dots inside them. So no query and no fragment, no empty segment
+                                      ("//", which begins a host), no ".." and no segment that begins or ends
+                                      with a dot, and nothing else that could be read as part of an address.
+                                    maxLength: 256
+                                    minLength: 2
+                                    pattern: ^(/[A-Za-z0-9_~-]+(\.[A-Za-z0-9_~-]+)*)+/?$
+                                    type: string
+                                required:
+                                - exposure
+                                - path
+                                type: object
                               backchannelLogoutUrl:
                                 description: |-
-                                  BackchannelLogoutURL is the endpoint Keycloak calls for backchannel logout
-                                  notifications (RFC 7009). Supports ${TENANT_DOMAIN} substitution.
+                                  BackchannelLogoutURL is withdrawn and refused: declare BackchannelLogout
+                                  instead.
+
+                                  It was an address of the profile's own writing, which the realm then
+                                  posted a logout token to when a person signed out. Two things were
+                                  wrong with that. Every profile wrote the app's public address, where
+                                  every path is behind a session, so the realm's own request was answered
+                                  with a redirect to the sign-in and never arrived. And it let a
+                                  catalogue entry make the identity provider send a request to any
+                                  address at all, inside the cluster or outside it.
+
+                                  The field stays in the definition so that a profile which still
+                                  carries it is refused and told why, where an unknown field would be
+                                  dropped without a word.
                                 type: string
                               clientId:
                                 description: ClientID is the OIDC client identifier
@@ -2828,6 +2925,14 @@ spec:
                             required:
                             - clientId
                             type: object
+                            x-kubernetes-validations:
+                            - message: 'backchannelLogoutUrl is withdrawn: declare
+                                backchannelLogout (exposure and path) instead. The
+                                platform builds the address from the entry''s own
+                                Service inside the cluster; a profile no longer names
+                                one'
+                              rule: '!has(self.backchannelLogoutUrl) || self.backchannelLogoutUrl.size()
+                                == 0'
                           saml:
                             description: SAML describes the SAML client to register
                               in the tenant's Keycloak realm.
@@ -3206,6 +3311,21 @@ spec:
                 || !((has(self.defaultForTenants) && self.defaultForTenants) || (has(self.defaultForPlatform)
                 && self.defaultForPlatform) || (has(self.defaultWhereStoreOffered)
                 && self.defaultWhereStoreOffered)) || self.trustTier == ''platform'''
+            - message: 'requires.services.identity.oidc.backchannelLogout.exposure
+                must name an entry of this profile that routes to this component''s
+                own Service (no backend.component), whose backend.service is a plain
+                Service name: the realm is told to call that Service and no other
+                address'
+              rule: '!has(self.requires) || !has(self.requires.services) || !has(self.requires.services.identity)
+                || !has(self.requires.services.identity.oidc) || !has(self.requires.services.identity.oidc.backchannelLogout)
+                || (has(self.expose) && self.expose.exists(e, e.name == self.requires.services.identity.oidc.backchannelLogout.exposure
+                && (!has(e.backend.component) || e.backend.component.size() == 0)
+                && e.backend.service.matches(''^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$'')))'
+            - message: backchannelLogout is served for the component's own client
+                (requires.services.identity.oidc), not for an extension's
+              rule: '!has(self.extensions) || self.extensions.all(x, !has(x.kernelRequirements)
+                || !has(x.kernelRequirements.identity) || !has(x.kernelRequirements.identity.oidc)
+                || !has(x.kernelRequirements.identity.oidc.backchannelLogout))'
             - message: a package is a chart, a composition, the two together, an api,
                 or an addon -- and nothing else beside them
               rule: '[has(self.__package__.chart) || (has(self.__package__.composition)

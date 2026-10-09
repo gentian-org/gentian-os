@@ -245,7 +245,14 @@ spec:
           postLogoutRedirectUris:
             - "https://wiki.${TENANT_DOMAIN}/"
             - "https://portal.${KERNEL_DOMAIN}/"
-          backchannelLogoutUrl: "https://wiki.${TENANT_DOMAIN}/oidc/authenticator/backchannel_logout"
+        # Where the realm tells XWiki that a person signed out: this path,
+        # at the Service and port of the entry "web", inside the cluster. The
+        # authenticator checks the token against the keys the realm publishes
+        # at oidc.provider, and then ends every session of the person it
+        # names (customization.md, "Signing out").
+          backchannelLogout:
+            exposure: web
+            path: /oidc/authenticator/backchannel_logout
       database:
         engine: postgresql
         databasePerTenant: true

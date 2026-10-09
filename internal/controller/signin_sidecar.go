@@ -90,12 +90,31 @@ import (
 //
 // Nothing else of the app's route changes: every other path keeps its session
 // and its question.
+//
+// A third path reaches the sidecar and not through the Gateway at all:
+//
+//   - /sso/logout is where the realm tells the sidecar that a person signed
+//     out, so that the session the handler made in the app ends then and not
+//     an hour later. The realm posts a signed SAML LogoutRequest, server to
+//     server, to the sidecar's own Service inside the cluster
+//     (signInLogoutURL). No route carries the path, so nothing outside the
+//     cluster reaches it; inside, the tenant's baseline admits the realm's
+//     namespace to the tenant's pods (internal/kernel/netpolicy) and no pod
+//     of the tenant to another. The sidecar answers the path only under its
+//     Service's name and believes nothing but a request the realm signed,
+//     addressed to exactly that address, once. What it does with one is the
+//     app's handler's: a handler that can end a session does, and one that
+//     cannot leaves the app's session to its hour.
 
 const (
 	// signInLoginPath begins a sign-in. Behind the session.
 	signInLoginPath = "/sso/login"
 	// signInACSPath is where the realm posts its answer. No session.
 	signInACSPath = "/sso/acs"
+	// signInLogoutPath is where the realm tells the sidecar that a person
+	// signed out. It is on no route: the realm calls the sidecar's Service
+	// inside the cluster.
+	signInLogoutPath = "/sso/logout"
 	// signInSidecarPort is the port the sidecar listens on, and its
 	// Service's.
 	signInSidecarPort = 8081
@@ -145,6 +164,9 @@ type signInSidecar struct {
 	secrets           []string
 	appURL            string
 	appPort           int32
+	// logoutURL is where the realm tells the sidecar that a person signed
+	// out: the sidecar's own Service inside the cluster.
+	logoutURL string
 	// claim is what the App claim carries for the Composition.
 	claim map[string]interface{}
 }
@@ -152,6 +174,20 @@ type signInSidecar struct {
 // signInSidecarService is the name of an app's sidecar Service, and of its
 // Deployment.
 func signInSidecarService(component string) string { return component + "-sign-in" }
+
+// signInLogoutURL is where the realm tells an app's sidecar that a person
+// signed out: the sidecar's Service, by its full name inside the cluster.
+//
+// The sidecar is given this string and the realm is registered with the same
+// one, built by the Composition from the same parts (app-default.yaml: the
+// claim's name, its namespace and the port the claim carries). The two have
+// to agree to the letter -- the sidecar refuses a request addressed anywhere
+// else -- and TestTheSidecarAndTheRealmAgreeOnTheSignOutAddress holds them
+// to it.
+func signInLogoutURL(component, namespace string) string {
+	return fmt.Sprintf("http://%s.%s.svc.cluster.local:%d%s",
+		signInSidecarService(component), namespace, signInSidecarPort, signInLogoutPath)
+}
 
 // signInSidecarLabel marks everything that is part of one app's sidecar, and
 // is what its Service and its network paths select its pod by. It is not the
@@ -329,11 +365,17 @@ func (r *ComponentReconciler) signInSidecarFor(
 		// The realm's signing certificate, read inside the cluster.
 		descriptorURL: fmt.Sprintf("http://%s.%s.svc.cluster.local:8080/auth/realms/%s/protocol/saml/descriptor",
 			suzeKeycloakHTTPServiceName(), identityNamespace, realm),
-		secrets: declared.Secrets,
+		secrets:   declared.Secrets,
+		logoutURL: signInLogoutURL(comp.Name, comp.Namespace),
 		// Where the app answers. The sidecar's name at the realm and the one
 		// address the realm may post to follow from it, here and in the
 		// Composition: https://<host>/sso and https://<host>/sso/acs.
-		claim: map[string]interface{}{"host": host},
+		//
+		// And the port of the sidecar's Service on which it is told of a
+		// sign-out. The Composition builds the rest of that address itself,
+		// from the claim's own name and namespace, so the realm can be told
+		// to call nothing but this app's sidecar.
+		claim: map[string]interface{}{"host": host, "logoutPort": int64(signInSidecarPort)},
 	}
 	// A handler that may call the app is told where it is: the Service and
 	// port the entry routes to, inside the cluster. The network path is to
@@ -704,6 +746,7 @@ func signInDeployment(comp *gentianov1alpha1.Component, s *signInSidecar, labels
 		{Name: "SSO_ENTITY_ID", Value: "https://" + s.host + "/sso"},
 		{Name: "SSO_ACS_URL", Value: "https://" + s.host + signInACSPath},
 		{Name: "SSO_LOGIN_PATH", Value: signInLoginPath},
+		{Name: "SSO_LOGOUT_URL", Value: s.logoutURL},
 		{Name: "SSO_IDP_ENTITY_ID", Value: s.identityProvider},
 		{Name: "SSO_IDP_SSO_URL", Value: s.identityProvider + "/protocol/saml"},
 		{Name: "SSO_IDP_DESCRIPTOR_URL", Value: s.descriptorURL},
@@ -808,7 +851,10 @@ func signInDeployment(comp *gentianov1alpha1.Component, s *signInSidecar, labels
 // In, to the sidecar: nothing is written. The tenant's baseline admits the
 // edge to every pod of the tenant and no pod of the tenant to another, which
 // is what the sidecar wants: it is reached through the Gateway and by nothing
-// that could claim to be it.
+// that could claim to be it. The same baseline admits the identity
+// provider's namespace to every pod of the tenant, which is the path the
+// realm tells the sidecar of a sign-out on; a rule here could add nothing to
+// that and, policies being additive, could take nothing from it either.
 //
 // In, to the app: its pods admit the sidecar on the declared port, where a
 // handler may call the app. The baseline closes the namespace, so without

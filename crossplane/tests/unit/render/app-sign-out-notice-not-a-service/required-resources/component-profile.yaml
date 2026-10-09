@@ -1,0 +1,49 @@
+# A profile the definition refuses, rendered all the same: the Composition
+# does not rely on having been reached through the definition's rules.
+#
+# The entry's backend "Service" is not a Service's name but the beginning of
+# an address somewhere else, and the path asks to climb out of itself. Either
+# would make the realm post its logout token to a host of the profile's
+# choosing. Nothing is registered: the realm is told to call nothing.
+apiVersion: gentianos.io/v1alpha1
+kind: ComponentProfile
+metadata:
+  name: demo-app
+  labels:
+    gentianos.io/profile-name: demo-app
+spec:
+  classes:
+    - app
+  launch: none
+  trustTier: certified
+  version: "1.0.0"
+  package:
+    chart:
+      repository: oci://example.invalid/demo-app
+      name: demo-app
+      version: "1.0.0"
+    valueMapping:
+      oidc:
+        clientSecretKey: demo-app.oidc.secret
+  requires:
+    services:
+      identity:
+        oidc:
+          clientId: catalogue-test-client
+          name: Demo App
+          accessType: CONFIDENTIAL
+          redirectUris:
+            - "https://demo.${TENANT_DOMAIN}/oidc/callback"
+          postLogoutRedirectUris:
+            - "https://demo.${TENANT_DOMAIN}/"
+          backchannelLogout:
+            exposure: web
+            path: /oidc/../backchannel-logout
+  expose:
+    - name: web
+      surface: gateway
+      authMode: oidc
+      subDomain: demo
+      backend:
+        service: "collect.elsewhere.example/logout?"
+        port: 8080

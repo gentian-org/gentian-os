@@ -119,7 +119,7 @@ spec:
           accessType: CONFIDENTIAL
           redirectUris:
             - "https://erp.${TENANT_DOMAIN}/auth_oauth/signin"
-        # No backchannelLogoutUrl: Odoo signs in through auth_oauth, an OAuth2
+        # No backchannelLogout: Odoo signs in through auth_oauth, an OAuth2
         # module rather than an OIDC relying party, so there is nothing to send a
         # logout_token to. Its session ends on its own timeout. Recorded rather
         # than left blank, so the absence reads as a limit of the app.
@@ -760,10 +760,6 @@ spec:
                 {{- if $postLogout }}
                 validPostLogoutRedirectUris:
                   {{ toYaml $postLogout | nindent 18 }}
-                {{- end }}
-                {{- if and $oidcCl.backchannelLogoutUrl (ne $oidcCl.backchannelLogoutUrl "") }}
-                backchannelLogoutUrl: {{ $oidcCl.backchannelLogoutUrl | replace "${TENANT_DOMAIN}" $domain | quote }}
-                backchannelLogoutSessionRequired: true
                 {{- end }}
                 {{- if eq (default "PUBLIC" $oidcCl.accessType) "CONFIDENTIAL" }}
                 clientSecretSecretRef:

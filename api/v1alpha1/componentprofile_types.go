@@ -99,6 +99,14 @@ const (
 // +kubebuilder:validation:XValidation:rule="!has(self.requires) || !has(self.requires.services) || !has(self.requires.services.identity) || !has(self.requires.services.identity.sidecar) || !has(self.requires.services.identity.sidecar.database) || !self.requires.services.identity.sidecar.database || has(self.requires.services.database)",message="requires.services.identity.sidecar.database needs requires.services.database: the database the handler is given is the app's own"
 // +kubebuilder:validation:XValidation:rule="!has(self.requires) || !has(self.requires.services) || !has(self.requires.services.mail) || !has(self.requires.services.mail.imap) || !has(self.requires.services.mail.imap.tokenSignIn) || !self.requires.services.mail.imap.tokenSignIn || (has(self.requires.services.identity) && has(self.requires.services.identity.oidc))",message="requires.services.mail.imap.tokenSignIn needs requires.services.identity.oidc: the sign-in client whose tokens the mail server is to accept"
 // +kubebuilder:validation:XValidation:rule="!has(self.requires) || !has(self.requires.services) || !has(self.requires.services.llm) || !((has(self.defaultForTenants) && self.defaultForTenants) || (has(self.defaultForPlatform) && self.defaultForPlatform) || (has(self.defaultWhereStoreOffered) && self.defaultWhereStoreOffered)) || self.trustTier == 'platform'",message="a component the platform places on tenants declares requires.services.llm only at trustTier platform: it is given a key at the model gateway without a tenant having installed it"
+// The address the realm posts a logout token to is built from an entry's
+// backend, so the entry has to be this profile's, has to route to this
+// component's own Service, and that Service's name has to be a name and
+// nothing else: it becomes the host of the address.
+// +kubebuilder:validation:XValidation:rule="!has(self.requires) || !has(self.requires.services) || !has(self.requires.services.identity) || !has(self.requires.services.identity.oidc) || !has(self.requires.services.identity.oidc.backchannelLogout) || (has(self.expose) && self.expose.exists(e, e.name == self.requires.services.identity.oidc.backchannelLogout.exposure && (!has(e.backend.component) || e.backend.component.size() == 0) && e.backend.service.matches('^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$')))",message="requires.services.identity.oidc.backchannelLogout.exposure must name an entry of this profile that routes to this component's own Service (no backend.component), whose backend.service is a plain Service name: the realm is told to call that Service and no other address"
+// An extension's client is not told of a sign-out: nothing builds an address
+// for it, and a declaration that did nothing would read as one that works.
+// +kubebuilder:validation:XValidation:rule="!has(self.extensions) || self.extensions.all(x, !has(x.kernelRequirements) || !has(x.kernelRequirements.identity) || !has(x.kernelRequirements.identity.oidc) || !has(x.kernelRequirements.identity.oidc.backchannelLogout))",message="backchannelLogout is served for the component's own client (requires.services.identity.oidc), not for an extension's"
 // One delivery, and nothing outside package to reach for. The OR this replaces
 // admitted a chart beside an API integration, and deploymentMethod could
 // contradict whichever was set.
@@ -818,6 +826,7 @@ type BackendRef struct {
 	Component string `json:"component,omitempty"`
 
 	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
 	Service string `json:"service"`
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:validation:Maximum=65535
