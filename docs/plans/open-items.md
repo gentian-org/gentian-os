@@ -29,7 +29,7 @@ code does what the decision says; it does not mean a cluster has shown it.
 | AD-6 | `authMode` mandatory; a perimeter surface is published per tenant by an approver | **Deviation.** Publishing works as decided: a proxy in `tenant-<t>-dmz` only for an entry an approver published under `can_expose`, with a review date. The proxy checks no caller, and no entry says it does any more: `authMode: app` passes the caller's credential to the app, which checks it (the accepted limit in AD-1), and `basic`, `signature`, `jwt` and `bearer` are refused on a perimeter entry by the schema. One thing does not work as decided: `can_expose` is held by the members of the group `gentian:tenant:<t>:perimeter` alone, a group nothing creates, so the tenant's admins do not hold it by default as the decision says |
 | AD-7 | Namespaces named by tier | **Holds** |
 | AD-8 | Kernel trust domains are separate namespaces | **Holds** |
-| AD-9 | System services have no public route | **Deviation, one of two closed.** Mail now faces the internet only through a proxy in `system-mail-dmz` that holds nothing; Postfix and Dovecot have no load balancer of their own. Still open: the model gateway's console is routed at `llm.<kernel domain>`, behind the kernel realm's session and `can_configure`, whenever the cluster runs the model gateway, and no setting takes the route away. TURN does not exist |
+| AD-9 | System services have no public route | **Holds by default; one claim setting departs from it.** Mail now faces the internet only through a proxy in `system-mail-dmz` that holds nothing; Postfix and Dovecot have no load balancer of their own. The model gateway's console has a claim setting, `llm.console.enabled`, off by default: off, `llm.<kernel domain>` has no route and the edge is not admitted to the gateway, so the cluster is in line with the decision on this point. Switching it on routes the console behind the kernel realm's session and `can_configure`, and is a deliberate departure the cluster's owner takes for that cluster ([llms.md](../design/llms.md)). TURN does not exist |
 | AD-10 | The portal splits two ways; the platform is a tenant | **Holds** |
 | AD-11 | The target layout applies to fresh installs | **Holds** |
 | AD-12 | The authorization store is a projection: the operator writes it, from git and from Keycloak's events; the director asks it | **Holds for who writes, with four things not built and one credential too many.** The operator receives Keycloak's signed statements and projects memberships, and projects roles, tenants, apps and grants from what git declares; the director asks the store and writes nothing to it. **Not built:** no code revokes a person's sessions when their groups change; no realm setting disables offline tokens (an app's client is left the optional scope `offline_access`); nothing reconciles the stored memberships toward Keycloak, so a statement that never arrives is repaired only by the next one about the same person; and the check at start that the defaults git implies are the ones the store holds does not exist. **Against the decision:** the operator still holds Keycloak's master administrator credential (defect 15) |
@@ -146,7 +146,7 @@ Each is true of the code today.
 | 9 | **A deleted tenant leaves entries behind**: its rights and memberships in the rights store, which a later tenant of the same name would inherit, and its keys in the shared cache. Not now: on the roadmap, item 1.38 | [data-lifecycle.md](../design/data-lifecycle.md), [roadmap.md](../roadmap.md) |
 | 10 | **A removed person's mailbox stays** until the tenant is deleted | [mail.md](../design/mail.md) |
 | 11 | **The Operations Console's profile arrives without a digest** | part 4 |
-| 12 | **The model gateway's console cannot be switched off** separately from the model gateway | part 1, AD-9 |
+| 12 | **The model gateway's console switch has not run on a cluster.** The console is off unless the claim says `llm.console.enabled: true`, so the defect as it stood -- no way to serve models without the console -- is closed in the code. Not yet seen: that an upgraded cluster loses the route and the edge's rule at the gateway, and that the console works behind the edge when switched on (its own sign-in and its `Authorization` header are held by tests of the rendered policy only) | part 1, AD-9; [llms.md](../design/llms.md) |
 | 13 | **Crossplane's providers install every resource type they ship** — about 400 — and the compositions use about 27. Nothing narrows what is installed | `crossplane/providers/` |
 | 14 | **Two images float.** `vllm/vllm-openai` falls back to `latest` when the claim names no tag, and the model gateway's cache runs `redis:alpine`. `lint-image-pins` lists the first as known and does not look at the second | `kernel/services/llm/` |
 | 15 | **The operator holds Keycloak's master administrator credential.** It reads the `keycloak-admin` Secret and hands it to the Jobs that configure realms, clients and groups. The process that writes the rights store can therefore change any identity as well | part 1, AD-12; `identity_reconciler.go` |
@@ -183,9 +183,10 @@ Each is true of the code today.
    (`clientAuthorization: app`), and a client without a session goes through
    the publishing proxy and is checked by the app (`authMode: app`). The
    app's cookies on a public address are left for later, with Synapse.
-6. **The model gateway's console** (AD-9). Either it gets a switch, off by
-   default, or AD-9 names it with the kernel's own tools as a console behind
-   the kernel session.
+6. **The model gateway's console** (AD-9). **Decided 2026-10-09**: it gets a
+   switch, off by default, and stays a console for platform administrators
+   where a cluster switches it on. Built as `llm.console.enabled` on the
+   Cluster claim; AD-9 is unchanged. What is left is defect 12.
 7. **External IMAP and submission.** The plans had ports 587 and 993 closed
    until a tenant's approver opened them; they are open whenever the cluster
    runs its own mail. Either that is accepted, or the mail proxy gets a

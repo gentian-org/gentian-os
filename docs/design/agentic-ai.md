@@ -394,9 +394,11 @@ for backend sizing/quantization research.
 
 ### 10.1 LiteLLM admin console
 
-`LLM_SUPPORT=true` provisions `https://llm.<KERNEL_DOMAIN>` (kernel-level
-`HTTPRoute`, see `kernel_gateway_routes.go`), fronting the shared
-`litellm-proxy` Deployment. Login is Keycloak OIDC SSO via a
+`https://llm.<KERNEL_DOMAIN>` exists only where the Cluster claim switches the
+console on (`spec.llm.console.enabled`, off by default; see
+[llms.md](llms.md), "Operator access"). It is then a kernel-level `HTTPRoute`
+(`kernel_gateway_routes.go`) fronting the shared `litellm-proxy` Deployment,
+behind the kernel sign-in. Login is Keycloak OIDC SSO via a
 `litellm-dashboard` client that only exists in the **kernel realm** —
 tenant users (separate per-tenant realms) structurally cannot reach it,
 which is what keeps LLM administration platform-admin-only for now.
@@ -537,7 +539,8 @@ against real cluster GPU resources by `validate_config`, see
    entry and creates a fresh one, and removing an ID from
    `VLLM_INSTANCES` entirely removes its LiteLLM entry too — the model
    list always matches whatever's actually running. Confirm via
-   `https://llm.<KERNEL_DOMAIN>/v1/models` (or from inside the cluster,
+   `https://llm.<KERNEL_DOMAIN>/v1/models` where the console is switched on
+   (`spec.llm.console.enabled`), or from inside the cluster (
    `curl http://vllm-<id>-inference.platform-kernel.svc.cluster.local:8000/v1/models`
    to check one instance directly).
 
@@ -563,7 +566,8 @@ cluster beyond this — configuration changes are GitOps (edit
 instance are plain HTTP: `GET /health`, `GET /v1/models`, `GET /metrics`
 (Prometheus), `GET /version`, or via the LiteLLM proxy sitting in front
 of it (`litellm --health`, or any OpenAI SDK pointed at
-`https://llm.<KERNEL_DOMAIN>/v1` with a virtual key).
+`https://llm.<KERNEL_DOMAIN>/v1` with a virtual key, on a cluster whose claim
+switches the console on; the gateway has no public address otherwise).
 
 **Further reading:**
 

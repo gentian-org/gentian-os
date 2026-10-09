@@ -29,6 +29,7 @@ import (
 const (
 	clusterConfigName          = "gentian-cluster-config"
 	clusterConfigLLMKey        = "llm.enabled"
+	clusterConfigLLMConsoleKey = "llm.console.enabled"
 	clusterConfigTenancyKey    = "tenancyMode"
 	clusterConfigMailModeKey   = "mail.serviceMode"
 	clusterConfigMailEgressKey = "mail.egressHost"
@@ -113,6 +114,19 @@ func clusterMailServiceMode(ctx context.Context, c client.Reader, fallback strin
 // still have it.
 func clusterLLMEnabled(ctx context.Context, c client.Reader) bool {
 	return clusterConfigValue(ctx, c, clusterConfigLLMKey, "LLM_SUPPORT") == "true"
+}
+
+// clusterLLMConsoleRouted reports whether the model gateway's console is
+// served at llm.<kernel domain>: the cluster serves models and its claim
+// switches the console on (llm.console.enabled).
+//
+// Off unless the claim says so, and there is deliberately no environment
+// fallback: the gateway is a system service, which has no public route, and
+// the console is the one departure from that a cluster may choose. A
+// ConfigMap that cannot answer -- not composed yet, or written before the key
+// existed -- therefore means no route, never one.
+func clusterLLMConsoleRouted(ctx context.Context, c client.Reader) bool {
+	return clusterLLMEnabled(ctx, c) && clusterConfigValueOr(ctx, c, clusterConfigLLMConsoleKey, "") == "true"
 }
 
 // clusterMailEgressHost is the name that resolves to the address mail leaves

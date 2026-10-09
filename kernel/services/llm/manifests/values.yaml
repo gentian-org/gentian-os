@@ -44,6 +44,17 @@ gateway:
 # a claim into Helm values — the same reason the vLLM release is not here.
 externalProviders: false
 
+# Whether the gateway's console is served at llm.<kernelDomain>, from the
+# Cluster claim's spec.llm.console.enabled. Off by default.
+#
+# Here it decides one thing: whether the gateway's NetworkPolicy admits the
+# edge's Envoy pods (templates/networkpolicy.yaml). The route itself is the
+# operator's, which reads the same claim setting; with this off and the route
+# present the route answers nothing, which is the safe way for the two to
+# disagree.
+console:
+  enabled: false
+
 # The namespace LLM serving runs in.
 #
 # Empty keeps v4's answer, platform-kernel, which is v4's one namespace for

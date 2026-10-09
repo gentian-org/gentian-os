@@ -223,9 +223,53 @@ registering anything, reporting unreachable, refused (401/403), wrong `apiBase`
 
 ### Operator access
 
-LiteLLM's Admin Console is routed at `llm.<kernelDomain>` whenever the claim
-enables LLM (`kernel_gateway_routes.go`), and the portal shows a platform
-administrator an **LLM Gateway** tile for it — kernel-scope, gated on the `llm`
-capability, platform administrators only, because the routing and budgets there
-apply to every tenant. Model registrations are still reconciled from the claim;
-the console is for inspecting them, keys and spend.
+LiteLLM's Admin Console is **off unless the Cluster claim switches it on**:
+
+```yaml
+spec:
+  llm:
+    enabled: true
+    console:
+      enabled: true     # default false
+```
+
+Off, the default, there is no route and no published host for
+`llm.<kernelDomain>`, and the gateway's NetworkPolicy has no rule for the edge:
+the gateway is reached from inside the cluster only, by the apps and desktops
+that declared it and by the operator. Nothing the platform does needs the
+console. Models come from the claim, an app's key and a tenant's team are
+registered by the operator, and a provider's token is entered in the portal's
+Admin Console.
+
+On, `llm.<kernelDomain>` is routed to the gateway behind the kernel sign-in for
+accounts that may configure the cluster (`can_configure`;
+`kernel_gateway_routes.go`), the host is published, the edge's Envoy pods are
+admitted to the gateway's port, and such an administrator's desktop shows a
+**Model gateway** tile, projected from the route like the other kernel
+consoles' (`tile_projection_reconciler.go`). Platform administrators only,
+because the routing and budgets there apply to every tenant. Model
+registrations are still reconciled from the claim; the console is for
+inspecting them, keys and spend. The host label `llm` stays reserved either
+way.
+
+Three things to know before switching it on:
+
+- **It is a departure from "system services have no public route"**, taken by
+  the cluster's owner for this cluster. The route forwards `/`, so the
+  gateway's whole API is on that host as well as its pages — for a signed-in
+  platform administrator only, and LiteLLM's own key check still applies behind
+  the session.
+- **The console signs in to LiteLLM by itself.** The kernel session opens the
+  host; LiteLLM then asks for its own administrator sign-in (the master key),
+  and its pages send the key that gives them in the `Authorization` header.
+  The edge leaves that header alone on this route, as it does on Keycloak's
+  administration console, and passes no token of the platform's to LiteLLM
+  ([routing.md §4.1](routing.md)). This is held by tests of the rendered policy
+  and the bouncer's table, not by a run against a live LiteLLM.
+- **An upgrade takes the console away.** A claim written before the setting
+  existed does not state it and reads as off, so a cluster that had the console
+  loses the route on its next run. The installer says so in one line whenever
+  the cluster serves models and the console is off. The route follows the claim
+  as soon as it is applied; the NetworkPolicy rule arrives with the installer's
+  next run, which is what passes the setting to the gateway's chart. Between
+  the two the route exists and answers nothing.

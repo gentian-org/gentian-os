@@ -57,6 +57,11 @@ spec:
             # whether an OpenBao path for provider API keys exists to read.
             - name: externalProviders
               value: 'llm.external.providers.placeholder'
+            # Whether the gateway's console is served (spec.llm.console.enabled,
+            # off by default): whether the gateway's NetworkPolicy admits the
+            # edge.
+            - name: console.enabled
+              value: 'llm.console.placeholder'
             # Where LLM serving runs. v4 left this at the chart's default,
             # platform-kernel, because that was v4's one namespace for
             # everything; on v5 it is a system-tier function of its own and

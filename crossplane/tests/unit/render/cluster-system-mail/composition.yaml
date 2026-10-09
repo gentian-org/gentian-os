@@ -1083,6 +1083,10 @@ spec:
                     # back; derived from the layout like the edge namespace below.
                     identity.namespace: {{ "kernel-authentication" | quote }}
                     llm.enabled: {{ default false (dig "llm" "enabled" false $spec) | quote }}
+                    # Whether the model gateway's console is routed at
+                    # llm.<kernelDomain>. The operator reads it and nothing
+                    # else answers for it there: absent means off.
+                    llm.console.enabled: {{ default false (dig "llm" "console" "enabled" false $spec) | quote }}
                     # Where the edge runs, which is the one kernel namespace a
                     # Composition has to name. The Gateway, its SecurityPolicies
                     # and the zone client secrets they read all live there, and

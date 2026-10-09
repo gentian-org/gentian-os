@@ -54,7 +54,7 @@ peers:
     evidence:
       - "Envoy Gateway v1.9.2 internal/infrastructure/kubernetes/proxy/resource.go EnvoyAppLabel: app.kubernetes.io/name=envoy on every proxy pod"
       - kernel/manifests/gateway/chart/templates/envoyproxy.yaml:86
-      - kernel/services/llm/manifests/templates/networkpolicy.yaml:95
+      - kernel/services/llm/manifests/templates/networkpolicy.yaml:106
   edge:
     what: every pod of the edge namespace (the Envoy proxies and the bouncer)
     namespace: kernel-edge

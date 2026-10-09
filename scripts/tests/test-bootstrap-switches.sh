@@ -79,6 +79,42 @@ report_unset="$(render true true true --set-string licenceReport.url=)"
 check "licence report: an empty address from the installer is the default" \
     "$(has "${report_unset}" 'url: "https://licence\.aluvian\.io/api/v1/licence-reports"$' && echo 1 || echo 0)"
 
+# The model gateway's console (llm.<kernelDomain>) is a claim decision, off
+# unless the claim says true. The installer reads the claim's answer, passes
+# it on as it is, and says so once where the cluster serves models and the
+# console is off: a claim written before the setting existed does not state
+# it, and nothing else would tell the administrator where the console went.
+# The library's own function over a throwaway claim; no cluster.
+console_claim() { # <llm.enabled> [llm.console.enabled] -- prints the notices, then LLM_CONSOLE=<value>
+    local dir="${TMP}/deployments" claims
+    claims="${dir}/clusters/c1/kernel/claims"
+    mkdir -p "${claims}" "${TMP}/home"
+    {
+        printf 'apiVersion: gentianos.io/v1alpha1\nkind: Cluster\nmetadata:\n  name: c1\nspec:\n  kernelDomain: k.example\n'
+        printf '  llm:\n    enabled: %s\n' "$1"
+        [[ -n "${2:-}" ]] && printf '    console:\n      enabled: %s\n' "$2"
+    } > "${claims}/cluster.yaml"
+    # The single quotes are the point: the inner shell expands LLM_CONSOLE.
+    # shellcheck disable=SC2016
+    env -i HOME="${TMP}/home" PATH="${PATH}" SCRIPT_DIR="$(pwd)" \
+        GENTIAN_DEPLOYMENTS_PATH="${dir}" GENTIAN_DEPLOYMENTS_CLUSTER_ID=c1 KERNEL_DOMAIN=k.example \
+        bash -c 'set -u; source scripts/lib/load.sh >/dev/null 2>&1; trap - ERR; set +e
+                 load_deployments_cluster_settings; load_deployments_cluster_settings
+                 echo "LLM_CONSOLE=${LLM_CONSOLE:-unset}"' 2>&1
+}
+said() { grep -c 'spec\.llm\.console\.enabled' <<<"$1"; }
+
+unstated="$(console_claim true)"
+check "console: a claim that does not state it reads as off" "$(has "${unstated}" '^LLM_CONSOLE=false$' && echo 1 || echo 0)"
+check "console: models served and the console off is said once, naming the setting" "$([[ "$(said "${unstated}")" == 1 ]] && echo 1 || echo 0)"
+stated_on="$(console_claim true true)"
+check "console: the claim switches it on, and nothing is said" \
+    "$(has "${stated_on}" '^LLM_CONSOLE=true$' && [[ "$(said "${stated_on}")" == 0 ]] && echo 1 || echo 0)"
+no_models="$(console_claim false)"
+check "console: a cluster that serves no models is told nothing about it" \
+    "$(has "${no_models}" '^LLM_CONSOLE=false$' && [[ "$(said "${no_models}")" == 0 ]] && echo 1 || echo 0)"
+check "console: no run reads an unset variable" "$(has "${unstated}${stated_on}${no_models}" 'unbound variable' && echo 0 || echo 1)"
+
 echo ""
 if (( fail > 0 )); then
     printf '%s%d failed%s, %d passed\n' "${RED}" "${fail}" "${NC}" "${pass}"

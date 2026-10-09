@@ -99,6 +99,7 @@ check_llm "each policy selects its server's pods and no other; every port they d
 check_llm "every client of the table is admitted to the server it names, everything it says to refuse is refused" clients
 check_llm "the namespace, the parameters, the gateway's port and the edge's label are what the policies assume" wiring
 check_llm "storeNetworkPolicies=false: no policy; with GPUs no mock and no policy for one; no models, no ApplicationSet" off
+check_llm "the gateway's console is off unless the claim switches it on: only then is the edge admitted to the gateway" console
 
 echo ""
 if [[ "${fail}" -gt 0 ]]; then

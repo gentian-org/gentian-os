@@ -1105,7 +1105,7 @@ load_deployments_cluster_settings() {
     for v in TENANCY_MODE NETWORK_MODE NODE_IP ROUTING_MODE SECRET_MODE \
              STORAGE_CLASS MAIL_SERVICE_MODE LB_PROVIDER LB_ANNOTATIONS \
              PLATFORM PLATFORM_PARAMS EDGE_ADDRESS_REF DNS_PROVIDER DNS_PARAMS \
-             LLM_SUPPORT GPU_ACCELERATION GPU_TIME_SLICE_REPLICAS \
+             LLM_SUPPORT LLM_CONSOLE GPU_ACCELERATION GPU_TIME_SLICE_REPLICAS \
              LETSENCRYPT_EMAIL KV_MOUNT ACME_ENV DNS01_RECURSIVE_NAMESERVERS; do
         [[ -n "${!v:-}" ]] || continue
         [[ -r "${INSTALL_CONFIG_FILE:-}" ]] || continue
@@ -1154,6 +1154,16 @@ load_deployments_cluster_settings() {
         claim_setting LLM_SUPPORT             llm.enabled              "${claim_file}"
         claim_setting GPU_ACCELERATION        llm.gpuAcceleration      "${claim_file}"
         claim_setting GPU_TIME_SLICE_REPLICAS llm.gpuTimeSliceReplicas "${claim_file}"
+        # The model gateway's console, llm.<kernelDomain>. Off unless the
+        # claim switches it on, and a claim written before the setting existed
+        # does not state it: a cluster that had the console loses its route
+        # on the next run. Said once per run, because nothing else would
+        # tell the administrator where the console went.
+        claim_setting LLM_CONSOLE             llm.console.enabled      "${claim_file}"
+        if [[ "${LLM_SUPPORT:-}" == "true" && "${LLM_CONSOLE:-}" != "true" && -z "${_LLM_CONSOLE_NOTED:-}" ]]; then
+            _LLM_CONSOLE_NOTED=1
+            info "The model gateway's console (llm.<kernelDomain>) is off: no route, and the edge is not admitted to the gateway. spec.llm.console.enabled: true on the Cluster claim switches it on, for platform administrators."
+        fi
         # Whether this cluster routes to any external provider. A count, not a
         # switch on the claim: the provider list is the declaration, and a second
         # boolean beside it could disagree with it. What needs the boolean is the

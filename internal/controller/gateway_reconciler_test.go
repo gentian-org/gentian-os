@@ -519,11 +519,84 @@ func TestNoDesktopRedirectsWithoutADesktop(t *testing.T) {
 	}
 }
 
+// The model gateway's console has a route only where the claim switches it
+// on (clusterLLMConsoleRouted). Off, nothing claims llm.<kernel domain>: no
+// route, so no hostname for the tunnel or a DNS record to carry, and no line
+// in the bouncer's table.
 func TestKernelHTTPRouteSpecsLLMDisabledByDefault(t *testing.T) {
 	specs := kernelHTTPRouteSpecs("platform.example.test", []string{"demo.platform.example.test"}, nil, []string{"demo"}, false, "c1", true, true, kernelFrontDoor{})
 	for _, spec := range specs {
 		if spec.name == kernelRouteLiteLLM {
-			t.Fatalf("kernel-llm route present with llm disabled")
+			t.Fatalf("kernel-llm route present with the console off")
+		}
+		if spec.host == "llm.platform.example.test" {
+			t.Fatalf("%s claims the console's host with the console off", spec.name)
+		}
+	}
+	table, err := bouncerRouteTable(specs, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(table, "llm.platform.example.test") {
+		t.Fatalf("the bouncer's table names the console's host with the console off:\n%s", table)
+	}
+}
+
+// Switched on, the console is a kernel console like the others: behind the
+// kernel session, for whoever may configure the cluster. Its pages send
+// LiteLLM's own key in the Authorization header, so the edge leaves that
+// header alone and hands LiteLLM no token of the platform's.
+func TestTheModelGatewayConsoleKeepsItsOwnBearer(t *testing.T) {
+	t.Parallel()
+	for _, s := range kernelHTTPRouteSpecs("platform.example.test", nil, nil, nil, true, "c1", true, true, kernelFrontDoor{}) {
+		if s.name != kernelRouteLiteLLM {
+			continue
+		}
+		if s.authz == nil || s.authz.relation != "can_configure" || s.authz.object != "cluster:c1" {
+			t.Fatalf("the console is for whoever may configure the cluster: %+v", s.authz)
+		}
+		if !s.authz.keepClientToken || s.authz.forwardToken {
+			t.Fatalf("the edge must neither replace the console's bearer nor send its own: %+v", s.authz)
+		}
+		table, err := bouncerRouteTable([]kernelHTTPRouteSpec{s}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, want := range []string{
+			"host: llm.platform.example.test", "relation: can_configure", "authMode: oidc",
+			"keepClientToken: true", "idTokenAudience: " + edgeKernelClientID,
+			// The session's cookies are taken out before the backend.
+			edgeKernelAccessTokenCookie, edgeKernelIDTokenCookie,
+		} {
+			if !strings.Contains(table, want) {
+				t.Fatalf("the bouncer's line for the console lacks %q:\n%s", want, table)
+			}
+		}
+		if strings.Contains(table, "forwardToken") {
+			t.Fatalf("the bouncer would pass the edge's token on to LiteLLM:\n%s", table)
+		}
+		// The policy Envoy reads: the session's access token is not put in
+		// the Authorization header, and the ID token goes in the header the
+		// bouncer reads and removes.
+		oidc := kernelSecurityPolicySpec("platform.example.test", "kernel", s.name, *s.authz, "gentian-os-bouncer")["oidc"].(map[string]interface{})
+		if oidc["forwardAccessToken"] != false {
+			t.Fatalf("forwardAccessToken = %v: the gateway would replace the console's own bearer", oidc["forwardAccessToken"])
+		}
+		if header := oidc["forwardIDToken"].(map[string]interface{})["header"]; header != edgeIDTokenHeader {
+			t.Fatalf("forwardIDToken.header = %v, want %s", header, edgeIDTokenHeader)
+		}
+		return
+	}
+	t.Fatal("the console's route is missing with the console on")
+}
+
+// No kernel zone, no console, whatever the claim says: there is no session
+// to put it behind.
+func TestTheModelGatewayConsoleWaitsForTheKernelZone(t *testing.T) {
+	t.Parallel()
+	for _, s := range kernelHTTPRouteSpecs("platform.example.test", nil, nil, nil, true, "c1", false, true, kernelFrontDoor{}) {
+		if s.name == kernelRouteLiteLLM {
+			t.Fatal("the console is routed before the kernel zone exists")
 		}
 	}
 }

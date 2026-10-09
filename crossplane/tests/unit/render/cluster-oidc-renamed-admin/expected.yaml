@@ -123,6 +123,7 @@ spec:
         identity.namespace: kernel-authentication
         kernel.controlNamespace: kernel-control
         kernel.gitopsNamespace: argocd
+        llm.console.enabled: "false"
         llm.enabled: "false"
         mail.egressHost: ""
         mail.serviceMode: ""

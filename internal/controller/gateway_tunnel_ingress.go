@@ -57,7 +57,7 @@ func ensureKernelGatewayTunnelIngress(
 	// is routed, which is only once the kernel zone exists. The cluster id
 	// does not reach a hostname.
 	for _, spec := range kernelHTTPRouteSpecs(kernelDomain, effectiveDomains, oidcSubs, tenantNames,
-		clusterLLMEnabled(ctx, c), "", kernelZoneReadyWith(ctx, c), desktopPresent(ctx, c),
+		clusterLLMConsoleRouted(ctx, c), "", kernelZoneReadyWith(ctx, c), desktopPresent(ctx, c),
 		kernelFrontDoorOf(tenantList.Items, kernelDomain, kernelRealm, tenancyMode)) {
 		if spec.host != "" {
 			hosts[spec.host] = struct{}{}

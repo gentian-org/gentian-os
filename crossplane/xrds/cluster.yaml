@@ -440,6 +440,30 @@ spec:
                     enabled:
                       type: boolean
                       default: false
+                    console:
+                      type: object
+                      description: >
+                        The model gateway's own console (models, keys, spend),
+                        served at llm.<kernelDomain> for platform
+                        administrators.
+                      properties:
+                        enabled:
+                          type: boolean
+                          description: >
+                            Whether the console has a public route. Off by
+                            default: the gateway is a system service, reached
+                            from inside the cluster by the apps that declared
+                            it and by the operator, and nothing the platform
+                            does needs the console.
+
+                            True routes llm.<kernelDomain> to the gateway
+                            behind the kernel sign-in, for accounts that may
+                            configure the cluster, publishes that host, admits
+                            the edge to the gateway and shows such an
+                            administrator a tile for it. The route carries the
+                            gateway's whole API as well as its pages. Read
+                            only when enabled is true.
+                          default: false
                     gpuAcceleration:
                       type: boolean
                       description: >

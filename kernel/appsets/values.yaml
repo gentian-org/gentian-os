@@ -24,6 +24,10 @@ storageClass: ""
 # runs; the second whether the chart reads a vault path for provider keys.
 llmGpuAcceleration: "false"
 llmExternalProviders: "false"
+# Whether the model gateway's console is served at llm.<kernelDomain>
+# (spec.llm.console.enabled). Off unless the claim says "true": anything else
+# renders the gateway's NetworkPolicy without a rule for the edge.
+llmConsoleEnabled: "false"
 
 # Whether the four shared stores -- PostgreSQL, MariaDB, Redis, MinIO -- each
 # get the NetworkPolicy that says who may connect to them

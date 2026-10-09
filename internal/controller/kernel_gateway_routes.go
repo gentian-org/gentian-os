@@ -128,7 +128,7 @@ func (r *GatewayPlatformReconciler) reconcileKernelHTTPRoutes(ctx context.Contex
 		}
 	}
 	specs := kernelHTTPRouteSpecs(r.KernelDomain, effectiveDomains, oidcSubs, tenantNames,
-		clusterLLMEnabled(ctx, r.Client), r.Cluster, r.kernelZoneReady(ctx), desktopPresent(ctx, r.Client),
+		clusterLLMConsoleRouted(ctx, r.Client), r.Cluster, r.kernelZoneReady(ctx), desktopPresent(ctx, r.Client),
 		door)
 	// The identity provider's public route is held to a rate of sign-in
 	// posts per client address, and which address that is has to be asked of
@@ -190,10 +190,25 @@ func (r *GatewayPlatformReconciler) reconcileKernelHTTPRoutes(ctx context.Contex
 			}
 		}
 	}
-	if err := r.deleteStaleKernelSecurityPolicies(ctx, expectedPolicies); err != nil {
+	return r.deleteStaleKernelRoutesAndPolicies(ctx, expected, expectedPolicies)
+}
+
+// deleteStaleKernelRoutesAndPolicies removes what is no longer listed: the
+// routes first, then their policies.
+//
+// In that order because a route's policy is what puts it behind the session.
+// With the policy gone first, a route that is being withdrawn -- a console
+// switched off -- would stand on the authenticated Gateway with its backend
+// and no question for as long as the second delete took to follow, or for
+// good if it failed. A policy that outlives its route targets nothing.
+func (r *GatewayPlatformReconciler) deleteStaleKernelRoutesAndPolicies(ctx context.Context, routes, policies map[string]struct{}) error {
+	if err := r.deleteStaleKernelHTTPRoutes(ctx, routes); err != nil {
+		return fmt.Errorf("delete stale kernel HTTPRoutes: %w", err)
+	}
+	if err := r.deleteStaleKernelSecurityPolicies(ctx, policies); err != nil {
 		return fmt.Errorf("delete stale kernel SecurityPolicies: %w", err)
 	}
-	return r.deleteStaleKernelHTTPRoutes(ctx, expected)
+	return nil
 }
 
 // mainAddressWebsiteServing reports whether the user tenant's website holds
@@ -320,7 +335,7 @@ func kernelHTTPRouteSpecs(
 	tenantEffectiveDomains []string,
 	tenantOIDCSubdomains map[string][]string,
 	tenantNames []string,
-	llmEnabled bool,
+	llmConsole bool,
 	cluster string,
 	kernelZoneReady bool,
 	desktop bool,
@@ -544,14 +559,18 @@ func kernelHTTPRouteSpecs(
 			})
 		}
 	}
-	// LiteLLM admin console — platform-level only (the claim's llm.enabled).
-	// Tenants do not get their own route; app-catalogue "litellm" tiles stay
-	// unused until per-tenant access is designed (see docs/design/llms.md).
+	// The model gateway's console (LiteLLM's: models, keys, spend), for
+	// platform administrators and only where the claim switches it on
+	// (llm.console.enabled, off by default; clusterLLMConsoleRouted). A
+	// system service has no public route, and nothing the platform does needs
+	// this one: apps and the desktop reach the gateway inside the cluster,
+	// and so does the operator. Tenants get no route of their own either way
+	// (docs/design/llms.md).
 	//
 	// Only once the kernel zone exists, like the other consoles: before it
 	// there is no session to put the route behind, and a console that is not
 	// routed is the safe way to be early.
-	if llmEnabled && kernelZoneReady {
+	if llmConsole && kernelZoneReady {
 		specs = append(specs, kernelHTTPRouteSpec{
 			name:        kernelRouteLiteLLM,
 			host:        fmt.Sprintf("llm.%s", kernelDomain),
@@ -569,7 +588,15 @@ func kernelHTTPRouteSpecs(
 			// and no authz gets no session policy, so the console and its
 			// API answered anyone who knew the hostname, with only LiteLLM's
 			// own key check between the internet and the model gateway.
-			authz: &routeAuthz{relation: "can_configure", object: clusterObject},
+			//
+			// The bearer on this route is the console's own, as on the
+			// identity provider's: the page signs in to LiteLLM and sends
+			// the key that sign-in gave it in the Authorization header of
+			// every call. The edge putting the session's token there instead
+			// left the console signed in to nothing. Kept, so no token of the
+			// platform's reaches LiteLLM: the session is proved to the
+			// bouncer by its ID token in a header the bouncer removes.
+			authz: &routeAuthz{relation: "can_configure", object: clusterObject, keepClientToken: true},
 		})
 	}
 	return specs

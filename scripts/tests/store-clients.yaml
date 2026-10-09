@@ -343,15 +343,21 @@ clients:
       internal/modelgateway/modelgateway.go, internal/controller/model_access_reconciler.go, litellm_team.go,
       internal/applifecycle/purge.go (the lifecycle service runs in the operator, cmd/main.go);
       the labels are checked against the rendered operator chart
+  # Only where the claim switches the gateway's console on
+  # (spec.llm.console.enabled, off by default). `when: console` says so:
+  # llm_network_policies.py admits this row on a cluster with the console on
+  # and holds the same row REFUSED on every other.
   - store: llm
     server: gateway
+    when: console
     client: the Gateway's Envoy pods, routing the gateway's console llm.<kernelDomain>
     namespace: kernel-edge
     podLabels: {app.kubernetes.io/name: envoy}
     port: 4000
     built: none
     proof: >-
-      internal/controller/kernel_gateway_routes.go kernelRouteLiteLLM (the route and its backend);
+      internal/controller/kernel_gateway_routes.go kernelRouteLiteLLM (the route and its backend, composed only
+      when clusterLLMConsoleRouted says so);
       the pods are Envoy Gateway's, labelled by it (upstream), and selected by the same label in
       kernel/manifests/gateway/chart/templates/envoyproxy.yaml
   - store: llm

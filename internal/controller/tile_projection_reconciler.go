@@ -170,6 +170,17 @@ func kernelTileTable(kernelRealm string) []kernelTile {
 			path:  fmt.Sprintf("/auth/admin/%s/console/", kernelRealm),
 			anyOf: []string{"can_configure"},
 		},
+		{
+			// Routed only where the claim switches it on
+			// (llm.console.enabled), so on most clusters this row finds no
+			// route and yields no tile. The relation is the route's own.
+			route:       kernelRouteLiteLLM,
+			name:        "llm",
+			displayName: "Model gateway",
+			description: "The models this cluster offers, the keys that may call them and what they spend.",
+			icon:        "analytics",
+			anyOf:       []string{"can_configure"},
+		},
 	}
 }
 

@@ -381,6 +381,16 @@ whatever the tag meant at that second. A set value is otherwise used as it
 stands, so a line left in `install.env` by an earlier install pins the
 cluster to that older build without a warning: remove it.
 
+The model gateway's console is a claim setting, `spec.llm.console.enabled`,
+off by default. Off, `llm.<kernel-domain>` has no route and no DNS name and
+the edge is not admitted to the gateway; on, platform administrators get the
+console there, behind the kernel sign-in, and a tile for it on their desktop.
+A claim that does not state it reads as off, so a cluster that had the console
+before the setting existed loses it on the next run; the install prints one
+line naming the setting whenever the cluster serves models and the console is
+off. After changing it, run the install again: the route follows the claim,
+the gateway's network rule follows the run ([llms.md](design/llms.md)).
+
 The model gateway's image (`llm.enabled`) is not a setting. It is one chart
 value, named by tag and digest, and `make lint` (`lint-image-pins`) fails on
 any image under `kernel/`, `charts/` or `crossplane/` tagged `latest`.

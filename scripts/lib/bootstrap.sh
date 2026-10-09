@@ -1441,6 +1441,16 @@ _claim_cluster_fields() {
         printf '  llm:\n'
         printf '    enabled: true\n'
         printf '    gpuAcceleration: %s\n' "${GPU_ACCELERATION:-false}"
+        printf '    # The console of the gateway (models, keys, spend) at llm.<kernelDomain>,\n'
+        printf '    # for platform administrators. Off by default: nothing the platform\n'
+        printf '    # does needs it, and off means no route and no way in from the edge.\n'
+        if [[ "${LLM_CONSOLE:-false}" == "true" ]]; then
+            printf '    console:\n'
+            printf '      enabled: true\n'
+        else
+            printf '    # console:\n'
+            printf '    #   enabled: true\n'
+        fi
         if [[ -n "${GPU_TIME_SLICE_REPLICAS:-}" ]]; then
             printf '    gpuTimeSliceReplicas: %s\n' "${GPU_TIME_SLICE_REPLICAS}"
         else
@@ -1479,6 +1489,8 @@ _claim_cluster_fields() {
         printf '  # llm:\n'
         printf '  #   enabled: false            set true on a cluster that serves models\n'
         printf '  #   gpuAcceleration: false    set true when the cluster has GPUs\n'
+        printf '  #   console:\n'
+        printf '  #     enabled: false          set true to serve the console of the gateway at llm.<kernelDomain>\n'
         printf '  #   gpuTimeSliceReplicas: 1   workloads sharing one physical GPU\n'
         printf '  #   instances: []             the models to serve; see the XRD for fields\n'
     fi

@@ -86,6 +86,7 @@ func TestTheKernelCatalogueFollowsTheRoutes(t *testing.T) {
 	headlamp := tileFixtureRoute(kernelRouteHeadlamp, servicesNamespace, "headlamp.k.example")
 	argocd := tileFixtureRoute(kernelRouteArgoCD, servicesNamespace, "argocd.k.example")
 	identity := tileFixtureRoute(kernelRouteKeycloakAdmin, servicesNamespace, "id.k.example")
+	models := tileFixtureRoute(kernelRouteLiteLLM, servicesNamespace, "llm.k.example")
 
 	cases := map[string]struct {
 		routes []client.Object
@@ -94,6 +95,10 @@ func TestTheKernelCatalogueFollowsTheRoutes(t *testing.T) {
 		"every console routed": {
 			routes: []client.Object{headlamp, argocd, identity},
 			want:   "[headlamp argocd keycloak]",
+		},
+		"the claim switches the model gateway's console on": {
+			routes: []client.Object{headlamp, argocd, identity, models},
+			want:   "[headlamp argocd keycloak llm]",
 		},
 		"no kernel zone, so no console is routed": {
 			routes: nil,
@@ -121,6 +126,7 @@ func TestTheKernelConsolesKeepTheirAddresses(t *testing.T) {
 		tileFixtureRoute(kernelRouteHeadlamp, servicesNamespace, "headlamp.k.example"),
 		tileFixtureRoute(kernelRouteArgoCD, servicesNamespace, "argocd.k.example"),
 		tileFixtureRoute(kernelRouteKeycloakAdmin, servicesNamespace, "id.k.example"),
+		tileFixtureRoute(kernelRouteLiteLLM, servicesNamespace, "llm.k.example"),
 	)
 	want := map[string]struct {
 		url   string
@@ -130,6 +136,7 @@ func TestTheKernelConsolesKeepTheirAddresses(t *testing.T) {
 		"headlamp": {"https://headlamp.k.example/", "bulb", "[can_configure can_operate_system can_audit]"},
 		"argocd":   {"https://argocd.k.example/auth/login", "kube", "[can_configure can_operate_system can_audit]"},
 		"keycloak": {"https://id.k.example/auth/admin/kernel/console/", "key", "[can_configure]"},
+		"llm":      {"https://llm.k.example/", "analytics", "[can_configure]"},
 	}
 	for _, tile := range got {
 		w, ok := want[tile.Name]

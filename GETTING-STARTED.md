@@ -323,6 +323,7 @@ one. Every question shows its default; Enter takes it.
 | `secretMode` | `derived` | You want independent random secrets rather than ones reproducible from the master password |
 | `backup.escrowIdentity` | `true` | The backup key should live in the recovery kit only, never in OpenBao |
 | `llm.enabled` | `false` | This cluster serves models; then `llm.gpuAcceleration` is asked too |
+| `llm.console.enabled` | `false` | Not asked; set it in the claim. Platform administrators should have the model gateway's own console at `llm.<kernel-domain>`. Off, there is no such address and the gateway is reached from inside the cluster only. A cluster installed before this setting existed has it off after its next run, and the install says so |
 
 With the answers it writes `clusters/<cluster-id>/kernel` into your deployments
 checkout:

@@ -27,11 +27,16 @@
     the operator        registers and removes each app's key and each tenant's
                         team (internal/modelgateway, the tenant reconciler,
                         and a purge, which runs in the operator).
-    the edge            the gateway's console is a kernel console,
-                        llm.<kernelDomain>, routed by the authenticated
-                        Gateway (kernel_gateway_routes.go); the connection
-                        comes from the Gateway's Envoy pods. Nothing else in
-                        the edge namespace is admitted.
+    the edge            only where the cluster's claim switches the gateway's
+                        console on (spec.llm.console.enabled, passed here as
+                        console.enabled; off by default). The console is then
+                        a kernel console, llm.<kernelDomain>, routed by the
+                        authenticated Gateway (kernel_gateway_routes.go), and
+                        the connection comes from the Gateway's Envoy pods;
+                        nothing else in the edge namespace is admitted. With
+                        the console off there is no rule for the edge at all,
+                        and the gateway is reachable by its in-cluster
+                        clients alone.
 
   No pod of this namespace is a client of the gateway: its database, its
   cache and the model server are called by it and call nothing.
@@ -92,12 +97,14 @@ spec:
             matchLabels:
               app.kubernetes.io/name: gentian-os
               app.kubernetes.io/component: operator
+        {{- if eq (toString .Values.console.enabled) "true" }}
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: {{ $np.namespaces.edge | quote }}
           podSelector:
             matchLabels:
               app.kubernetes.io/name: envoy
+        {{- end }}
       ports:
         - protocol: TCP
           port: {{ $np.ports.gateway }}

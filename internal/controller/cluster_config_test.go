@@ -82,3 +82,35 @@ func TestClusterLLMEnabledFallsBackToEnv(t *testing.T) {
 		t.Fatal("nil client and env false: expected disabled")
 	}
 }
+
+// The model gateway's console is routed only where the claim switches it on,
+// and only on a cluster that serves models. Nothing else may answer for the
+// claim: a ConfigMap that does not carry the key -- every cluster's, before
+// the key existed -- means no console, and there is no environment variable
+// that says otherwise.
+func TestTheModelGatewayConsoleIsOffUnlessTheClaimSwitchesItOn(t *testing.T) {
+	ctx := context.Background()
+	t.Setenv("LLM_SUPPORT", "true")
+	cases := map[string]struct {
+		data map[string]string
+		want bool
+	}{
+		"no ConfigMap":                         {nil, false},
+		"a ConfigMap written before the key":   {map[string]string{clusterConfigLLMKey: "true"}, false},
+		"the claim says off":                   {map[string]string{clusterConfigLLMKey: "true", clusterConfigLLMConsoleKey: "false"}, false},
+		"the claim says on":                    {map[string]string{clusterConfigLLMKey: "true", clusterConfigLLMConsoleKey: "true"}, true},
+		"on, on a cluster that serves nothing": {map[string]string{clusterConfigLLMKey: "false", clusterConfigLLMConsoleKey: "true"}, false},
+	}
+	for name, c := range cases {
+		var objs []client.Object
+		if c.data != nil {
+			objs = append(objs, clusterConfigWith(c.data))
+		}
+		if got := clusterLLMConsoleRouted(ctx, fakeClusterConfigClient(t, objs...)); got != c.want {
+			t.Errorf("%s: console routed = %v, want %v", name, got, c.want)
+		}
+	}
+	if clusterLLMConsoleRouted(ctx, nil) {
+		t.Error("no client to ask the claim with, and the console is routed")
+	}
+}
