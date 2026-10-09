@@ -149,13 +149,15 @@ spec:
                     sources:
                       type: array
                       description: >
-                        The catalogues this cluster knows. An entry whose url
-                        is not https, or which has no name, is ignored.
+                        The catalogues this cluster knows. Each states where
+                        it is read from once: url, or path. An entry whose url
+                        is not https, whose path is not a directory a
+                        catalogue is read from, which states both, or which
+                        has no name, is ignored.
                       items:
                         type: object
                         required:
                           - name
-                          - url
                         properties:
                           name:
                             type: string
@@ -169,6 +171,20 @@ spec:
                               bytes are untrusted -- the digest an install
                               asks for is what admits them -- so this may be
                               any host.
+                          path:
+                            type: string
+                            maxLength: 255
+                            pattern: '^[A-Za-z0-9_-][A-Za-z0-9._-]*(/[A-Za-z0-9_-][A-Za-z0-9._-]*)*$'
+                            description: >
+                              In place of url: the directory of this cluster's
+                              own deployments repository the catalogue is kept
+                              in, named from the top of the repository, as in
+                              "catalogue". The director reads index.yaml and
+                              profiles/<name>.yaml there from the checkout it
+                              already holds; nothing is fetched, and the bytes
+                              are held to the digest like any other. It cannot
+                              be clusters/<cluster>/catalogue, where the
+                              director writes the profiles tenants installed.
                 kernelDomain:
                   type: string
                   description: >

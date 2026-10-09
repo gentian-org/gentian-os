@@ -510,7 +510,7 @@ func (s *Server) importProfiles(ctx context.Context, tenant string, spec *gentia
 	var sourceNames []string
 	for _, src := range settings.Sources {
 		sources = append(sources, visibleSource{
-			Source: catalogue.Source{Key: profilebundle.ClusterOrigin(src.Name), Name: src.Name, URL: src.URL},
+			Source: catalogue.Source{Key: profilebundle.ClusterOrigin(src.Name), Name: src.Name, URL: src.URL, Dir: src.Path},
 			scope:  scopeCluster, addedBy: string(gitops.ByCluster),
 		})
 		sourceNames = append(sourceNames, src.Name)

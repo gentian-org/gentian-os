@@ -351,8 +351,8 @@ Three roles, three scopes:
 
 | Role | Primary scope | Can do | Cannot do |
 |---|---|---|---|
-| **Cluster admin** | Cluster + kernel | Run installer, configure Argo CD/OpenBao/cert-manager, manage kernel upgrade policy, create tenants, add catalogues | Perform tenant business actions, bypass GitOps in prod for tenant changes |
-| **Tenant admin** | One tenant's apps | Install/uninstall apps for the tenant, edit tenant-level config, view tenant health and reconciliation state | Touch kernel components, modify other tenants, alter cluster-wide policy |
+| **Cluster admin** | Cluster + kernel | Run installer, configure Argo CD/OpenBao/cert-manager, manage kernel upgrade policy, create tenants, add catalogues: at a public address, or kept in the cluster's deployments repository, for every tenant or for one | Perform tenant business actions, bypass GitOps in prod for tenant changes |
+| **Tenant admin** | One tenant's apps | Install/uninstall apps for the tenant, edit tenant-level config, view tenant health and reconciliation state | Touch kernel components, modify other tenants, alter cluster-wide policy, declare a catalogue kept in the deployments repository |
 | **Tenant user** | Day-to-day app use | Use installed apps via SSO, consume integrations | Install/uninstall apps, modify tenant manifest, see admin surfaces |
 
 ### 8.1 Admin / User Separation of Duties

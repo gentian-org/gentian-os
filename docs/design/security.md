@@ -719,6 +719,22 @@ So an app that declares it can open the mailbox of a person who signed in to it,
 - **Not served:** the kernel realm, and so the platform tenant, has no `mailbox` scope; a cluster that relays its mail has no Dovecot. The declaration is accepted there and grants nothing.
 - **The network is not the gate.** A profile that declares `requires.services.mail` is opened `system-mail` (`kernel-access-<app>`), and Dovecot's IMAP ports admit every tenant's pods, and the proxy for everybody else (§2.8); the token is the check.
 
+### 2.17 A catalogue kept in the deployments repository
+
+A catalogue is a public https address, and no credential is sent to one. For profiles that must not be public, a catalogue may instead be a directory of the cluster's own deployments repository ([custom-catalogues.md §4.4](../custom-catalogues.md)). The director reads that repository already; this lets what it reads there be installed from, and nothing more.
+
+| Control | State |
+| --- | --- |
+| The declaration is a directory and nothing else: no repository, host, branch or commit can be stated. Read from the director's own checkout, at the commit it is at, with the credential it already holds; no request is made | Built (`internal/director/gitops/catalogue_directory.go`) |
+| The directory is a relative path of plain names: no leading `/`, no `..`, no name beginning with a dot (so not `.git`), checked when it is declared and on every read | Built; refused with `422` when added, not read when a manifest states it anyway |
+| No symbolic link is followed: the directory, each directory on the way and each file must be a plain directory or file, looked at on disk before the file is opened | Built; a link is refused wherever it points |
+| Never `clusters/<cluster>/catalogue`, of any cluster in the repository: installed profiles are written there, a tenant's own among them, and read as a catalogue they would be offered to every tenant under another origin | Built |
+| Only the cluster's administrator declares one (`can_configure` on the cluster), for the cluster or for one tenant. A tenant's administrator is refused with or without delegation, and an entry stating a directory and `addedBy: tenant` is not read | Built |
+| No more trust than an address the cluster's administrator added: the digest pins the install, the bytes are held to it, the bundle checks run, the origin is recorded, a tenant's catalogue brings no companion and its profiles install in that tenant only | Built: one code path after the bytes are read |
+| The schema states the same rules for a Tenant's sources (`url` or `path`, a `path` only with `addedBy: cluster`) | Built (`TenantCatalogueSource`) |
+
+What it does not change: whoever can push to the deployments repository can put any profile into such a directory, and into the cluster directly (§2.11). The catalogue is no stronger than the repository, and its index is not signed. Whoever may view a tenant (`can_view`) can read the name, version, edition and digest of every entry of a catalogue that tenant sees, as for a catalogue at an address; a profile itself reaches the cluster when somebody who may install apps installs it, and is then one object for the whole cluster like every profile. A directory declared for the whole cluster is therefore listed to every tenant; one that only a tenant should see is declared for that tenant.
+
 ---
 
 ## 3. Architecture
@@ -755,6 +771,7 @@ the code does.
 | Default profiles the installer places | Implemented at a stated digest, and compared with the recorded bundle at rollout | Written only when the file hashes to the digest its catalogue's index lists, or to a pin, with its bundle and origin (§2.11). The index is not signed. The operator holds the Component it creates for a default profile to the bundle recorded with the profile; nothing apart from the profile states that digest |
 | Mail: one proxy faces the internet, the mail servers do not | Implemented; proven in local containers, not on a cluster | `kernel/services/mail-edge`, in `system-mail-dmz`: PROXY protocol, TLS passed through, limits per client address (§2.8). Egress from `system-mail` is open |
 | A mailbox opened with a sign-in token | Implemented | Only for an app that declares `requires.services.mail.imap.tokenSignIn`, by the scope `mailbox` (§2.16) |
+| A catalogue in the deployments repository | Implemented | A directory of the cluster's own repository, declared by the cluster's administrator only, read from the director's checkout; no escape, no link followed, never the directory installed profiles are written into (§2.17) |
 | Sign-in sidecar | Implemented, with the weaknesses listed | Only from a cluster catalogue's bundle pinned by digest, never in the kernel realm (§2.12). It can become anybody in its app |
 | The rights check for a component (`requires.services.rights`) | Implemented | A key per component for one question at the bouncer -- may this person use that app of my tenant -- instead of the store's key (`rights_check.go`, `internal/bouncer/check.go`). Platform-trust profiles only |
 | A removed person's mailbox | Implemented; proven in local containers, not on a cluster | Whoever removes the person chooses archive or delete; no default, and the registrar refuses a removal without the choice. The registrar writes the choice down (`MailboxRemoval`, the one kind it may write in the cluster) and has no access to `system-mail`. The operator acts only on an address of the tenant's mail domain that no person of any realm on that domain holds, after the address's mail passwords are gone ([mail.md §5c](mail.md)). Mail to the address is refused at `RCPT` (550, unknown recipient) while the record stands and nobody holds the address; a deleted mailbox's record is removed after 30 days, and the recipient policy decides again from then |

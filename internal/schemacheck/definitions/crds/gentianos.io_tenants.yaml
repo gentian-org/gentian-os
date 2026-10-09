@@ -305,7 +305,8 @@ spec:
                     items:
                       description: |-
                         TenantCatalogueSource is one catalogue of a tenant: an address that serves
-                        index.yaml and profiles/<name>.yaml.
+                        index.yaml and profiles/<name>.yaml, or a directory of the cluster's own
+                        deployments repository that holds them.
                       properties:
                         addedBy:
                           default: cluster
@@ -325,6 +326,19 @@ spec:
                           maxLength: 63
                           pattern: ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$
                           type: string
+                        path:
+                          description: |-
+                            Path is the directory of the cluster's own deployments repository the
+                            catalogue is kept in, in place of an address: names separated by '/',
+                            from the top of the repository, none beginning with a dot. The
+                            director reads it from the checkout it already holds. Only the
+                            cluster's administrator declares one. clusters/<cluster>/catalogue,
+                            where the director writes the profiles tenants installed, is never a
+                            catalogue: the director refuses it and does not read it, which the
+                            schema leaves to it.
+                          maxLength: 255
+                          pattern: ^[A-Za-z0-9_-][A-Za-z0-9._-]*(/[A-Za-z0-9_-][A-Za-z0-9._-]*)*$
+                          type: string
                         url:
                           description: URL is the https address the catalogue is served
                             from.
@@ -333,8 +347,16 @@ spec:
                           type: string
                       required:
                       - name
-                      - url
                       type: object
+                      x-kubernetes-validations:
+                      - message: 'a catalogue states where it is read from once: url,
+                          or path'
+                        rule: has(self.url) != has(self.path)
+                      - message: 'a catalogue kept in the deployments repository (path)
+                          is added by the cluster''s administrator: addedBy must be
+                          cluster'
+                        rule: '!has(self.path) || !has(self.addedBy) || self.addedBy
+                          == ''cluster'''
                     type: array
                     x-kubernetes-list-map-keys:
                     - name

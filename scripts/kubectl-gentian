@@ -35,6 +35,9 @@
 #
 #   kubectl gentian catalogues list [--tenant <tenant>]
 #   kubectl gentian catalogues add <name> <https-url> [--tenant <tenant>]
+#   kubectl gentian catalogues add <name> --path <directory> [--tenant <tenant>]
+#                                  a catalogue kept in a directory of the cluster's own
+#                                  deployments repository; the cluster's administrator only
 #   kubectl gentian catalogues remove <name> [--tenant <tenant>]
 #   kubectl gentian catalogues residue
 #   kubectl gentian catalogues residue remove <kind>/<name> [--namespace <ns>] [--yes]
@@ -886,6 +889,10 @@ _optional_tenant_flag() {
     echo "${t}"
 }
 
+# Where a catalogue is read from, as the lists show it: its https address, or
+# the directory of the cluster's own deployments repository it is kept in.
+_CATALOGUE_WHERE='def where: if (.path // "") != "" then "deployments repository: " + .path else (.url // "") end;'
+
 # catalogues list: with --tenant, what that tenant installs from -- the
 # cluster's catalogues and its own. Without, everything the cluster declares:
 # its own catalogues, each tenant's, and which tenants may add their own.
@@ -895,10 +902,10 @@ cmd_catalogues_list() {
     need jq
     if [[ -n "${t}" ]]; then
         answer="$(_call GET "/v1/tenants/${t}/catalogues")" || exit 1
-        printf '%s' "${answer}" | jq -r '
+        printf '%s' "${answer}" | jq -r "${_CATALOGUE_WHERE}"'
             (["CATALOGUE","FOR","ADDED BY","ADDRESS"] | @tsv),
             (.catalogues[] | [.name, (if .scope == "cluster" then "every tenant" else "this tenant" end),
-                (if .addedBy == "tenant" then "the tenant" else "the cluster" end), .url] | @tsv)' |
+                (if .addedBy == "tenant" then "the tenant" else "the cluster" end), where] | @tsv)' |
             column -t -s $'\t'
         if [[ "$(printf '%s' "${answer}" | jq -r '.delegated')" == "true" ]]; then
             echo "The administrators of ${t} may add catalogues of their own."
@@ -909,11 +916,11 @@ cmd_catalogues_list() {
     fi
     _discover
     answer="$(_call GET "/v1/clusters/${_CLUSTER}/catalogues")" || exit 1
-    printf '%s' "${answer}" | jq -r '
+    printf '%s' "${answer}" | jq -r "${_CATALOGUE_WHERE}"'
         (["CATALOGUE","FOR","ADDED BY","ADDRESS"] | @tsv),
-        (.catalogues[] | [.name, "every tenant", "the cluster", .url] | @tsv),
+        (.catalogues[] | [.name, "every tenant", "the cluster", where] | @tsv),
         (.tenants[] | .tenant as $t | .catalogues[] |
-            [.name, ("tenant " + $t), (if .addedBy == "tenant" then "the tenant" else "the cluster" end), .url] | @tsv)' |
+            [.name, ("tenant " + $t), (if .addedBy == "tenant" then "the tenant" else "the cluster" end), where] | @tsv)' |
         column -t -s $'\t'
     local delegated
     delegated="$(printf '%s' "${answer}" | jq -r '[.tenants[] | select(.delegated) | .tenant] | join(", ")')"
@@ -1062,10 +1069,18 @@ cmd_catalogues() {
             esac
             ;;
         add|remove)
-            local name="" address="" t="" a
+            local name="" address="" dir="" t="" a
+            local add_usage="usage: kubectl gentian catalogues add <name> <https-url> [--tenant <tenant>]
+       kubectl gentian catalogues add <name> --path <directory of the deployments repository> [--tenant <tenant>]"
             while [[ $# -gt 0 ]]; do
                 case "$1" in
                     --tenant|-t) t="${2:?}"; shift 2 ;;
+                    --path)
+                        [[ "${sub}" == "add" ]] || die "unknown option $1"
+                        dir="${2:?${add_usage}}"; shift 2 ;;
+                    --path=*)
+                        [[ "${sub}" == "add" ]] || die "unknown option ${1%%=*}"
+                        dir="${1#*=}"; shift ;;
                     -*) die "unknown option $1" ;;
                     *)
                         if [[ -z "${name}" ]]; then name="$1"
@@ -1076,10 +1091,18 @@ cmd_catalogues() {
                 esac
             done
             if [[ "${sub}" == "add" ]]; then
-                [[ -n "${name}" && -n "${address}" ]] ||
-                    die "usage: kubectl gentian catalogues add <name> <https-url> [--tenant <tenant>]"
+                # One of the two: an address, or a directory of the repository.
+                [[ -n "${name}" ]] || die "${add_usage}"
+                [[ -n "${address}" || -n "${dir}" ]] || die "${add_usage}"
+                [[ -z "${address}" || -z "${dir}" ]] ||
+                    die "a catalogue is at an https address or in a directory of the deployments repository (--path), not both.
+${add_usage}"
                 need jq
-                _catalogues_change add PUT "${name}" "${t}" "$(jq -n --arg u "${address}" '{url: $u}')"
+                if [[ -n "${dir}" ]]; then
+                    _catalogues_change add PUT "${name}" "${t}" "$(jq -n --arg p "${dir}" '{path: $p}')"
+                else
+                    _catalogues_change add PUT "${name}" "${t}" "$(jq -n --arg u "${address}" '{url: $u}')"
+                fi
             else
                 [[ -n "${name}" && -z "${address}" ]] ||
                     die "usage: kubectl gentian catalogues remove <name> [--tenant <tenant>]"

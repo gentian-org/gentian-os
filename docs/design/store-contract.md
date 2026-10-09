@@ -977,7 +977,20 @@ catalogue:
     url: https://…
   - name: in-house         # a platform administrator's own repository
     url: https://…
+  - name: private          # a directory of the cluster's deployments repository
+    path: catalogue
 ```
+
+A source states `url` or `path`, never both. A `path` is for profiles that
+must not be public: a directory of the cluster's own deployments repository,
+holding the same `index.yaml` and `profiles/`, which the director reads from
+the checkout it already holds. It can name nothing outside that repository
+and not the directory installed profiles are written into, only the
+cluster's administrator declares one, and what is read from it is held to
+the digest and the bundle checks like bytes from an address
+([custom-catalogues.md](../custom-catalogues.md) §4.4,
+[security.md §2.17](security.md)). To the store and to an install it is a
+source like any other: a coordinate names it, and the digest pins the build.
 
 A source publishes `profiles/<name>.yaml` for each entry and `index.yaml`
 beside them: name, version, edition, trust tier, digest, and nothing else.
@@ -1003,7 +1016,7 @@ exists is not rewritten.
 | | Where it is declared | Who adds it | Who installs from it |
 |---|---|---|---|
 | A catalogue of the whole cluster | `catalogue.sources` on the Cluster claim | whoever may configure the cluster | every tenant |
-| A tenant's own catalogue | `spec.catalogue.sources` on the Tenant | the cluster's administrator; or the tenant's own, where the cluster's administrator turned that on (`spec.catalogue.delegated`) | that tenant only |
+| A tenant's own catalogue | `spec.catalogue.sources` on the Tenant | the cluster's administrator; or the tenant's own, where the cluster's administrator turned that on (`spec.catalogue.delegated`), for an address and never for a directory of the deployments repository | that tenant only |
 
 Both are written by the director's catalogue routes
 (`kubectl gentian catalogues`), are outside the store, and are documented

@@ -147,8 +147,11 @@ func run(log *slog.Logger, listen, base string, origins []string, cluster string
 	// The real fetcher: a catalogue added here is fetched from, with the
 	// address checks a cluster's director makes, so only public https
 	// addresses work on a laptop as well.
+	// One kept in a directory of the repository itself is read from it.
+	entries := catalogue.NewFetcher()
+	entries.Repo = repo
 	director, err := api.New(api.Config{Authn: verifier, Authz: checker, Repo: repo, Log: log, Cluster: cluster,
-		Catalogue: catalogue.NewFetcher()})
+		Catalogue: entries})
 	if err != nil {
 		return err
 	}

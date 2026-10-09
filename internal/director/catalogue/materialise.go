@@ -38,6 +38,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"net/http"
 	"net/url"
@@ -79,6 +80,84 @@ type Source struct {
 	Name string
 	// URL is the base address its index and profiles are served from.
 	URL string
+	// Dir is the directory of the cluster's own deployments repository that
+	// holds its index and profiles, for a catalogue kept there instead of at
+	// an address. A source has one of the two.
+	Dir string
+}
+
+// Repository is the cluster's own deployments repository as a catalogue kept
+// in it is read: one file of one directory, from the checkout the director
+// already holds, at the commit it is at (gitops.CatalogueFile).
+//
+// It is not a second way in. What is read is the same two kinds of file an
+// address serves, and the bytes are held to everything bytes from an address
+// are held to: the digest the install named, and what a bundle of that origin
+// may bring. That they come from the cluster's own repository earns them
+// nothing.
+type Repository interface {
+	// CatalogueFile returns at most limit+1 bytes of dir/file. A file that
+	// is not there is fs.ErrNotExist.
+	CatalogueFile(ctx context.Context, dir, file string, limit int) ([]byte, error)
+}
+
+// read is one file of a source, at most limit bytes of it: fetched from its
+// address, or read from its directory of the deployments repository. A file
+// the source does not have is fs.ErrNotExist.
+func (f *Fetcher) read(ctx context.Context, src Source, file, what string, limit int) ([]byte, error) {
+	var body []byte
+	var err error
+	if src.Dir != "" {
+		if f.Repo == nil {
+			return nil, fmt.Errorf("catalogue: %s is kept in the deployments repository, which this director does not read catalogues from", src.Name)
+		}
+		body, err = f.Repo.CatalogueFile(ctx, src.Dir, file, limit)
+	} else {
+		body, err = f.served(ctx, src.URL, file, limit)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if len(body) > limit {
+		return nil, fmt.Errorf("catalogue: %s is larger than %d bytes", what, limit)
+	}
+	return body, nil
+}
+
+// served fetches one file from a catalogue's address.
+func (f *Fetcher) served(ctx context.Context, base, file string, limit int) ([]byte, error) {
+	parts := strings.Split(file, "/")
+	for i := range parts {
+		parts[i] = url.PathEscape(parts[i])
+	}
+	ref, err := url.Parse(strings.TrimSuffix(base, "/") + "/" + strings.Join(parts, "/"))
+	if err != nil {
+		return nil, fmt.Errorf("catalogue: source %q is not a URL: %w", base, err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ref.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := f.Client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("catalogue: %s: %w", ref.Host, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, fmt.Errorf("catalogue: %s: %w", ref.Host, fs.ErrNotExist)
+	}
+	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+		return nil, fmt.Errorf("catalogue: %s redirects elsewhere, and a redirect is not followed: "+
+			"declare the address the catalogue is served from", ref.Host)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("catalogue: %s answered %d", ref.Host, resp.StatusCode)
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, int64(limit)+1))
+	if err != nil {
+		return nil, fmt.Errorf("catalogue: reading %s from %s: %w", file, ref.Host, err)
+	}
+	return body, nil
 }
 
 // Fetcher reads profile bundles and indexes from catalogue sources.
@@ -89,6 +168,9 @@ type Fetcher struct {
 	// Vet checks an address when a catalogue is added: as it is written, and
 	// what its host resolves to.
 	Vet func(ctx context.Context, address string) error
+	// Repo reads a catalogue kept in the cluster's own deployments
+	// repository. Nil is a director that reads none from there.
+	Repo Repository
 	// indexCache holds each source's index between fetches. See index.go.
 	indexCache
 }
@@ -134,43 +216,18 @@ func (f *Fetcher) Fetch(ctx context.Context, src Source, name, digest string) (*
 	if src.Name == "" || name == "" || strings.ContainsAny(name, "/\\") {
 		return nil, fmt.Errorf("catalogue: %q is not <catalogue>/<name>", coordinate)
 	}
-	base := src.URL
 	want, err := normaliseDigest(digest)
 	if err != nil {
 		return nil, err
 	}
 	// The layout the conversion tool writes and the store ingests:
 	// profiles/<name>.yaml beside listings/<name>.yaml.
-	ref, err := url.Parse(strings.TrimSuffix(base, "/") + "/profiles/" + url.PathEscape(name) + ".yaml")
-	if err != nil {
-		return nil, fmt.Errorf("catalogue: source %q is not a URL: %w", base, err)
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ref.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-	resp, err := f.Client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("catalogue: %s: %w", ref.Host, err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode == http.StatusNotFound {
+	body, err := f.read(ctx, src, "profiles/"+name+".yaml", coordinate, maxBundle)
+	if errors.Is(err, fs.ErrNotExist) {
 		return nil, fmt.Errorf("%w: %s", ErrNotFound, coordinate)
 	}
-	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
-		return nil, fmt.Errorf("catalogue: %s redirects elsewhere, and a redirect is not followed: "+
-			"declare the address the catalogue is served from", ref.Host)
-	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("catalogue: %s answered %d", ref.Host, resp.StatusCode)
-	}
-
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBundle+1))
 	if err != nil {
-		return nil, fmt.Errorf("catalogue: reading %s: %w", coordinate, err)
-	}
-	if len(body) > maxBundle {
-		return nil, fmt.Errorf("catalogue: %s is larger than %d bytes", coordinate, maxBundle)
+		return nil, err
 	}
 
 	sum := sha256.Sum256(body)

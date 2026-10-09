@@ -467,7 +467,11 @@ type TenantCatalogue struct {
 }
 
 // TenantCatalogueSource is one catalogue of a tenant: an address that serves
-// index.yaml and profiles/<name>.yaml.
+// index.yaml and profiles/<name>.yaml, or a directory of the cluster's own
+// deployments repository that holds them.
+//
+// +kubebuilder:validation:XValidation:rule="has(self.url) != has(self.path)",message="a catalogue states where it is read from once: url, or path"
+// +kubebuilder:validation:XValidation:rule="!has(self.path) || !has(self.addedBy) || self.addedBy == 'cluster'",message="a catalogue kept in the deployments repository (path) is added by the cluster's administrator: addedBy must be cluster"
 type TenantCatalogueSource struct {
 	// Name is the catalogue's name: the first half of a coordinate,
 	// <name>/<app>. It is not the name of a catalogue of the whole cluster,
@@ -479,7 +483,21 @@ type TenantCatalogueSource struct {
 	// URL is the https address the catalogue is served from.
 	// +kubebuilder:validation:Pattern=`^https://`
 	// +kubebuilder:validation:MaxLength=2048
-	URL string `json:"url"`
+	// +optional
+	URL string `json:"url,omitempty"`
+
+	// Path is the directory of the cluster's own deployments repository the
+	// catalogue is kept in, in place of an address: names separated by '/',
+	// from the top of the repository, none beginning with a dot. The
+	// director reads it from the checkout it already holds. Only the
+	// cluster's administrator declares one. clusters/<cluster>/catalogue,
+	// where the director writes the profiles tenants installed, is never a
+	// catalogue: the director refuses it and does not read it, which the
+	// schema leaves to it.
+	// +kubebuilder:validation:Pattern=`^[A-Za-z0-9_-][A-Za-z0-9._-]*(/[A-Za-z0-9_-][A-Za-z0-9._-]*)*$`
+	// +kubebuilder:validation:MaxLength=255
+	// +optional
+	Path string `json:"path,omitempty"`
 
 	// AddedBy says who added it: the cluster's administrator, or the
 	// tenant's own under delegation. A tenant's administrator removes only

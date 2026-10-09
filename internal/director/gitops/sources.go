@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 
 	"sigs.k8s.io/yaml"
@@ -47,8 +48,30 @@ type CatalogueSource struct {
 	// Name is the catalogue's slug: the first half of a coordinate, so
 	// "main/nextcloud-base-ce" is served by the source named main.
 	Name string `json:"name"`
-	// URL is where bundles are fetched from.
-	URL string `json:"url"`
+	// URL is the https address bundles are fetched from.
+	URL string `json:"url,omitempty"`
+	// Path is a directory of the cluster's own deployments repository that
+	// holds the catalogue, instead of an address (catalogue_directory.go). A
+	// source states one of the two.
+	Path string `json:"path,omitempty"`
+}
+
+// where says where a source is read from, for a message.
+func (c CatalogueSource) where() string {
+	if c.Path != "" {
+		return "the directory " + c.Path + " of the deployments repository"
+	}
+	return c.URL
+}
+
+// usableSource says whether a declared source is one that is read from: an
+// https address, or a directory of the deployments repository a catalogue
+// may be in -- one of the two, not both.
+func usableSource(address, dir string) bool {
+	if dir != "" {
+		return address == "" && CheckCatalogueDirectory(dir) == nil
+	}
+	return strings.HasPrefix(address, "https://")
 }
 
 // CatalogueSettings is the claim's whole spec.catalogue.
@@ -82,10 +105,11 @@ func (g *GitOps) Catalogue(ctx context.Context) (CatalogueSettings, error) {
 	for _, src := range claim.Spec.Catalogue.Sources {
 		src.Name = strings.TrimSpace(src.Name)
 		src.URL = strings.TrimSpace(src.URL)
-		if src.Name == "" || !strings.HasPrefix(src.URL, "https://") {
+		if src.Name == "" || !usableSource(src.URL, src.Path) {
 			// http:// is skipped here as it is everywhere else: the digest
 			// makes the bytes safe, but a cluster fetching its catalogue in
-			// clear announces what it runs.
+			// clear announces what it runs. So is a directory no catalogue
+			// is read from, and an entry that states both.
 			continue
 		}
 		out.Sources = append(out.Sources, src)
@@ -95,7 +119,8 @@ func (g *GitOps) Catalogue(ctx context.Context) (CatalogueSettings, error) {
 
 // CatalogueSources reads the sources this cluster declares.
 //
-// A source with no name or no https URL is skipped rather than refused: the
+// A source with no name, or with neither an https URL nor a directory a
+// catalogue may be in, is skipped rather than refused: the
 // claim is read on every start, and one malformed entry must not stop a
 // director from serving. What it costs is that installs from that catalogue
 // are refused for want of a source, which says the same thing where somebody
@@ -122,7 +147,11 @@ func (g *GitOps) CatalogueSources(ctx context.Context) ([]CatalogueSource, error
 // TenantCatalogueSource is one catalogue only a tenant sees.
 type TenantCatalogueSource struct {
 	Name string `json:"name"`
-	URL  string `json:"url"`
+	URL  string `json:"url,omitempty"`
+	// Path is a directory of the cluster's own deployments repository, in
+	// place of an address. Only the cluster's administrator declares one:
+	// an entry that states a path and addedBy: tenant is not read.
+	Path string `json:"path,omitempty"`
 	// AddedBy is "cluster" or "tenant". Anything else in the manifest is
 	// read as "cluster": what nobody is known to have added, the tenant's
 	// administrators may not remove.
@@ -175,13 +204,19 @@ func parseTenantCatalogue(text string) (TenantCatalogue, error) {
 	seen := map[string]bool{}
 	for _, src := range doc.Spec.Catalogue.Sources {
 		src.Name, src.URL = strings.TrimSpace(src.Name), strings.TrimSpace(src.URL)
-		if !ValidName(src.Name) || !strings.HasPrefix(src.URL, "https://") || seen[src.Name] {
+		if !ValidName(src.Name) || !usableSource(src.URL, src.Path) || seen[src.Name] {
 			continue
 		}
-		seen[src.Name] = true
 		if src.AddedBy != gentianov1alpha1.CatalogueAddedByTenant {
 			src.AddedBy = gentianov1alpha1.CatalogueAddedByCluster
 		}
+		if src.Path != "" && src.AddedBy != gentianov1alpha1.CatalogueAddedByCluster {
+			// The deployments repository is the cluster administrator's. A
+			// tenant's administrators do not decide what is read from it,
+			// whatever a manifest says.
+			continue
+		}
+		seen[src.Name] = true
 		out.Sources = append(out.Sources, src)
 	}
 	return out, nil
@@ -245,6 +280,25 @@ func (g *GitOps) AddClusterCatalogueSource(ctx context.Context, name, address st
 	if err := checkCatalogueSource(name, address); err != nil {
 		return Result{}, err
 	}
+	return g.addClusterSource(ctx, CatalogueSource{Name: name, URL: address}, meta)
+}
+
+// AddClusterCatalogueDirectory names a catalogue every tenant sees that is
+// kept in a directory of the cluster's own deployments repository
+// (catalogue_directory.go). The directory must be there, as the remote has
+// the repository now.
+func (g *GitOps) AddClusterCatalogueDirectory(ctx context.Context, name, dir string, meta Meta) (Result, error) {
+	if !ValidName(name) {
+		return Result{}, fmt.Errorf("%w: a catalogue's name is lower-case letters, digits and hyphens", ErrInvalidName)
+	}
+	if err := g.catalogueDirectoryPresent(ctx, dir); err != nil {
+		return Result{}, err
+	}
+	return g.addClusterSource(ctx, CatalogueSource{Name: name, Path: dir}, meta)
+}
+
+func (g *GitOps) addClusterSource(ctx context.Context, want CatalogueSource, meta Meta) (Result, error) {
+	name := want.Name
 	tenants, err := g.TenantCatalogues(ctx)
 	if err != nil {
 		return Result{}, err
@@ -272,13 +326,13 @@ func (g *GitOps) AddClusterCatalogueSource(ctx context.Context, name, address st
 			if src.Name != name {
 				continue
 			}
-			if src.URL == address {
+			if src == want {
 				return text, "unchanged", false, nil
 			}
 			return text, "", false, fmt.Errorf("%w: %s is already a catalogue of this cluster, at %s; remove it first to change its address",
-				ErrCatalogueNameTaken, name, src.URL)
+				ErrCatalogueNameTaken, name, src.where())
 		}
-		have = append(have, CatalogueSource{Name: name, URL: address})
+		have = append(have, want)
 		out, err := setClaimSources(text, have)
 		if err != nil {
 			return text, "", false, err
@@ -341,9 +395,38 @@ func renderClusterSources(sources []CatalogueSource) []string {
 	}
 	out := []string{"    sources:"}
 	for _, src := range sources {
-		out = append(out, "      - name: "+quoteScalar(src.Name), "        url: "+plainURL(src.URL))
+		out = append(out, "      - name: "+quoteScalar(src.Name))
+		out = append(out, sourceLines(src.URL, src.Path)...)
 	}
 	return out
+}
+
+// sourceLines are the lines of a source that say where it is read from: its
+// address, or its directory of the deployments repository. A source somebody
+// wrote by hand with both, or with neither, is not read from; it is written
+// back as it was, so that an edit of the list loses nothing.
+func sourceLines(address, dir string) []string {
+	var out []string
+	if address != "" || dir == "" {
+		out = append(out, "        url: "+plainURL(address))
+	}
+	if dir != "" {
+		out = append(out, "        path: "+pathScalar(dir))
+	}
+	return out
+}
+
+// pathScalar writes a directory bare where YAML reads that back as the same
+// text, and quoted where it would read it as something else: a directory
+// called on, 2024 or null is a name, not a value.
+func pathScalar(dir string) string {
+	var back struct {
+		V any `json:"v"`
+	}
+	if err := yaml.Unmarshal([]byte("v: "+dir+"\n"), &back); err == nil && back.V == dir {
+		return dir
+	}
+	return strconv.Quote(dir)
 }
 
 // plainURL writes an address the way a person would: bare, where that is
@@ -379,6 +462,27 @@ func (g *GitOps) AddTenantCatalogueSource(
 	if err := checkCatalogueSource(name, address); err != nil {
 		return Result{}, err
 	}
+	return g.addTenantSource(ctx, tenant, TenantCatalogueSource{Name: name, URL: address, AddedBy: string(by)}, meta)
+}
+
+// AddTenantCatalogueDirectory names a catalogue only one tenant sees that is
+// kept in a directory of the cluster's own deployments repository.
+//
+// It takes no role: the deployments repository is the cluster
+// administrator's, so the entry is always the cluster's, and there is no way
+// to call this for a tenant's administrator.
+func (g *GitOps) AddTenantCatalogueDirectory(ctx context.Context, tenant, name, dir string, meta Meta) (Result, error) {
+	if !ValidName(name) {
+		return Result{}, fmt.Errorf("%w: a catalogue's name is lower-case letters, digits and hyphens", ErrInvalidName)
+	}
+	if err := g.catalogueDirectoryPresent(ctx, dir); err != nil {
+		return Result{}, err
+	}
+	return g.addTenantSource(ctx, tenant, TenantCatalogueSource{Name: name, Path: dir, AddedBy: string(ByCluster)}, meta)
+}
+
+func (g *GitOps) addTenantSource(ctx context.Context, tenant string, want TenantCatalogueSource, meta Meta) (Result, error) {
+	name, by := want.Name, TenantCatalogueActor(want.AddedBy)
 	cluster, err := g.Catalogue(ctx)
 	if err != nil && !errors.Is(err, ErrNoClusterClaim) {
 		return Result{}, err
@@ -402,13 +506,13 @@ func (g *GitOps) AddTenantCatalogueSource(
 			if src.Name != name {
 				continue
 			}
-			if src.URL == address && src.AddedBy == string(by) {
+			if src == want {
 				return text, "unchanged", false, nil
 			}
 			return text, "", false, fmt.Errorf("%w: %s is already a catalogue of this tenant; remove it first to change it",
 				ErrCatalogueNameTaken, name)
 		}
-		have.Sources = append(have.Sources, TenantCatalogueSource{Name: name, URL: address, AddedBy: string(by)})
+		have.Sources = append(have.Sources, want)
 		out, err := setTenantCatalogue(text, have)
 		if err != nil {
 			return text, "", false, err
@@ -500,10 +604,9 @@ func setTenantCatalogue(text string, c TenantCatalogue) (string, error) {
 		if len(c.Sources) > 0 {
 			block = append(block, "    sources:")
 			for _, src := range c.Sources {
-				block = append(block,
-					"      - name: "+quoteScalar(src.Name),
-					"        url: "+plainURL(src.URL),
-					"        addedBy: "+src.AddedBy)
+				block = append(block, "      - name: "+quoteScalar(src.Name))
+				block = append(block, sourceLines(src.URL, src.Path)...)
+				block = append(block, "        addedBy: "+src.AddedBy)
 			}
 		}
 	}

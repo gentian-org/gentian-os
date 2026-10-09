@@ -251,7 +251,14 @@ func run(log *slog.Logger) error {
 	// The fetcher connects to public https addresses and to nothing else
 	// (internal/director/catalogue/address.go): an address somebody typed
 	// must not be a way to reach into the cluster this process runs in.
+	//
+	// A catalogue may instead be kept in a directory of the deployments
+	// repository itself, for profiles that must not be public. That is read
+	// from the checkout this process already holds, with the credential it
+	// already has: no address, and no request to anywhere
+	// (internal/director/gitops/catalogue_directory.go).
 	entries := catalogue.NewFetcher()
+	entries.Repo = repo
 	var storeURL string
 	readSources, cancelRead := context.WithTimeout(context.Background(), time.Minute)
 	catalogues, err := repo.Catalogue(readSources)
@@ -265,7 +272,7 @@ func run(log *slog.Logger) error {
 			"error", err)
 	}
 	for _, src := range catalogues.Sources {
-		log.Info("catalogue of the cluster", "catalogue", src.Name, "url", src.URL)
+		log.Info("catalogue of the cluster", "catalogue", src.Name, "url", src.URL, "path", src.Path)
 	}
 	if storeURL == "" {
 		// Worth one line: without it the cluster's own catalogue view can

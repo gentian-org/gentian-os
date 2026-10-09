@@ -841,7 +841,7 @@ does not exist yet that something cannot be the Composition.
 
 ### 2.4 OCI-Based App Catalogue Delivery (**)
 * **Target Domain**: Software Supply
-* **Context**: A catalogue is an https address serving an index and one profile bundle per file. The director fetches the bundle an install names, checks it against its digest and commits it to the deployments repository, from where Argo CD applies it ([custom-catalogues.md](custom-catalogues.md)). The ApplicationSet that copied a whole git repository of profiles into a cluster is retired. Bundles are plain files; they are not OCI artifacts and carry no signature.
+* **Context**: A catalogue is an https address serving an index and one profile bundle per file, or a directory of the cluster's own deployments repository holding the same. The director fetches the bundle an install names, checks it against its digest and commits it to the deployments repository, from where Argo CD applies it ([custom-catalogues.md](custom-catalogues.md)). The ApplicationSet that copied a whole git repository of profiles into a cluster is retired. Bundles are plain files; they are not OCI artifacts and carry no signature.
 * **Proposed Solution**: Publish profile bundles as OCI artifacts as well, and let the director fetch a bundle from a registry by the same coordinate and digest.
 * **Backlog Items**:
   - `[ ]` Build a packaging pipeline to publish profile bundles as OCI artifacts.

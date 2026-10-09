@@ -111,6 +111,10 @@ been seen working on a cluster. Until it has, it is not done.
 
 - Catalogues added per cluster and per tenant, read when needed; nothing copied
   into a cluster ahead of an install.
+- A catalogue kept in a directory of the cluster's own deployments
+  repository, declared by the cluster's administrator and read from the
+  director's checkout. Held by tests of the director against a local
+  repository.
 - A profile bundle with its companions under one digest, and the operator's
   check of all of it before rollout.
 - The same check for a Component the operator places by default, against the
@@ -290,6 +294,10 @@ Each is true of the code today.
 - **The director reads the cluster's catalogue sources from the claim in
   git.** An edit made outside the director reaches it with the next commit it
   reads.
+- **A private catalogue for a tenant's own administrator.** A catalogue in
+  the deployments repository is the cluster administrator's to declare, also
+  for one tenant; a tenant's administrator adds public addresses only, and
+  no credential is sent to a catalogue.
 - **A Cluster-claim setting for the mail proxy's load balancer** -- the PROXY
   header from a load balancer that is itself a proxy, the addresses it may
   come from, and the pinned mail address. They are values of the mail

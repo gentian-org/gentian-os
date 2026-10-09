@@ -11,7 +11,7 @@ two are made by the operator (`Component`, `IntegrationBinding`).
 
 ```mermaid
 flowchart TD
-    Catalogue["catalogue (https address):<br>index.yaml + one bundle per profile"]
+    Catalogue["catalogue (https address, or a directory<br>of the deployments repository):<br>index.yaml + one bundle per profile"]
     Director["director"]
     Git["deployments repository"]
     Profile["ComponentProfile (cluster-scoped)"]
@@ -33,7 +33,10 @@ flowchart TD
 
 - A **catalogue** is an https address that serves static files: an `index.yaml`
   and one profile bundle per app. Nothing is copied from it into a cluster
-  ahead of an install. Format, the three ways a catalogue is added to a cluster
+  ahead of an install. One whose profiles must not be public is a directory
+  of the cluster's own deployments repository holding the same files, which
+  the cluster's administrator declares and the director reads from its
+  checkout. Format, the three ways a catalogue is added to a cluster
   and the commands are in [custom-catalogues.md](../custom-catalogues.md).
 - An **install** names an entry and the digest of its bundle. The director
   fetches that one file, refuses it unless the bytes hash to the digest and

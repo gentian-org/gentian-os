@@ -127,6 +127,11 @@ func withFetcher(src *httptest.Server) func(*api.Config) {
 			f.Client = src.Client()
 		}
 		f.Vet = func(context.Context, string) error { return nil }
+		// As cmd/director wires it: the repository the director writes is
+		// the one a catalogue kept in it is read from.
+		if repo, ok := cfg.Repo.(catalogue.Repository); ok {
+			f.Repo = repo
+		}
 		cfg.Catalogue = f
 		cfg.StoreURL = "https://store.example.com"
 	}

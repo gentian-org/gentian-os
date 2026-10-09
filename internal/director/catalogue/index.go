@@ -12,10 +12,9 @@ package catalogue
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"io"
-	"net/http"
-	"net/url"
+	"io/fs"
 	"sort"
 	"strings"
 	"sync"
@@ -96,13 +95,14 @@ func (f *Fetcher) Index(ctx context.Context, src Source) (Listing, error) {
 	if f == nil {
 		return Listing{}, fmt.Errorf("%w: this director fetches from no catalogue", ErrNotFound)
 	}
-	// By the catalogue and by its address: a catalogue removed and added
-	// again at another address is another catalogue under the same name.
-	key := src.Key + "\n" + src.URL
+	// By the catalogue and by where it is read from: a catalogue removed and
+	// added again at another address, or in another directory, is another
+	// catalogue under the same name.
+	key := src.Key + "\n" + src.URL + "\n" + src.Dir
 	if cached, ok := f.cached(key); ok {
 		return serve(cached), nil
 	}
-	fresh, err := f.fetchIndex(ctx, src.Name, src.URL)
+	fresh, err := f.fetchIndex(ctx, src)
 	if err != nil {
 		return Listing{}, err
 	}
@@ -137,39 +137,17 @@ func (f *Fetcher) store(catalogue string, c cachedIndex) {
 	f.indexes[catalogue] = c
 }
 
-func (f *Fetcher) fetchIndex(ctx context.Context, catalogue, base string) (cachedIndex, error) {
-	ref, err := url.Parse(strings.TrimSuffix(base, "/") + "/index.yaml")
-	if err != nil {
-		return cachedIndex{}, fmt.Errorf("catalogue: source %q is not a URL: %w", base, err)
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ref.String(), nil)
-	if err != nil {
-		return cachedIndex{}, err
-	}
-	resp, err := f.Client.Do(req)
-	if err != nil {
-		return cachedIndex{}, fmt.Errorf("catalogue: %s: %w", ref.Host, err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode == http.StatusNotFound {
+func (f *Fetcher) fetchIndex(ctx context.Context, src Source) (cachedIndex, error) {
+	catalogue := src.Name
+	body, err := f.read(ctx, src, "index.yaml", "the index of "+catalogue, maxIndex)
+	if errors.Is(err, fs.ErrNotExist) {
 		// A source that publishes bundles but no index. Not an error worth
 		// failing a screen over: it means this catalogue cannot be browsed
 		// from here, which is what an empty listing says.
 		return cachedIndex{at: time.Now()}, nil
 	}
-	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
-		return cachedIndex{}, fmt.Errorf("catalogue: %s redirects elsewhere, and a redirect is not followed: "+
-			"declare the address the catalogue is served from", ref.Host)
-	}
-	if resp.StatusCode != http.StatusOK {
-		return cachedIndex{}, fmt.Errorf("catalogue: %s answered %d", ref.Host, resp.StatusCode)
-	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxIndex+1))
 	if err != nil {
-		return cachedIndex{}, fmt.Errorf("catalogue: reading the index of %s: %w", catalogue, err)
-	}
-	if len(body) > maxIndex {
-		return cachedIndex{}, fmt.Errorf("catalogue: the index of %s is larger than %d bytes", catalogue, maxIndex)
+		return cachedIndex{}, err
 	}
 	var idx Index
 	if err := yaml.Unmarshal(body, &idx); err != nil {
