@@ -301,8 +301,13 @@ is a request to the tenant's perimeter approver, listed and approved like a publ
 although it is none; until it is approved nothing changes and the app's own calls fail. Approved,
 the header is left as the page sent it, sign-in and the right to use the app stay required, and
 no platform token reaches the app. It cannot be combined with `forwardToken` or `exchangeToken` in one profile.
-Signing out at the front door tells no app; a session the app keeps itself ends when the app ends
-it.
+Signing out at the front door ends no session an app keeps itself unless the app is told. An app
+with its own OIDC client says where, as a path on one of its own entries
+(`requires.services.identity.oidc.backchannelLogout: {exposure, path}`); the platform builds the
+address — that entry's Service inside the cluster — and the realm posts its logout token there.
+A profile names no address: the older `backchannelLogoutUrl` is refused. The app must check the
+token before it ends a session ([app-customization.md §2.10](app-customization.md)). An app that
+declares nothing keeps its session until the app ends it.
 
 **An entry on the internet is a request, and the proxy checks no caller.** A `surface: perimeter`
 entry publishes nothing until the tenant's perimeter approver approves it (`kubectl gentian

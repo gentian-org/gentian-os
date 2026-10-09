@@ -595,10 +595,12 @@ component reconciler with the sidecar.
   lifetime (five minutes in a tenant realm). A right withdrawn in OpenFGA is
   refused within about two seconds, the bouncer's poll of the change log; its
   cached allows live five minutes at most. The edge has no back-channel
-  logout. An app is told only if its own OIDC client declares a
-  `backchannelLogoutUrl`, which the realm then calls; otherwise a session it keeps of its own (a sign-in sidecar's
-  lasts up to an hour, [iam.md §1.11](iam.md)) ends when the app ends it.
-  The app is not reachable meanwhile, because the front door comes first.
+  logout of its own, and no route for one: the realm tells an app of a
+  sign-out inside the cluster, at the app's own Service or its sign-in
+  sidecar's, where the app can be told at all ([iam.md §1.12](iam.md)). A
+  session an app keeps that is not ended that way ends when the app ends it
+  -- a sign-in sidecar's after an hour at most. The app is not reachable
+  meanwhile, because the front door comes first.
 
 ### 4.3 Embedding
 

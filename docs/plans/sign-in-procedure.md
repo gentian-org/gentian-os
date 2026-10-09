@@ -208,7 +208,14 @@ The standard remedy is back-channel logout: Keycloak sends the app a signed
 notice, and the app ends the sessions that belong to it. It is defined in
 OpenID Connect Back-Channel Logout 1.0.
 
-**State today: the notice does not arrive.** Six profiles declare an address
+**Added 2026-10-09: the notice now arrives, inside the cluster.** Decision 5 was taken as
+recommended. A profile names a path on one of its own entries, the platform registers that
+entry's Service inside the cluster as the address, and the free-form address described below is
+refused. It is shown for Nextcloud and XWiki; the sign-in sidecar is told the same way and
+Docmost and OpenProject end the session. What follows is the state this document found, kept as
+written. The state now: [iam.md §1.12](../design/iam.md), [security.md §2.15](../design/security.md).
+
+**State when this was written: the notice does not arrive.** Six profiles declare an address
 for it, and the platform registers that address on the app's Keycloak client
 (`backchannelLogoutUrl` in
 [app-default.yaml](../../crossplane/compositions/app-default.yaml)). The
@@ -1501,6 +1508,11 @@ Each is a question for the owner, with a recommendation.
    and a test per app that the app accepts the notice on its internal name.
    This touches the front door and the network rules, so it is put here as
    a question and not decided.
+   **Decided 2026-10-09: the address inside the cluster**, built by the
+   platform from the profile's own entry
+   (`requires.services.identity.oidc.backchannelLogout`); no rule of the
+   front door or of the network changed for it
+   ([security.md §2.15](../design/security.md)).
 
 6. **How should an address be published whose callers carry the app's own
    token, such as Element's chat server?** The front door has such a mode

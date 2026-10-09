@@ -366,6 +366,7 @@ The handler is the ConfigMap `<profile>.sign-in-handler` of the profile's bundle
 | Hands the handler what was declared | the operator | `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`; `SECRET_<NAME>`; `APP_URL`. From this app's own vault paths; a profile names which, never where |
 | Routes two paths of the app's host to it | the operator | `/sso/login` as a rule of the app's own route, behind the session and the bouncer; `/sso/acs` on a route of its own with no session ([routing.md §4.1](design/routing.md)) |
 | Sends the entry paths to `/sso/login` | the operator | for a page load (GET) only |
+| Has the realm tell the sidecar of a sign-out | the app Composition and the operator | the client's single-logout address is the sidecar's own Service, `http://<app>-sign-in.<namespace>.svc.cluster.local:8081/sso/logout`; the sidecar is told the same address and answers `/sso/logout` under that name only. Not routed: nothing outside the cluster reaches it |
 | Opens the sidecar's network paths | the operator | the realm's certificate; the app's database server; the app's own pods on `appPort`. One port each, and nothing else: the sidecar is not one of the app's pods |
 
 A profile states no address, no client name and no Secret. They follow from where the app answers
@@ -416,6 +417,32 @@ the hour a session lasts.
 administer the app and how long the session may last (an hour at most), it answers where to go
 and which cookies or browser storage carry the app's session, and the sidecar writes the
 response. It gives nobody a password and touches no licence check.
+
+**Signing out is part of the handler.** A handler may export a second function:
+
+```js
+module.exports = {
+  async onLogin(person, ctx) { /* make the session; as before */ },
+
+  // Optional. The person signed out at the platform.
+  // person: { email }   ctx: { origin, log(event, fields) }
+  async onLogout(person, ctx) {
+    // end every session this person has in the app, in every browser
+  },
+};
+```
+
+When a person signs out, the realm posts a signed logout request to the sidecar inside the
+cluster. The sidecar accepts it only signed by the realm, addressed to its own address, fresh and
+not seen before, and then calls `onLogout` with the person it names. The handler ends that
+person's sessions in the app — all of them: it is told who signed out, not which browser.
+Docmost's and OpenProject's delete the person's session rows, which both apps look up on every
+request.
+
+A handler without `onLogout` is one for an app whose session cannot be ended from outside: the
+sidecar answers the realm, logs `no-sign-out-handling`, and the app's session lasts what is left
+of its hour. Say so in the app's customization record, as Activepieces' does. A handler written
+before this, and a sidecar built before it, go on working with each other and with the new ones.
 
 **Before reaching for it.** It is the last of three ways to sign people in ([iam.md §1.11](design/iam.md)),
 and the only one in which a program beside the app holds the app's keys. Use it when the edition
@@ -772,12 +799,65 @@ out again before the app, with the session's cookies. So an app whose pages
 call its own API with a bearer token of their own loses that token on such an
 entry, unless the entry declares `clientAuthorization: app` and was approved
 (above). `forwardToken: true` passes the
-front door's token on instead, and needs `trustTier: platform`. Signing out
-ends the session at the front door and at the realm, and tells no app: a
-session an app keeps itself lasts until the app ends it -- for an app behind
-the sign-in sidecar (§2.3a), an hour at most -- unless the app's own sign-in
-client declares a `backchannelLogoutUrl`, which is registered at the realm
-with the client.
+front door's token on instead, and needs `trustTier: platform`.
+
+**Telling the app that a person signed out.** Signing out ends the session
+at the front door and at the realm. A session the app keeps itself is the
+app's: it ends then only if the realm tells the app and the app acts on it.
+An app with its own sign-in client says where it takes that notice:
+
+```yaml
+spec:
+  requires:
+    services:
+      identity:
+        oidc:
+          clientId: gentian-example
+          backchannelLogout:
+            exposure: web                    # an entry under spec.expose
+            path: /oauth/backchannel-logout  # the app's endpoint for it
+  expose:
+    - name: web
+      surface: gateway
+      authMode: oidc
+      backend: {service: example, port: 8080}
+```
+
+A path and an entry, never an address. The platform builds the address from
+the entry's own backend,
+`http://<backend.service>.<namespace>.svc.cluster.local:<backend.port><path>`,
+and registers it with the client at the realm. Keycloak then posts its logout
+token there when a person signs out: inside the cluster, at the app's own
+Service, not at the public address, where the front door would ask Keycloak
+for a session it does not have.
+
+- The entry must be this profile's and route to this component's own Service
+  (no `backend.component`), and that Service's name must be a plain name.
+- The path is segments of letters, digits, `_`, `~` and `-`, with single dots
+  inside a segment: no query, no fragment, no `..`, no `//`.
+- The older `backchannelLogoutUrl`, an address of the profile's own writing,
+  is refused, and the message names this field. It let a catalogue entry make
+  the identity provider post to any address, and every profile that used it
+  named an address the notice could not reach.
+- It is served for the component's own client, by the platform's Composition.
+  An extension's client may not declare it, and a profile that brings a
+  Composition of its own has to build the address the same way itself.
+
+The app sees its Service's name in the `Host` header. One that refuses a
+host it does not know needs that name
+(`<service>.${TENANT_NAMESPACE}.svc.cluster.local`) among the hosts it
+trusts; that lets it answer a caller that could already reach it and opens
+nothing.
+
+Declare it only for an app that **checks the token** before it ends a
+session -- the signature against the realm's keys, the issuer, that the
+audience is its own client, and the back-channel logout event -- and say in
+the profile's customization record what it checks. Show it once against the
+app's real image (gentian-apps, `e2e/oidc-sign-out`). Keycloak posts once and
+does not try again, so the notice is the common case and the app's own
+session lifetime is the bound. An app behind the sign-in sidecar declares
+none of this: §2.3a. What it guards and what it leaves open:
+[security.md §2.15](design/security.md).
 
 The component's `MainAddress` condition says whether it is there and, if not,
 why. A profile that should also work on a multi-tenancy cluster declares a

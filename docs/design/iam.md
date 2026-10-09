@@ -27,7 +27,7 @@ user and group store for that organisation.
 - The canonical, bookmarkable entry point is the tenant's desktop, **`https://desktop.<tenant>.<KERNEL_DOMAIN>/`** (on a single-tenancy cluster, `https://desktop.<KERNEL_DOMAIN>/`, §1.1a): the edge sends the browser to the tenant realm's form, which asks for email and password together.
 - What the cluster's bare domain does (the apex; `www` leads where it does) depends on the cluster's tenancy mode (§1.1a). On a **multi-tenancy** cluster it is the **concierge**, a page the platform tenant publishes with no session in front of it. It asks for the email only and sends the browser to the desktop of the workspace the address belongs to (`@<tenant>.<KERNEL_DOMAIN>`, `@<KERNEL_DOMAIN>` for the platform's own people, or a tenant's custom domain); an address it cannot place is asked for the workspace's name. It asks the server nothing about accounts, and hands the address on as `login_hint`. On a **single-tenancy** cluster nobody is asked anything: the bare domain leads to the one user tenant's desktop.
 - **The edge keeps the session**, not the app and not the desktop: on every host behind a session the Gateway runs the code flow against the zone's client (`gentian-edge-<zone>`), keeps the tokens in encrypted, host-scoped, `SameSite=Lax` cookies, renews them with the refresh token, and only then asks the bouncer whether this person may reach the host. The order, what the bouncer is shown and what it refuses are in [routing.md §4.1](routing.md).
-- **Signing out** is `/oauth2/logout` on the host the person is on: the Gateway drops that host's cookies and sends the browser to the realm's end-session endpoint with the session's ID token as the hint, so Keycloak ends the realm session without asking and returns to the host's front page, which is the realm's sign-in again. Ending the realm session is what signs the person out of the zone's other hosts, within one access-token lifetime ([routing.md §4.2](routing.md)). Sign-out does not reach the apps, with one exception: an app whose own OIDC client declares a `backchannelLogoutUrl` in its profile is called there by the realm. Any other session an app keeps of its own outlives the sign-out until the app ends it. The front door still refuses that person's next request to the app.
+- **Signing out** is `/oauth2/logout` on the host the person is on: the Gateway drops that host's cookies and sends the browser to the realm's end-session endpoint with the session's ID token as the hint, so Keycloak ends the realm session without asking and returns to the host's front page, which is the realm's sign-in again. Ending the realm session is what signs the person out of the zone's other hosts, within one access-token lifetime ([routing.md §4.2](routing.md)). Ending the realm session is also what tells the apps: the realm calls each app that can be told, inside the cluster, and the app ends its own session for that person. Which apps can be told, and how long a session lasts in one that cannot, is §1.12.
 - **Tenant apps** use the same tenant realm for OIDC, so a session created at portal login is reused silently by every app launch — no broker hop, no second login screen.
 - The **platform admin** signs in in the kernel realm, at `https://platform.<KERNEL_DOMAIN>/`; there is no tenant realm for them to be routed to. The kernel realm holds the platform's administrators and nobody else: a cluster's users are never the kernel realm's, on a single-tenancy cluster any more than on a shared one.
 
@@ -355,8 +355,59 @@ a bearer token of the app's loses it on a session route, where the Gateway drops
 perimeter approver approved it; sign-in stays required either way ([routing.md §4.1](routing.md)).
 A client with no browser session reaches an app only through a public entry of `authMode: app`,
 with a credential the app issued: the platform does not know that caller, and removing a person
-from the realm does not end such a credential ([security.md §2.14](security.md)). And sign-out does not reach an app's own
-session, unless its OIDC client declares a back-channel logout address (§1.1).
+from the realm does not end such a credential ([security.md §2.14](security.md)). And a sign-out ends an app's own session
+only where the app can be told of it (§1.12).
+
+### 1.12 Signing out: what ends, where, and when
+
+A person signs out once, at `/oauth2/logout` on whichever host they are on. Four things have a
+session for them, and each ends differently.
+
+| Where the session is | What ends it | When |
+|---|---|---|
+| **The realm** (Keycloak) | the sign-out itself: the Gateway sends the browser to the realm's end-session endpoint with the session's ID token | at once |
+| **The front door** (the Gateway's cookies, per host) | the host the person signed out on: its cookies are deleted. Every other host of the zone: its access token cannot be renewed against the ended realm session | at once on that host; within one access-token lifetime elsewhere — five minutes in a tenant realm ([routing.md §4.2](routing.md)) |
+| **An app that signs people in itself** (its own OIDC client) and declares where it is told | the realm posts a logout token to the app, inside the cluster; the app checks it and ends its session | at once, if the app was running when the realm told it |
+| **An app behind the sign-in sidecar** whose handler can end a session | the realm posts a signed logout request to the sidecar, inside the cluster; the sidecar checks it and has the handler end the person's sessions in the app | at once, if the sidecar was running when the realm told it |
+| **Any other app session** | nothing the platform does. The app's own lifetime for a session | a sidecar's app: an hour at most. An app with its own client: as long as the app keeps a session |
+
+**How the realm tells an app.** Server to server, at the app's own Service inside the cluster —
+never at the app's public address, where every path is behind a session and the realm, which is
+not a browser, has none. Nothing is opened for it at the front door.
+
+- *An app with its own OIDC client* says in its profile which path of which of its entries takes
+  the notice (`requires.services.identity.oidc.backchannelLogout`). The platform builds the
+  address from that entry's own Service and registers it with the client
+  ([app-customization.md §2.10](../app-customization.md)). The notice is an OpenID Connect
+  logout token: a JWT the realm signs, naming the client, the person and the session.
+- *An app behind the sign-in sidecar* (§1.11) declares nothing. The sidecar's client at the realm
+  is registered with the sidecar's own Service as its SAML single-logout address; the realm posts
+  a signed `LogoutRequest` there, and the sidecar calls the handler's `onLogout`.
+
+**The realm tells once.** Keycloak 26.8.0 posts the notice when a person signs out or an
+administrator ends their session. It does not post again if nothing answered, and it posts
+nothing when a session merely runs out. So the notice shortens the common case to nothing; it
+is not what bounds the worst case. The bounds are the lifetimes in the table.
+
+**What the catalogue's apps do** (gentian-apps; each *yes* is shown end to end against the app's
+real image and Keycloak 26.8.0):
+
+| App | Told of a sign-out | The session then |
+|---|---|---|
+| Nextcloud (`nextcloud-base-ce`) | yes, its own client | ends for the browser that signed out |
+| XWiki (`xwiki-ce`) | yes, its own client | ends, every session of that person |
+| Docmost, OpenProject | yes, through the sidecar | ends, every session of that person |
+| Activepieces 0.28.0 | the sidecar is told; the app has nothing to end a session with | lasts what is left of its hour |
+| Nextcloud (`nextcloud-base-od`) | declared, not shown with its own image | unknown until it is |
+| Open WebUI 0.10.2 | declared, not in effect: needs a switch and Redis | lasts as long as its own token |
+| Element (Synapse) | no: nothing registers an address, and Synapse's switch is off | lasts as long as Synapse keeps it |
+| Mathesar, Odoo | no: neither has an endpoint for it | lasts as long as the app keeps it |
+
+**What an outlived session is worth.** Not a way in: the front door refuses a signed-out
+person's next request to every app, within the five minutes above, whatever the app remembers.
+What it costs is on a shared browser: the next person, admitted by the front door as
+themselves, can be shown the previous person's account by an app that still has that person's
+cookie. The security side of all of this is [security.md §2.15](security.md).
 
 ## 2. Administration UI
 

@@ -422,8 +422,29 @@ profile names which, never where.
 
 **What it may reach, and what may reach it.** Out: the realm's signing certificate, and what the
 profile declared for the handler — the app's database server, the app's own pods — one port
-each. It does not carry the app's label, so none of the app's other paths are its. In: the edge;
-no pod of the tenant.
+each. It does not carry the app's label, so none of the app's other paths are its. In: the edge,
+and the identity provider's namespace, which tells it of a sign-out (below); no pod of the
+tenant.
+
+**Signing out.** The sidecar's client at the realm names the sidecar's own Service as its SAML
+single-logout address, `http://<app>-sign-in.<namespace>.svc.cluster.local:8081/sso/logout`, and
+asks the browser for nothing: when a person signs out, the realm posts a signed `LogoutRequest`
+there itself. No route carries `/sso/logout`, so nothing outside the cluster reaches it, and the
+sidecar answers it only under that Service name — a request that arrived under the app's public
+name is answered 404. What it accepts there, or it ends nothing:
+
+| It checks | So that |
+|---|---|
+| A signature by a certificate of the realm over the request as a whole. Everything it reads is read from the signed bytes | nothing posted is believed that the realm did not say |
+| It is a `LogoutRequest`, and its issuer is the realm it was told about | an answer or a request of another kind, or another realm's, signs nobody out |
+| `Destination` is exactly its own sign-out address | a request made for another app's sidecar is not accepted here |
+| Issued within the last two minutes and not in the future; not past its `NotOnOrAfter` where it has one; not presented before | a kept request is not presented later, or twice |
+| It names one person, by e-mail address, in clear; a realm session this process signed somebody else in from is not named for them | the handler is told the person the realm means |
+| Exactly one request in the post; no document type declaration | a doctored message is not accepted |
+
+It then calls the handler's `onLogout` for that person, where the handler has one. The worst a
+request could do that got past all of this is sign a person out of one app. It could not sign
+anybody in: the path makes no session.
 
 | Control | State |
 |---|---|
@@ -433,6 +454,7 @@ no pod of the tenant.
 | The handler is given only what the profile declared, of the app's own | Built |
 | The sidecar's image is one build, named by tag and digest | Built |
 | An app session lasts at most an hour and no longer than its realm session | Built in the sidecar; the handler has to give its token that lifetime |
+| A sign-out at the realm ends the person's sessions in the app, on a request the realm signed and addressed to the sidecar inside the cluster | Built; tests in the sidecar, against Keycloak 26.8.0, and against Docmost and OpenProject. Activepieces 0.28.0 cannot end a session and keeps the hour |
 | Who administers the app is read from the signed assertion alone; given and withdrawn at sign-in | Built; tests in the sidecar, against Keycloak 26.8.0, and against each of the three apps |
 
 **What remains weak.**
@@ -449,9 +471,18 @@ no pod of the tenant.
 - **Requests to the realm are not signed.** The sidecar holds no key. Anybody can make the realm
   post an answer to the sidecar's address for whoever is at the browser; the sidecar refuses it,
   because it asked for none.
-- **Within the hour, the app can show the previous person.** Anna signs out, Ben signs in at the
-  same browser and opens a page of the app that is not an entry path: the app still has Anna's
-  session. Opening the app from its tile goes through the sign-in and gives Ben his own.
+- **Within the hour, the app can show the previous person — where the sign-out did not end the
+  session.** Anna signs out, Ben signs in at the same browser and opens a page of the app that is
+  not an entry path: an app that still has Anna's session shows it. Docmost and OpenProject end
+  it when the realm tells the sidecar. It is left in three cases: Activepieces, whose handler
+  has nothing to end a session with; a sidecar that was not running at the moment the realm told
+  it, because the realm tells once; and a realm session that ran out without a sign-out. Opening
+  the app from its tile goes through the sign-in and gives Ben his own.
+- **The sign-out request arrives over plain HTTP inside the cluster,** like the realm's
+  certificate. It carries the person's address and the realm session's identifier and no secret:
+  something that read it would learn who signed out, and presenting it again is refused.
+- **Signing out at one device signs the person out of the app at all of them.** The handler is
+  told who, not which browser. The other device is taken through the sign-in again, silently.
 - **App Admin is one role per tenant.** Who holds it administers every app of the tenant that
   maps it, not one app. The per-app group of the authorization model
   (`gentian:tenant:<t>:app:<p>:admins`) is not built.
@@ -562,6 +593,125 @@ What `app` costs is said to the approver in the director's words before they app
 
 **How it is held.** The proxy's rules are asked of the proxy: `TestTheProxyItself*` (`internal/controller/component_perimeter_nginx_test.go`) start the image the operator deploys with the configuration it renders, in front of a server that says back what it was sent, and send it some ninety paths written to leave a prefix or reach a denied path, every identity header in three spellings, oversized bodies and headers, and bursts from two addresses; and, for an entry that passes the credential, that `Authorization` arrives as sent on the declared paths and on no other, that `Cookie` and every identity header still do not, and that guesses from one address are answered 429 at the lower limit. They need docker and are skipped without it. The sign-in limits are validated against the pinned release's definitions, and `TestEnvoyGatewayAcceptsTheRateLimits` puts them through that release's own translator where its `egctl` is installed.
 
+### 2.15 Telling an app that a person signed out
+
+When a person signs out, the realm ends its session and the front door stops admitting that
+browser within five minutes ([routing.md §4.2](routing.md)). What that leaves is each app's own
+session: on a shared browser the next person, admitted as themselves, could be shown the previous
+person's account. So the realm tells the app, and the app ends its session
+([iam.md §1.12](iam.md)). For an app with its own OIDC client that is an OpenID Connect logout
+token, posted to an address the platform registers with the client. This section is what that
+address may be, who can reach it, and what is left. The sign-in sidecar's side is §2.12.
+
+**Before.** A profile wrote a whole address (`backchannelLogoutUrl`), and it was registered as
+written. Every profile wrote the app's public address, where every path is behind a session; the
+realm has none, so its request was answered with a redirect to the sign-in and no notice ever
+arrived. And the field was a request forgery waiting for a use: a catalogue entry could make the
+identity provider send a POST to any address at all, inside the cluster or outside it. The field
+is now refused.
+
+**Now.** A profile states a path and which of its own entries serves it
+(`requires.services.identity.oidc.backchannelLogout`). The platform's Composition builds
+`http://<backend.service>.<namespace>.svc.cluster.local:<backend.port><path>` and registers it.
+
+**(a) What the app must verify, and what happens if it does not.** A logout token is a JWT the
+realm signs. Before it ends a session the app has to check the signature against the realm's
+published keys, the issuer, that the audience is its own client, and that the token carries the
+back-channel logout event; it then ends the session the token's `sid` names, or the sessions of
+its `sub`. The platform cannot check that an app does. An app that ends a session on a token it
+did not verify lets whoever can reach that path sign a person out of it — an annoyance, and
+never a sign-in: the path makes no session. So the declaration is a review item: the profile's
+customization record says what the app checks, and the app is run once against Keycloak with a
+token signed by another key and an unsigned one. For the two that declare it and were run:
+Nextcloud's `user_oidc` checks signature, audience, event, the absence of a nonce, and that it
+holds a session for the token's `sid`, `sub` and issuer together; XWiki's OIDC authenticator
+checks signature, issuer and audience against the keys the realm publishes, provided a provider
+is configured, which the profile does. (Open WebUI checks the token as well, and cannot end the
+session without Redis, so its declaration has no effect yet.)
+
+**(b) Who can reach the path.** Nothing new. The address is the app's Service inside the
+cluster, and what reaches an app's pods is what the tenant's network policies already admit
+(`internal/kernel/netpolicy`):
+
+- the identity provider's namespace — Keycloak, and the realm, client and group Jobs that run
+  beside it — on every port, which is the path the notice takes;
+- the edge: the Gateway's Envoy pods, and with `KERNEL_NETWORK_POLICIES` off every pod of the
+  edge namespace;
+- the control namespace: the operator and the programs beside it;
+- pods of the same app; another app of the tenant that holds a granted contract with it; the
+  app's sign-in sidecar, on the one port its profile declares;
+- the node the pod runs on.
+
+No other app of the tenant, no other tenant, and nothing outside the cluster. The same path at
+the app's **public** address is where it always was: behind the session and the bouncer, so a
+signed-in person who may use the app can post to it. That is unchanged, and it is why (a)
+matters for an app that verifies nothing.
+
+**(c) The realm cannot be pointed at another address.** The address is built, never written.
+Each part is held to what it has to be, by the definition's rules and again by the Composition,
+which registers nothing if one fails:
+
+| Part | From | Held to |
+|---|---|---|
+| The Service | the `backend.service` of the entry the profile names | an entry of this profile, with no `backend.component` — this component's own Service — and a plain name: one DNS label, so nothing in it can end the host or begin a path |
+| The namespace | the install's, from the claim the operator writes | not the profile's to say |
+| The port | that entry's `backend.port` | a port number |
+| The path | the profile | segments of letters, digits, `_`, `~`, `-`, with single dots inside: no query, no fragment, no `..`, no `//`, no `@` |
+| Scheme, `.svc.cluster.local` | fixed | — |
+
+So the realm is told to call a Service of that name in the component's own namespace and
+nothing else: not another namespace, not a host outside the cluster. For the sign-in sidecar the
+Service is the operator's own (`<app>-sign-in`) and the claim carries only the port.
+
+*What this does not close.* The Service is the app's chart's to define. A chart that gave the
+Service of that name hand-written endpoints instead of its own pods could make the realm post to
+an address of the chart's choosing after all. What such a request can carry is fixed: a POST, a
+plain path, and a body the chart does not choose (a logout token for its own client, which no
+other client accepts). What admits the identity provider's namespace is every tenant's pods,
+Keycloak's own database and the mail relay, and the operator's membership listener. This is the
+position a chart already has towards the Gateway, which routes to the same Service; it needs a
+chart written to do it, where the old field needed one line of a profile. The platform does not
+check a Service's endpoints.
+
+**(d) Plain HTTP inside the cluster.** The token is signed and is not a credential: it names the
+issuer, the client, the person's identifier and the realm session, and it is good for ending
+that session and nothing else. Something that could read the hop would learn who signed out of
+what; something that could change it could only make it invalid. It is the same hop, and the
+same absence of TLS, as an app's connection to its database.
+
+**(e) The name the app is called by.** The app sees its Service's name in the `Host` header, not
+its public one. An app that refuses a host it does not know needs that name among the hosts it
+trusts. Trusting it lets the app answer a caller under that name; it does not make the app
+reachable from anywhere it was not, because reaching it is the network policy's question and
+the name is only what an admitted caller writes in a header. The risk a host list guards
+against — a link in a mail built from a `Host` header an attacker chose — needs the attacker to
+reach the app under that name, which no browser can. For Nextcloud as the catalogue configures
+it no name had to be added at all: with `overwritehost` set it does not hold a request to its
+list of trusted names, and XWiki answered under its Service's name as it is.
+
+**(f) The identity provider's own egress.** The kernel's network rules restrict who may connect
+to a kernel pod, not where one connects to: `kernel-authentication` is `egress: open` in the
+inventory the rules are generated from (`internal/kernel/kernelnet/inventory.yaml`), which
+names this flow among the reasons. Nothing had to be opened. If that namespace's egress is ever
+restricted, this is a flow it must keep: from Keycloak to tenant namespaces, on each app's
+backend port and on a sign-in sidecar's 8081.
+
+**What the notice does not do.** Keycloak 26.8.0 posts it once, when a person signs out or an
+administrator ends their session. It does not post again if the app was not there, and posts
+nothing when a session only runs out. So it ends an app session at once in the ordinary case and
+bounds nothing: an app's own session lifetime is still the bound, and for an app that cannot be
+told it is the only thing there is.
+
+| Control | State |
+|---|---|
+| The address the realm posts to is built from the profile's own entry, in the install's namespace; a profile names none | Built (`app-default.yaml`); render fixtures for an accepted declaration and two refused ones |
+| The free-form address is refused, with a message naming the field that replaces it | Built (the definition's rules; a test holds each) |
+| The catalogue's own profiles are admitted by those rules | Built; a test reads the published bundles |
+| The notice arrives at the Service's address and ends the session; a token of another key, an unsigned one and a repeated one end nothing | Shown for Nextcloud (`nextcloud-base-ce`) and XWiki against their images and Keycloak 26.8.0 (gentian-apps, `e2e/oidc-sign-out`) |
+| An app checks the token before it ends a session | **The app's**, reviewed per profile and recorded in its customization record; nothing enforces it |
+| A Service's endpoints are the app's own pods | **Not checked** |
+| The notice is sent again when it did not arrive, or when a session runs out | **Not done**: Keycloak does neither |
+
 ## 3. Architecture
 
 ### 3.0 Implementation status
@@ -577,7 +727,7 @@ changes only when the code does.
 | `AppGrant` → tuples | Implemented | `app_grant_reconciler.go`; grants are structure and stay stored. The operator writes the store and the director only asks it (AD-12) |
 | Gateway ext-auth calling OpenFGA `Check` on every session route | Implemented | `internal/bouncer`, attached by `internal/controller/bouncer.go`; the session filter runs first and the bouncer refuses a request without a token it verified ([routing.md §4.1](routing.md)). Fails closed |
 | Session cookies: per host, encrypted, `SameSite=Lax`; frame policy naming the tenant's own desktop | Implemented | `zoneSecurityPolicySpec`, `componentFramers` ([routing.md §4.2, §4.3](routing.md)) |
-| Sign-out reaching the apps | **Target** | Sign-out ends the realm session and the edge's cookies. The realm calls an app only where the app's own OIDC client declares a `backchannelLogoutUrl`; any other session an app keeps itself lasts as long as the app lets it, though the front door refuses the person's next request ([routing.md §4.2](routing.md)) |
+| Sign-out reaching the apps | **Implemented where an app can be told; otherwise bounded by the app** | Sign-out ends the realm session and the edge's cookies. The realm then tells an app inside the cluster: an app with its own OIDC client at the path its profile declares (`backchannelLogout`), at an address the platform builds from the entry's own Service (`app-default.yaml`); an app behind the sign-in sidecar through the sidecar's `/sso/logout` (`signin_sidecar.go`). Shown end to end for Nextcloud (`nextcloud-base-ce`), XWiki, Docmost and OpenProject. Not told, or told to no effect: Activepieces (an hour at most), Open WebUI, Element, Mathesar, Odoo, and `nextcloud-base-od` until it is shown — their sessions last as long as the app keeps them, though the front door refuses the person's next request. The realm tells once and not when a session only runs out (§2.15, [iam.md §1.12](iam.md)) |
 | Identity headers to a backend, signed | **Target** | `x-gentian-*` are plain headers. What makes them the bouncer's word is that only the Gateway's Envoy pods reach the backend: a NetworkPolicy, and for the kernel side one that is off by default (§2.13). The same holds for a sign-in sidecar's `/sso/login` (§2.12) |
 | An app's own bearer token through the front door | Implemented, **on approval** | An entry that declares `clientAuthorization: app` keeps the header once the tenant's perimeter approver approved it; the session and the bouncer's check stay required and no platform token reaches the app (`approvedClientAuthorization`, `internal/bouncer`; [routing.md §4.1](routing.md)). Every other session route still drops it, but for two kernel consoles that keep theirs by the kernel's own rule: Keycloak's administration console, and the model gateway's where the claim switches it on (§2.9). A client with no browser session cannot use a session route at all: it needs a public entry of `authMode: app` |
 | The session's tokens stop at the edge: a backend gets its own cookies, the identity headers, and a bearer only where its exposure says `forwardToken` | Implemented | `internal/bouncer/cookies.go` rewrites the `Cookie` header without the edge's cookies on every allowed request of a session route; the names come from the route table ([routing.md §4.1](routing.md)) |
