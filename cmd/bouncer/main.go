@@ -144,6 +144,12 @@ func run(log *slog.Logger) error {
 	http.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	go func() { _ = httpSrv.ListenAndServe() }()
 
+	// The one question a component may ask for a person who is not at a
+	// browser, on a port of its own so that the network can admit components
+	// to it and to nothing else here.
+	checkSrv := &http.Server{Addr: envOr("BOUNCER_CHECK_LISTEN", ":8082"), Handler: decider.CheckHandler(), ReadHeaderTimeout: 5 * time.Second}
+	go func() { _ = checkSrv.ListenAndServe() }()
+
 	done := make(chan error, 1)
 	go func() { done <- srv.Serve(lis) }()
 	log.Info("bouncer listening", "addr", lis.Addr().String(), "routes", len(table.Routes), "issuer", issuerBase, "store", fgaOptions.StoreID)
@@ -156,6 +162,7 @@ func run(log *slog.Logger) error {
 	shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_ = httpSrv.Shutdown(shutdown)
+	_ = checkSrv.Shutdown(shutdown)
 	return nil
 }
 

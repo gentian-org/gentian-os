@@ -138,6 +138,9 @@ const (
 // Table is the route table.
 type Table struct {
 	Routes []Route `json:"routes"`
+	// Checkers are the components that may ask whether a person may use an
+	// app of their tenant (check.go). None by default.
+	Checkers []Checker `json:"checkers,omitempty"`
 }
 
 // LoadTable reads a table from a file the operator's ConfigMap is mounted at.
@@ -178,6 +181,9 @@ func ParseTable(b []byte) (*Table, error) {
 				return nil, fmt.Errorf("route table: entry %d (%q) names an empty session cookie", i, r.Host)
 			}
 		}
+	}
+	if err := validateCheckers(t.Checkers); err != nil {
+		return nil, err
 	}
 	return &t, nil
 }
