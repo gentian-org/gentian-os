@@ -182,7 +182,7 @@ Each is true of the code today.
 | 8 | **An import carries the source's approvals.** The new tenant's manifest is written from the bundle, so the privileges granted and the entries approved in the exported tenant — public addresses, with their kind, and kept `Authorization` headers — arrive approved, and nobody on the importing cluster approved them | [data-lifecycle.md](../design/data-lifecycle.md) |
 | 9 | **A deleted tenant leaves entries behind**: its rights and memberships in the rights store, which a later tenant of the same name would inherit, and its keys in the shared cache. Not now: on the roadmap, item 1.38 | [data-lifecycle.md](../design/data-lifecycle.md), [roadmap.md](../roadmap.md) |
 | 10 | **Mail to a removed person's address is accepted again once the record of the removal is gone.** Closed in the code on 2026-10-09 for as long as the record stands, and shown against Postfix in local containers, not on a cluster: the address is refused at `RCPT`, archived or deleted. The record of a deleted mailbox is removed after 30 days, and under the recipient policy `catchall` (the default) the address is accepted from then like any other nobody owns. A person removed before this was built is not known. An IMAP session open at the removal is not ended | [mail.md §5c](../design/mail.md) |
-| 11 | **A default Component's digest is stated only on its profile.** Closed in part on 2026-10-09: the operator now compares the profile, and what its bundle brings, with the bundle recorded with it before it rolls out a Component it placed by default, and holds the Component when they differ. Open: no second place states that digest, as the tenant's manifest does for an install, so a profile replaced together with its bundle passes. The digest the installer uses comes from the catalogue's own unsigned index unless the person installing pins one | AD-14, [security.md §2.11](../design/security.md) |
+| 11 | **A default Component's digest is stated only on its profile.** Closed in part on 2026-10-09: the operator now compares the profile, and what its bundle brings, with the bundle recorded with it before it rolls out a Component it placed by default, and holds the Component when they differ. Open: no second place states that digest, as the tenant's manifest does for an install, so a profile replaced together with its bundle passes; on the roadmap, item 1.39. The digest the installer uses comes from the catalogue's own unsigned index unless the person installing pins one | AD-14, [security.md §2.11](../design/security.md), [roadmap.md](../roadmap.md) |
 | 12 | **The model gateway's console switch has not run on a cluster.** The console is off unless the claim says `llm.console.enabled: true`, so the defect as it stood -- no way to serve models without the console -- is closed in the code. Not yet seen: that an upgraded cluster loses the route and the edge's rule at the gateway, and that the console works behind the edge when switched on (its own sign-in and its `Authorization` header are held by tests of the rendered policy only) | part 1, AD-9; [llms.md](../design/llms.md) |
 | 13 | **A cluster installed before 2026-10-09 keeps every Crossplane resource type** — the 391 CRDs of the four providers, and provider-http's until `B-05` removes that provider. A fresh install creates 42: the 25 types the platform uses and the 17 that cannot be left out (`crossplane/providers/activation.yaml`, held by `make lint-provider-activation`); Crossplane never deactivates a type, so nothing narrows an existing cluster. The narrowed list has not run on a cluster yet (part 2) | [install-reference.md §4](../install-reference.md) |
 | 14 | **Two images float.** `vllm/vllm-openai` falls back to `latest` when the claim names no tag, and the model gateway's cache runs `redis:alpine`. `lint-image-pins` lists the first as known and does not look at the second | `kernel/services/llm/` |
@@ -202,6 +202,9 @@ Each is true of the code today.
    2026-10-09** and built: the operator compares a Component it places by
    default with the digest of the bundle recorded with its profile, at
    rollout, as it does for an install. What is left is defect 11.
+   **Decided 2026-10-09**: stating that digest in a second place, on the
+   Cluster claim or the Component, is not built now; on the roadmap, item
+   1.39.
 2. **Who may publish by default** (AD-6): decided on 2026-10-09 and built.
    The perimeter group is created with the tenant, the cluster's
    administrator approves, and a tenant's admins approve only where the
@@ -241,7 +244,10 @@ Each is true of the code today.
    way the rule can return to exactly one.
 10. **Mail to a removed person's address** (defect 10). **Decided
     2026-10-09** and built: it is refused, whether the mailbox was archived
-    or deleted.
+    or deleted. **Decided 2026-10-09**: a deleted mailbox's address is
+    refused for the 30 days its record is kept, and no longer. The list is
+    built by listing a domain's people at each sync; a lookup per address is
+    on the roadmap, item 2.29.
 11. **Whether a perimeter approver who is not a tenant administrator is let
     into the admin console.** **Decided 2026-10-09: no.** The console stays
     the tenant administrators'.

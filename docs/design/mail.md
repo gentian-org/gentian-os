@@ -354,8 +354,13 @@ test-mail-edge-lab`, part a2); not yet run on a cluster.
 - An IMAP session that was open when the person was removed is not ended.
 - The platform has no shared mailboxes and no aliases other than `abuse@`
   and `postmaster@`, which forward and have no mailbox.
-- The record of a mailbox that is gone is removed after 30 days. The record
-  of an archived mailbox stays as long as the archive.
+- The record of a mailbox that is gone is removed after 30 days, and its
+  address is refused for those 30 days. The record of an archived mailbox
+  stays as long as the archive.
+- Whether somebody holds a recorded address is found by listing every person
+  of the mail domain at the identity provider, at each sync. A lookup per
+  address, for tenants of many thousand people, is on the roadmap, item 2.29
+  ([roadmap.md](../roadmap.md)).
 
 **Putting an archived mailbox back by hand.** Not offered. On the node, in a
 pod of the mail server's image with the volume mounted, as user 1000:

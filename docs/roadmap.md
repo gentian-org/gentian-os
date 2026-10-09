@@ -788,6 +788,24 @@ does not exist yet that something cannot be the Composition.
   - `[ ]` Hold the tenant's deletion open until both are empty, and say on its status what is left.
   - `[ ]` Prove with a test that a tenant created under a deleted tenant's name starts with no member and no right of the old one.
 
+### 1.39 A Default Component's Fingerprint Is Stated in a Second Place (**)
+* **Target Domain**: Software Supply
+* **Context**: Before it rolls out a component it places by default (the
+  Operations Console), the operator compares the profile, and what its
+  bundle brings, with the fingerprint recorded with that profile. The
+  fingerprint is stated nowhere else, so a profile replaced together with its
+  recorded fingerprint passes. An app a tenant installed does not have this
+  gap: its fingerprint is on the tenant's manifest, apart from the profile
+  ([custom-catalogues.md §1, §9](custom-catalogues.md),
+  [security.md §2.11](design/security.md)).
+* **Proposed Solution**: State the fingerprint of a default component a
+  second time, on the Cluster claim or on the Component, and have the
+  operator hold the profile to that one.
+* **Backlog Items**:
+  - `[ ]` Decide where the second statement lives: the Cluster claim, or the Component the operator creates.
+  - `[ ]` Have the installer write it when it places the profile, in the same signed commit.
+  - `[ ]` Have the operator hold a default component whose profile does not match it.
+
 ## 2. Platform, Infrastructure & Lifecycle
 
 ### 2.1 Keycloak Provider & Crossplane Consolidation (*)
@@ -1198,6 +1216,20 @@ does not exist yet that something cannot be the Composition.
   - `[ ]` Decide where the Hugging Face token for gated models is kept.
   - `[ ]` A report when a provider's token is missing, refused, or its endpoint cannot be reached from the cluster, in place of a failing call.
   - `[ ]` Serve a model on a cluster with a GPU and call it with an app's key.
+
+### 2.29 Removed People's Addresses Are Looked Up One by One (*)
+* **Target Domain**: Mail
+* **Context**: Mail to a removed person's address is refused while the record
+  of the removal stands and nobody holds the address. To know that nobody
+  holds it, the operator lists every person of the mail domain at the
+  identity provider, at each sync, and compares
+  ([mail.md §5c](design/mail.md)). For a tenant of many thousand people that
+  is a full listing each time, for a handful of addresses.
+* **Proposed Solution**: Ask the identity provider about each recorded
+  address instead of listing the domain's people.
+* **Backlog Items**:
+  - `[ ]` Look an address up at the identity provider by its mail attribute, per removal record.
+  - `[ ]` Keep the rule that nothing changes for a domain whose lookups fail.
 
 ## 3. User Management & Shell UI
 
