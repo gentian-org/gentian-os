@@ -85,6 +85,9 @@ spec:
         {{- end }}
         # The Gateway, its routes and its reference grants live at the edge.
         servicesNamespace: {{ include "ns" (list . "edge") }}
+        # The switch for the kernel's network rules, compared as a string
+        # the way it is passed (--set-string): only "true" is on.
+        kernelNetworkPolicies: {{ ternary "true" "false" (eq (toString .Values.kernelNetworkPolicies) "true") | quote }}
         # Where Argo CD runs. The operator chart's default is "argocd", which
         # is v4's name -- it reaches only a ConfigMap key nothing reads today,
         # but a stale namespace waiting in a ConfigMap for its first reader is

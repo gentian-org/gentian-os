@@ -152,6 +152,13 @@ mailEgressHost: ""
 # on the mail servers of a cluster that runs its own.
 storeNetworkPolicies: "true"
 
+# Whether the kernel namespaces refuse an ingress their NetworkPolicies do not
+# list (kernel/security/network-policies, applied by the installer's first
+# step). Off by default until a cluster has run them. The installer passes
+# KERNEL_NETWORK_POLICIES; here it only tells the operator, whose two rules
+# that name the Gateway's Envoy pods follow the same switch.
+kernelNetworkPolicies: "false"
+
 # The long key ids Argo CD accepts commits from on the deployments repository
 # (AD-2). Passed by the installer, which reads them out of
 # clusters/<id>/kernel/signing/keys.env in the deployments checkout -- so what

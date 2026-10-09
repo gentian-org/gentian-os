@@ -1,0 +1,803 @@
+# Who may open a connection to a pod of a kernel namespace.
+#
+# This file is the list the kernel's NetworkPolicies are generated from
+# (kernel/security/network-policies/kernel-network-policies.yaml, written by
+# `make gen-kernel-network-policies`) and the list the tests hold the
+# repository to. A flow that is not here is refused on a cluster; so a new
+# kernel workload, a new port or a new caller is added here first, with where
+# in the repository it was read.
+#
+# For every port a kernel pod listens on, exactly one of:
+#
+#   from:      the callers admitted, each a peer below, with why and evidence
+#   open:      any source is admitted, and why it cannot be narrowed
+#   closed:    no source outside the pod's own namespace is admitted, and why
+#              nobody needs to be
+#   elsewhere: another NetworkPolicy, delivered with the workload, decides;
+#              the rules here add nothing for this port
+#
+# What the rules do not see, on any conforming network plugin: a connection
+# from the node a pod runs on (the kubelet's probes) is always admitted, and
+# `kubectl port-forward` enters the pod's own network namespace. Neither is
+# listed. A connection from the API server is not from a pod and not always
+# from the pod's node, and NetworkPolicy has no portable word for it: every
+# port the API server calls (admission and conversion webhooks) is `open`.
+#
+# Egress from the kernel namespaces is not restricted by these rules. Each
+# namespace says why under egress.
+
+# Namespaces these rules do not cover, and who covers them.
+excluded:
+  - namespace: system-mail
+    owner: the mail servers' own charts (kernel/services/dovecot, kernel/services/postfix)
+    why: >-
+      A system namespace, not a kernel one. Its rules are written with the mail
+      servers and their DMZ proxy; nothing here selects a pod of it.
+  - namespace: system-mail-dmz
+    owner: the mail DMZ proxy's own chart
+    why: >-
+      A system namespace, not a kernel one. Its rules are written with the mail
+      DMZ proxy; nothing here selects a pod of it.
+
+# Kernel-tier namespaces the platform labels but does not own: no rule.
+unmanaged:
+  - namespace: kube-system
+    why: the cluster's own; CoreDNS, the network plugin and metrics-server run there and every pod of the cluster calls them
+  - namespace: metallb-system
+    why: the load balancer's own; its speakers use the host's network, which no NetworkPolicy selects
+
+peers:
+  envoy:
+    what: the Gateway's Envoy proxy pods
+    namespace: kernel-edge
+    podLabels: {app.kubernetes.io/name: envoy}
+    evidence:
+      - "Envoy Gateway v1.9.2 internal/infrastructure/kubernetes/proxy/resource.go EnvoyAppLabel: app.kubernetes.io/name=envoy on every proxy pod"
+      - kernel/manifests/gateway/chart/templates/envoyproxy.yaml:86
+      - kernel/services/llm/manifests/templates/networkpolicy.yaml:95
+  edge:
+    what: every pod of the edge namespace (the Envoy proxies and the bouncer)
+    namespace: kernel-edge
+  bouncer:
+    what: the bouncer, the Gateway's external authorization service
+    namespace: kernel-edge
+    podLabels: {app.kubernetes.io/name: gentian-os, app.kubernetes.io/component: bouncer}
+    evidence:
+      - charts/gentian-os/templates/bouncer.yaml:12
+  control-programs:
+    what: the programs of the operator's chart in the control namespace (operator, director, usher, custodian, registrar)
+    namespace: kernel-control
+    podLabels: {app.kubernetes.io/name: gentian-os}
+    evidence:
+      - charts/gentian-os/templates/_helpers.tpl:1
+  operator:
+    what: the operator
+    namespace: kernel-control
+    podLabels: {app.kubernetes.io/name: gentian-os, app.kubernetes.io/component: operator}
+    evidence:
+      - charts/gentian-os/templates/deployment.yaml:1
+  custodian:
+    what: the custodian
+    namespace: kernel-control
+    podLabels: {app.kubernetes.io/name: gentian-os, app.kubernetes.io/component: custodian}
+    evidence:
+      - charts/gentian-os/templates/custodian.yaml:1
+  provisioning:
+    what: every pod of the provisioning namespace (Crossplane's providers, whose pods Crossplane names and labels)
+    namespace: kernel-provisioning
+  secrets:
+    what: every pod of the secrets namespace (the vault)
+    namespace: kernel-secrets
+  tenants:
+    what: every namespace labelled gentianos.io/tier=tenant
+    tier: [tenant]
+    evidence:
+      - crossplane/compositions/tenant-default.yaml:182
+  mail:
+    what: the mail namespaces, by name
+    namespaces: [system-mail, system-mail-dmz]
+
+namespaces:
+  - name: kernel-gitops
+    sameNamespace: false
+    sameNamespaceWhy: >-
+      Argo CD's manifest ships a NetworkPolicy per component that names which
+      component may call which; a rule admitting the whole namespace would
+      widen every one of them.
+    egress: open
+    egressWhy: Argo CD reaches git hosts, chart and image registries and the API server; the image updater reaches registries.
+    workloads:
+      - name: argocd-server
+        installedBy: step:A-06-argocd
+        readAt: argocd manifest v3.5.0
+        podLabels: {app.kubernetes.io/name: argocd-server}
+        ports:
+          - port: 8080
+            what: console and API
+            elsewhere: argocd-server-network-policy admits any source (upstream). The Gateway's Envoy pods route argocd.<kernel> to it.
+            evidence: [internal/controller/kernel_gateway_routes.go:512, scripts/steps/A-06-argocd.sh:50]
+          - port: 8083
+            what: metrics
+            elsewhere: argocd-server-network-policy admits any source (upstream)
+      - name: argocd-repo-server
+        installedBy: step:A-06-argocd
+        readAt: argocd manifest v3.5.0
+        podLabels: {app.kubernetes.io/name: argocd-repo-server}
+        ports:
+          - port: 8081
+            what: manifest generation
+            elsewhere: argocd-repo-server-network-policy admits the server and the three controllers (upstream)
+          - port: 8084
+            what: metrics
+            elsewhere: argocd-repo-server-network-policy admits any namespace (upstream)
+      - name: argocd-redis
+        installedBy: step:A-06-argocd
+        readAt: argocd manifest v3.5.0
+        podLabels: {app.kubernetes.io/name: argocd-redis}
+        ports:
+          - port: 6379
+            what: cache
+            elsewhere: argocd-redis-network-policy admits the server, the repo server and the application controller (upstream)
+      - name: argocd-application-controller
+        installedBy: step:A-06-argocd
+        readAt: argocd manifest v3.5.0
+        podLabels: {app.kubernetes.io/name: argocd-application-controller}
+        ports:
+          - port: 8082
+            what: metrics
+            elsewhere: argocd-application-controller-network-policy admits any namespace (upstream)
+      - name: argocd-applicationset-controller
+        installedBy: step:A-06-argocd
+        readAt: argocd manifest v3.5.0
+        podLabels: {app.kubernetes.io/name: argocd-applicationset-controller}
+        ports:
+          - port: 7000
+            what: git webhook receiver, routed nowhere
+            elsewhere: argocd-applicationset-controller-network-policy admits any namespace (upstream)
+          - port: 8080
+            what: metrics
+            elsewhere: argocd-applicationset-controller-network-policy admits any namespace (upstream)
+      - name: argocd-notifications-controller
+        installedBy: step:A-06-argocd
+        readAt: argocd manifest v3.5.0
+        podLabels: {app.kubernetes.io/name: argocd-notifications-controller}
+        ports:
+          - port: 9001
+            what: metrics
+            elsewhere: argocd-notifications-controller-network-policy admits any namespace (upstream)
+      - name: argocd-dex-server
+        installedBy: step:A-06-argocd
+        readAt: argocd manifest v3.5.0
+        podLabels: {app.kubernetes.io/name: argocd-dex-server}
+        ports:
+          - port: 5556
+            what: dex
+            elsewhere: argocd-dex-server-network-policy admits the server (upstream)
+          - port: 5557
+            what: dex gRPC
+            elsewhere: argocd-dex-server-network-policy admits the server (upstream)
+          - port: 5558
+            what: metrics
+            elsewhere: argocd-dex-server-network-policy admits any namespace (upstream)
+      - name: argocd-image-updater
+        installedBy: step:A-06-argocd
+        readAt: argocd-image-updater chart 1.3.1 (the step pins no version)
+        podLabels: {app.kubernetes.io/name: argocd-image-updater}
+        ports:
+          - port: 8081
+            what: health
+            closed: the kubelet's probes only
+          - port: 8082
+            what: registry webhook receiver, off
+            closed: not enabled (webhook.enable is unset) and routed nowhere
+          - port: 8443
+            what: metrics
+            closed: nothing the platform runs scrapes it
+
+  - name: kernel-provisioning
+    sameNamespace: true
+    sameNamespaceWhy: Crossplane calls each composition function over gRPC on the function's pod; both are Crossplane's own pods, which it names and labels.
+    egress: open
+    egressWhy: >-
+      Crossplane pulls packages from registries and its providers call the API
+      server, the vault, Keycloak and chart repositories; provider pods are
+      created by Crossplane under names it generates.
+    workloads:
+      - name: crossplane
+        installedBy: step:A-04-crossplane
+        readAt: crossplane chart 2.2.1
+        podLabels: {app: crossplane}
+        ports:
+          - port: 9443
+            what: admission and conversion webhooks
+            open: called by the API server, which is not a pod
+            evidence: [scripts/steps/A-04-crossplane.sh:16]
+          - port: 8081
+            what: readiness
+            closed: the kubelet's probes only
+      - name: crossplane-rbac-manager
+        installedBy: step:A-04-crossplane
+        readAt: crossplane chart 2.2.1
+        podLabels: {app: crossplane-rbac-manager}
+        ports: []
+      - name: providers
+        installedBy: step:B-05-crossplane-providers
+        readAt: crossplane/providers/providers.yaml
+        podLabels: {pkg.crossplane.io/provider: provider-kubernetes}
+        ports:
+          - port: 9443
+            what: conversion webhooks of the provider's own kinds
+            open: called by the API server, which is not a pod
+            evidence: [crossplane/providers/providers.yaml:39]
+          - port: 8080
+            what: metrics
+            closed: nothing the platform runs scrapes it
+      - name: functions
+        installedBy: step:B-05-crossplane-providers
+        readAt: crossplane/providers/providers.yaml
+        podLabels: {pkg.crossplane.io/function: function-go-templating}
+        ports:
+          - port: 9443
+            what: gRPC, called by Crossplane on every composition
+            open: >-
+              the same port number as the providers' webhooks, which is open;
+              the rule is by port for the whole namespace, because Crossplane
+              labels these pods and the labels are not in this repository
+            evidence: [crossplane/providers/providers.yaml:5, scripts/steps/B-05-crossplane-providers.sh:50]
+          - port: 8080
+            what: metrics
+            closed: nothing the platform runs scrapes it
+
+  - name: kernel-secrets
+    sameNamespace: true
+    sameNamespaceWhy: External Secrets reads the vault; a pod of this namespace can mount the vault's own Secrets anyway.
+    egress: open
+    egressWhy: >-
+      The vault calls its seal, the API server (token review) and the identity
+      provider's public address; External Secrets and Reloader call the API
+      server.
+    workloads:
+      - name: openbao
+        installedBy: bootstrap-application:openbao
+        readAt: openbao chart 0.25.5
+        podLabels: {app.kubernetes.io/name: openbao, app.kubernetes.io/instance: openbao}
+        ports:
+          - port: 8200
+            what: the vault's API (TLS)
+            from:
+              - peer: operator
+                why: reads and writes kernel and tenant secrets (BAO_ADDR)
+                evidence: [charts/gentian-os/templates/deployment.yaml:98, internal/kernel/secrets/openbao.go:89]
+              - peer: custodian
+                why: relays a person's credential writes (BAO_ADDR)
+                evidence: [charts/gentian-os/templates/custodian.yaml:244, internal/custodian/openbao.go:166]
+              - peer: provisioning
+                why: provider-vault configures mounts, policies and roles
+                evidence: [crossplane/providers/provider-configs.yaml:34, scripts/steps/B-05-crossplane-providers.sh:33]
+            also:
+              - External Secrets, in this namespace (crossplane/compositions/cluster-default.yaml:33)
+              - the installer, from the install host; by port-forward where the host does not reach the pod (scripts/lib/portforward.sh:107)
+          - port: 8201
+            what: cluster traffic between vault replicas
+            closed: one replica, no peer
+          - port: 8202
+            what: replication
+            closed: one replica, no peer
+      - name: external-secrets
+        installedBy: step:A-03-external-secrets
+        readAt: external-secrets chart 2.4.1
+        podLabels: {app.kubernetes.io/name: external-secrets}
+        ports:
+          - port: 8080
+            what: metrics
+            closed: nothing the platform runs scrapes it
+      - name: external-secrets-webhook
+        installedBy: step:A-03-external-secrets
+        readAt: external-secrets chart 2.4.1
+        podLabels: {app.kubernetes.io/name: external-secrets-webhook}
+        ports:
+          - port: 10250
+            what: admission webhook for SecretStore and ExternalSecret
+            open: called by the API server, which is not a pod
+            evidence: [scripts/steps/A-03-external-secrets.sh:16]
+          - port: 8080
+            what: metrics
+            closed: nothing the platform runs scrapes it
+          - port: 8081
+            what: readiness
+            closed: the kubelet's probes only
+      - name: external-secrets-cert-controller
+        installedBy: step:A-03-external-secrets
+        readAt: external-secrets chart 2.4.1
+        podLabels: {app.kubernetes.io/name: external-secrets-cert-controller}
+        ports:
+          - port: 8080
+            what: metrics
+            closed: nothing the platform runs scrapes it
+          - port: 8081
+            what: readiness
+            closed: the kubelet's probes only
+      - name: reloader
+        installedBy: bootstrap-application:reloader
+        readAt: reloader chart 2.2.9
+        podLabels: {app.kubernetes.io/name: reloader}
+        ports:
+          - port: 9090
+            what: health and metrics
+            closed: the kubelet's probes only
+
+  - name: kernel-seal
+    sameNamespace: true
+    sameNamespaceWhy: one workload; a pod of this namespace can mount the seal's own Secrets anyway.
+    egress: open
+    egressWhy: not restricted in this pass; the seal calls nothing but DNS.
+    workloads:
+      - name: openbao-transit
+        installedBy: bootstrap-application:openbao-transit
+        readAt: openbao chart 0.25.5
+        podLabels: {app.kubernetes.io/name: openbao, app.kubernetes.io/instance: openbao-transit}
+        ports:
+          - port: 8200
+            what: the seal's API
+            from:
+              - peer: secrets
+                why: the vault unseals itself through the transit seal
+                evidence: [kernel/bootstrap/chart/templates/openbao.yaml:43]
+            also:
+              - the installer, from the install host; by port-forward where the host does not reach the pod (scripts/steps/B-02-seal-init.sh:20)
+          - port: 8201
+            what: cluster traffic between replicas
+            closed: one replica, no peer
+          - port: 8202
+            what: replication
+            closed: one replica, no peer
+
+  - name: kernel-data
+    sameNamespace: true
+    sameNamespaceWhy: >-
+      CloudNativePG's operator and the cluster's replicas and join Jobs run beside the instances; the
+      instance's own policy already admits this namespace.
+    egress: open
+    egressWhy: CloudNativePG's operator and every instance call the API server; the operator calls instances in the system namespaces.
+    workloads:
+      - name: cloudnative-pg
+        installedBy: bootstrap-application:cnpg
+        readAt: cloudnative-pg chart 0.23.0
+        podLabels: {app.kubernetes.io/name: cloudnative-pg}
+        ports:
+          - port: 9443
+            what: admission webhooks for Cluster, Database and the other CloudNativePG kinds
+            open: called by the API server, which is not a pod
+            evidence: [kernel/bootstrap/chart/templates/cnpg.yaml:30]
+          - port: 8080
+            what: metrics
+            closed: nothing the platform runs scrapes it
+      - name: kernel-postgres
+        installedBy: bootstrap-application:kernel-postgres
+        readAt: kernel/data/kernel-postgres
+        podLabels: {cnpg.io/cluster: kernel-postgres, cnpg.io/podRole: instance}
+        ports:
+          - port: 5432
+            what: PostgreSQL
+            elsewhere: >-
+              kernel-postgres-ingress (kernel/data/kernel-postgres/templates/networkpolicy.yaml) names
+              Keycloak's and OpenFGA's namespaces, the registrar, the operator, tenant namespaces and this
+              namespace
+            evidence: [kernel/data/kernel-postgres/templates/networkpolicy.yaml:86]
+          - port: 8000
+            what: instance manager status
+            elsewhere: kernel-postgres-ingress admits CloudNativePG's operator
+            evidence: [kernel/data/kernel-postgres/templates/networkpolicy.yaml:113]
+          - port: 9187
+            what: metrics
+            closed: nothing the platform runs scrapes it
+
+  - name: kernel-authentication
+    sameNamespace: true
+    sameNamespaceWhy: >-
+      The operator's and the installer's Keycloak Jobs run here, their pods
+      unlabelled, and Keycloak calls itself through its own Service for a
+      brokered realm.
+    egress: open
+    egressWhy: >-
+      Keycloak calls its database, the mail relay, the operator's membership
+      listener, tenants' back-channel logout endpoints and brokered identity
+      providers; its Jobs install packages from the internet.
+    workloads:
+      - name: keycloak
+        installedBy: composition:suze
+        readAt: keycloakx chart 7.3.2
+        podLabels: {app.kubernetes.io/name: keycloakx}
+        ports:
+          - port: 8080
+            what: every realm's endpoints and the administration API
+            from:
+              - peer: edge
+                why: the Gateway routes id.<kernel> to it, and the bouncer reads the realms' keys
+                evidence: [internal/controller/kernel_gateway_routes.go:335, charts/gentian-os/templates/bouncer.yaml:118]
+              - peer: control-programs
+                why: director, usher, custodian and registrar read the realms' keys; the operator and the registrar call the administration API
+                evidence:
+                  - charts/gentian-os/templates/director.yaml:232
+                  - charts/gentian-os/templates/usher.yaml:129
+                  - charts/gentian-os/templates/custodian.yaml:226
+                  - charts/gentian-os/templates/registrar.yaml:28
+                  - internal/controller/keycloak_browser_security.go:32
+              - peer: provisioning
+                why: provider-keycloak configures realms, clients and groups
+                evidence: [kernel/appsets/raw/16-keycloak-provider.yaml:45]
+              - peer: tenants
+                why: >-
+                  the sign-in sidecar reads the realm's SAML descriptor, and an
+                  app that signs people in itself reads keys and tokens by the
+                  in-cluster name; the tenant's own policies decide which pods
+                  may leave for here
+                evidence: [internal/controller/signin_sidecar.go:330, internal/kernel/netpolicy/kernel.go:147]
+              - peer: mail
+                why: Dovecot asks the realm whether a sign-in token is good
+                evidence: [internal/controller/mail_reconciler.go:1216]
+            also:
+              - >-
+                the operator's realm, client and group Jobs and the installer's two Jobs, in this namespace
+                (internal/controller/identity_reconciler.go:513, scripts/lib/portal-login-bootstrap.sh:664)
+              - every caller that uses the public name id.<kernel> arrives through the Gateway's Envoy pods (internal/controller/coredns_hairpin.go:38)
+          - port: 9000
+            what: management (health)
+            closed: the kubelet's probes only
+          - port: 8443
+            what: https, unused
+            closed: nothing calls it; the Gateway speaks plain HTTP to 8080
+
+  - name: kernel-authorization
+    sameNamespace: true
+    sameNamespaceWhy: one workload; a pod of this namespace can mount OpenFGA's own Secrets anyway.
+    egress: open
+    egressWhy: not restricted in this pass; OpenFGA calls its database, whose address the Suze claim decides, and DNS.
+    workloads:
+      - name: openfga
+        installedBy: composition:suze
+        readAt: openfga chart 0.3.10
+        podLabels: {app.kubernetes.io/name: openfga}
+        ports:
+          - port: 8080
+            what: OpenFGA's HTTP API
+            from:
+              - peer: control-programs
+                why: >-
+                  the operator writes the model and the tuples; director,
+                  usher, custodian and registrar ask it before they act
+                evidence:
+                  - charts/gentian-os/templates/deployment.yaml:185
+                  - charts/gentian-os/templates/director.yaml:235
+                  - charts/gentian-os/templates/usher.yaml:130
+                  - charts/gentian-os/templates/custodian.yaml:230
+                  - charts/gentian-os/templates/registrar.yaml:158
+                  - kernel/bootstrap/chart/templates/gentian-os.yaml:100
+              - peer: bouncer
+                why: asks it whether a signed-in person may reach a route
+                evidence: [charts/gentian-os/templates/bouncer.yaml:119]
+          - port: 8081
+            what: gRPC
+            closed: no client uses gRPC; the kubelet's probes only
+          - port: 2112
+            what: metrics, off
+            closed: not served (telemetry.metrics.enabled is false)
+          - port: 3000
+            what: playground, off
+            closed: not served (playground.enabled is false)
+          - port: 3001
+            what: profiler, off
+            closed: not served
+
+  - name: kernel-control
+    sameNamespace: false
+    sameNamespaceWhy: >-
+      The operator's listener takes commands that purge data and admits the
+      director and the usher alone (the chart's own policy); a rule admitting
+      the whole namespace would open it to every pod here.
+    egress: open
+    egressWhy: >-
+      The operator, the director and the registrar call the API server, git
+      hosts, registries, Cloudflare, the vault, Keycloak, OpenFGA, the stores
+      and tenants' pods.
+    workloads:
+      - name: operator
+        installedBy: bootstrap-application:gentian-os
+        readAt: charts/gentian-os
+        podLabels: {app.kubernetes.io/name: gentian-os, app.kubernetes.io/component: operator}
+        ports:
+          - port: 8082
+            what: the listener that runs app lifecycle commands
+            elsewhere: gentian-os-operator (charts/gentian-os/templates/networkpolicy.yaml) admits the director and the usher
+            evidence: [charts/gentian-os/templates/networkpolicy.yaml:53]
+          - port: 8080
+            what: metrics
+            elsewhere: gentian-os-operator admits any source
+          - port: 8081
+            what: health
+            elsewhere: gentian-os-operator admits any source
+          - port: 8090
+            what: Keycloak's event listener posts membership events here
+            elsewhere: gentian-os-operator admits any source
+            evidence: [kernel/appsets/raw/09-identity.yaml:63]
+          - port: 9443
+            what: the Tenant admission webhook
+            elsewhere: gentian-os-operator admits any source (the API server is not a pod)
+      - name: director
+        installedBy: bootstrap-application:gentian-os
+        readAt: charts/gentian-os
+        podLabels: {app.kubernetes.io/name: gentian-os, app.kubernetes.io/component: director}
+        ports:
+          - port: 8080
+            what: the platform's API
+            from:
+              - peer: tenants
+                why: the desktop, the administration console and the store relay a signed-in person's requests with that person's token
+                evidence:
+                  - internal/controller/component_reconciler.go:1527
+                  - charts/gentian-os/templates/componentprofile-desktop.yaml:45
+                  - charts/gentian-os/templates/componentprofile-admin-console.yaml:44
+      - name: usher
+        installedBy: bootstrap-application:gentian-os
+        readAt: charts/gentian-os
+        podLabels: {app.kubernetes.io/name: gentian-os, app.kubernetes.io/component: usher}
+        ports:
+          - port: 8080
+            what: installs and removes apps for a signed-in person
+            from:
+              - peer: tenants
+                why: the desktop, the administration console and the store
+                evidence:
+                  - internal/controller/component_reconciler.go:1537
+                  - charts/gentian-os/templates/componentprofile-desktop.yaml:47
+      - name: custodian
+        installedBy: bootstrap-application:gentian-os
+        readAt: charts/gentian-os
+        podLabels: {app.kubernetes.io/name: gentian-os, app.kubernetes.io/component: custodian}
+        ports:
+          - port: 9444
+            what: relays a signed-in person's credential writes to the vault
+            from:
+              - peer: tenants
+                why: the administration console and the store
+                evidence:
+                  - internal/controller/component_reconciler.go:1553
+                  - charts/gentian-os/templates/componentprofile-admin-console.yaml:47
+            also:
+              - >-
+                the installer asks its /healthz through the API server's proxy and, where that is refused, by
+                port-forward (scripts/steps/E-03-revoke-bootstrap-token.sh:211)
+      - name: registrar
+        installedBy: bootstrap-application:gentian-os
+        readAt: charts/gentian-os
+        podLabels: {app.kubernetes.io/name: gentian-os, app.kubernetes.io/component: registrar}
+        ports:
+          - port: 9445
+            what: manages people for a signed-in administrator
+            from:
+              - peer: tenants
+                why: the administration console
+                evidence:
+                  - internal/controller/component_reconciler.go:1567
+                  - charts/gentian-os/templates/componentprofile-admin-console.yaml:50
+
+  - name: kernel-edge
+    sameNamespace: false
+    sameNamespaceWhy: >-
+      The bouncer answers whether a request may pass and is for the Envoy
+      proxies alone; a rule admitting the whole namespace would open it to
+      cert-manager, external-dns and every other pod here.
+    egress: open
+    egressWhy: >-
+      The Envoy proxies reach every tenant's backends, cert-manager reaches
+      certificate authorities and DNS providers, external-dns reaches DNS
+      providers, Envoy Gateway and cert-manager call the API server.
+    workloads:
+      - name: envoy
+        installedBy: step:A-05-envoy-gateway
+        readAt: envoy-gateway chart v1.9.2
+        podLabels: {app.kubernetes.io/name: envoy}
+        allIngress: >-
+          The cluster's public listeners. A connection arrives from the
+          internet through a load balancer or the tunnel, and from every pod
+          that calls a published name (the cluster's DNS answers those with
+          this Service); the listener ports follow the Gateways' listeners,
+          which tenants' published hosts add to.
+        evidence:
+          - internal/controller/gateway_tunnel.go:75
+          - internal/controller/coredns_hairpin.go:38
+          - internal/controller/gateway_platform_reconciler.go:487
+        ports:
+          - port: 10443
+            what: every https listener
+            open: see allIngress
+          - port: 10080
+            what: the http listener that redirects to https
+            open: see allIngress
+          - port: 19001
+            what: metrics
+            open: see allIngress; nothing the platform runs scrapes it
+          - port: 19003
+            what: readiness
+            open: see allIngress; the kubelet's probes only
+          - port: 19002
+            what: shutdown manager
+            open: see allIngress; the kubelet only
+      - name: envoy-gateway
+        installedBy: step:A-05-envoy-gateway
+        readAt: envoy-gateway chart v1.9.2
+        podLabels: {control-plane: envoy-gateway}
+        ports:
+          - port: 18000
+            what: configuration for the Envoy proxies (xDS)
+            from:
+              - peer: envoy
+                why: every proxy pod fetches its configuration here
+                evidence: [scripts/steps/A-05-envoy-gateway.sh:52]
+          - port: 18001
+            what: configuration for a rate limit service
+            closed: no rate limit service is installed
+          - port: 18002
+            what: wasm module server
+            closed: no extension uses it
+          - port: 19001
+            what: metrics
+            closed: nothing the platform runs scrapes it
+          - port: 8081
+            what: health
+            closed: the kubelet's probes only
+          - port: 9443
+            what: topology injector webhook, off
+            closed: not enabled (topologyInjector.enabled=false)
+      - name: bouncer
+        installedBy: bootstrap-application:gentian-os
+        readAt: charts/gentian-os
+        podLabels: {app.kubernetes.io/name: gentian-os, app.kubernetes.io/component: bouncer}
+        ports:
+          - port: 9001
+            what: external authorization (gRPC)
+            from:
+              - peer: envoy
+                why: the Gateway asks before a request reaches a route behind a session
+                evidence: [internal/controller/bouncer.go:248, charts/gentian-os/templates/bouncer.yaml:51]
+          - port: 8082
+            what: the rights check, one question for a component that holds a key for it
+            from:
+              - peer: tenants
+                why: a component whose profile declares the rights check asks it; the tenant's own policy opens this port to that component alone
+                evidence: [internal/controller/rights_check.go:60, internal/controller/component_network_policy.go:75]
+          - port: 8081
+            what: health
+            closed: the kubelet's probes only
+      - name: cert-manager
+        installedBy: step:A-02-cert-manager
+        readAt: cert-manager chart v1.21.0
+        podLabels: {app.kubernetes.io/name: cert-manager}
+        ports:
+          - port: 9402
+            what: metrics
+            closed: nothing the platform runs scrapes it
+          - port: 9403
+            what: health
+            closed: the kubelet's probes only
+      - name: cert-manager-cainjector
+        installedBy: step:A-02-cert-manager
+        readAt: cert-manager chart v1.21.0
+        podLabels: {app.kubernetes.io/name: cainjector}
+        ports:
+          - port: 9402
+            what: metrics
+            closed: nothing the platform runs scrapes it
+      - name: cert-manager-webhook
+        installedBy: step:A-02-cert-manager
+        readAt: cert-manager chart v1.21.0
+        podLabels: {app.kubernetes.io/name: webhook}
+        ports:
+          - port: 10250
+            what: admission webhook for certificates and issuers
+            open: called by the API server, which is not a pod
+            evidence: [scripts/steps/A-02-cert-manager.sh:18]
+          - port: 6080
+            what: health
+            closed: the kubelet's probes only
+          - port: 9402
+            what: metrics
+            closed: nothing the platform runs scrapes it
+      - name: acme-http01-solver
+        installedBy: cert-manager, for a certificate of this namespace issued by an HTTP-01 issuer
+        readAt: cert-manager chart v1.21.0
+        podLabels: {acme.cert-manager.io/http01-solver: "true"}
+        ports:
+          - port: 8089
+            what: answers the certificate authority's challenge
+            from:
+              - peer: envoy
+                why: the challenge arrives on the Gateway's port 80 and is routed to the solver
+                evidence: [kernel/manifests/cert-manager/chart/templates/_issuers.tpl:30]
+      - name: external-dns
+        installedBy: bootstrap-application:external-dns
+        readAt: external-dns chart 1.21.1
+        podLabels: {app.kubernetes.io/name: external-dns}
+        ports:
+          - port: 7979
+            what: health and metrics
+            closed: the kubelet's probes only
+
+  - name: kernel-admission
+    sameNamespace: true
+    sameNamespaceWhy: one product; its controllers are its own.
+    egress: open
+    egressWhy: Kyverno's controllers call the API server and image registries.
+    workloads:
+      - name: kyverno-admission-controller
+        installedBy: bootstrap-application:kyverno
+        readAt: kyverno chart 3.3.7
+        podLabels: {app.kubernetes.io/component: admission-controller}
+        ports:
+          - port: 9443
+            what: admission webhooks
+            open: called by the API server, which is not a pod
+            evidence: [kernel/bootstrap/chart/templates/kyverno.yaml:14]
+          - port: 8000
+            what: metrics
+            closed: nothing the platform runs scrapes it
+      - name: kyverno-cleanup-controller
+        installedBy: bootstrap-application:kyverno
+        readAt: kyverno chart 3.3.7
+        podLabels: {app.kubernetes.io/component: cleanup-controller}
+        ports:
+          - port: 9443
+            what: admission webhooks
+            open: called by the API server, which is not a pod
+          - port: 8000
+            what: metrics
+            closed: nothing the platform runs scrapes it
+      - name: kyverno-background-controller
+        installedBy: bootstrap-application:kyverno
+        readAt: kyverno chart 3.3.7
+        podLabels: {app.kubernetes.io/component: background-controller}
+        ports:
+          - port: 9443
+            what: declared, not served
+            open: the same port number as the admission controller's webhooks; the rule is by port for the whole namespace
+          - port: 8000
+            what: metrics
+            closed: nothing the platform runs scrapes it
+      - name: kyverno-reports-controller
+        installedBy: bootstrap-application:kyverno
+        readAt: kyverno chart 3.3.7
+        podLabels: {app.kubernetes.io/component: reports-controller}
+        ports:
+          - port: 9443
+            what: declared, not served
+            open: the same port number as the admission controller's webhooks; the rule is by port for the whole namespace
+          - port: 8000
+            what: metrics
+            closed: nothing the platform runs scrapes it
+
+  - name: kernel-observability
+    sameNamespace: true
+    sameNamespaceWhy: Headlamp reaches the API server through kube-oidc-proxy, beside it.
+    egress: open
+    egressWhy: kube-oidc-proxy calls the API server and the identity provider's public address.
+    workloads:
+      - name: headlamp
+        installedBy: bootstrap-application:headlamp
+        readAt: headlamp chart, pinned in versions.yaml
+        podLabels: {app.kubernetes.io/name: headlamp}
+        ports:
+          - port: 4466
+            what: the console
+            from:
+              - peer: envoy
+                why: the Gateway routes headlamp.<kernel> to it, behind the kernel session
+                evidence: [internal/controller/kernel_gateway_routes.go:66]
+      - name: kube-oidc-proxy
+        installedBy: bootstrap-chart:kube-oidc-proxy
+        readAt: kernel/bootstrap/chart/templates/kube-oidc-proxy.yaml
+        podLabels: {app.kubernetes.io/name: kube-oidc-proxy}
+        ports:
+          - port: 8443
+            what: the API server, for a person signed in at the identity provider
+            closed: Headlamp alone calls it, from this namespace
+            evidence: [kernel/bootstrap/chart/templates/kube-oidc-proxy.yaml:219]

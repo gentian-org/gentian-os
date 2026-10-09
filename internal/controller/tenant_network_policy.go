@@ -44,7 +44,19 @@ func (r *TenantReconciler) tenantNetPolicyConfig() netpolicy.Config {
 		OpenbaoNamespace:  "openbao",
 		RoutingMode:       r.RoutingMode,
 		KubeAPIServerCIDR: cidr,
+		NarrowEdge:        kernelNetworkPoliciesEnabled(),
 	}
+}
+
+// kernelNetworkPoliciesEnabled reports the cluster's switch for the kernel's
+// network rules, as the operator is told it (KERNEL_NETWORK_POLICIES, from
+// the installer through the chart). The installer applies and removes the
+// kernel namespaces' own policies by it; the operator's two rules that lean
+// on the same fact -- which pods of the edge namespace are the Gateway's --
+// follow it: a tenant's baseline admits those pods alone, and a publishing
+// proxy admits them alone. Anything but "true" is off.
+func kernelNetworkPoliciesEnabled() bool {
+	return os.Getenv("KERNEL_NETWORK_POLICIES") == "true"
 }
 
 // loadKubeAPIEndpointSlice returns the EndpointSlice backing the "kubernetes"

@@ -22,7 +22,7 @@ CROSSPLANE_IMAGE ?= xpkg.crossplane.io/crossplane/crossplane:$(CROSSPLANE_CLI_VE
 KUBEBUILDER_ASSETS ?= /tmp/envtest-bins/k8s/1.32.0-linux-amd64
 export KUBEBUILDER_ASSETS
 
-.PHONY: verify all build generate manifests test lint docker-build clean install-plugin uninstall-plugin validate-steps gen-credentials gen-authz-model check-credentials lint-cluster-config-keys lint-rbac-coverage lint-marker-ascii test-bootstrap-token-classification test-cert-manager-dns01-args test-step0-sync test-user-tenant-scaffold test-catalogue-default test-kubectl-gentian test-bootstrap-switches test-operator-network-policy test-store-network-policies test-wildcard-cache test-dns-credential-single-writer lint-composed-resource-names lint-sequencer-targets lint-eso-readable-paths lint-template-placeholders lint-portability lint-image-digests check-render-fixtures lint-resolvable lint-unreachable lint-bootstrap-apps lint-step-contracts lint-job-scripts lint-claim-defaults lint-live-identifiers lint-password-schemes test-policy test-policy-openbao test-policy-authz verify-authz-vocabulary test-director-contract run-director-dev lint-namespace-layout verify-claim-applied verify-argocd-config verify-image-updates gen-provider-rbac lint-provider-rbac lint-credential-validators lint-credential-catalogue
+.PHONY: verify all build generate manifests test lint docker-build clean install-plugin uninstall-plugin validate-steps gen-credentials gen-authz-model check-credentials lint-cluster-config-keys lint-rbac-coverage lint-marker-ascii test-bootstrap-token-classification test-cert-manager-dns01-args test-step0-sync test-user-tenant-scaffold test-catalogue-default test-kubectl-gentian test-bootstrap-switches test-operator-network-policy test-store-network-policies test-kernel-network-policies gen-kernel-network-policies test-wildcard-cache test-dns-credential-single-writer lint-composed-resource-names lint-sequencer-targets lint-eso-readable-paths lint-template-placeholders lint-portability lint-image-digests check-render-fixtures lint-resolvable lint-unreachable lint-bootstrap-apps lint-step-contracts lint-job-scripts lint-claim-defaults lint-live-identifiers lint-password-schemes test-policy test-policy-openbao test-policy-authz verify-authz-vocabulary test-director-contract run-director-dev lint-namespace-layout verify-claim-applied verify-argocd-config verify-image-updates gen-provider-rbac lint-provider-rbac lint-credential-validators lint-credential-catalogue
 
 all: generate build test
 
@@ -117,7 +117,7 @@ gen-cluster-setting-defaults:
 	python3 scripts/gen/gen-cluster-setting-defaults.py
 
 ## Both generate and manifests in order
-gen-all: generate manifests gen-theme gen-credentials gen-provider-rbac gen-cluster-setting-defaults gen-authz-model
+gen-all: generate manifests gen-theme gen-credentials gen-provider-rbac gen-cluster-setting-defaults gen-authz-model gen-kernel-network-policies
 
 ## Verify generated files are up to date (CI check)
 verify-gen: gen-all
@@ -126,7 +126,7 @@ verify-gen: gen-all
 	@# for the first time is exactly that, and a build without it would not
 	@# check the kind at all.
 	@test -z "$$(git status --porcelain --untracked-files=all internal/schemacheck/definitions/ | grep '^??')" || (echo "A newly embedded definition is not committed: git add internal/schemacheck/definitions/" && exit 1)
-	git diff --exit-code api/ internal/director/authz/model.json internal/director/gitops/settings_defaults.go config/crd/ charts/gentian-os/crds/ internal/profilebundle/componentprofiles.crd.yaml internal/schemacheck/ charts/gentian-os/templates/clusterrole.yaml kernel/services/keycloak-idp/manifests/ kernel/credentials/ crossplane/providers/provider-rbac.yaml || (echo "Generated files are out of date. Run 'make gen-all'." && exit 1)
+	git diff --exit-code api/ internal/director/authz/model.json internal/director/gitops/settings_defaults.go config/crd/ charts/gentian-os/crds/ internal/profilebundle/componentprofiles.crd.yaml internal/schemacheck/ charts/gentian-os/templates/clusterrole.yaml kernel/services/keycloak-idp/manifests/ kernel/credentials/ crossplane/providers/provider-rbac.yaml kernel/security/network-policies/ || (echo "Generated files are out of date. Run 'make gen-all'." && exit 1)
 
 ## Tidy module dependencies
 tidy:
@@ -161,7 +161,7 @@ lint-yaml:
 ## The file list and flags must match CI exactly: -x follows sourced files, and no
 ## -S filter means info/style findings fail the build too. Hand-rolling a narrower
 ## invocation is how an SC2153 reached develop green-looking.
-lint-shell: validate-steps lint-step-contracts lint-resolvable lint-unreachable lint-bootstrap-apps lint-credential-fields lint-credential-validators lint-credential-catalogue lint-claim-defaults lint-live-identifiers lint-cluster-config-keys lint-template-placeholders lint-provider-rbac lint-password-schemes lint-rbac-coverage lint-composed-resource-names lint-sequencer-targets lint-eso-readable-paths lint-marker-ascii lint-scaffold-schemas lint-plan-defaults lint-legacy-profile-fields lint-step-order test-bootstrap-token-classification test-cert-manager-dns01-args test-step0-sync test-user-tenant-scaffold test-catalogue-default test-kubectl-gentian test-bootstrap-switches test-operator-network-policy test-store-network-policies test-wildcard-cache test-dns-credential-single-writer
+lint-shell: validate-steps lint-step-contracts lint-resolvable lint-unreachable lint-bootstrap-apps lint-credential-fields lint-credential-validators lint-credential-catalogue lint-claim-defaults lint-live-identifiers lint-cluster-config-keys lint-template-placeholders lint-provider-rbac lint-password-schemes lint-rbac-coverage lint-composed-resource-names lint-sequencer-targets lint-eso-readable-paths lint-marker-ascii lint-scaffold-schemas lint-plan-defaults lint-legacy-profile-fields lint-step-order test-bootstrap-token-classification test-cert-manager-dns01-args test-step0-sync test-user-tenant-scaffold test-catalogue-default test-kubectl-gentian test-bootstrap-switches test-operator-network-policy test-store-network-policies test-kernel-network-policies test-wildcard-cache test-dns-credential-single-writer
 	@git ls-files -z -- '*.sh' | xargs -0 shellcheck -x scripts/kubectl-gentian
 
 ## Round-trip the recovery kit: export one, load it back, prove every value
@@ -222,6 +222,18 @@ test-operator-network-policy:
 ## nobody it says to refuse. Needs helm, no cluster.
 test-store-network-policies:
 	@bash scripts/tests/test-store-network-policies.sh
+
+## The kernel namespaces refuse an ingress nothing lists, and the list is
+## internal/kernel/kernelnet/inventory.yaml. Holds what the repository deploys
+## into a kernel namespace to that list (every port, every webhook, every
+## pinned version), and the installer's switch to what it says. Rendered with
+## helm, no cluster.
+test-kernel-network-policies:
+	@bash scripts/tests/test-kernel-network-policies.sh
+
+## Write the kernel namespaces' NetworkPolicies from the inventory.
+gen-kernel-network-policies:
+	@go run ./internal/kernel/kernelnet/gen kernel/security/network-policies/kernel-network-policies.yaml
 
 test-wildcard-cache:
 	@bash scripts/tests/test-wildcard-cache.sh

@@ -140,7 +140,7 @@ Closed, deliberately: PostgreSQL's metrics port (9187) and MinIO's console (9001
 What this does not cover:
 
 - **The other servers.** The kernel's own PostgreSQL and the mail servers have a policy each (§2.8), and so has each server of the model gateway's namespace (§2.9); what those leave open is said there.
-- **Kernel and system namespaces deny no egress.** A pod in one of them is kept from a store by the store's policy alone, and from everything else by nothing (gap G28).
+- **Kernel and system namespaces deny no egress.** A pod in one of them is kept from a store by the store's policy, from a kernel namespace by that namespace's rules (§2.13), and on the way out by nothing (gap G28).
 - **A tenant's DMZ namespace has no default deny.** Its proxies carry their own egress policy; the stores do not admit that tier.
 - **A CNI that does not enforce NetworkPolicy** makes all of this a description. The kubelet's probes are unaffected either way: traffic from a pod's own node is not subject to a NetworkPolicy.
 
@@ -163,7 +163,7 @@ Closed: the metrics port (9187). Not admitted: Argo CD, Crossplane and its provi
 
 - **The two identity namespaces are admitted whole.** Keycloak's and OpenFGA's pods are built by upstream charts the Suze claim installs at a version it may move, and a pod of either namespace can mount the database Secret there.
 - **Tenant namespaces are admitted by tier, not by name.** Which tenant keeps its desktop's database here is decided by its realm (`componentDatabaseNamespace`), so no namespace can be named. The tenant's side is what narrows it, as for a store: egress is denied by default, and only that one tenant's desktop is opened `kernel-data`.
-- **CloudNativePG's operator is selected by no policy.** It runs in `kernel-data` beside the cluster, and its webhook is called by the API server from a host address; its ports are as open as they were.
+- **CloudNativePG's operator is not selected by this policy.** It runs in `kernel-data` beside the cluster; the namespace's own rule (§2.13) leaves its webhook port open to any source, because the API server calls it from no pod, and closes its metrics port.
 - **Switched off, this one policy is kept and admits everything** rather than being removed: the Application that syncs the chart does not prune, so a policy that merely stopped being rendered would stay in force.
 
 **Dovecot and Postfix, in `system-mail`** (`templates/networkpolicy.yaml` in `kernel/services/dovecot/manifests` and `kernel/services/postfix/manifests`, policies `dovecot-ingress` and `postfix-ingress`). They exist only on a cluster whose `mail.serviceMode` is `system`; a cluster that relays its mail runs neither and has neither policy. Both run in `system-mail`: Postfix has not been split into `system-mail-dmz`, which holds no pod, and the DKIM signer runs inside Postfix's container.
@@ -413,6 +413,44 @@ no pod of the tenant.
 - **Whether a vendor accepts this in place of its paid single sign-on** is a judgement per app,
   recorded in the app's `Customization` record, and not made here.
 
+### 2.13 Who may reach a pod of a kernel namespace
+
+Every kernel namespace refuses an ingress that nothing lists. The list is one file, `internal/kernel/kernelnet/inventory.yaml`: per namespace, every pod set, every port it listens on, and for each port who is admitted, with where in the repository that was read. The NetworkPolicies are generated from it (`kernel/security/network-policies/kernel-network-policies.yaml`, `make gen-kernel-network-policies`), so no rule exists without a line that says who it is for.
+
+They are plain `networking.k8s.io/v1` NetworkPolicy and name no address block, so they mean the same on every network plugin that enforces NetworkPolicy. Each namespace has one policy, `kernel-ingress`, that selects every pod; rules are by the pod's port, because a plugin matches a connection after a Service's port has become the pod's.
+
+| Namespace | Admitted from outside the namespace | Pods of the namespace reach each other |
+| --- | --- | --- |
+| `kernel-gitops` | Nothing by these rules. Argo CD's own manifest ships a policy per component, and those stand: the console (8080) stays open to any source, as upstream has it | No: a rule for the whole namespace would widen upstream's |
+| `kernel-provisioning` | 9443 from any source (Crossplane's and its providers' webhooks, called by the API server) | Yes |
+| `kernel-secrets` | The vault, 8200: the operator and the custodian by label, and the provisioning namespace (provider-vault). 10250 from any source (External Secrets' webhook) | Yes (External Secrets reads the vault) |
+| `kernel-seal` | The seal, 8200: the secrets namespace | Yes |
+| `kernel-data` | 9443 from any source (CloudNativePG's webhook). The kernel's PostgreSQL keeps its own policy (§2.8) | Yes |
+| `kernel-authentication` | Keycloak, 8080: the edge namespace, the control namespace's programs, the provisioning namespace, tenant namespaces, the mail namespaces. Its management port (9000) and 8443: nobody | Yes (the realm Jobs) |
+| `kernel-authorization` | OpenFGA, 8080: the control namespace's programs and the bouncer, by label. gRPC, metrics, playground: nobody | Yes |
+| `kernel-control` | Director and usher (8080), custodian (9444), registrar (9445): tenant namespaces. The operator keeps its own policy: its listener admits the director and the usher | No: it would open the operator's listener to every pod here |
+| `kernel-edge` | The Envoy proxies: any source, any port (they are the public listeners). The bouncer, 9001: the Envoy proxies alone; 8082 (the rights check): tenant namespaces. Envoy Gateway's configuration port, 18000: the Envoy proxies. 10250 from any source (cert-manager's webhook). An HTTP-01 solver, 8089: the Envoy proxies | No: it would open the bouncer to cert-manager and external-dns |
+| `kernel-admission` | 9443 from any source (Kyverno's webhooks) | Yes |
+| `kernel-observability` | Headlamp, 4466: the Envoy proxies. kube-oidc-proxy: nobody | Yes (Headlamp reaches kube-oidc-proxy) |
+
+What follows from this: OpenFGA is reachable from the programs that ask it and from nothing else; the bouncer's authorization port takes the Gateway's Envoy pods alone; the vault and its seal take their named clients; a tenant's pod reaches the director, the usher, the custodian and the registrar, which check the person's token, and no other port of the control namespace.
+
+**The tenant side is narrowed with it.** A tenant's `tenant-isolation` policy admits the whole edge namespace; with the switch on it admits that namespace's Envoy pods (`app.kubernetes.io/name=envoy`, the label Envoy Gateway puts on every proxy pod). cert-manager, external-dns and the bouncer share the namespace and then have no path to an app on which to send identity headers. The authentication and control namespaces are still admitted whole: Keycloak's pods are an upstream chart's, and besides the operator the registrar calls a tenant's desktop.
+
+**What a NetworkPolicy cannot say, and what was done instead.**
+
+- *The API server.* It is no pod, and not always on the pod's node; on a managed cluster it arrives through an agent. No portable rule names it, so every port it calls -- the admission and conversion webhooks of Crossplane and its providers, External Secrets, cert-manager, CloudNativePG, Kyverno and the operator -- admits any source. A webhook serves TLS and decides nothing by who connects; an open webhook port is what keeps an install alive on every cluster.
+- *The kubelet.* A connection from the node a pod runs on is admitted whatever the policies say; that is NetworkPolicy's own rule, so probes need no rule and health ports are closed to everything else.
+- *The install host.* The installer reaches the vault, the seal and Keycloak from the host, by the Service's address where the host routes to it and by `kubectl port-forward` where it does not (`scripts/lib/portforward.sh`); a port-forward enters the pod itself. Its one check through the API server's proxy, of the custodian, falls back to a port-forward as well (`E-03`).
+
+**Egress is not restricted** in any kernel namespace. Argo CD, Crossplane and its providers, cert-manager, external-dns, Keycloak, the Envoy proxies and the operator reach the internet or the API server in ways that differ per cluster; CloudNativePG's instances call the API server; OpenFGA's database address is the claim's to decide. A pod of a kernel namespace is stopped at another kernel namespace's door by that namespace's rules, and on the way out by nothing (gap G28, the egress half).
+
+**Not covered.** `system-mail` and `system-mail-dmz` are system namespaces and their rules are written with the mail servers (§2.8); nothing here selects a pod of them. `kube-system` and the load balancer's namespace are the cluster's own. The system and shared tiers are as §2.7 to §2.9 leave them.
+
+**The switch, and why it is off.** `KERNEL_NETWORK_POLICIES`, read by the installer. `true` applies the file with the namespaces themselves, in the installer's first step -- before a pod exists in any of them on a fresh cluster, and with nothing else running to deliver it; anything else removes every policy labelled `gentianos.io/kernel-network-policy` and applies none. The operator is told the same switch, and the tenant side above follows it. **It is off by default.** The rules were derived from the repository and checked against it, and no cluster had run them when they were merged; a caller the inventory lacks shows as a timeout in the middle of an install. Turn it on once an install has succeeded ([install-reference.md §9](../install-reference.md)), and make it the default when a fresh install has passed with it on.
+
+**How it is held.** `go test ./internal/kernel/kernelnet/` reads the generated policies with NetworkPolicy's own semantics and asserts that every caller the inventory names is admitted, that a list of flows a cluster cannot do without is admitted by the pods' real labels, and that a list of flows the rules exist to refuse is refused (a tenant's pod to OpenFGA, the vault, the seal, the bouncer's authorization port, the operator's listener; a publishing proxy to anything in the kernel; cert-manager to the bouncer). It also fails when a Go file or a template of the operator's chart gains an in-cluster address nobody classified. `make test-kernel-network-policies` renders the operator's chart and the bootstrap chart and fails on a port, a Service or a webhook in a kernel namespace that the inventory does not have, and on a pinned chart whose version is not the one the inventory was read at. No cluster ran these rules before they were merged: what they prove is that the list and the rules agree, and that the list agrees with what the repository deploys.
+
 ## 3. Architecture
 
 ### 3.0 Implementation status
@@ -430,7 +468,8 @@ changes only when the code does.
 | The session's tokens stop at the edge: a backend gets its own cookies, the identity headers, and a bearer only where its exposure says `forwardToken` | Implemented | `internal/bouncer/cookies.go` rewrites the `Cookie` header without the edge's cookies on every allowed request of a session route; the names come from the route table ([routing.md §4.1](routing.md)) |
 | Tenant namespace + NetworkPolicy default-deny egress | Implemented | `internal/kernel/netpolicy/` — tenant namespaces only |
 | Per-app egress to the stores a profile declares | Implemented, mail and identity not narrowed | `internal/kernel/netpolicy/kernel.go`, policy `kernel-access-<app>`; see §2.6 |
-| NetworkPolicy in kernel, system and shared namespaces | **Partial**: ingress to twelve servers, no egress anywhere | One policy in the operator chart, on the operator's pods: its app-lifecycle port admits the director's and the usher's pods only, and its other ports stay open. One on each shared store -- PostgreSQL, MariaDB, Redis, MinIO -- admitting tenant namespaces and the platform's named clients (§2.7). One on the kernel's own PostgreSQL, and one each on Dovecot and Postfix, whose internet-facing ports stay open (§2.8). One on each server of the model gateway's namespace -- the gateway, its PostgreSQL, its Redis and the mock model server (§2.9). CloudNativePG's operator and every other kernel pod are selected by no policy, and no kernel or system namespace denies egress (gap G28) |
+| NetworkPolicy in the kernel namespaces | Implemented for ingress, **off by default**; egress open | With `KERNEL_NETWORK_POLICIES=true` each of the eleven kernel namespaces refuses an ingress nothing lists, from one inventory (`internal/kernel/kernelnet/inventory.yaml`) the policies are generated from; webhook ports admit any source, because no portable rule names the API server (§2.13). Applied by the installer with the namespaces. Off until a cluster has run them; without the switch a kernel pod is selected only by the policies its own chart delivers. No kernel namespace restricts egress (gap G28, the egress half) |
+| NetworkPolicy in system and shared namespaces | **Partial**: ingress to eleven servers, no egress anywhere | One on each shared store -- PostgreSQL, MariaDB, Redis, MinIO -- admitting tenant namespaces and the platform's named clients (§2.7). One each on Dovecot and Postfix, whose internet-facing ports stay open (§2.8). One on each server of the model gateway's namespace (§2.9). The kernel's own PostgreSQL and the operator keep the policies their charts deliver, beside the kernel namespaces' rules |
 | Approval path for profile-declared egress | **Target** | `security.egress` reaches the NetworkPolicy uninspected; `PlatformSecurityPolicy` allowlists MAC waivers only (gap G27) |
 | Pod-security admission (privileged, host ns, non-root, hostPath, caps, priv-esc) | Implemented | `kernel/security/kyverno/policies/` |
 | Gateway rate limit | **Target** | `BackendTrafficPolicy` carries timeouts only |

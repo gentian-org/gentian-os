@@ -240,6 +240,13 @@ spec:
               value: {{ .Values.edgeIngress | default "" | quote }}
             - name: NETWORK_MODE
               value: {{ .Values.networkMode | default "" | quote }}
+            # The cluster's switch for the kernel's network rules, as the
+            # installer set it (KERNEL_NETWORK_POLICIES). "true" narrows what
+            # a tenant's namespace and a publishing proxy admit from the edge
+            # namespace to the Gateway's Envoy pods; anything else leaves
+            # both as they were.
+            - name: KERNEL_NETWORK_POLICIES
+              value: {{ ternary "true" "false" (eq (toString .Values.kernelNetworkPolicies) "true") | quote }}
             - name: CLOUDFLARE_ZONE_ID
               {{- if .Values.cloudflare.zoneID }}
               value: {{ .Values.cloudflare.zoneID | quote }}

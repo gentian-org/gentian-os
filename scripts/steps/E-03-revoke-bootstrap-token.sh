@@ -225,7 +225,17 @@ _custodian_ready() {
 
     kubectl get --raw \
         "/api/v1/namespaces/${ns}/services/${svc}:${port}/proxy/healthz" \
-        >/dev/null 2>&1
+        >/dev/null 2>&1 && return 0
+
+    # The API server's proxy opens that connection from the API server, which
+    # is no pod. The control namespace admits the custodian's callers by name
+    # (kernel/security/network-policies), so on a cluster whose API server is
+    # not on the custodian's node the proxy is refused while the custodian is
+    # perfectly well. A port-forward enters the pod itself and is refused by
+    # no policy; it asks the same question.
+    local addr
+    addr="$(gentian_service_addr "${svc}" "${ns}" "${port}" http 2>/dev/null)" || return 1
+    curl -sf -o /dev/null --max-time 5 "${addr}/healthz" 2>/dev/null
 }
 
 # _oidc_write_path_ready — every link between a human and an OpenBao token.

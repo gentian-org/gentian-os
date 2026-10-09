@@ -271,10 +271,17 @@ port, and the gateway's database, cache and mock model server each admit the
 gateway alone ([security.md §2.9](../design/security.md)). An app that did
 not declare the gateway has no path to it and no key for it.
 
+The kernel namespaces carry the server's side for everything in them: each
+refuses an ingress that an inventory of callers does not list -- OpenFGA
+admits the programs that ask it, the bouncer's authorization port the Envoy
+proxies alone ([security.md §2.13](../design/security.md)). **Built**, for
+ingress, and off by default (`KERNEL_NETWORK_POLICIES`) until a cluster has
+run it.
+
 Still open at L5: the app-facing mail ports are not narrowed to the apps
 that declared mail, a real vLLM instance has no policy, and no kernel or
-system namespace denies egress -- a pod there is stopped at a server by that
-server's policy and nowhere else by anything.
+system namespace denies egress -- a pod there is stopped at a server or at a
+kernel namespace by its rules and on the way out by nothing.
 
 ## 3. Route classes
 

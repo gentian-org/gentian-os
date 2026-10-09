@@ -2,8 +2,8 @@
 # step: A-01-namespaces
 # phase: control-plane
 # requires:
-# provides: every kernel namespace of kernel/namespaces.yaml, labelled with gentianos.io/tier and gentianos.io/function; the platform's own namespaces labelled
-# mutates: namespaces only
+# provides: every kernel namespace of kernel/namespaces.yaml, labelled with gentianos.io/tier and gentianos.io/function; the platform's own namespaces labelled; in each kernel namespace the NetworkPolicies of kernel/security/network-policies when KERNEL_NETWORK_POLICIES=true, and none of them otherwise
+# mutates: namespaces, and the NetworkPolicies labelled gentianos.io/kernel-network-policy in the kernel namespaces
 
 # The list is kernel/namespaces.yaml and nothing else: the operator reads the
 # same file's Go twin, and a lint keeps the two equal. Every later step asks for
@@ -14,7 +14,7 @@ check() {
     for ns in $(ns_kernel_all); do
         ns_labelled_ok "${ns}" || return 1
     done
-    return 0
+    ns_kernel_policies_ok
 }
 
 apply() {
@@ -24,6 +24,16 @@ apply() {
     for ns in $(ns_kernel_all); do
         success "${ns}  $(ns_labels "${ns}" | tr ' ' '  ')"
     done
+
+    # Who may reach a pod of each of them, with the namespace itself: the
+    # rules are there before the first pod is. Every later step runs under
+    # them, so a caller they do not list shows as a timeout in that step.
+    ns_kernel_policies_sync || { error "the kernel namespaces' NetworkPolicies could not be applied"; return 1; }
+    if ns_kernel_policies_wanted; then
+        success "kernel NetworkPolicies applied (ingress refused unless listed; anything but KERNEL_NETWORK_POLICIES=true removes them)"
+    else
+        info "kernel NetworkPolicies are off (KERNEL_NETWORK_POLICIES=true turns them on; docs/install-reference.md)"
+    fi
 }
 
 destroy() {

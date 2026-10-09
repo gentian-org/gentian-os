@@ -444,6 +444,13 @@ edgeIngress: ""
 # How traffic reaches this cluster, from the Cluster claim's networkMode.
 networkMode: ""
 
+# The cluster's switch for the kernel's network rules (the installer's
+# KERNEL_NETWORK_POLICIES, through the bootstrap chart). The kernel
+# namespaces' own NetworkPolicies are the installer's to apply and remove;
+# this tells the operator, whose two rules that name the Gateway's Envoy pods
+# follow the same switch (internal/controller/tenant_network_policy.go).
+kernelNetworkPolicies: "false"
+
 # Cloudflare Tunnel edge ingress. Set tunnelCNAME and a token and the operator
 # programs the tunnel's routing rules for kernel and tenant hostnames, and
 # annotates the kernel Gateway so external-dns publishes records that reach it.

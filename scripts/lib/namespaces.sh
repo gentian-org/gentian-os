@@ -8,6 +8,8 @@
 #   ns_labels <name>            → "gentianos.io/tier=… gentianos.io/function=…"
 #   ns_ensure <name>            → create if absent, then apply the labels
 #   ns_ensure_kernel            → all kernel namespaces, plus labels on the platform's own
+#   ns_kernel_policies_sync     → the kernel namespaces' NetworkPolicies, or none (KERNEL_NETWORK_POLICIES)
+#   ns_kernel_policies_ok       → whether the cluster carries exactly those
 
 NAMESPACES_FILE="${NAMESPACES_FILE:-${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}/kernel/namespaces.yaml}"
 
@@ -117,4 +119,97 @@ ns_declined() {
     local name="${1:?ns_declined <name>}" fn
     fn="$(_ns_table | awk -v n="${name}" '$1 == n { print $NF }')"
     [[ "${fn}" == "load-balancer" && "${METALLB_ALLOWED:-true}" == "false" ]]
+}
+
+# -----------------------------------------------------------------------------
+# Who may reach a pod of a kernel namespace.
+#
+# One file of NetworkPolicies, generated from the inventory of who calls what
+# (internal/kernel/kernelnet/inventory.yaml). It is applied with the
+# namespaces, before a pod exists in any of them, so no rule ever arrives
+# under a running workload on a fresh install and nothing has to be running
+# to deliver it: not Argo CD, not the operator.
+#
+# KERNEL_NETWORK_POLICIES=true applies them. Anything else -- unset is off --
+# removes every one of them and applies none. Off by default, because no
+# cluster had run these rules when they were written: turn them on once an
+# install has succeeded, with ./install.sh --only A-01,B-01
+# (docs/install-reference.md), and off again the same way if a component
+# then times out reaching another.
+#
+# Each policy carries the digest of the file it came from as a label, which
+# is how a policy a later file no longer has is found and removed, and how
+# check() tells that the cluster has this file's rules and not an earlier
+# one's.
+# -----------------------------------------------------------------------------
+KERNEL_NETWORK_POLICIES_FILE="${KERNEL_NETWORK_POLICIES_FILE:-${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}/kernel/security/network-policies/kernel-network-policies.yaml}"
+KERNEL_NETWORK_POLICY_LABEL="gentianos.io/kernel-network-policy"
+
+ns_kernel_policies_wanted() {
+    [[ "${KERNEL_NETWORK_POLICIES:-false}" == "true" ]]
+}
+
+_ns_kernel_policies_digest() {
+    openssl dgst -sha256 < "${KERNEL_NETWORK_POLICIES_FILE}" | awk '{ print substr($NF, 1, 16) }'
+}
+
+# _ns_kernel_policies_stamped <digest> -- the file, with the digest as a label
+# beside the one every policy carries. awk rather than sed: a newline in a
+# replacement is not something every sed writes.
+# shellcheck disable=SC2016 # awk's own variables, not the shell's
+_NS_POLICY_STAMP_AWK='
+    { print }
+    $1 == label ":" && $2 == "\"true\"" {
+        match($0, /^ */)
+        printf "%*s%s-digest: \"%s\"\n", RLENGTH, "", label, digest
+    }
+'
+
+_ns_kernel_policies_stamped() {
+    awk -v label="${KERNEL_NETWORK_POLICY_LABEL}" -v digest="${1:?digest}" \
+        "${_NS_POLICY_STAMP_AWK}" "${KERNEL_NETWORK_POLICIES_FILE}"
+}
+
+# _ns_kernel_policies_live [selector] -- "<namespace>/<name>" per policy these
+# rules own, optionally narrowed by a further label selector.
+_ns_kernel_policies_live() {
+    local selector="${KERNEL_NETWORK_POLICY_LABEL}=true${1:+,${1}}"
+    kubectl get networkpolicy --all-namespaces -l "${selector}" \
+        -o jsonpath='{range .items[*]}{.metadata.namespace}/{.metadata.name}{"\n"}{end}' 2>/dev/null
+}
+
+ns_kernel_policies_ok() {
+    if ! ns_kernel_policies_wanted; then
+        [[ -z "$(_ns_kernel_policies_live)" ]]
+        return
+    fi
+    local digest want have
+    digest="$(_ns_kernel_policies_digest)" || return 1
+    want="$(grep -c '^kind: NetworkPolicy$' "${KERNEL_NETWORK_POLICIES_FILE}")"
+    have="$(_ns_kernel_policies_live "${KERNEL_NETWORK_POLICY_LABEL}-digest=${digest}" | grep -c .)"
+    [[ "${have}" == "${want}" ]] &&
+        [[ -z "$(_ns_kernel_policies_live "${KERNEL_NETWORK_POLICY_LABEL}-digest!=${digest}")" ]]
+}
+
+# _ns_kernel_policies_remove [selector] -- delete the policies these rules own.
+_ns_kernel_policies_remove() {
+    local entry
+    while IFS= read -r entry; do
+        [[ -n "${entry}" ]] || continue
+        kubectl delete networkpolicy "${entry#*/}" -n "${entry%%/*}" --ignore-not-found >/dev/null
+    done < <(_ns_kernel_policies_live "${1:-}")
+}
+
+ns_kernel_policies_sync() {
+    if ! ns_kernel_policies_wanted; then
+        _ns_kernel_policies_remove
+        return 0
+    fi
+    local digest
+    digest="$(_ns_kernel_policies_digest)" || return 1
+    # The digest goes in beside the label every policy carries. One apply of
+    # one file: a namespace's rules arrive together.
+    _ns_kernel_policies_stamped "${digest}" | kubectl apply -f - >/dev/null || return 1
+    # What an earlier file had and this one has not.
+    _ns_kernel_policies_remove "${KERNEL_NETWORK_POLICY_LABEL}-digest!=${digest}"
 }

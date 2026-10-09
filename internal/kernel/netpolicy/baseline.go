@@ -70,10 +70,18 @@ func BaselineNetworkPolicy(tenantName, nsName string, cfg Config, kubeAPIEndpts 
 		}
 	}
 
+	// The edge: the Gateways' data plane runs in the edge function's
+	// namespace, and it is what reaches a tenant's routed pods.
+	edge := namespaceIngress(layout.Namespace(layout.Edge))
+	if cfg.NarrowEdge {
+		// Its Envoy pods and no other pod there: they are what sets the
+		// identity headers an app trusts, so cert-manager, external-dns
+		// and the bouncer, which share the namespace, have no path to an
+		// app on which to say who a caller is.
+		edge.From[0].PodSelector = &metav1.LabelSelector{MatchLabels: EdgeProxyPodLabels()}
+	}
 	ingress := []networkingv1.NetworkPolicyIngressRule{
-		// The edge: the Gateways' data plane runs in the edge function's
-		// namespace, and it is what reaches a tenant's routed pods.
-		namespaceIngress(layout.Namespace(layout.Edge)),
+		edge,
 		// Keycloak calls an app's back-channel logout endpoint, so the
 		// authentication function may reach tenant pods; nothing else kernel does.
 		namespaceIngress(layout.Namespace(layout.Authentication)),
@@ -102,6 +110,19 @@ func BaselineNetworkPolicy(tenantName, nsName string, cfg Config, kubeAPIEndpts 
 			Egress:  egress,
 		},
 	}
+}
+
+// EdgeProxyPodLabels select the Gateway's Envoy proxy pods in the edge
+// namespace.
+//
+// The label is Envoy Gateway's own, on every proxy pod it creates
+// (EnvoyAppLabel in its internal/infrastructure/kubernetes/proxy), and the
+// one the model gateway's policy and the EnvoyProxy's spread constraint
+// already select by. The kernel namespaces' rules name the same pods
+// (internal/kernel/kernelnet, peer envoy) and a test there holds the two
+// equal.
+func EdgeProxyPodLabels() map[string]string {
+	return map[string]string{"app.kubernetes.io/name": "envoy"}
 }
 
 // namespacePeer selects a namespace by its immutable metadata.name label.

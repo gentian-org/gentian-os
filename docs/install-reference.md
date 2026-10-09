@@ -155,6 +155,8 @@ The template carries one line per setting; the reasoning is here.
 | `GENTIAN_STORE_URL` | The base address of the App Store API, written to `spec.catalogue.storeUrl` when step 0 scaffolds a new Cluster claim. Defaults to `https://store-service.aluvian.io`. It must not be an address a cluster's own App Store app could have — `store.<a domain a cluster is installed under>` — which is why the default is `store-service.…` and not `store.…`; a cluster whose claim names its own App Store host offers no App Store (`store-address-is-own-host`). |
 | `TENANCY_MODE` | `multi` (default) or `single`, for an unattended first run; step 0 asks otherwise. It is written to the Cluster claim (`spec.tenancyMode`), which owns it from then on. See *Tenancy modes* below. |
 | `GENTIAN_USER_TENANT_WAIT_SECS` | How long `E-04` waits for the user tenant of a single-tenancy cluster to be Ready. 900 by default. |
+| `KERNEL_NETWORK_POLICIES` | `true` or unset. **Off by default.** On, step `A-01` gives every kernel namespace the NetworkPolicies of `kernel/security/network-policies` -- ingress is refused unless listed ([design/security.md §2.13](design/security.md)) -- and `B-01` tells the operator, which then narrows what tenants admit from the edge namespace. Anything else removes them. Turn it on after a successful install, and off again if a component then times out reaching another: §9. |
+| `STORE_NETWORK_POLICIES` | `true` (default) or `false`. The policies on the shared stores, the kernel's PostgreSQL, the mail servers and the model gateway ([design/security.md §2.7](design/security.md)). |
 | `INSTALL_CLUSTER_INFRA` | `0` when cert-manager, CloudNativePG and Reloader are managed elsewhere on this cluster. |
 | `GENTIAN_NO_LICENCE_REPORT` | `1` turns the licence report off, as `--no-licence-report` does; `0` turns it back on. Unset keeps what the cluster has. Off, nothing is sent and the App Store is not offered: no tenant gets the App Store app — [design/operations.md §6.2](design/operations.md). |
 | `GENTIAN_LICENCE_REPORT_URL` | Where the licence report goes, instead of the default address in `kernel/bootstrap/chart/values.yaml`. `https` only. |
@@ -517,3 +519,56 @@ key reads as absent:
 bao kv get -mount=secret gentian-os/kernel/mail/postfix
 grep -A8 'name: smtp-relay' credentials.yaml
 ```
+
+**Turning the kernel's network rules on, and what to do when a component
+then cannot reach another.** With `KERNEL_NETWORK_POLICIES=true` every kernel
+namespace refuses a connection that its NetworkPolicy does not list
+([design/security.md §2.13](design/security.md)). The rules are off by
+default because no cluster had run them when they were written. On a cluster
+whose install has succeeded:
+
+```bash
+# in install.env
+KERNEL_NETWORK_POLICIES=true
+
+./install.sh --only A-01,B-01
+kubectl get networkpolicy -A -l gentianos.io/kernel-network-policy=true   # twelve
+```
+
+`A-01` applies the rules; `B-01` passes the switch to the operator, which
+restarts and narrows the tenants' side. Then check, in this order: a page
+behind sign-in opens (the desktop); the administration console lists people
+and saves a setting; `kubectl get externalsecret -A` shows none failing;
+`kubectl get managed` and `kubectl get application -n kernel-gitops` settle
+as before; a new app installs. A fresh install with the switch on is the
+last check, and the one that says it can become the default.
+
+A caller the list lacks shows as a timeout, never as a refusal with a
+reason: a pod that waits for its configuration, `context deadline exceeded`
+or `i/o timeout` in a controller's log, an Application that stays
+`Progressing`. To rule the rules out, remove them -- this takes effect at
+once and nothing puts them back until `A-01` runs again:
+
+```bash
+kubectl delete networkpolicy -A -l gentianos.io/kernel-network-policy=true
+```
+
+To keep them off, set `KERNEL_NETWORK_POLICIES=false` (or remove the line)
+and run `./install.sh --only A-01,B-01` again. If the trouble went away, the
+list is missing a caller: add it to
+`internal/kernel/kernelnet/inventory.yaml`, run
+`make gen-kernel-network-policies`, and turn the switch back on. Where to
+look first, by symptom:
+
+| Symptom | The flow to check |
+|---|---|
+| Every signed-in page answers 403 or 500 | the Envoy proxies to the bouncer (`kernel-edge`, 9001), the bouncer to OpenFGA (`kernel-authorization`, 8080) |
+| No page answers at all; the Envoy pods are not Ready | the Envoy proxies to Envoy Gateway (`kernel-edge`, 18000) |
+| The operator's pod restarts until OpenFGA answers | the operator to OpenFGA (`kernel-authorization`, 8080) |
+| ExternalSecrets stay `SecretSyncedError` | External Secrets to the vault (`kernel-secrets`, 8200) |
+| The vault stays sealed after a restart | the vault to its seal (`kernel-seal`, 8200) |
+| Realm or client Jobs time out; `Realm` objects not Ready | the Jobs and provider-keycloak to Keycloak (`kernel-authentication`, 8080) |
+| The desktop or the administration console shows errors after sign-in | the tenant's namespace to the director, usher, custodian, registrar (`kernel-control`, 8080, 9444, 9445) |
+| A tenant's apps answer 503 from the Gateway while their pods are Ready | the Envoy proxies into the tenant's namespace: the operator's `tenant-isolation` policy then admits pods labelled `app.kubernetes.io/name=envoy` in `kernel-edge` only. It follows the switch through `B-01`, not through the `kubectl delete` above |
+| "failed calling webhook" on any apply | not these rules: every webhook port admits any source. Check the webhook's pod |
+

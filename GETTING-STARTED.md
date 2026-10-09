@@ -815,6 +815,10 @@ credentials through the environment instead of the prompt:
 | `gentian-os-repository` etc. | `GENTIAN_OS_GIT_USERNAME` / `_TOKEN`, and the same for `APPS` and `UI` |
 | Cloudflare API token | `CF_API_TOKEN` |
 
+The kernel namespaces' NetworkPolicies are off unless
+`KERNEL_NETWORK_POLICIES=true`. Turn them on once an install has succeeded
+([install-reference.md §9](docs/install-reference.md)).
+
 Step 0's questions take their defaults unattended, and an environment value
 answers any of them without a question: `KERNEL_DOMAIN` (no default — must be
 set), `NETWORK_MODE`, `NODE_IP`, `CERT_ISSUER_MODE`, `ACME_ENV`,

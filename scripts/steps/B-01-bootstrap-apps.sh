@@ -166,6 +166,7 @@ _v5_render() {
         --set-string "mailServiceMode=$(gentian_mail_service_mode)" \
         --set-string "mailEgressHost=${MAIL_EGRESS_HOST:-}" \
         --set-string "storeNetworkPolicies=${STORE_NETWORK_POLICIES:-true}" \
+        --set-string "kernelNetworkPolicies=${KERNEL_NETWORK_POLICIES:-false}" \
         --set-string "licenceReport.enabled=$(gentian_licence_report_enabled)" \
         --set-string "licenceReport.url=${GENTIAN_LICENCE_REPORT_URL:-}" \
         --set-string "versions.headlamp.chart=$(gentian_pin headlamp chart)" \
@@ -187,6 +188,17 @@ check() {
     [[ "${ACME_ENV:-production}" == "staging" ]] && want_staging=true
     [[ "$(kubectl get configmap gentian-kernel-services -n "$(ns_kernel control)" \
         -o jsonpath='{.data.ACME_STAGING}' 2>/dev/null)" == "${want_staging}" ]] || return 1
+    # The switch for the kernel's network rules, as the operator is told it
+    # (once there is an operator to tell). Everything else this checks stays
+    # in place when the switch moves, so without this a run that turned the
+    # rules on or off would leave the operator on the other side of it.
+    if kubectl get application gentian-os -n "${ns}" >/dev/null 2>&1; then
+        local want_rules=false told_rules
+        ns_kernel_policies_wanted && want_rules=true
+        told_rules="$(kubectl get application gentian-os -n "${ns}" \
+            -o jsonpath='{.spec.sources[?(@.path=="charts/gentian-os")].helm.valuesObject.kernelNetworkPolicies}' 2>/dev/null)"
+        [[ "${told_rules:-false}" == "${want_rules}" ]] || return 1
+    fi
     for app in $(_v5_apps_healthy); do _v5_delivered "${ns}" "${app}" || return 1; done
     for app in $(_v5_apps_synced);  do _v5_delivered "${ns}" "${app}" synced || return 1; done
     return 0
