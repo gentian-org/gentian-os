@@ -92,6 +92,7 @@ type Repository interface {
 	AddTenantCatalogueSource(ctx context.Context, tenant, name, address string, by gitops.TenantCatalogueActor, meta gitops.Meta) (gitops.Result, error)
 	RemoveTenantCatalogueSource(ctx context.Context, tenant, name string, by gitops.TenantCatalogueActor, meta gitops.Meta) (gitops.Result, error)
 	SetTenantCatalogueDelegation(ctx context.Context, tenant string, delegated bool, meta gitops.Meta) (gitops.Result, error)
+	SetTenantAdminsApprove(ctx context.Context, tenant string, approve bool, meta gitops.Meta) (gitops.Result, error)
 	TenantExposures(ctx context.Context, tenant string) ([]gitops.Exposure, error)
 	PublishExposure(ctx context.Context, tenant string, e gitops.Exposure, meta gitops.Meta) (gitops.Result, error)
 	WithdrawExposure(ctx context.Context, tenant, install, exposure string, meta gitops.Meta) (gitops.Result, error)
@@ -460,6 +461,13 @@ func (s *Server) routes() {
 		s.guarded("DELETE /v1/clusters/{c}/tenants/{t}/catalogues/{s}", "can_configure", s.clusterObject, s.removeTenantCatalogueAsCluster)
 		s.guarded("PUT /v1/clusters/{c}/tenants/{t}/catalogue-delegation", "can_configure", s.clusterObject, s.delegateCatalogues)
 		s.guarded("DELETE /v1/clusters/{c}/tenants/{t}/catalogue-delegation", "can_configure", s.clusterObject, s.undelegateCatalogues)
+		// Whether a tenant's own administrators may approve what it
+		// publishes to the internet. The same shape as the switch above and
+		// for the same reason under /v1/clusters and nowhere else: a
+		// tenant's administrator holds no relation that reaches it, so
+		// nobody gives themselves the right to publish.
+		s.guarded("PUT /v1/clusters/{c}/tenants/{t}/perimeter-delegation", "can_configure", s.clusterObject, s.delegatePerimeter)
+		s.guarded("DELETE /v1/clusters/{c}/tenants/{t}/perimeter-delegation", "can_configure", s.clusterObject, s.undelegatePerimeter)
 		if s.cfg.Lifecycle != nil {
 			// Import: a bundle in, a tenant out (sovereignty-concept.md §4.3).
 			s.guarded("POST /v1/clusters/{c}/bundles", "can_configure", s.clusterObject, s.uploadBundle)
@@ -512,11 +520,13 @@ func (s *Server) routes() {
 	// could ask for the cheaper approver.
 	// What this tenant publishes to the internet, and who said it could.
 	//
-	// can_expose, never admin (AD-6). The tenant's administrators hold it by
-	// default because most tenants do not staff a perimeter approver
-	// separately — but it is asked as its own relation, so putting something
-	// on the internet is always its own line in the record rather than
-	// something that happened while somebody was doing everything else.
+	// can_expose, never admin (AD-6). The members of the tenant's perimeter
+	// group hold it, and the cluster's administrators while the tenant is
+	// operated by its cluster; the tenant's own administrators only where
+	// the cluster's administrator said so (perimeter-delegation above). It
+	// is asked as its own relation, so putting something on the internet is
+	// always its own line in the record rather than something that happened
+	// while somebody was doing everything else.
 	//
 	// The READ is can_view, and it is the registry: every URL this tenant
 	// publishes, who published it and until when. "What of ours is on the
@@ -1436,7 +1446,8 @@ func (s *Server) listTenants(w http.ResponseWriter, r *http.Request, _ call) {
 func (s *Server) createTenant(w http.ResponseWriter, r *http.Request, c call) {
 	var body gitops.NewTenant
 	if err := decode(r, &body); err != nil {
-		s.fail(w, r, http.StatusBadRequest, `body must be {"name": "<name>", "displayName": "<name>"}`)
+		s.fail(w, r, http.StatusBadRequest, `body must be {"name": "<name>", "displayName": "<name>"}, optionally with `+
+			`"requireMFA": false, "perimeter": {"adminsApprove": true}, "catalogue": {"delegated": true}`)
 		return
 	}
 	if !gitops.ValidName(body.Name) {

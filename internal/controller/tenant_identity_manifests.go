@@ -382,6 +382,10 @@ func (r *TenantReconciler) collectGentianGroupsJSON(ctx context.Context, tenant 
 	// below, because what it grants is collected from the installed profiles.
 	addGroup(keycloak.TenantMembersGroup(tenant.Name), nil)
 	addGroup(keycloak.TenantAdminsGroup(tenant.Name), nil)
+	// Whoever approves what the tenant publishes to the internet. Made with
+	// the tenant and empty, so that naming an approver is adding a person to
+	// a group that is there rather than knowing which name to give a new one.
+	addGroup(keycloak.TenantPerimeterGroup(tenant.Name), nil)
 
 	// The Odoo roles an app admin gets, unioned across everything installed.
 	//

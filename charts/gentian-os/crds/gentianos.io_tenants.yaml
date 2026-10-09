@@ -569,6 +569,24 @@ spec:
                       The Secret must provide keys: host, port, username, password.
                     type: string
                 type: object
+              perimeter:
+                description: |-
+                  Perimeter says who, beside the members of the tenant's perimeter group
+                  and the cluster's administrators, may approve what this tenant
+                  publishes to the internet.
+
+                  The director writes it, in the tenant's manifest in git, for the
+                  cluster's administrator alone. The operator projects it into the
+                  rights store: the grant is there while the manifest says so, and gone
+                  when it stops.
+                properties:
+                  adminsApprove:
+                    description: |-
+                      AdminsApprove says the tenant's own administrators may approve and
+                      withdraw public addresses for this tenant. Off unless the cluster's
+                      administrator turns it on; a tenant's administrator cannot.
+                    type: boolean
+                type: object
               privileges:
                 description: |-
                   Privileges are the privilege requests a person granted for this

@@ -81,7 +81,7 @@ type tenant
     # approval derive through, and it is not removable.
     define operated_by: [cluster]
     define admin: [group#member] or admin from operated_by   # gentian:tenant:<t>:admins
-    define perimeter_approver: [group#member]  # gentian:tenant:<t>:perimeter
+    define perimeter_approver: [group#member]  # gentian:tenant:<t>:perimeter; and :admins where the manifest says so
     define member: [group#member]              # gentian:tenant:<t>:members
 
     # reach — the desktop host at L2. An admin account must get in to
@@ -96,11 +96,21 @@ type tenant
     define can_grant: admin               # AppGrant: integration consent
     define can_manage_users: admin
     define can_approve_privilege: admin   # tenant-scope privilege requests (§ component-profile 3.1)
-    # Publishing to the internet is its own grant. The roles stay distinct,
-    # but most tenants do not staff them separately: at tenant creation the
-    # director writes the admins group into perimeter_approver, and a tenant
-    # that wants the separation removes that one tuple.
-    define can_expose: perimeter_approver
+    # Publishing to the internet is its own grant, asked as its own relation
+    # and never as admin. Three ways to hold it:
+    #
+    #   - a member of the tenant's perimeter group, which exists from the day
+    #     the tenant does;
+    #   - the cluster's administrators, while the tenant is operated by its
+    #     cluster: `admin from operated_by` is the cluster's admin relation
+    #     alone, not the tenant's, and it goes with the consent tuple like
+    #     every other platform-admin verb here;
+    #   - the tenant's own administrators, only where the cluster's
+    #     administrator said so on the tenant's manifest
+    #     (spec.perimeter.adminsApprove): the operator then writes the admins
+    #     group into perimeter_approver, and removes it when the manifest
+    #     stops saying so.
+    define can_expose: perimeter_approver or admin from operated_by
     define can_view: member or admin or can_audit from cluster
 
     # Admin tiles on the desktop. Not an app permission: app#can_use excludes

@@ -101,7 +101,7 @@ func (r *AuthzProjectionReconciler) Reconcile(ctx context.Context, _ ctrl.Reques
 		return ctrl.Result{}, fmt.Errorf("project cluster roles: %w", err)
 	}
 
-	tenants, err := r.tenantNames(ctx)
+	tenants, err := r.tenantRights(ctx)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("list tenants: %w", err)
 	}
@@ -189,22 +189,27 @@ func (r *AuthzProjectionReconciler) installedApps(ctx context.Context) (map[stri
 	return out, nil
 }
 
-// tenantNames is every tenant this cluster has, excluding those being deleted:
-// a tenant on its way out should lose its attachment before its namespace
-// goes, not after.
-func (r *AuthzProjectionReconciler) tenantNames(ctx context.Context) ([]string, error) {
+// tenantRights is every tenant this cluster has, excluding those being
+// deleted: a tenant on its way out should lose its attachment before its
+// namespace goes, not after. With each, what its manifest says about who
+// approves its public addresses (spec.perimeter.adminsApprove).
+func (r *AuthzProjectionReconciler) tenantRights(ctx context.Context) ([]authz.TenantRights, error) {
 	list := &gentianov1alpha1.TenantList{}
 	if err := r.List(ctx, list); err != nil {
 		return nil, err
 	}
-	out := make([]string, 0, len(list.Items))
+	out := make([]authz.TenantRights, 0, len(list.Items))
 	for i := range list.Items {
-		if list.Items[i].DeletionTimestamp != nil {
+		tenant := &list.Items[i]
+		if tenant.DeletionTimestamp != nil {
 			continue
 		}
-		out = append(out, list.Items[i].Name)
+		out = append(out, authz.TenantRights{
+			Name:          tenant.Name,
+			AdminsApprove: tenant.Spec.Perimeter != nil && tenant.Spec.Perimeter.AdminsApprove,
+		})
 	}
-	sort.Strings(out)
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
 }
 

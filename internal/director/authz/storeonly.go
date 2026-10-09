@@ -104,6 +104,16 @@ func StoreOnlyOf(ctx context.Context, store Reader, cluster, tenant string, apps
 	for _, t := range once {
 		derived[key(t)] = true
 	}
+	// Whether the tenant's administrators approve its public addresses is
+	// the manifest's to say, and the projection removes the entry where the
+	// manifest does not. Present or not, it is not a right only the store
+	// knows, and it does not travel in a bundle: on the cluster a tenant is
+	// imported to, that is its administrator's decision.
+	approve, err := adminsApprove(tenant)
+	if err != nil {
+		return out, err
+	}
+	derived[key(approve)] = true
 	want, err := appTuples(tenant, apps)
 	if err != nil {
 		return out, err

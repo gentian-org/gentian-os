@@ -55,6 +55,14 @@ var facts = dt.Table{
 	"user:alice can_set_policy tenant:demo":         true,
 	"user:alice can_audit cluster:demo-cluster":     true,
 	"user:alice can_configure cluster:demo-cluster": true,
+	// Who may approve a tenant's public addresses, which every write asks
+	// besides: whoever may not is held back from changing who does
+	// (perimeter_test.go). The fixture's demo is a tenant whose own
+	// administrators approve, and one its cluster operates; solo is neither,
+	// and tina administers it.
+	"user:tom can_expose tenant:demo":        true,
+	"user:alice can_expose tenant:demo":      true,
+	"user:tina can_manage_users tenant:solo": true,
 }
 
 // fakeTenants is what the cluster says about its tenants.
@@ -200,9 +208,14 @@ func routes() []route {
 	}
 }
 
-// Each route asks the store exactly one question, and it is the one written
-// beside it: the same relation on the same object as when the director
-// served the path. Moving the routes must not have widened or narrowed any.
+// Each route asks the store the question written beside it: the same
+// relation on the same object as when the director served the path. Moving
+// the routes must not have widened or narrowed any.
+//
+// A write asks one question more, and always the same one: whether the
+// caller may approve the tenant's public addresses. It opens nothing -- the
+// first question has been answered by then -- and decides only whether the
+// write may change who approves them (holdApprovers).
 func TestEveryRouteAsksWhatTheDirectorAsked(t *testing.T) {
 	f := newFakeIdentity("demo", "solo", "other")
 	h := startWithIdentity(t, f)
@@ -214,9 +227,12 @@ func TestEveryRouteAsksWhatTheDirectorAsked(t *testing.T) {
 			t.Errorf("%s %s: alice was answered %d %v", rt.method, rt.path, status, body)
 		}
 		got := h.asked.questions()[before:]
-		want := "user:alice " + rt.relation + " " + rt.object
-		if len(got) != 1 || got[0] != want {
-			t.Errorf("%s %s asked %v, want exactly [%s]", rt.method, rt.path, got, want)
+		want := []string{"user:alice " + rt.relation + " " + rt.object}
+		if rt.method != "GET" {
+			want = append(want, "user:alice can_expose tenant:demo")
+		}
+		if strings.Join(got, ", ") != strings.Join(want, ", ") {
+			t.Errorf("%s %s asked %v, want exactly %v", rt.method, rt.path, got, want)
 		}
 	}
 }

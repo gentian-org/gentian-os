@@ -124,6 +124,17 @@ type TenantSpec struct {
 	// +optional
 	Catalogue *TenantCatalogue `json:"catalogue,omitempty"`
 
+	// Perimeter says who, beside the members of the tenant's perimeter group
+	// and the cluster's administrators, may approve what this tenant
+	// publishes to the internet.
+	//
+	// The director writes it, in the tenant's manifest in git, for the
+	// cluster's administrator alone. The operator projects it into the
+	// rights store: the grant is there while the manifest says so, and gone
+	// when it stops.
+	// +optional
+	Perimeter *TenantPerimeter `json:"perimeter,omitempty"`
+
 	// Locales are the languages this tenant's realm renders its login and
 	// account pages in, as ISO 639-1 codes (AD-15). Empty means the
 	// platform's own set.
@@ -427,6 +438,17 @@ type TenantQuotas struct {
 	// +optional
 	// +kubebuilder:validation:Minimum=1
 	MaxPods int32 `json:"maxPods,omitempty"`
+}
+
+// TenantPerimeter is who may approve a tenant's public addresses beyond the
+// two who always may: the members of gentian:tenant:<t>:perimeter, and the
+// cluster's administrators while the tenant is operated by its cluster.
+type TenantPerimeter struct {
+	// AdminsApprove says the tenant's own administrators may approve and
+	// withdraw public addresses for this tenant. Off unless the cluster's
+	// administrator turns it on; a tenant's administrator cannot.
+	// +optional
+	AdminsApprove bool `json:"adminsApprove,omitempty"`
 }
 
 // TenantCatalogue is a tenant's own catalogues and who may add them.

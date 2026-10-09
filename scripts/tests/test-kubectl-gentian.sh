@@ -267,6 +267,88 @@ refused "a tenant name that is not a name is refused"
 is "... and asks the director nothing" "$(cat "${CALLS}")" ""
 
 echo ""
+echo "kubectl gentian tenants: who approves public addresses, who adds catalogues"
+echo ""
+
+SWITCHES='{"cluster":"c1","tenants":[{"name":"globex","apps":[],"protected":false,"adminsApprove":false,"cataloguesDelegated":false},{"name":"acme","displayName":"Acme","apps":["cloud"],"protected":false,"adminsApprove":true,"cataloguesDelegated":false}]}'
+APPROVE_ROUTE="/v1/clusters/c1/tenants/globex/perimeter-delegation"
+CATALOGUE_ROUTE="/v1/clusters/c1/tenants/globex/catalogue-delegation"
+
+fresh; reply GET /v1/clusters/c1/tenants 200 "${SWITCHES}"
+gentian tenants list
+has "list names the two switches" "$(head -1 <<<"${OUT}")" "ADMINS-APPROVE"
+has "... and each tenant's" "$(grep '^acme' <<<"${OUT}" | tr -s ' ')" "yes no"
+has "... off where nothing was switched on" "$(grep '^globex' <<<"${OUT}" | tr -s ' ')" "no no"
+# A director that does not answer the fields yet shows them off, never on.
+fresh; reply GET /v1/clusters/c1/tenants 200 "${TENANTS}"
+gentian tenants list
+has "a listing without the fields shows both off" "$(grep '^globex' <<<"${OUT}" | tr -s ' ')" "no no"
+
+fresh; reply GET /v1/clusters/c1/tenants 200 "${SWITCHES}"
+gentian tenants show acme
+has "show says whether its administrators approve" "${OUT}" "Its administrators may approve public addresses:  yes"
+has "... and whether they add catalogues" "${OUT}" "Its administrators may add catalogues:            no"
+has "... and who always approves" "${OUT}" "gentian:tenant:acme:perimeter"
+is "... and only reads" "$(cat "${CALLS}")" "GET /v1/clusters/c1/tenants "
+gentian tenants show nobody
+refused "show of a tenant that is not there is refused"
+
+fresh; reply POST /v1/clusters/c1/tenants 202 '{"status":"created","commit":"0123456789abcdef"}'
+gentian tenants create globex
+is "create names no switch unless one is given" "$(writes | tr -d ' \n')" 'POST/v1/clusters/c1/tenants{"name":"globex","displayName":"","requireMFA":true}'
+has "... and says who approves then" "${OUT}" "not by its own administrators"
+
+fresh; reply POST /v1/clusters/c1/tenants 202 '{"status":"created","commit":"0123456789abcdef"}'
+gentian tenants create globex --admins-approve-public-addresses --admins-add-catalogues
+is "create with both switches states both, as the manifest names them" "$(writes | tr -d ' \n')" \
+    'POST/v1/clusters/c1/tenants{"name":"globex","displayName":"","requireMFA":true,"perimeter":{"adminsApprove":true},"catalogue":{"delegated":true}}'
+has "... and says so" "${OUT}" "Its administrators may approve its public addresses."
+
+fresh; reply POST /v1/clusters/c1/tenants 202 '{"status":"created","commit":"0123456789abcdef"}'
+gentian tenants create globex --admins-add-catalogues
+is "create with one switch states that one" "$(writes | tr -d ' \n')" \
+    'POST/v1/clusters/c1/tenants{"name":"globex","displayName":"","requireMFA":true,"catalogue":{"delegated":true}}'
+
+fresh; reply PUT "${APPROVE_ROUTE}" 202 '{"status":"updated","tenant":"globex","adminsApprove":true,"commit":"0123456789abcdef"}'
+gentian tenants set globex --admins-approve-public-addresses=true
+is "set turns approving on with one PUT" "$(cat "${CALLS}")" "PUT ${APPROVE_ROUTE} "
+has "... and says it is committed" "${OUT}" "may now approve its public addresses: committed"
+
+fresh; reply DELETE "${APPROVE_ROUTE}" 202 '{"status":"updated","tenant":"globex","adminsApprove":false,"commit":"0123456789abcdef"}'
+gentian tenants set globex --admins-approve-public-addresses=false
+is "set turns approving off with one DELETE" "$(cat "${CALLS}")" "DELETE ${APPROVE_ROUTE} "
+has "... and says what stays" "${OUT}" "What is published stays until it is withdrawn"
+
+fresh; reply PUT "${APPROVE_ROUTE}" 202 '{"status":"updated"}'; reply DELETE "${CATALOGUE_ROUTE}" 202 '{"status":"updated"}'
+gentian tenants set globex --admins-add-catalogues=false --admins-approve-public-addresses=true
+is "set changes both, each by its own route" "$(tr '\n' '|' < "${CALLS}")" "PUT ${APPROVE_ROUTE} |DELETE ${CATALOGUE_ROUTE} |"
+
+fresh; reply PUT "${CATALOGUE_ROUTE}" 202 '{"status":"updated"}'
+gentian tenants set globex --admins-add-catalogues=true
+is "set delegates catalogues through the route that always did" "$(cat "${CALLS}")" "PUT ${CATALOGUE_ROUTE} "
+
+fresh; reply PUT "${APPROVE_ROUTE}" 403 '{"error":"forbidden"}'
+gentian tenants set globex --admins-approve-public-addresses=true
+refused "a refusal by the director ends the command non-zero"
+has "... with the director's own word" "${OUT}" "the director answered 403: forbidden"
+
+for wrong in "--admins-approve-public-addresses" "--admins-approve-public-addresses=yes" "--admins-add-catalogues=on" "--everything=true" ""; do
+    fresh
+    # shellcheck disable=SC2086 # an empty option is no argument at all
+    gentian tenants set globex ${wrong} --admins-add-catalogues=maybe
+    refused "set refuses '${wrong:-nothing but a mistyped value}'"
+    is "... and asks the director nothing" "$(cat "${CALLS}")" ""
+done
+fresh
+gentian tenants set globex
+refused "set with nothing to set is refused"
+is "... and asks the director nothing" "$(cat "${CALLS}")" ""
+fresh
+gentian tenants set 'globex/../acme' --admins-approve-public-addresses=true
+refused "set refuses a tenant that is not a name"
+is "... and asks the director nothing" "$(cat "${CALLS}")" ""
+
+echo ""
 echo "kubectl gentian exposures"
 echo ""
 

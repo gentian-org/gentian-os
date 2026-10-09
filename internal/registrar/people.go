@@ -138,6 +138,14 @@ func (s *Server) identityError(w http.ResponseWriter, r *http.Request, err error
 			"request_id", reqID(r.Context()), "tenant", r.PathValue("t"), "reason", err.Error())
 		s.fail(w, r, http.StatusForbidden, "refused: "+err.Error()+
 			". Who holds a platform role is not changed through the registrar.")
+	case errors.Is(err, identity.ErrApproversOnly):
+		// The caller manages this tenant's people and does not approve its
+		// public addresses: they do not decide who does (identity/guard.go).
+		s.cfg.Log.WarnContext(r.Context(), "refused: the caller may not approve public addresses, and so not say who does",
+			"request_id", reqID(r.Context()), "tenant", r.PathValue("t"), "reason", err.Error())
+		s.fail(w, r, http.StatusForbidden, "refused: "+err.Error()+
+			". The members of the tenant's perimeter group approve what it publishes to the internet; "+
+			"the cluster's administrator names them, or whoever may already approve.")
 	case errors.Is(err, identity.ErrGuardUnavailable):
 		s.cfg.Log.ErrorContext(r.Context(), "the platform role groups could not be read; nothing was written",
 			"request_id", reqID(r.Context()), "error", err.Error())
@@ -385,7 +393,7 @@ func tenantGroupPrefix(tenant string) string {
 var groupLabel = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,40}$`)
 
 // reservedGroupLabels are names the platform composes itself.
-var reservedGroupLabels = map[string]bool{"admin": true, "admins": true, "app-admins": true, "members": true}
+var reservedGroupLabels = map[string]bool{"admin": true, "admins": true, "app-admins": true, "members": true, "perimeter": true}
 
 // updatePerson changes somebody's names, delivery address or whether they may
 // sign in.

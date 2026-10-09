@@ -596,7 +596,9 @@ var facts = dt.Table{
 	"user:uma can_install_app tenant:user": true,
 	"user:uma can_view tenant:user":        true,
 	"user:ulf can_view tenant:user":        true,
-	// Its admins approve what it publishes, as demo's do.
+	// Its admins approve what it publishes, as demo's do: in the fixture
+	// both tenants are ones whose administrators the cluster's
+	// administrator let approve (spec.perimeter.adminsApprove).
 	"user:uma can_expose tenant:user":        true,
 	"user:alice can_install_app tenant:user": true,
 	"user:alice can_view tenant:user":        true,
@@ -606,11 +608,18 @@ var facts = dt.Table{
 	"user:tom can_write_credential tenant:demo":   true,
 	"user:alice can_write_credential tenant:demo": true,
 	"user:tina can_write_credential tenant:solo":  true,
-	// can_expose is the perimeter approver's, and a tenant's admins hold it
-	// by default (AD-6). pat holds it and nothing else -- the model's own
-	// fixture for the role existing separately from running the tenant.
-	"user:tom can_expose tenant:demo": true,
-	"user:pat can_expose tenant:demo": true,
+	// can_expose is the perimeter approver's (AD-6). pat holds it and nothing
+	// else -- the model's own fixture for the role existing separately from
+	// running the tenant. tom holds it because demo's administrators were
+	// let approve; alice because she administers the cluster that operates
+	// demo and user. In solo, which administers itself and where nobody
+	// switched anything on, paul of the perimeter group holds it and neither
+	// tina, its administrator, nor alice does.
+	"user:tom can_expose tenant:demo":   true,
+	"user:pat can_expose tenant:demo":   true,
+	"user:alice can_expose tenant:demo": true,
+	"user:alice can_expose tenant:user": true,
+	"user:paul can_expose tenant:solo":  true,
 	// sam is the security officer: cluster#can_approve, and can_view on every
 	// tenant because can_audit reaches it. Deliberately NOT a tenant
 	// administrator, which is the case the kind-scoped check exists for.

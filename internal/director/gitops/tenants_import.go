@@ -86,6 +86,8 @@ type ImportedTenant struct {
 //     with it.
 //   - spec.catalogue is dropped: a bundle does not bring its own catalogues
 //     or its own delegation.
+//   - spec.perimeter is dropped: whether a tenant's own administrators
+//     approve its public addresses is not the bundle's to say either.
 func (g *GitOps) DeclareTenant(ctx context.Context, imported ImportedTenant, meta Meta) (Result, error) {
 	name := imported.Name
 	if imported.Spec == nil {
@@ -111,6 +113,11 @@ func (g *GitOps) DeclareTenant(ctx context.Context, imported ImportedTenant, met
 		// administrator of the cluster the bundle came from; on this one they
 		// are decided here, through the catalogue routes, after the import.
 		declared.Catalogue = nil
+		// Nor who approves its public addresses. That the tenant's own
+		// administrators did where the bundle came from was that cluster's
+		// administrator's decision; here it is off until this one's turns
+		// it on (SetTenantAdminsApprove).
+		declared.Perimeter = nil
 		body, err := yaml.Marshal(map[string]any{
 			"apiVersion": "gentianos.io/v1alpha1",
 			"kind":       "Tenant",

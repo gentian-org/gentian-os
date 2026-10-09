@@ -31,6 +31,13 @@ func TenantAdminsGroup(tenant string) string {
 	return tenantPrefix(tenant) + "admins"
 }
 
+// TenantPerimeterGroup is the Keycloak group whose members approve what the
+// tenant publishes to the internet (tenant#perimeter_approver). It exists
+// from the day the tenant does, empty: who is in it is somebody's decision.
+func TenantPerimeterGroup(tenant string) string {
+	return tenantPrefix(tenant) + "perimeter"
+}
+
 // TenantAppGroup is the Keycloak group for users entitled to an app profile.
 func TenantAppGroup(tenant, profile string) string {
 	return tenantPrefix(tenant) + "app:" + profile
@@ -55,11 +62,13 @@ func CollectTenantGroupNames(tenant *gentianov1alpha1.Tenant, additionalProfiles
 		TenantMembersGroup(tenant.Name):   {},
 		TenantAdminsGroup(tenant.Name):    {},
 		TenantAppAdminsGroup(tenant.Name): {},
+		TenantPerimeterGroup(tenant.Name): {},
 	}
 	names := []string{
 		TenantMembersGroup(tenant.Name),
 		TenantAdminsGroup(tenant.Name),
 		TenantAppAdminsGroup(tenant.Name),
+		TenantPerimeterGroup(tenant.Name),
 	}
 	add := func(group string) {
 		if group == "" {

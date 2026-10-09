@@ -131,15 +131,15 @@ func TestWithdrawingRemovesItFromTheRegistry(t *testing.T) {
 	}
 }
 
-// Administering a tenant is not publishing from it. alice runs the cluster
-// and mia is a member; neither holds can_expose.
+// Seeing a tenant is not publishing from it. mia is a member and sam is the
+// cluster's security officer, who sees every tenant; neither holds can_expose.
 func TestPublishingNeedsTheExposeRelation(t *testing.T) {
 	h := start(t)
 	before := h.tip(t)
 
 	for name, tok := range map[string]string{
-		"a member":             h.token(t, "tenant-demo", "mia"),
-		"a cluster configurer": h.token(t, "gentian", "alice"),
+		"a member":           h.token(t, "tenant-demo", "mia"),
+		"a security officer": h.token(t, "gentian", "sam"),
 	} {
 		code, _ := h.do(t, "PUT", sharesPath, tok, publishBody(time.Now().Add(24*time.Hour)))
 		if code != http.StatusForbidden {

@@ -268,6 +268,8 @@ func TestAnImportDeclaresTheTenantFromTheBundlesSpec(t *testing.T) {
 		Catalogue: &gentianov1alpha1.TenantCatalogue{Delegated: true, Sources: []gentianov1alpha1.TenantCatalogueSource{
 			{Name: "theirs", URL: "https://elsewhere.example.com/apps", AddedBy: "tenant"},
 		}},
+		// Nor with its administrators approving its public addresses.
+		Perimeter: &gentianov1alpha1.TenantPerimeter{AdminsApprove: true},
 	}
 	res, err := g.DeclareTenant(ctx, gitops.ImportedTenant{Name: "acme", Spec: spec, Origin: "export nightly of 2026-10-01"}, tenantMeta())
 	if err != nil {
@@ -301,6 +303,9 @@ func TestAnImportDeclaresTheTenantFromTheBundlesSpec(t *testing.T) {
 	}
 	if strings.Contains(text, "catalogue") || strings.Contains(text, "delegated") {
 		t.Fatalf("the bundle's catalogues travelled with it:\n%s", text)
+	}
+	if strings.Contains(text, "perimeter") || strings.Contains(text, "adminsApprove") {
+		t.Fatalf("who approved public addresses where the bundle came from travelled with it:\n%s", text)
 	}
 	if !strings.Contains(text, "imported from a bundle") {
 		t.Fatal("the manifest does not say where it came from")

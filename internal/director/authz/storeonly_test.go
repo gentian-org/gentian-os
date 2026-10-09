@@ -106,6 +106,22 @@ func TestWhatTheProjectionWritesIsNotStoreOnly(t *testing.T) {
 		t.Errorf("without the uninstalled app named: %v", got.Granted)
 	}
 
+	// Whether the tenant's administrators approve its public addresses is
+	// its manifest's to say and the projection's to write: never a right
+	// only the store knows, so a bundle does not carry the switch.
+	approve, err := adminsApprove("demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	store[approve] = true
+	got, _ = StoreOnlyOf(context.Background(), store, "c1", "demo", apps, nil)
+	for _, tuple := range got.Granted {
+		if tuple == approve {
+			t.Errorf("the administrators' approval travels as a store-only right: %v", got.Granted)
+		}
+	}
+	delete(store, approve)
+
 	// The platform tenant is always operated by its cluster.
 	platform := projection(t, "c1", PlatformTenant, nil)
 	delete(platform, Tuple{User: "cluster:c1", Relation: "operated_by", Object: "tenant:" + PlatformTenant})

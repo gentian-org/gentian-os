@@ -200,7 +200,7 @@ func TestTenantsAreAttachedToTheirClusterFromGit(t *testing.T) {
 	if err := c.ReconcileClusterRoles(ctx, cluster, map[string]string{"admin": "gentian:platform:admin"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.ReconcileTenants(ctx, cluster, []string{"platform", "acme"}); err != nil {
+	if err := c.ReconcileTenants(ctx, cluster, TenantsNamed("platform", "acme")); err != nil {
 		t.Fatal(err)
 	}
 	// A platform administrator: in the group, so admin of the cluster, so
@@ -225,7 +225,7 @@ func TestTenantsAreAttachedToTheirClusterFromGit(t *testing.T) {
 	if err := c.Write(ctx, nil, []Tuple{{User: Cluster(cluster), Relation: "operated_by", Object: Tenant("acme")}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.ReconcileTenants(ctx, cluster, []string{"platform", "acme"}); err != nil {
+	if err := c.ReconcileTenants(ctx, cluster, TenantsNamed("platform", "acme")); err != nil {
 		t.Fatal(err)
 	}
 	if ok, _ := c.Check(ctx, "test", "user:root", "can_administer", Tenant("acme")); ok {
@@ -234,10 +234,96 @@ func TestTenantsAreAttachedToTheirClusterFromGit(t *testing.T) {
 	if err := c.Write(ctx, nil, []Tuple{{User: Cluster(cluster), Relation: "operated_by", Object: Tenant("platform")}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.ReconcileTenants(ctx, cluster, []string{"platform"}); err != nil {
+	if err := c.ReconcileTenants(ctx, cluster, TenantsNamed("platform")); err != nil {
 		t.Fatal(err)
 	}
 	if ok, _ := c.Check(ctx, "test", "user:root", "can_administer", Tenant("platform")); !ok {
 		t.Error("the platform tenant is always operated by its cluster")
 	}
+}
+
+// Who approves a tenant's public addresses follows the tenant's manifest and
+// nothing else: the administrators' group holds perimeter_approver while the
+// manifest says so and loses it when it stops, the cluster's administrator
+// approves wherever the tenant is operated by its cluster, and a member of
+// the perimeter group always does.
+func TestWhoApprovesPublicAddressesFollowsTheManifest(t *testing.T) {
+	o := requireOpenFGA(t)
+	ctx := context.Background()
+	store, model, err := Bootstrap(ctx, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	o.StoreID, o.ModelID = store, model
+	c, err := NewOpenFGA(o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cluster := "perimeter-test"
+	if err := c.ReconcileClusterRoles(ctx, cluster, map[string]string{"admin": "gentian:platform:admin"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Write(ctx, []Tuple{
+		{User: "user:p-root", Relation: "member", Object: "group:gentian/platform/admin"},
+		{User: "user:p-tom", Relation: "member", Object: "group:gentian/tenant/p-acme/admins"},
+		{User: "user:p-pat", Relation: "member", Object: "group:gentian/tenant/p-acme/perimeter"},
+		{User: "user:p-mia", Relation: "member", Object: "group:gentian/tenant/p-acme/members"},
+		{User: "user:p-root", Relation: "member", Object: "group:gentian/tenant/platform/admins"},
+	}, nil); err != nil {
+		t.Fatal(err)
+	}
+	expect := func(when string, want map[string]bool) {
+		t.Helper()
+		for user, allowed := range want {
+			ok, err := c.Check(ctx, "test", "user:"+user, "can_expose", Tenant("p-acme"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if ok != allowed {
+				t.Errorf("%s: can_expose for %s = %v, want %v", when, user, ok, allowed)
+			}
+		}
+	}
+	project := func(approve bool) {
+		t.Helper()
+		if err := c.ReconcileTenants(ctx, cluster, []TenantRights{
+			{Name: "platform", AdminsApprove: approve}, {Name: "p-acme", AdminsApprove: approve},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	project(false)
+	expect("a new tenant", map[string]bool{"p-root": true, "p-pat": true, "p-tom": false, "p-mia": false})
+
+	project(true)
+	expect("switched on", map[string]bool{"p-root": true, "p-pat": true, "p-tom": true, "p-mia": false})
+	// The platform tenant's administrators are the cluster's: the switch
+	// writes nothing there.
+	approve, _ := adminsApprove(PlatformTenant)
+	if have, err := c.Read(ctx, approve); err != nil || len(have) != 0 {
+		t.Errorf("the switch wrote %v for the platform tenant (%v)", have, err)
+	}
+
+	project(false)
+	expect("switched off again", map[string]bool{"p-root": true, "p-pat": true, "p-tom": false, "p-mia": false})
+
+	// An entry of that shape written by hand does not outlive a projection:
+	// the manifest is where the switch is.
+	approve, _ = adminsApprove("p-acme")
+	if err := c.Write(ctx, []Tuple{approve}, nil); err != nil {
+		t.Fatal(err)
+	}
+	project(false)
+	expect("written by hand", map[string]bool{"p-tom": false})
+
+	// A tenant that withdrew the operator is not approved for by the
+	// cluster's administrator; its own approvers still approve.
+	if err := c.Write(ctx, nil, []Tuple{{User: Cluster(cluster), Relation: "operated_by", Object: Tenant("p-acme")}}); err != nil {
+		t.Fatal(err)
+	}
+	project(false)
+	expect("the operator withdrawn", map[string]bool{"p-root": false, "p-pat": true, "p-tom": false})
+	project(true)
+	expect("the operator withdrawn, switched on", map[string]bool{"p-root": false, "p-pat": true, "p-tom": true})
 }

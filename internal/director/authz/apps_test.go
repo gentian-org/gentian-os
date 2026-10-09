@@ -69,7 +69,7 @@ func TestInstalledAppsAreLaunchedByTheirGroups(t *testing.T) {
 		t.Fatal(err)
 	}
 	const tenant = "apps-a"
-	if err := c.ReconcileTenants(ctx, "apps-cluster", []string{tenant, "apps-b"}); err != nil {
+	if err := c.ReconcileTenants(ctx, "apps-cluster", TenantsNamed(tenant, "apps-b")); err != nil {
 		t.Fatal(err)
 	}
 	member := func(user, group string) Tuple {

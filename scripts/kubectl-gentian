@@ -16,7 +16,11 @@
 #   kubectl gentian whoami
 #
 #   kubectl gentian tenants list
+#   kubectl gentian tenants show <name>
 #   kubectl gentian tenants create <name> [--display-name <text>] [--no-mfa]
+#                                  [--admins-approve-public-addresses] [--admins-add-catalogues]
+#   kubectl gentian tenants set <name> [--admins-approve-public-addresses=true|false]
+#                                      [--admins-add-catalogues=true|false]
 #   kubectl gentian tenants activate-admin <name> [--recovery-email <address>]
 #   kubectl gentian tenants retire <name> [--purge [--keep-bundles]] [--yes]
 #   kubectl gentian tenants import <file.gentian> [--identity-file <f> | --passphrase] [--name <n>]
@@ -405,25 +409,67 @@ cmd_whoami() {
 cmd_tenants_list() {
     _discover
     _call GET "/v1/clusters/${_CLUSTER}/tenants" |
-        jq -r '(["TENANT","NAME","APPS","STATE"] | @tsv), (.tenants[] | [.name, (.displayName // .name), ((.apps // []) | length | tostring), (if .purging then "purging" elif .protected then "protected" else "-" end)] | @tsv)' |
+        jq -r '(["TENANT","NAME","APPS","STATE","ADMINS-APPROVE","ADMINS-ADD-CATALOGUES"] | @tsv), (.tenants[] | [.name, (.displayName // .name), ((.apps // []) | length | tostring), (if .purging then "purging" elif .protected then "protected" else "-" end), (if .adminsApprove then "yes" else "no" end), (if .cataloguesDelegated then "yes" else "no" end)] | @tsv)' |
         column -t -s $'\t'
 }
 
+# tenants show: one tenant as git declares it, with the two things only the
+# cluster's administrator decides about it.
+cmd_tenants_show() {
+    local name="${1:-}" entry
+    [[ -n "${name}" && $# -eq 1 ]] || die "usage: kubectl gentian tenants show <name>"
+    _label "The tenant" "${name}"
+    _discover
+    entry="$(_call GET "/v1/clusters/${_CLUSTER}/tenants" | jq -c --arg n "${name}" '.tenants[] | select(.name == $n)')"
+    [[ -n "${entry}" ]] || die "this cluster has no tenant ${name}"
+    printf '%s' "${entry}" | jq -r '
+        "Tenant:          \(.name)",
+        "Name:            \(.displayName // .name)",
+        "Apps:            \((.apps // []) | if length == 0 then "none" else join(", ") end)",
+        "Signs in under:  \(.loginDomain // "-")",
+        "Own domain:      \(.customDomain // "none")",
+        "State:           \(if .purging then "purging" elif .protected then "protected" else "-" end)",
+        "",
+        "Its administrators may approve public addresses:  \(if .adminsApprove then "yes" else "no" end)",
+        "Its administrators may add catalogues:            \(if .cataloguesDelegated then "yes" else "no" end)"'
+    echo ""
+    echo "A public address is always approved by a member of the tenant's group"
+    echo "gentian:tenant:${name}:perimeter, and by the cluster's administrator while the"
+    echo "tenant is operated by its cluster. Change either line with:"
+    echo "  kubectl gentian tenants set ${name} --admins-approve-public-addresses=true|false --admins-add-catalogues=true|false"
+}
+
 cmd_tenants_create() {
-    local name="" display="" mfa="true"
+    local name="" display="" mfa="true" approve="false" catalogues="false"
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --display-name) display="${2:?}"; shift 2 ;;
             --no-mfa) mfa="false"; shift ;;
+            --admins-approve-public-addresses) approve="true"; shift ;;
+            --admins-add-catalogues) catalogues="true"; shift ;;
             -*) die "unknown option $1" ;;
             *) name="$1"; shift ;;
         esac
     done
-    [[ -n "${name}" ]] || die "usage: kubectl gentian tenants create <name> [--display-name <text>] [--no-mfa]"
+    [[ -n "${name}" ]] || die "usage: kubectl gentian tenants create <name> [--display-name <text>] [--no-mfa] [--admins-approve-public-addresses] [--admins-add-catalogues]"
     _discover
+    # A switch is named in the request only when it is turned on: left out,
+    # the director writes neither, which is how every tenant starts.
     _call POST "/v1/clusters/${_CLUSTER}/tenants" \
-        "$(jq -n --arg n "${name}" --arg d "${display}" --argjson m "${mfa}" '{name:$n, displayName:$d, requireMFA:$m}')" >/dev/null
+        "$(jq -n --arg n "${name}" --arg d "${display}" --argjson m "${mfa}" --argjson a "${approve}" --argjson c "${catalogues}" \
+            '{name:$n, displayName:$d, requireMFA:$m}
+             + (if $a then {perimeter:{adminsApprove:true}} else {} end)
+             + (if $c then {catalogue:{delegated:true}} else {} end)')" >/dev/null
     echo "Tenant ${name} committed; the platform is provisioning it."
+    if [[ "${approve}" == "true" ]]; then
+        echo "Its administrators may approve its public addresses."
+    else
+        echo "Its public addresses are approved by the members of gentian:tenant:${name}:perimeter and by the"
+        echo "cluster's administrator, not by its own administrators (tenants set ${name} --admins-approve-public-addresses=true)."
+    fi
+    if [[ "${catalogues}" == "true" ]]; then
+        echo "Its administrators may add catalogues for their tenant."
+    fi
     echo "When it is ready, hand the administrator account over:"
     echo "  kubectl gentian tenants activate-admin ${name} [--recovery-email <address>]"
 }
@@ -1048,6 +1094,45 @@ cmd_tenants_delegate_catalogues() {
     fi
 }
 
+# tenants set: the two things about a tenant that only the cluster's
+# administrator decides -- whether its own administrators may approve what it
+# publishes to the internet, and whether they may add catalogues. Each is a
+# switch on the tenant's manifest in git, off unless turned on; each option
+# given is one request to the director (PUT turns it on, DELETE off), which
+# decides who may. Everything is read before anything is asked, so a mistyped
+# option changes nothing.
+cmd_tenants_set() {
+    local name="" approve="" catalogues="" usage_text
+    usage_text="usage: kubectl gentian tenants set <name> [--admins-approve-public-addresses=true|false] [--admins-add-catalogues=true|false]"
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --admins-approve-public-addresses=true|--admins-approve-public-addresses=false) approve="${1#*=}"; shift ;;
+            --admins-add-catalogues=true|--admins-add-catalogues=false) catalogues="${1#*=}"; shift ;;
+            --admins-approve-public-addresses*|--admins-add-catalogues*) die "${1%%=*} is given as ${1%%=*}=true or ${1%%=*}=false" ;;
+            -*) die "unknown option $1" ;;
+            *) [[ -z "${name}" ]] || die "${usage_text}"; name="$1"; shift ;;
+        esac
+    done
+    [[ -n "${name}" ]] || die "${usage_text}"
+    [[ -n "${approve}${catalogues}" ]] || die "nothing to set. ${usage_text}"
+    _label "The tenant" "${name}"
+    _discover
+    if [[ "${approve}" == "true" ]]; then
+        _call PUT "/v1/clusters/${_CLUSTER}/tenants/${name}/perimeter-delegation" >/dev/null
+        echo "The administrators of ${name} may now approve its public addresses: committed. It holds once the cluster has taken the commit in."
+    elif [[ "${approve}" == "false" ]]; then
+        _call DELETE "/v1/clusters/${_CLUSTER}/tenants/${name}/perimeter-delegation" >/dev/null
+        echo "The administrators of ${name} may no longer approve its public addresses: committed. What is published stays until it is withdrawn."
+    fi
+    if [[ "${catalogues}" == "true" ]]; then
+        _call PUT "/v1/clusters/${_CLUSTER}/tenants/${name}/catalogue-delegation" >/dev/null
+        echo "The administrators of ${name} may now add catalogues for their tenant: committed."
+    elif [[ "${catalogues}" == "false" ]]; then
+        _call DELETE "/v1/clusters/${_CLUSTER}/tenants/${name}/catalogue-delegation" >/dev/null
+        echo "The administrators of ${name} may no longer add catalogues: committed. What they added stays until it is removed."
+    fi
+}
+
 # ---------------------------------------------------------------------------
 # A tenant's own domain, and what a tenant has on the internet
 # ---------------------------------------------------------------------------
@@ -1577,13 +1662,15 @@ main() {
             shift || true
             case "${sub}" in
                 list) cmd_tenants_list ;;
+                show) cmd_tenants_show "$@" ;;
+                set) cmd_tenants_set "$@" ;;
                 create) cmd_tenants_create "$@" ;;
                 activate-admin) cmd_tenants_activate_admin "$@" ;;
                 retire) cmd_tenants_retire "$@" ;;
                 import) cmd_tenants_import "$@" ;;
                 delegate-catalogues) cmd_tenants_delegate_catalogues "$@" ;;
                 domain) cmd_tenants_domain "$@" ;;
-                *) die "usage: kubectl gentian tenants list|create|activate-admin|retire|import|delegate-catalogues|domain" ;;
+                *) die "usage: kubectl gentian tenants list|show|create|set|activate-admin|retire|import|delegate-catalogues|domain" ;;
             esac
             ;;
         app|apps) cmd_apps "$@" ;;

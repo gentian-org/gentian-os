@@ -155,6 +155,13 @@ type Tenant struct {
 	// deletionPolicy: Delete and carries PurgeAnnotation, and the director
 	// removes it as soon as the cluster has taken that in.
 	Purging bool `json:"purging,omitempty"`
+	// AdminsApprove is spec.perimeter.adminsApprove: the tenant's own
+	// administrators may approve its public addresses. CataloguesDelegated
+	// is spec.catalogue.delegated: they may add catalogues for the tenant.
+	// The two switches the cluster's administrator alone sets, both off
+	// unless set.
+	AdminsApprove       bool `json:"adminsApprove"`
+	CataloguesDelegated bool `json:"cataloguesDelegated"`
 }
 
 // PurgeAnnotation marks a tenant whose purge was asked for and not finished.
@@ -285,9 +292,17 @@ func (g *GitOps) TenantDetails(ctx context.Context) ([]Tenant, error) {
 						Apps []struct {
 							Profile string `json:"profile"`
 						} `json:"apps"`
+						Perimeter struct {
+							AdminsApprove bool `json:"adminsApprove"`
+						} `json:"perimeter"`
+						Catalogue struct {
+							Delegated bool `json:"delegated"`
+						} `json:"catalogue"`
 					} `json:"spec"`
 				}
 				if yamlErr := yaml.Unmarshal(b, &doc); yamlErr == nil {
+					t.AdminsApprove = doc.Spec.Perimeter.AdminsApprove
+					t.CataloguesDelegated = doc.Spec.Catalogue.Delegated
 					t.DisplayName = doc.Spec.DisplayName
 					t.Purging = doc.Metadata.Annotations[PurgeAnnotation] != ""
 					t.Realm = doc.Spec.Isolation.KeycloakRealm
@@ -320,6 +335,25 @@ type NewTenant struct {
 	// RequireMFA makes the administrator enrol a second factor when they
 	// activate the account. Nil is the default, which is on.
 	RequireMFA *bool `json:"requireMFA,omitempty"`
+	// Perimeter and Catalogue are the two switches a tenant is created
+	// with, named as the manifest names them: whether its own
+	// administrators may approve public addresses
+	// (perimeter.adminsApprove) and add catalogues (catalogue.delegated).
+	// Left out, both are off. The route that creates a tenant is the
+	// cluster administrator's, as the routes that change them are.
+	Perimeter *NewTenantPerimeter `json:"perimeter,omitempty"`
+	Catalogue *NewTenantCatalogue `json:"catalogue,omitempty"`
+}
+
+// NewTenantPerimeter is spec.perimeter of a tenant being created.
+type NewTenantPerimeter struct {
+	AdminsApprove bool `json:"adminsApprove"`
+}
+
+// NewTenantCatalogue is the switch in spec.catalogue of a tenant being
+// created. Its catalogues are added afterwards, through the catalogue routes.
+type NewTenantCatalogue struct {
+	Delegated bool `json:"delegated"`
 }
 
 // CreateTenant writes a tenant's manifest and commits it.
@@ -337,7 +371,19 @@ func (g *GitOps) CreateTenant(ctx context.Context, req NewTenant, meta Meta) (Re
 	}
 	requireMFA := req.RequireMFA == nil || *req.RequireMFA
 	return g.createTenant(ctx, req.Name, func() ([]byte, error) {
-		return []byte(tenantManifest(req.Name, display, requireMFA)), nil
+		text := tenantManifest(req.Name, display, requireMFA)
+		var err error
+		if req.Catalogue != nil && req.Catalogue.Delegated {
+			if text, err = setTenantCatalogue(text, TenantCatalogue{Delegated: true}); err != nil {
+				return nil, err
+			}
+		}
+		if req.Perimeter != nil && req.Perimeter.AdminsApprove {
+			if text, err = setTenantPerimeter(text, true); err != nil {
+				return nil, err
+			}
+		}
+		return []byte(text), nil
 	}, nil, fmt.Sprintf("Add tenant %s", req.Name), "created", meta)
 }
 

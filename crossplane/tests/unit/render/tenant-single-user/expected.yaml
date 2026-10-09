@@ -7,7 +7,7 @@ status:
   conditions:
   - lastTransitionTime: "2024-01-01T00:00:00Z"
     message: 'Unready resources: keycloak-broker-client, keycloak-broker-client-id,
-      keycloak-dovecot-oidc-client, and 24 more'
+      keycloak-dovecot-oidc-client, and 25 more'
     reason: Creating
     status: "False"
     type: Ready
@@ -769,6 +769,29 @@ spec:
   deletionPolicy: Orphan
   forProvider:
     name: gentian:tenant:user:members
+    realmId: user
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: group.keycloak.crossplane.io/v1alpha1
+kind: Group
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-group-gentian-tenant-user-perimeter
+  labels:
+    crossplane.io/composite: user
+  name: gentian-tenant-user-perimeter
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: user
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    name: gentian:tenant:user:perimeter
     realmId: user
   providerConfigRef:
     name: keycloak

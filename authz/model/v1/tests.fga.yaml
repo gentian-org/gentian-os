@@ -23,6 +23,10 @@ tuples:
   - {user: user:olaf,   relation: member, object: group:gentian/tenant/other/members}
   - {user: user:uma,    relation: member, object: group:gentian/tenant/user/admins}
   - {user: user:ulf,    relation: member, object: group:gentian/tenant/user/members}
+  - {user: user:pia,    relation: member, object: group:gentian/tenant/plain/admins}
+  - {user: user:petra,  relation: member, object: group:gentian/tenant/plain/perimeter}
+  - {user: user:piet,   relation: member, object: group:gentian/tenant/plain/members}
+  - {user: user:paul,   relation: member, object: group:gentian/tenant/solo/perimeter}
 
   # --- cluster roles, from the Cluster claim
   - {user: group:gentian/platform/admin#member,             relation: admin,             object: cluster:main}
@@ -32,7 +36,8 @@ tuples:
   - {user: group:gentian/platform/shared-apps-admin#member, relation: shared_apps_admin, object: cluster:main}
   - {user: group:gentian/platform/break-glass#member,       relation: break_glass,       object: cluster:main}
 
-  # --- tenant demo: operated by the platform, perimeter held by its admins (the default) and a dedicated group
+  # --- tenant demo: operated by the platform. Its manifest says its own administrators approve public
+  # addresses (spec.perimeter.adminsApprove), so the admins group holds perimeter_approver beside the perimeter group
   - {user: cluster:main, relation: cluster,     object: tenant:demo}
   - {user: cluster:main, relation: operated_by, object: tenant:demo}
   - {user: group:gentian/tenant/demo/admins#member,    relation: admin,              object: tenant:demo}
@@ -43,13 +48,24 @@ tuples:
   # --- tenant solo administers itself: cluster stays, operated_by was removed
   - {user: cluster:main, relation: cluster, object: tenant:solo}
   - {user: group:gentian/tenant/solo/admins#member, relation: admin, object: tenant:solo}
+  - {user: group:gentian/tenant/solo/perimeter#member, relation: perimeter_approver, object: tenant:solo}
 
-  # --- tenant user: the name of the one user tenant of a single-tenancy cluster, operated by the platform
+  # --- tenant plain: operated by the platform, and as every tenant starts: its manifest says nothing about
+  # who approves, so only its perimeter group holds perimeter_approver
+  - {user: cluster:main, relation: cluster,     object: tenant:plain}
+  - {user: cluster:main, relation: operated_by, object: tenant:plain}
+  - {user: group:gentian/tenant/plain/admins#member,    relation: admin,              object: tenant:plain}
+  - {user: group:gentian/tenant/plain/members#member,   relation: member,             object: tenant:plain}
+  - {user: group:gentian/tenant/plain/perimeter#member, relation: perimeter_approver, object: tenant:plain}
+
+  # --- tenant user: the name of the one user tenant of a single-tenancy cluster, operated by the platform,
+  # here with its administrators approving (switched on, as demo's are)
   - {user: cluster:main, relation: cluster,     object: tenant:user}
   - {user: cluster:main, relation: operated_by, object: tenant:user}
   - {user: group:gentian/tenant/user/admins#member,  relation: admin,  object: tenant:user}
   - {user: group:gentian/tenant/user/members#member, relation: member, object: tenant:user}
   - {user: group:gentian/tenant/user/admins#member,  relation: perimeter_approver, object: tenant:user}
+  - {user: group:gentian/tenant/user/perimeter#member, relation: perimeter_approver, object: tenant:user}
 
   # --- one installed app
   - {user: tenant:demo, relation: tenant, object: app:demo/nextcloud}
@@ -103,12 +119,40 @@ tests:
       - {user: user:audrey, object: tenant:solo, assertions: {can_view: true, can_enter: true, can_install_app: false}}
       - {user: user:sam,    object: tenant:solo, assertions: {can_enter: true, can_view: true, can_approve_privilege: false}}
 
-  - name: publishing is its own relation, held by admins by default and by the perimeter group
+  - name: publishing is its own relation, held by the perimeter group and by the cluster's administrator
     check:
-      - {user: user:tom, object: tenant:demo, assertions: {can_expose: true}}
-      - {user: user:pat, object: tenant:demo, assertions: {can_expose: true, can_install_app: false, can_view: false}}
-      - {user: user:mia, object: tenant:demo, assertions: {can_expose: false}}
-      - {user: user:alice, object: tenant:demo, assertions: {can_expose: false}}
+      # As a tenant starts: its own administrators do not approve, its members never do.
+      - {user: user:pia,  object: tenant:plain, assertions: {can_expose: false, can_install_app: true, can_manage_users: true}}
+      - {user: user:piet, object: tenant:plain, assertions: {can_expose: false}}
+      # A member of the perimeter group approves, and holds nothing else by it.
+      - {user: user:petra, object: tenant:plain, assertions: {can_expose: true, can_install_app: false, can_manage_users: false, can_view: false}}
+      - {user: user:pat,   object: tenant:demo,  assertions: {can_expose: true, can_install_app: false, can_view: false}}
+      # The cluster's administrator approves in every tenant the cluster
+      # operates; no other cluster role does.
+      - {user: user:alice,  object: tenant:plain, assertions: {can_expose: true}}
+      - {user: user:alice,  object: tenant:demo,  assertions: {can_expose: true}}
+      - {user: user:alice,  object: tenant:user,  assertions: {can_expose: true}}
+      - {user: user:sam,    object: tenant:plain, assertions: {can_expose: false}}
+      - {user: user:audrey, object: tenant:plain, assertions: {can_expose: false}}
+      - {user: user:serge,  object: tenant:plain, assertions: {can_expose: false}}
+      - {user: user:bea,    object: tenant:plain, assertions: {can_expose: false}}
+      # Another tenant's approver and administrator are nobody here.
+      - {user: user:pat, object: tenant:plain, assertions: {can_expose: false}}
+      - {user: user:tom, object: tenant:plain, assertions: {can_expose: false}}
+
+  - name: a tenant's administrators approve only where the cluster's administrator switched it on
+    check:
+      - {user: user:tom, object: tenant:demo,  assertions: {can_expose: true}}
+      - {user: user:mia, object: tenant:demo,  assertions: {can_expose: false}}
+      - {user: user:uma, object: tenant:user,  assertions: {can_expose: true}}
+      - {user: user:ulf, object: tenant:user,  assertions: {can_expose: false}}
+      - {user: user:pia, object: tenant:plain, assertions: {can_expose: false}}
+
+  - name: a tenant that withdrew the operator is not approved for by the cluster's administrator
+    check:
+      - {user: user:alice, object: tenant:solo, assertions: {can_expose: false}}
+      - {user: user:tina,  object: tenant:solo, assertions: {can_expose: false}}
+      - {user: user:paul,  object: tenant:solo, assertions: {can_expose: true}}
 
   - name: entitlement is the app's own group, not tenant membership
     check:

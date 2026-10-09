@@ -267,9 +267,48 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request, pattern, rela
 func (s *Server) guarded(pattern, relation string, obj object, h func(http.ResponseWriter, *http.Request, call)) {
 	s.mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
 		if c, ok := s.authorize(w, r, pattern, relation, obj); ok {
-			h(w, r, c)
+			h(w, s.holdApprovers(r, c), c)
 		}
 	})
+}
+
+// holdApprovers marks a write so that it cannot change who approves the
+// tenant's public addresses, unless the caller may approve them.
+//
+// Every route here is opened by can_manage_users or a relation beside it,
+// which a tenant's administrator holds. can_expose is its own relation
+// (tenant#perimeter_approver): by default a tenant's administrators do not
+// hold it, and the members of gentian:tenant:<t>:perimeter do. A registrar
+// that put anybody in that group for whoever manages people would make the
+// two the same relation again, one step removed. So the second question is
+// asked here, once, for every write that names a tenant, and the answer
+// travels with the request to the one place writes leave from
+// (identity/guard.go), which refuses the group's membership, the group, and
+// every write to a person in it.
+//
+// The caller who holds can_expose is not held back: the cluster's
+// administrator in a tenant its cluster operates, a member of the perimeter
+// group, and a tenant's administrator where the cluster's administrator said
+// its administrators approve. A store that does not answer holds back.
+func (s *Server) holdApprovers(r *http.Request, c call) *http.Request {
+	tenant := r.PathValue("t")
+	if r.Method == http.MethodGet || !dnsLabel.MatchString(tenant) {
+		return r
+	}
+	ctx := r.Context()
+	allowed, err := s.cfg.Authz.Check(ctx, reqID(ctx), "user:"+c.subject, "can_expose", authz.Tenant(tenant))
+	if err == nil && allowed {
+		return r
+	}
+	return r.WithContext(identity.WithApproversHeld(ctx, perimeterGroup(tenant)))
+}
+
+// perimeterGroup is the group whose members approve a tenant's public
+// addresses: internal/keycloak.TenantPerimeterGroup, and the group the
+// operator projects as tenant#perimeter_approver. For every tenant, the
+// platform's too, it is under gentian:tenant:<t>:.
+func perimeterGroup(tenant string) string {
+	return "gentian:tenant:" + tenant + ":perimeter"
 }
 
 // action registers something that happens once. The pattern must be a POST

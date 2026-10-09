@@ -60,6 +60,61 @@ import (
 // ErrProtected is a write that would change who holds a platform role.
 var ErrProtected = errors.New("the holders of the platform's roles are not managed here")
 
+// ErrApproversOnly is a write that would change who approves a tenant's
+// public addresses, asked by somebody who may not approve them.
+var ErrApproversOnly = errors.New("who approves this tenant's public addresses is changed only by somebody who may approve them")
+
+// Who approves what a tenant publishes to the internet is held by the members
+// of one more group, the tenant's own: gentian:tenant:<t>:perimeter. Unlike a
+// platform role's group it IS managed here -- but only by a caller who holds
+// the right its members hold. Whoever may add a person to that group, or take
+// over an account in it, decides who publishes; a tenant's administrator may
+// manage people (can_manage_users) without being one of them, and must not be
+// able to become one by putting themselves in the group.
+//
+// So the registrar's routes ask the store whether the caller holds can_expose
+// on the tenant, and where they do not, name the group here. guard then
+// applies to it everything it applies to a platform role's group: its
+// membership, the group itself, and every write to a person in it.
+
+// approversHeldKey is the context key the held-back groups are under.
+type approversHeldKey struct{}
+
+// WithApproversHeld marks group as one the caller of ctx may not change the
+// holders of.
+func WithApproversHeld(ctx context.Context, group string) context.Context {
+	group = strings.TrimPrefix(strings.TrimSpace(group), "/")
+	if group == "" {
+		return ctx
+	}
+	held, _ := ctx.Value(approversHeldKey{}).([]string)
+	return context.WithValue(ctx, approversHeldKey{}, append(append([]string{}, held...), group))
+}
+
+// approversHeld is the test for the groups WithApproversHeld named, or nil
+// when it named none.
+func approversHeld(ctx context.Context) func(path string) (string, bool) {
+	held, _ := ctx.Value(approversHeldKey{}).([]string)
+	if len(held) == 0 {
+		return nil
+	}
+	return beneath(held)
+}
+
+// beneath is the test for a set of group names: the one a path is, or is
+// beneath.
+func beneath(names []string) func(path string) (string, bool) {
+	return func(path string) (string, bool) {
+		path = strings.TrimPrefix(path, "/")
+		for _, name := range names {
+			if path == name || strings.HasPrefix(path, name+"/") {
+				return name, true
+			}
+		}
+		return "", false
+	}
+}
+
 // ErrGuardUnavailable means the rule could not be applied: the groups' names
 // could not be read. The write is refused, because letting it through would
 // be deciding without knowing.
@@ -156,12 +211,30 @@ func (c *Client) guard(ctx context.Context, r Realm, method, rel string, body an
 	if err != nil {
 		return fmt.Errorf("%w: %s %s: %v", ErrUnguarded, method, rel, err)
 	}
+	if err := c.refuse(ctx, r, w, named, which, ErrProtected); err != nil {
+		return err
+	}
+	// The same rule, for the groups this caller in particular may not change
+	// the holders of (WithApproversHeld).
+	if held := approversHeld(ctx); held != nil {
+		return c.refuse(ctx, r, w, named, held, ErrApproversOnly)
+	}
+	return nil
+}
+
+// refuse is the rule itself, for one set of groups: which says whether a
+// path is one of them, and refusal is what the caller hears when the write
+// would change who is in one.
+func (c *Client) refuse(
+	ctx context.Context, r Realm, w change, named names,
+	which func(path string) (string, bool), refusal error,
+) error {
 	if name, is := which(named.Name); is && w.user == "" {
-		return fmt.Errorf("%w: a group may not be given the name %q", ErrProtected, name)
+		return fmt.Errorf("%w: a group may not be given the name %q", refusal, name)
 	}
 	for _, g := range named.Groups {
 		if name, is := which(g); is {
-			return fmt.Errorf("%w: nobody is added to %q from here", ErrProtected, name)
+			return fmt.Errorf("%w: nobody is added to %q from here", refusal, name)
 		}
 	}
 
@@ -176,9 +249,9 @@ func (c *Client) guard(ctx context.Context, r Realm, method, rel string, body an
 		}
 		if name, is := which(path); is {
 			if w.membership {
-				return fmt.Errorf("%w: membership of %q is not changed from here", ErrProtected, name)
+				return fmt.Errorf("%w: membership of %q is not changed from here", refusal, name)
 			}
-			return fmt.Errorf("%w: the group %q is not changed from here", ErrProtected, name)
+			return fmt.Errorf("%w: the group %q is not changed from here", refusal, name)
 		}
 	}
 	if w.user != "" && !w.membership {
@@ -188,7 +261,7 @@ func (c *Client) guard(ctx context.Context, r Realm, method, rel string, body an
 		}
 		for _, g := range groups {
 			if name, is := which(g.Path); is {
-				return fmt.Errorf("%w: this person is in %q", ErrProtected, name)
+				return fmt.Errorf("%w: this person is in %q", refusal, name)
 			}
 		}
 	}
@@ -215,15 +288,7 @@ func (c *Client) roleGroups(ctx context.Context) (func(path string) (string, boo
 	if len(protected) == 0 {
 		return nil, ErrGuardUnavailable
 	}
-	return func(path string) (string, bool) {
-		path = strings.TrimPrefix(path, "/")
-		for _, name := range protected {
-			if path == name || strings.HasPrefix(path, name+"/") {
-				return name, true
-			}
-		}
-		return "", false
-	}, nil
+	return beneath(protected), nil
 }
 
 // notCustom is the answer for a group the platform composes, which is not
@@ -239,6 +304,11 @@ func (c *Client) notCustom(ctx context.Context, path string) error {
 	}
 	if name, is := which(path); is {
 		return fmt.Errorf("%w: the group %q is not changed from here", ErrProtected, name)
+	}
+	if held := approversHeld(ctx); held != nil {
+		if name, is := held(path); is {
+			return fmt.Errorf("%w: the group %q is not changed from here", ErrApproversOnly, name)
+		}
 	}
 	return fmt.Errorf("%w: %q", ErrNotCustom, path)
 }

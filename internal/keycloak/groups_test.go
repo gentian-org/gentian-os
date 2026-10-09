@@ -33,6 +33,7 @@ func TestCollectTenantGroupNames_IncludesAppAdmins(t *testing.T) {
 		"gentian:tenant:demo:members",
 		"gentian:tenant:demo:admins",
 		"gentian:tenant:demo:app-admins",
+		"gentian:tenant:demo:perimeter",
 		"gentian:tenant:demo:app:demo-app",
 	}
 	if len(names) != len(want) {
