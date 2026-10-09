@@ -482,8 +482,22 @@ func (r *TenantReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 	envoyKernelServicePredicate := predicate.NewPredicateFuncs(isKernelEdgeService)
 
+	// A grant between two apps is what opens the way between them
+	// (netpolicy.ContractNetworkPolicies), so a grant that is made, changed
+	// or withdrawn has to reach the tenant's policies when it happens and
+	// not when something else next wakes the tenant. A grant carries no
+	// tenant label; it lives in the tenant's namespace.
+	mapGrantToTenant := func(_ context.Context, obj client.Object) []reconcile.Request {
+		tenantName, ok := strings.CutPrefix(obj.GetNamespace(), "tenant-")
+		if !ok || tenantName == "" {
+			return nil
+		}
+		return []reconcile.Request{{NamespacedName: types.NamespacedName{Name: tenantName}}}
+	}
+
 	ctrlBuilder := ctrl.NewControllerManagedBy(mgr).
 		For(&gentianov1alpha1.Tenant{}).
+		Watches(&gentianov1alpha1.AppGrant{}, handler.EnqueueRequestsFromMapFunc(mapGrantToTenant)).
 		// One worker is controller-runtime's default, and it is the wrong one
 		// here. A tenant waiting on its provisioning Jobs requeues every two
 		// seconds (see the RequeueAfter below), so every tenant that has not

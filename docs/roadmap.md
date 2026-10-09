@@ -15,7 +15,7 @@ For the current baseline design of the system, refer to [architecture.md](archit
 * **Backlog Items**:
   - `[ ]` Tightly restrict kube-API server egress (CIDR 443) on tenant namespaces to API server endpoint IPs.
   - `[ ]` Restrict external DNS egress to CoreDNS cluster IP addresses only.
-  - `[ ]` Modify the network policy builder in `grants.go` and `integration.go` to fail closed (deny egress) when an AppGrant is missing.
+  - `[x]` Modify the network policy builder in `grants.go` and `integration.go` to fail closed (deny egress) when an AppGrant is missing.
   - `[ ]` Evaluate Cilium network policy configuration to enforce domain-scoped (FQDN) egress allow-lists.
 
 ### 1.2 Workload Identity & Service Mesh Integration (***)
@@ -170,9 +170,9 @@ Design: see [docs/design/agentic-ai.md](design/agentic-ai.md), Scope
 * **Proposed Solution**: Generic hooks a profile declares, each narrow enough to hand to a component: the rights check, and contracts between apps of a tenant that carry traffic and tell the provider which consumer is calling.
 * **Backlog Items**:
   - `[x]` The rights check: `requires.services.rights`, a key per component for one question at the bouncer.
-  - `[ ]` Contracts between apps open the provider's side as well as the consumer's, for both ways a component is delivered.
+  - `[x]` A granted contract opens the provider's side as well as the consumer's, for both ways a component is delivered; one that nobody granted opens nothing.
   - `[ ]` A contract tells the provider which consumer is calling.
-  - `[ ]` Serve the rights check for a component delivered through the app Composition.
+  - `[x]` The rights check is served whichever way a component is delivered.
 
 ### 1.15 Gateway External Authentication (AuthZEN PEP) (**)
 * **Target Domain**: Gateway Security

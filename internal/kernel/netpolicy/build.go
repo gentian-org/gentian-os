@@ -45,9 +45,13 @@ type BuildInput struct {
 	// baseline is a privilege somebody has to have answered (AD-5), and this
 	// is where the answer is: an app installed through Tenant.spec.apps has
 	// no Component to hang a grant on.
-	Privileges    []gentianov1alpha1.TenantPrivilegeGrant
-	Bindings      []*gentianov1alpha1.IntegrationBinding
-	Grants        map[string]*gentianov1alpha1.AppGrant
+	Privileges []gentianov1alpha1.TenantPrivilegeGrant
+	Bindings   []*gentianov1alpha1.IntegrationBinding
+	Grants     map[string]*gentianov1alpha1.AppGrant
+	// PodSelectors are the labels each app's pods carry, for an app whose
+	// delivery does not put the app label on them. A contract's two sides
+	// are selected by these.
+	PodSelectors  map[string]map[string]string
 	Config        Config
 	KubeAPIEndpts *discoveryv1.EndpointSlice
 }
@@ -81,9 +85,7 @@ func BuildDesired(in BuildInput) []*networkingv1.NetworkPolicy {
 		if in.Grants != nil {
 			grant = in.Grants[binding.Spec.Consumer.App]
 		}
-		if np := ContractAllowNetworkPolicy(in.TenantName, binding, grant); np != nil {
-			out = append(out, np)
-		}
+		out = append(out, ContractNetworkPolicies(in.TenantName, binding, grant, in.PodSelectors)...)
 	}
 
 	cacheApps := cacheAppNames(in)
@@ -147,8 +149,16 @@ func ManagedPolicyNames(in BuildInput) map[string]struct{} {
 			names[appEgressPolicyName(app.Profile)] = struct{}{}
 		}
 	}
+	// Only the policies of a contract somebody granted: one that lost its
+	// grant loses its policies, and with them the way between the two apps.
 	for _, binding := range in.Bindings {
-		names[contractPolicyName(binding.Name)] = struct{}{}
+		var grant *gentianov1alpha1.AppGrant
+		if in.Grants != nil {
+			grant = in.Grants[binding.Spec.Consumer.App]
+		}
+		for _, np := range ContractNetworkPolicies(in.TenantName, binding, grant, in.PodSelectors) {
+			names[np.Name] = struct{}{}
+		}
 	}
 	// Only while there is a Memcached app to build them for: named
 	// unconditionally they were never removed, and a tenant whose last such

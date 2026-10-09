@@ -295,8 +295,7 @@ question, `POST` with `{"person": "<subject>", "app": "<profile name>"}` and the
 may this person use that app of this tenant. The answer is `{"allowed": true|false}`. The key
 cannot write, cannot list, and cannot name another tenant's app, and the component holds no
 credential of the authorization store. The answer says who in the tenant may use what, so the
-declaration needs `trustTier: platform`. It is served for a component the operator installs
-directly, not for one delivered through the app Composition.
+declaration needs `trustTier: platform`.
 
 **An app that opens mailboxes with the person's sign-in token** (IMAP XOAUTH2) declares
 `spec.requires.services.mail.imap.tokenSignIn: true`, beside the sign-in client it needs

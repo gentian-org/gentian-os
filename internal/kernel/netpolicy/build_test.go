@@ -66,9 +66,17 @@ func TestBuildDesired_KernelAndContractPolicies(t *testing.T) {
 		Bindings:   []*gentianov1alpha1.IntegrationBinding{binding},
 		Config:     netpolicy.DefaultConfig(),
 	}
+	// Declared by the profiles and granted by nobody: no contract policy.
+	if got := len(netpolicy.BuildDesired(in)); got != 4 {
+		t.Fatalf("expected baseline + tenant-export + kernel + app-internal with no grant, got %d", got)
+	}
+	grant := &gentianov1alpha1.AppGrant{}
+	grant.Spec.App = "consumer-app"
+	grant.Spec.Consume = []gentianov1alpha1.ConsumeGrantSpec{{Contract: "file-store", Granted: []string{"webdav:read"}}}
+	in.Grants = map[string]*gentianov1alpha1.AppGrant{"consumer-app": grant}
 	policies := netpolicy.BuildDesired(in)
-	if len(policies) != 5 {
-		t.Fatalf("expected baseline + tenant-export + kernel + app-internal + contract policies, got %d", len(policies))
+	if len(policies) != 6 {
+		t.Fatalf("expected baseline + tenant-export + kernel + app-internal + the contract's two policies, got %d", len(policies))
 	}
 	contractNP := policies[len(policies)-1]
 	if got := contractNP.Labels["gentianos.io/granted-capabilities"]; got != "webdav_read" {

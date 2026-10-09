@@ -375,10 +375,10 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 	// The key for the rights check, for a component that declares it, before
 	// the chart runs so that its pods find the Secret they are told to read.
-	if !composed {
-		if err := r.ensureRightsCheck(ctx, comp, profile); err != nil {
-			return ctrl.Result{}, fmt.Errorf("rights check: %w", err)
-		}
+	// Whichever way the chart is delivered: the Secret is this reconciler's,
+	// and a chart reads it by its name.
+	if err := r.ensureRightsCheck(ctx, comp, profile); err != nil {
+		return ctrl.Result{}, fmt.Errorf("rights check: %w", err)
 	}
 	// What the platform tells any component about itself, where its profile
 	// says its chart takes it. Nothing is keyed on which component this is.

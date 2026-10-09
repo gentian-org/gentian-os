@@ -99,6 +99,16 @@ func (r *TenantReconciler) ensureNetworkPolicies(ctx context.Context, tenant *ge
 		profiles[app.Profile] = profile
 	}
 
+	// An app whose chart the operator installs itself carries the labels
+	// its chart gives a release, not the app label the Composition puts on
+	// the pods it renders. A contract selects each side by what it carries.
+	selectors := map[string]map[string]string{}
+	for name, profile := range profiles {
+		if !composedDelivery(profile) {
+			selectors[name] = map[string]string{componentInstanceLabel: nsName + "-" + name}
+		}
+	}
+
 	in := netpolicy.BuildInput{
 		TenantName:    tenant.Name,
 		Namespace:     nsName,
@@ -106,6 +116,7 @@ func (r *TenantReconciler) ensureNetworkPolicies(ctx context.Context, tenant *ge
 		Profiles:      profiles,
 		Bindings:      bindings,
 		Grants:        grants,
+		PodSelectors:  selectors,
 		Config:        r.tenantNetPolicyConfig(),
 		KubeAPIEndpts: r.loadKubeAPIEndpointSlice(ctx),
 	}

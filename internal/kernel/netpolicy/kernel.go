@@ -165,6 +165,11 @@ func kernelEgressTargets(profile *gentianov1alpha1.ComponentProfile, cfg Config)
 		if kr.LLM != nil {
 			add(layout.System("llm"), provisioner.ModelGatewayPort)
 		}
+		// The rights check: the bouncer's listener for the one question,
+		// and no other port of the edge.
+		if kr.Rights != nil {
+			add(cfg.ServicesNamespace, RightsCheckPort)
+		}
 	}
 
 	for _, ns := range gentianov1alpha1.ProfileKernelEgressNamespaces(profile) {

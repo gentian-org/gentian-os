@@ -213,10 +213,15 @@ NetworkPolicies enforce three rules at the CNI level:
 1. Tenant namespaces can reach kernel services (Keycloak, PostgreSQL,
    MinIO, Redis, Postfix).
 2. Tenant namespaces **cannot** reach other tenant namespaces.
-3. App-to-app calls within a tenant are scoped by the
-   `IntegrationBinding` — the binding emits a NetworkPolicy that
-   allows the consumer to reach the provider only for the declared
-   capabilities.
+3. App-to-app calls within a tenant need a grant. Two profiles that
+   name the same contract, one under `provides` and one under
+   `integrations`, ask for a relation; the tenant's administrator gives
+   it with an `AppGrant` for the consumer. Only then are two
+   NetworkPolicies written: the consumer's pods may leave for the
+   provider's, and the provider's admit the consumer's. A grant that is
+   withdrawn takes both away. The network decides which app reaches
+   which; it cannot tell one path of the provider from another, so what
+   the consumer may do there is the provider's to check.
 
 ## 5. Identity and OIDC Trust Chain
 

@@ -30,6 +30,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/kernel/netpolicy"
 )
 
 // The rights check (requires.services.rights): a component that declares it
@@ -43,7 +44,7 @@ const (
 	rightsCheckerLabel = "gentianos.io/rights-checker"
 	// rightsCheckPort is the bouncer's listener for the question
 	// (cmd/bouncer, BOUNCER_CHECK_LISTEN: the two must agree).
-	rightsCheckPort   = int32(8082)
+	rightsCheckPort   = netpolicy.RightsCheckPort
 	rightsCheckURLKey = "RIGHTS_CHECK_URL"
 	rightsCheckKeyKey = "RIGHTS_CHECK_KEY" //nolint:gosec // Secret key name, not a credential.
 )

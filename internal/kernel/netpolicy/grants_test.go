@@ -25,10 +25,19 @@ func TestEffectiveContractCapabilities(t *testing.T) {
 		Capabilities: []string{"webdav:read", "webdav:write"},
 	}
 
-	t.Run("no grant uses binding", func(t *testing.T) {
-		got := netpolicy.EffectiveContractCapabilities(binding, nil)
-		if len(got) != 2 {
-			t.Fatalf("expected 2 caps, got %v", got)
+	t.Run("no grant opens nothing", func(t *testing.T) {
+		if got := netpolicy.EffectiveContractCapabilities(binding, nil); got != nil {
+			t.Fatalf("expected nil, got %v", got)
+		}
+	})
+
+	t.Run("a grant for another contract opens nothing", func(t *testing.T) {
+		grant := &gentianov1alpha1.AppGrant{}
+		grant.Spec.Consume = []gentianov1alpha1.ConsumeGrantSpec{
+			{Contract: "calendar", Granted: []string{"read"}},
+		}
+		if got := netpolicy.EffectiveContractCapabilities(binding, grant); got != nil {
+			t.Fatalf("expected nil, got %v", got)
 		}
 	})
 
