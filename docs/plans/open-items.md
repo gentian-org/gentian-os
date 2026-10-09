@@ -24,7 +24,7 @@ code does what the decision says; it does not mean a cluster has shown it.
 | AD-1 | Nine security principles normative; every request passes one named enforcement point | **Holds, with one accepted limit, stated in the decision.** The publishing proxy is a named enforcement point that checks no caller: it filters and limits. On an entry of `authMode: app` it passes the caller's credential to the app, which checks it; the platform does not know that caller, and a removed person's app credential lives until the app revokes it (roadmap 1.34) |
 | AD-2 | The director is the only writer of the deployment repository | **Holds.** Commits are signed, Argo CD syncs only commits signed by the director's key or the break-glass key, the operator holds no git credential. For a private repository the installer gives Argo CD the repository's credential directly until the vault's copy takes over (`A-06`, `C-05-repository-handoff`). Argo CD and the director still share one credential that can push |
 | AD-3 | The store's data is outside the cluster; its interface is an app on it | **Holds on the cluster's side.** The operator places the App Store app on every tenant but the platform's while the cluster reports its licences and names a store; an install is fetched at its digest, checked, committed, and checked again before rollout. A store address that is the cluster's own App Store host is not taken as a store |
-| AD-4 | One catalogue kind, `ComponentProfile` | **Holds.** [app-customization.md](../app-customization.md) still says `AppProfile` in many places |
+| AD-4 | One catalogue kind, `ComponentProfile` | **Holds.** The design documents name the kind as the code does since 2026-10-09 |
 | AD-5 | Privileges are requests with one approval path | **Holds**, except that egress a profile declares reaches the network policy without an approval |
 | AD-6 | `authMode` mandatory; a perimeter surface is published per tenant by an approver | **Holds, not yet shown on a cluster.** Publishing works as decided: a proxy in `tenant-<t>-dmz` only for an entry an approver published under `can_expose`, with a review date. The proxy checks no caller, and no entry says it does any more: `authMode: app` passes the caller's credential to the app, which checks it (the accepted limit in AD-1), and `basic`, `signature`, `jwt` and `bearer` are refused on a perimeter entry by the schema. Who approves is as the decision says since it was changed on 2026-10-09: the group `gentian:tenant:<t>:perimeter` is created with the tenant, the cluster's administrator holds `can_expose` in every tenant its cluster operates, and a tenant's admins hold it only where the cluster's administrator switched it on (part 2) |
 | AD-7 | Namespaces named by tier | **Holds** |
@@ -51,6 +51,10 @@ been seen working on a cluster. Until it has, it is not done.
   App Admin role it reads from the realm's signed answer. Three apps declare
   it.
 - A mailbox opened with a sign-in token, for an app that declared it.
+- A sign-out told to the apps inside the cluster, at an address the platform
+  builds from the entry's own Service: Nextcloud (`nextcloud-base-ce`) and
+  XWiki through their own client, Docmost and OpenProject through the sign-in
+  sidecar. What it does not reach is defect 2.
 - The bouncer's rights check for a component that holds a key for it.
 
 ### Addresses and publishing
@@ -58,7 +62,9 @@ been seen working on a cluster. Until it has, it is not done.
 - The two tenancy modes, and the user tenant of a single-tenancy cluster
   created by the installer after the handover (`E-04`).
 - Address names an app may not take, refused by the operator and the director.
-- A tenant bound to a domain of its own with the command line.
+- A tenant bound to a domain of its own with the command line, and the
+  director refusing that for any tenant of a single-tenancy cluster and for
+  the platform tenant on every cluster.
 - What a tenant's apps ask to publish as a read; approval, review and
   withdrawal on the command line and in the administration console.
 - A website on the main address of a single-tenancy cluster, with the
@@ -127,8 +133,11 @@ been seen working on a cluster. Until it has, it is not done.
   its recorded id; the OpenBao command line fetched and checked.
 - The default catalogue chosen by the ref the platform is installed from.
 - Crossplane installed without its activate-everything policy, and only the
-  25 provider resource types in use activated (`A-04`, `B-05`). Not shown on a
-  cluster: that the two providers come up healthy with only those types, that
+  25 provider resource types in use activated (`A-04`, `B-05`): the four
+  providers then bring 42 CRDs in place of the 391 they ship (the 25, the ten
+  configuration kinds of the vault and Keycloak providers, and all seven of
+  provider-kubernetes and provider-helm, which cannot be narrowed). Not shown
+  on a cluster: that the two providers come up healthy with only those types, that
   `B-05`'s wait for them ends, how a composed resource of a type that is not
   activated shows on its composite, and `CROSSPLANE_ACTIVATE_ALL=true` as the
   way back on a cluster that was installed without it.
@@ -168,11 +177,17 @@ Each is true of the code today.
 | 10 | **Mail to a removed person's address is still accepted** where the recipient policy is `catchall` (the default), and an IMAP session open at the removal is not ended. The mailbox itself is archived or deleted as chosen | [mail.md §5c](../design/mail.md) |
 | 11 | **The Operations Console's default Component is not pinned.** The installer now places its profile only at a stated digest, with its bundle and origin; the operator compares a profile with its bundle at rollout only for a Component pinned to a digest, and the one it creates for a `defaultForTenants` profile carries none. The digest the installer uses comes from the catalogue's own unsigned index unless the person installing pins one | AD-14, [security.md §2.10](../design/security.md) |
 | 12 | **The model gateway's console switch has not run on a cluster.** The console is off unless the claim says `llm.console.enabled: true`, so the defect as it stood -- no way to serve models without the console -- is closed in the code. Not yet seen: that an upgraded cluster loses the route and the edge's rule at the gateway, and that the console works behind the edge when switched on (its own sign-in and its `Authorization` header are held by tests of the rendered policy only) | part 1, AD-9; [llms.md](../design/llms.md) |
-| 13 | **A cluster installed before 2026-10-09 keeps every Crossplane resource type** — about 380 CRDs. A fresh install creates the 25 the platform uses (`crossplane/providers/activation.yaml`, held by `make lint-provider-activation`); Crossplane never deactivates a type, so nothing narrows an existing cluster. The narrowed list has not run on a cluster yet (part 2) | [install-reference.md §4](../install-reference.md) |
+| 13 | **A cluster installed before 2026-10-09 keeps every Crossplane resource type** — the 391 CRDs of the four providers, and provider-http's until `B-05` removes that provider. A fresh install creates 42: the 25 types the platform uses and the 17 that cannot be left out (`crossplane/providers/activation.yaml`, held by `make lint-provider-activation`); Crossplane never deactivates a type, so nothing narrows an existing cluster. The narrowed list has not run on a cluster yet (part 2) | [install-reference.md §4](../install-reference.md) |
 | 14 | **Two images float.** `vllm/vllm-openai` falls back to `latest` when the claim names no tag, and the model gateway's cache runs `redis:alpine`. `lint-image-pins` lists the first as known and does not look at the second | `kernel/services/llm/` |
 | 15 | **The operator holds Keycloak's master administrator credential.** It reads the `keycloak-admin` Secret and hands it to the Jobs that configure realms, clients and groups. The process that writes the rights store can therefore change any identity as well | part 1, AD-12; `identity_reconciler.go` |
 | 16 | **Argo CD's repository credential can push** | [operator-split-plan.md §6](operator-split-plan.md) |
 | 17 | **A change of a person's groups does not end their sessions**, and offline tokens are not disabled. AD-12 states both; no code does either. An app that read groups from its own token keeps them until that token or the app's session ends | part 1, AD-12 |
+| 18 | **The development catalogue is not republished until the released branch can be built.** The catalogue repository's publishing job builds the released and the development catalogue together, and fails while the released branch lacks the catalogue build script. A profile changed on the development branch therefore does not reach `…/gentian-apps/develop`, and a cluster installed from a branch keeps reading the last catalogue that was published | [custom-catalogues.md §3](../custom-catalogues.md) |
+| 19 | **The XWiki profile on the development catalogue cannot be installed.** It names a chart (`xwiki-ce` in the upstream chart repository, which serves `xwiki`) and an image that do not exist. Sign-out reaching XWiki (defect 2, part 2) is therefore held by tests of the profile only | the catalogue repository, `profiles/xwiki/xwiki-ce` |
+| 20 | **`backchannelLogoutUrl` remains in profiles outside this repository.** The schema refuses the field (`OIDCClientSpec`, `api/v1alpha1/profile_parts.go`): a bundle that still carries it is not admitted, and the app is not installed or updated from it, until the profile declares `backchannelLogout` (exposure and path) instead. The catalogue's released branch and some extension profiles still carry the old field | [app-customization.md](../app-customization.md) §2, [iam.md §1.12](../design/iam.md) |
+| 21 | **Removing a tenant's file reports "unchanged" and leaves the file when the tenant has no `kustomization.yaml`.** `writeTenantFileLocked` (`internal/director/gitops/backup.go`) decides that there is nothing to remove from the read error of the kustomization, not from that of the file. Unbinding a tenant's domain (`tenants domain <t> --remove`) in such a tenant directory answers `unchanged` and `domain.yaml` stays | `internal/director/gitops/backup.go` |
+| 22 | **The smoke check of a cluster's own mail cannot pass.** `make verify-kernel-services` (and `e2e-p5-keycloak-dovecot`) run `crossplane/tests/e2e/scripts/e2e-verify-kernel-services.sh`, which calls `verify_keycloak_installation`; that function was deleted from `scripts/lib/verify-kernel-services.sh`, so the script always counts one error. The Dovecot check it also calls now looks in `system-mail`, and has not been run | `scripts/lib/verify-kernel-services.sh` |
+| 23 | **Nothing registers the claim's models at the model gateway.** The Cluster claim accepts `spec.llm.instances` and `spec.llm.providers`, and its schema says providers are reconciled from that list; the installer functions that did it were removed with the steps that called them, and no step, Composition or reconciler replaced them (`scripts/lib/llm-lib.sh` holds comments only). An app's key and a tenant's team are registered by the operator; a model is not. [llms.md](../design/llms.md) says both, in different sections | [llms.md](../design/llms.md), `crossplane/xrds/cluster.yaml` |
 
 ## 4. Decisions waiting for the owner
 

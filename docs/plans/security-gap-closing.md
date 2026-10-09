@@ -9,17 +9,22 @@ given where the gap is already tracked there. Direction-setting decisions
 made while closing gaps are recorded in
 [architectural-decisions.md](architectural-decisions.md).
 
+The *Gap* and *Evidence* columns record the code as it was when each gap was
+found: the file names, line numbers, the `AppProfile` kind and the single
+console with its BFF are of that tree, and several of them are gone. Which
+gaps are closed is tracked in [work-packages.md](work-packages.md), not here.
+
 ## 1. Gaps, from code
 
 | # | Gap | Evidence | Principle | Fix | Wave |
 | --- | --- | --- | --- | --- | --- |
 | G1 | App lifecycle API is unauthenticated and holds git-push authority | `internal/applifecycle/http.go` — no auth middleware; caller sets `X-Gentian-Actor` | 1, 3 | Director (see [operator-split-plan.md](operator-split-plan.md)); token verified, FGA checked, header removed | 0 |
-| G2 | No policy-enforcement point calls OpenFGA. Tuples are written (bridge, `app_grant_reconciler`) and never read | BFF: `app/core/openfga_client.py` has `check()`, no route calls it; operator: `Check` exists in `internal/authz/openfga_client.go`, one caller in tests | 3, 4 | Director checks on every write (wave 1); gateway ext-auth checks on every route (wave 1). The console checks nothing: it renders what the director returns for the caller's relations ([ui-restructure.md](ui-restructure.md)) | 1 |
+| G2 | No policy-enforcement point calls OpenFGA. Tuples are written (bridge, `app_grant_reconciler`) and never read | BFF: `app/core/openfga_client.py` has `check()`, no route calls it; operator: `Check` exists in `internal/authz/openfga_client.go`, one caller in tests | 3, 4 | Director checks on every write (wave 1); gateway ext-auth checks on every route (wave 1). The desktop and the administration console check nothing: they render what the director returns for the caller's relations ([ui-restructure.md](ui-restructure.md)) | 1 |
 | G3 | No gateway authentication. Every app authenticates itself or not at all; `llm.<domain>` is public. The only `authMode` in the tree is on `BrowserProxyRoute`, a shell-proxy field with two values and a default | no `SecurityPolicy` in `kernel/`, `crossplane/`, `internal/`; `BackendTrafficPolicy` carries timeouts only; `AppProfile.spec.ingress` (`IngressSpec`) has no `authMode` field; `appprofile_types.go` `BrowserProxyRoute.AuthMode` is `+kubebuilder:default=forward-bearer` | 3, 6 | Envoy Gateway `SecurityPolicy` per HTTPRoute: JWT (Keycloak JWKS) + ext-auth to an AuthZEN bouncer over OpenFGA (roadmap 1.15). The field is `ComponentProfile.spec.expose[].authMode`, mandatory and defaultless, on **both** surfaces (AD-6): a `gateway` entry gets the `SecurityPolicy`, a `perimeter` entry carries its `authMode` into the DMZ proxy, which is where `none`, `basic` and `signature` actually live ([namespace-cleanup.md](namespace-cleanup.md) §2.6). A fix scoped to `ingress` would reach neither | 1 |
 | G4 | LiteLLM virtual keys are predictable and unauthenticated at the edge | `app_reconciler.go:242` — `sk-gentian-<tenant>-<app>` | 1, 8 | Random keys from OpenBao; route behind G3; per-key budgets (roadmap 2.15 decides ownership) | 0 |
 | G5 | Redis ACL grants every tenant app every key and channel | `cache_reconciler.go:405` — `allkeys allchannels` | 6, 8 | `~<tenant>:<app>:*` key pattern + `&<tenant>:<app>:*` channels; prefix injected through `valueMapping.cache`; apps that cannot prefix get a dedicated instance | 0 |
 | G6 | MariaDB dynamic-creation grant is root | `mariadb_reconciler.go:200` — `GRANT ALL ON *.* … WITH GRANT OPTION` | 8 | wildcard grant on the tenant prefix: ``GRANT ALL ON `<prefix>\_%`.*``; no `GRANT OPTION` | 0 |
-| G7 | The console acts as one ServiceAccount for every tenant; separation lives in Python | roadmap 1.28; `k8s_*` services use `load_incluster_config()` with no impersonation | 1, 3 | The console has no Kubernetes identity at all: reads and writes are director calls with the user's token, filtered by the caller's relations; its `rbac.yaml` has zero rules ([ui-restructure.md](ui-restructure.md) §2). No impersonation — roadmap 1.28 is superseded | 1 |
+| G7 | The console acts as one ServiceAccount for every tenant; separation lives in Python | roadmap 1.28; `k8s_*` services use `load_incluster_config()` with no impersonation | 1, 3 | Neither the desktop nor the administration console has a Kubernetes identity: reads and writes are director calls with the user's token, filtered by the caller's relations; the chart's `rbac.yaml` has zero rules ([ui-restructure.md](ui-restructure.md) §2). No impersonation — roadmap 1.28 is superseded | 1 |
 | G8 | Workloads have no identity; east-west traffic is unauthenticated | no SPIFFE, no mesh, no audience-bound tokens except the OpenBao Kubernetes-auth path | 1, 6 | Projected SA tokens with per-consumer audiences first; SPIRE + mTLS when an app-to-app contract needs it (roadmap 1.2) | 2 |
 | G9 | Agents share human or service credentials | `agentic-ai.md §8` is design; no token-exchange client, no `agent:` tuples written | 1, 5 | Keycloak token exchange with `act`; `agent`/`task` FGA types with TTL conditions; MCP gateway as PEP (roadmap 1.14) | 2 |
 | G10 | No decision log; audit covers console actions only | BFF `audit_log.py` records admin actions to SQL; nothing records FGA decisions; operator has no audit output | 7 | FGA check wrapper logs `(request id, subject, relation, object, decision)` in director, gateway bouncer and console; Keycloak event export; one request id propagated as a header | 3 |
@@ -65,8 +70,9 @@ shows no `*.*`; a guessed `sk-gentian-…` key → 401.
 
 Director with FGA `Check` on every write (G1, G2); gateway `SecurityPolicy`
 with JWT + ext-auth on every tenant route, `authMode` mandatory on every
-`expose[]` entry with `none` as an explicit value (G3); console with no
-Kubernetes identity — reads and writes through the director (G7). Model v1
+`expose[]` entry with `none` as an explicit value (G3); desktop and
+administration console with no Kubernetes identity — reads and writes through
+the director (G7). Model v1
 as [authz/model/v1/model.fga](../../authz/model/v1/model.fga) with its tests. Privileges —
 egress and MAC waivers both — become `requires.privileges`, approved against
 the cluster policy by the same director write (G27): an enforcement point
@@ -77,8 +83,8 @@ never reaching the pod; a route with `authMode: none` appears in `kubectl
 gentian audit routes`; removing a user from a group revokes their Keycloak
 sessions and the next request re-authenticates without the role
 (networking.md §4); deleting a stored tuple (a grant)
-changes the next `Check`; the console's ServiceAccount is bound to no Role
-or ClusterRole (roles-and-authorizations.md §2, invariant 1); a profile
+changes the next `Check`; the desktop's and the administration console's
+ServiceAccounts are bound to no Role or ClusterRole (roles-and-authorizations.md §2, invariant 1); a profile
 declaring egress the cluster policy does not allow is refused, exactly as an
 unapproved MAC waiver already is.
 
@@ -100,7 +106,7 @@ verification at Argo and admission, provider-helm scoped per tenant (G11).
 
 *Challenge:* one request id yields the issuer event, the FGA decision and
 the resulting commit; an unsigned commit on `main` does not sync; an unsigned
-image does not admit; an AppProfile naming a chart that creates a
+image does not admit; a ComponentProfile naming a chart that creates a
 `ClusterRoleBinding` fails at provider-helm.
 
 ### Wave 4 — depth in the data plane (principles 6, 8)
@@ -143,11 +149,11 @@ each lands.
 | G22 | ~20 settings reach the cluster as installer-written Helm parameters that bypass the Cluster claim | 1.22 | 9 | The claim is the director's source of truth; anything Argo needs before the composition runs is derived from the claim by the bootstrap chart, and `make verify-claim-applied` covers all of them | 1 |
 | G23 | A vanity domain (`Tenant.spec.domain`) is bound with no proof of ownership | 2.10 | 6, 8 | DNS TXT challenge issued by the director on `can_expose`, verified by the operator before a listener or certificate is created (networking.md §6) | 1 |
 | G24 | A tenant's only administrator is a derived bootstrap account shared by everyone who administers it | 3.4 | 1, 7 | Invitations through the registrar (`can_manage_users`); tenant-admin by named account; the bootstrap account disabled or retained as break-glass with its use audited. Required by "administrator ≠ member" (roles §1) | 2 |
-| G25 | Profiles can name any registry and any digest; the AppProfile webhook validates categories only | 1.13 | 9 | Registry allowlist and digest check at materialise-on-reference in the director, and as a CEL rule on `ComponentProfile.package` | 3 |
+| G25 | Profiles can name any registry and any digest; when this was found the `AppProfile` webhook validated categories only (that webhook went with the kind) | 1.13 | 9 | Registry allowlist and digest check where the director fetches a profile bundle for an install (AD-14), and as a CEL rule on `ComponentProfile.spec.package` | 3 |
 | G26 | App-internal secrets are derived `sha256(xrName:app:secret)` | 1.8 | 8 | Generated with `crypto/rand`, stored once (target-component-structure.md §5) | 4 |
 
 Not folded in, decided elsewhere: 1.28 (superseded by G7 as rewritten),
 1.26 (the per-tenant desktop replaces the BFF client), 2.4 and 2.8
-(superseded by AD-3). The per-app `can_use` relation is no longer out of scope: `app#entitled` is in model.fga. It encodes a rule the portal already enforces; what it adds is a second enforcement point, since today only the tile list applies it and an app's hostname goes around it. Additions the
+(superseded by AD-3). The per-app `can_use` relation is no longer out of scope: `app#entitled` is in model.fga. It encodes a rule the former portal enforced in its tile list only, where an app's hostname went around it; the bouncer now asks `can_use` on the app's own route. Additions the
 cleanup creates for the roadmap itself are in
 [artefacts/roadmap-additions.md](artefacts/roadmap-additions.md).

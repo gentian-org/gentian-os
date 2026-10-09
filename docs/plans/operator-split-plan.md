@@ -54,9 +54,9 @@ namespaces is in [kernel/namespaces.yaml](../../kernel/namespaces.yaml).
 | Program | Its job in one sentence | Runs in | Who may call it | What it holds | What it can change |
 | --- | --- | --- | --- | --- | --- |
 | **Director** | Turns a permitted request for a change into a signed commit in the deployment repository, and passes one-off commands to the operator. | `kernel-control` | The consoles' backends and the command line tool, each with the signed-in person's token. | The credential that pushes to the deployment repository, and the key that signs its commits. | The deployment repository. Nothing in the cluster directly. |
-| **Operator** | Makes the cluster match what git declares, and carries out one-off commands. That includes what stands beside an app or in front of it: the publishing proxy for an entry published to the internet, the sign-in service for an app with no single sign-on of its own, and what the mail servers read about each tenant. | `kernel-control` | Argo CD (by applying objects), the director and the usher (on its listener), Keycloak (membership events), the Kubernetes API server (admission checks). | Wide rights in the cluster, Keycloak's administrator credential, a vault role that reads and writes every platform secret. | Everything in the cluster, Keycloak, the vault and OpenFGA. |
+| **Operator** | Makes the cluster match what git declares, and carries out one-off commands. That includes what stands beside an app or in front of it: the publishing proxy for an entry published to the internet, the sign-in service for an app with no single sign-on of its own, what the mail servers read about each tenant, and the Job that archives or deletes a removed person's mailbox. | `kernel-control` | Argo CD (by applying objects), the director and the usher (on its listener), Keycloak (membership events), the Kubernetes API server (admission checks). | Wide rights in the cluster, Keycloak's administrator credential, a vault role that reads and writes every platform secret. | Everything in the cluster, Keycloak, the vault and OpenFGA. |
 | **Custodian** | Takes a secret from the person entitled to set it and puts it in the vault; never gives one back. | `kernel-control` | The admin console's and the App Store app's backends, with the person's token. | A vault role that can write a secret and cannot read one. | Secrets in the vault (write only). |
-| **Registrar** | Keeps the list of people: invites them, puts them in groups, removes them. | `kernel-control` | The admin console's backend and the command line tool, with the person's token. | One Keycloak client secret per realm, and the login of its own database. | People and groups in Keycloak; a realm's password policy. |
+| **Registrar** | Keeps the list of people: invites them, puts them in groups, removes them. | `kernel-control` | The admin console's backend and the command line tool, with the person's token. | One Keycloak client secret per realm, and the login of its own database. | People and groups in Keycloak; a realm's password policy. In the cluster, one kind and no other: the record of what was decided about a removed person's mailbox (`MailboxRemoval`). |
 | **Usher** | Tells a signed-in person what is here, what they may open, and what the cluster currently holds of a tenant. | `kernel-control` | The consoles' backends and the command line tool, with the person's token. | An identity the operator admits to reads only. | Nothing. |
 | **Bouncer** | Checks, for every request at the front door, whether this signed-in person may enter this address. Answers the same question, about one tenant, for a component that was given a key for it. | `kernel-edge` | The Gateway; and, on a second listener, a component whose profile declares the rights check. | Nothing of its own. | Nothing. It lets a request through or refuses it. |
 | **Concierge** | Shows the page on the cluster's bare domain and sends a visitor to the sign-in of their workspace. | `tenant-platform`, published from `tenant-platform-dmz` | Anybody on the internet; no sign-in. | Nothing. | Nothing. |
@@ -567,10 +567,11 @@ corrects the difference. The operator runs these:
 | Reconciler | What it produces |
 | --- | --- |
 | Tenant | A tenant's namespaces, realm, databases, storage, mail setup, quota and network rules; and one Component for every app and add-on the tenant's manifest lists. |
-| Component | The app itself: its chart installed in the tenant's namespace, the services its component profile requires, and for each address it exposes a route, a session policy and the bouncer's question. For an entry published to the internet: the publishing proxy in the tenant's DMZ namespace, its configuration, its route and its network rule. For a profile that declares the sign-in sidecar: the sidecar, the handler from the app's profile bundle, what it is handed of the app's own, its two routes and its network rules. For a profile that declares the rights check: a key of the component's own, and its line in the bouncer's table. |
+| Component | The app itself: its chart installed in the tenant's namespace, the services its component profile requires, and for each address it exposes a route, a session policy and the bouncer's question. For an entry published to the internet: the publishing proxy in the tenant's DMZ namespace, its configuration, its route and its network rule — only for an entry whose approval in the tenant's manifest is of the kind the entry asks for (`public`, or `publicAppCredential` for one that passes its callers' `Authorization` header to the app). For an entry behind sign-in approved as `signInAppAuthorization`: a session policy that leaves the app's own `Authorization` header alone; nothing is published for it. For a profile that declares the sign-in sidecar: the sidecar, the handler from the app's profile bundle, what it is handed of the app's own, its two routes, its network rules, and the address inside the cluster at which the realm tells the sidecar that a person signed out. For a profile that declares the rights check: a key of the component's own, and its line in the bouncer's table. |
+| Mailbox removal | For each `MailboxRemoval` the registrar wrote: a Job beside the mail server's volume that moves the mailbox to the archive or deletes it, and the outcome on the record. It refuses a record whose address is not in the tenant's mail domain, touches no mailbox whose address a person of the realm still holds, and waits until the mail server holds no password for the address. |
 | Mail (a stage of Tenant) | On a cluster that runs its own mail: the maps Postfix reads and the files Dovecot reads for each tenant, written into the namespace where the server that mounts them runs, and each tenant's mail credentials beside what reads them. A tenant's mail is reported ready only once the map Postfix mounts names its domain. |
 | Model access (a stage of Tenant) | For each app, and each component the platform places on the tenant, whose profile declares the model gateway: its key, registered at the gateway and held in the vault, and the Secret that delivers it. It takes both away from an app that does not declare the gateway. |
-| Gateway platform | The shared Gateway objects, the routes of the platform's own tools (Keycloak, Argo CD, the cluster dashboard, the model gateway's console), their session policies, the limit on posts to the sign-in pages, and the bouncer's route table. |
+| Gateway platform | The shared Gateway objects, the routes of the platform's own tools (Keycloak, Argo CD, the cluster dashboard, the model gateway's console), their session policies, the limit on posts to the sign-in pages, and the bouncer's route table. The model gateway's console is routed only while the Cluster claim says `spec.llm.console.enabled: true`; otherwise it has no route. |
 | Keycloak platform | Browser security settings in every realm, and the registrar's client and secret in every realm (handed over in a Secret the registrar mounts). |
 | Authorization projection | The contents of OpenFGA; see below. |
 | Tile projection | The list of tiles the usher serves, built from the routes that really exist. |
@@ -592,7 +593,9 @@ and its model, and writes four things into it:
 - **Platform roles**: which Keycloak group holds which role over the cluster,
   from `spec.platformRoles` on the Cluster claim.
 - **Tenants**: each tenant attached to the cluster, with its admins',
-  members' and perimeter approvers' groups.
+  members' and perimeter approvers' groups. The tenant's admins group is
+  written as a perimeter approver only while the tenant's manifest says
+  `spec.perimeter.adminsApprove: true`, and removed again when it does not.
 - **Apps**: each installed app attached to its tenant, with the group whose
   members may use it.
 - **Memberships**: which person is in which group, from Keycloak's signed
@@ -797,7 +800,12 @@ keep working.
 
 - Lists a tenant's people, one person, its groups, a group's members, the
   realm's sign-in settings and the templates an invitation may apply.
-- Invites a person, updates one, removes one.
+- Invites a person, updates one, removes one. Where the person has a mailbox
+  on the cluster's own mail server, the removal carries the answer of whoever
+  removes them — archive or delete — and the registrar writes it down as a
+  `MailboxRemoval` before it removes the person. It does nothing to the
+  mailbox itself: the operator carries the answer out and reports on the same
+  object, which the registrar reads back for the console.
 - Puts a person into a group or takes them out; creates, renames and deletes
   groups.
 - Sends a password reset; requires or removes a second factor.
@@ -810,7 +818,8 @@ keep working.
 
 Every write is a one-off action
 (`POST /v1/tenants/{t}/actions/…`). None is a commit: people do not belong in
-a history that is kept for ever.
+a history that is kept for ever. One of them also writes an object in the
+cluster, the `MailboxRemoval` above.
 
 **What it must never do**
 
@@ -834,8 +843,12 @@ a history that is kept for ever.
   Keycloak's own master realm.
 - The login of its own database.
 - The OpenFGA key.
-- In the cluster: read the tenants and the Cluster claim. No Secret; its
-  realm secrets are handed over as a mounted file by the operator.
+- In the cluster: read the tenants and the Cluster claim; create, update and
+  delete `MailboxRemoval`, a cluster-scoped kind, and nothing else. No Secret;
+  its realm secrets are handed over as a mounted file by the operator.
+  **Changed 2026-10-09**: until then it could write nothing in the cluster.
+  It has no right in the mail servers' namespace and mounts nothing of their
+  volume.
 
 **Who calls it, and whom it calls**
 
@@ -1061,7 +1074,7 @@ list of relations and the rules behind them are in
 | **Director** | Push credential and signing key for the deployment repository; identity at the operator's listener | Commit anything to the deployment repository in anybody's name, including a change to who administers the platform and where software comes from. Issue every command for any tenant and name anybody as the one who asked; two commands destroy data, and one deletes objects the catalogue left behind (never one a profile on the cluster still brings: the operator checks that itself). | Every commit stays in git, signed, where it can be seen and reverted. It cannot read a secret and cannot reach Keycloak. Its token for the operator lasts ten minutes and stops working when the pod is gone. |
 | **Operator** | Wide cluster rights, Keycloak's administrator credential, the vault role for everything | Everything. It can read every Secret, and with that it can also do what each of the others can. | Nothing inside the cluster. It is the part the platform trusts. What protects it is that no person's request reaches it directly: only Argo CD, the director and the usher on the listener, Keycloak's signed events and the API server's admission calls. |
 | **Custodian** | Vault role that writes and cannot read | Overwrite any secret the platform stores. | It cannot read or delete a secret, so the damage is loud: things stop working. No git, no Keycloak, and it cannot change any object that decides configuration. |
-| **Registrar** | One Keycloak client secret per realm | In every realm, the kernel realm included: create, disable or delete any account, set any password, remove any second factor, change any group. That includes the groups behind the platform roles, so it can make somebody a platform admin. It can also rewrite its own record. | No git, no vault, no write in the cluster. No client in Keycloak's master realm; it cannot manage clients or identity providers and cannot impersonate. Keycloak records each change it makes. |
+| **Registrar** | One Keycloak client secret per realm | In every realm, the kernel realm included: create, disable or delete any account, set any password, remove any second factor, change any group. That includes the groups behind the platform roles, so it can make somebody a platform admin. It can also rewrite its own record. And it can write a `MailboxRemoval` for any address and either answer: together with deleting the account, which it can do too, that has the operator archive or delete that person's mailbox. | No git, no vault. In the cluster it can write one kind, `MailboxRemoval`, and no other object. The operator does not act on such a record because it says so: the address must be in the tenant's mail domain, no person of the realm may still hold it, and the mail server must hold no password for it. No client in Keycloak's master realm; it cannot manage clients or identity providers and cannot impersonate. Keycloak records each change it makes. |
 | **Usher** | Identity for reads at the operator's listener | Read every tenant's live state and show it to anybody; show or hide tiles. | It cannot issue a command, download a backup, read a secret, or change anything. A tile is not access: the bouncer decides each request. |
 | **Bouncer** | None of its own | Let any signed-in person into any address behind it, or refuse everybody. It sees the token of every session that passes and can use each one, while it is valid, at the director, the custodian, the registrar and the usher. | A token it sees is good for five minutes (the lifetime Keycloak gives it in a tenant realm). |
 | **Concierge** | None | Show a false sign-in page on the cluster's bare domain, and alter the brand files other pages load. | It holds no credential and no session passes through it. |
@@ -1197,24 +1210,33 @@ gives.
     by nothing in front of it; and an app session it made can outlast a
     sign-out by up to an hour ([security.md §2.12](../design/security.md)).
 
-16. **A publishing proxy checks no caller.** An entry's `authMode` may say
-    `basic`, `signature` or `jwt`; the proxy verifies none of them. It limits
-    and filters, and whatever checking there is, is the app's.
+16. **A publishing proxy checks no caller.** It limits and filters. No entry
+    says otherwise any more: the schema refuses `basic`, `signature`, `jwt`
+    and `bearer` on a published entry, and `authMode: app` passes the
+    caller's `Authorization` header to the app, which checks it. The platform
+    does not know that caller, and a credential the app issued to a person
+    who was since removed works until the app revokes it.
 
-17. **A client's own bearer token does not pass the front door.** On a route
-    with a sign-in session the Gateway removes whatever a client sent in the
+17. **No route verifies a bearer token a client brings.** On a route with a
+    sign-in session the Gateway removes whatever a client sent in the
     `Authorization` header, and a request with no session is sent to sign
-    in. An app's own client that presents a token of its own (a sync client,
-    a mobile app, a script) therefore never reaches the app with it. A path
-    published through a publishing proxy has no session in front of it, and
-    that proxy removes the header too. No route verifies a bearer token a
-    client brings.
+    in; a publishing proxy removes the header too. Two entry kinds, each
+    approved by the tenant's perimeter approver, let an app's own token
+    through unverified by the platform: behind sign-in, an entry that
+    declares `clientAuthorization: app` keeps the header its own page sent
+    (the session is still required); and a published entry of `authMode: app`
+    passes the header of a client with no session (a sync client, a mobile
+    app, a script) to the app. A client that needs the app's cookies on a
+    public address is not served.
 
-18. **Signing out does not reach most apps.** Ending the session at Keycloak
+18. **Signing out does not reach every app.** Ending the session at Keycloak
     ends it at the Gateway when the access token runs out (weakness 11).
-    Keycloak tells only an app whose own OIDC client declares a back-channel
-    logout address. Any other app that keeps a session of its own keeps it
-    until that session ends by itself.
+    Keycloak tells an app inside the cluster, at an address the platform
+    builds from the app's own Service, where the app's profile declares a
+    path for it or the app signs in through the sign-in sidecar. An app that
+    has nothing to be told with keeps its own session until that ends by
+    itself, and Keycloak tells once, at the sign-out, not when a session only
+    runs out ([iam.md §1.12](../design/iam.md)).
 
 19. **No kernel namespace restricts what its pods may connect to.** The
     kernel's network rules are about incoming connections only. A program of
@@ -1222,10 +1244,23 @@ gives.
     when the rules are on, and on its way to the internet or to a tenant by
     nothing.
 
-20. **The model gateway's console has an address.** `llm.<domain>` is routed
-    whenever the cluster runs the model gateway, behind the kernel realm's
-    session and `can_configure`. A system service was to have no route from
-    outside at all, and there is no setting that takes this one away.
+20. **The model gateway's console has an address where a cluster switches it
+    on.** `llm.<domain>` is routed only while the Cluster claim says
+    `spec.llm.console.enabled: true`, behind the kernel realm's session and
+    `can_configure`; off, which is the default, there is no route and the
+    edge is not admitted to the gateway. A system service was to have no
+    route from outside at all, so a cluster that switches it on departs from
+    that on purpose.
+
+21. **The registrar can have a mailbox archived or deleted.** Since
+    2026-10-09 it writes one kind in the cluster, `MailboxRemoval`, and the
+    operator acts on it with the rights that move and destroy mail. The
+    operator checks each record against the tenant's mail domain, the realm
+    and the mail server before it acts, so a record alone destroys nothing
+    of a person who still exists. Whoever has taken the registrar over can
+    delete the account first, and then the record is true. The record names
+    who asked as the registrar established it; the operator does not ask
+    OpenFGA about that person again (as in weakness 3).
 
 ## 7. Addresses and tenancy in brief
 
@@ -1332,11 +1367,8 @@ not yet been run on a cluster.
   to**, which do not exist (weakness 19).
 - **Signed identity headers**, or another proof to an app that the bouncer
   wrote them (weakness 14).
-- **A check of the caller at the publishing proxy** for the `authMode` an
-  entry names (weakness 16), and **a route that verifies a client's own
-  bearer token** (weakness 17).
-- **A setting that takes the model gateway's console off the Gateway**
-  (weakness 20).
+- **A check of the caller at the publishing proxy** (weakness 16), and **a
+  route that verifies a client's own bearer token** (weakness 17).
 - **A read-only repository credential for Argo CD** (weakness 12).
 - **The operator asking OpenFGA again** about the person a command is for
   (weakness 3).

@@ -743,7 +743,7 @@ other than a kernel console has put itself on the desktop.
 
 `ComponentProfile` gained the tile fields and its doc comment was rewritten
 rather than left saying something untrue: the App Store still owns the
-catalogue listing, and the cluster owns the tile, because the portal has to
+catalogue listing, and the cluster owns the tile, because the desktop has to
 show what the cluster routes without asking a service outside the cluster.
 `AppProfile`'s existing tile fields were not reused — they are the v4 portal's
 icon plumbing and carry no relation, which is the one field the per-caller
@@ -1547,6 +1547,10 @@ it there. That is what "ComponentProfile for everything" means in practice,
 and it is what lets an app be standalone rather than reached only through the
 App Store.
 
+**Done since.** `AppProfile` is deleted; `Tenant.spec.apps[].profile` names a
+`ComponentProfile`, and every installed app is a `Component`
+([ad4-migration.md](ad4-migration.md)).
+
 ---
 
 ## 7. Open decisions
@@ -1584,8 +1588,14 @@ written out in [target-component-structure.md](target-component-structure.md).
   contracts (`provides: wiki, project-management`). `requires.services` is the
   proposal.
 
-Two defects found while looking, both admissible on `ComponentProfile` today
-and neither on `AppProfile`: a package may declare `deploymentMethod: api`
+**Settled since, all three, as the code has them.** `ComponentProfile` is the
+only catalogue kind and `AppProfile` is deleted. The field is `spec.classes`,
+a list of `service`, `app` and `shared-app`. Requirements are
+`spec.requires.services`. The package rule below is an exactly-one
+(`exists_one`) now.
+
+Two defects found while looking, both admissible on `ComponentProfile` at the
+time and neither on `AppProfile`: a package may declare `deploymentMethod: api`
 and carry a chart, and a package may carry a chart and an API integration at
 once. The one-of rule is an OR where it should be an exactly-one, which the
 same file already writes correctly for egress.

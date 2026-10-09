@@ -28,7 +28,7 @@ to be tested against, and each package then brings its own step.
 
 | Phase | Packages | Needs | Gate |
 | --- | --- | --- | --- |
-| 0 — no cluster | WP-1 cutover A (director against a bare repo, static JWKS, OpenFGA in a container); WP-3 model v1, tests, vocabulary check; WP-5 CRD schemas, CEL rules, profile conversion tooling; WP-6 store contract and grant format; WP-7 desktop and console against a mocked director; WP-3 the event listener provider, the director's ingestion endpoint and the membership tuple writer (code only — no Keycloak needed to build or unit-test them) | nothing | contract tests green |
+| 0 — no cluster | WP-1 cutover A (director against a bare repo, static JWKS, OpenFGA in a container); WP-3 model v1, tests, vocabulary check; WP-5 CRD schemas, CEL rules, profile conversion tooling; WP-6 store contract and grant format; WP-7 desktop and console against a mocked director; WP-3 the event listener provider, the ingestion endpoint and the membership tuple writer — the operator's since (AD-12) — (code only — no Keycloak needed to build or unit-test them) | nothing | contract tests green |
 | 1 — installer skeleton, and the store's counterpart | the parts of WP-8 and WP-10 that produce an *empty* cluster in the target shape: labelled `kernel-*` namespaces, tier-0 operators, `kernel-data` with `kernel-postgres`, Keycloak and OpenFGA in their namespaces, OpenBao and the seal, the two Gateways; the step framework kept, step contents rewritten; ACME staging issuers while iterating. **In parallel, WP-14**: the store reference implementation, built against `director-dev` — it needs no cluster, so it fills this phase without competing for the one being rebuilt, and every director call the store makes is exercised before phase 2 wires the operator behind it | the purged cluster (WP-8/10); nothing (WP-14) | `install.sh` stands up the empty layout repeatably; `--dry-run` and `--status` true; the store's flow test passes against `director-dev` |
 | 2 — packages on the fresh cluster | WP-1 deployed (no side-by-side), WP-2, WP-4, WP-5 on-cluster parts and materialise-on-reference against WP-14's catalogue source, WP-9 wave 0 and signing, WP-8 remaining namespaces — each adding its installer step as it lands; **WP-3's event listener deployed and wired**, because the director starts checking here and an empty membership projection denies every write, including phase 3's handover commit | phase 1 | each package's tests; the step's `check()` honest |
 | 3 — handover and challenge | WP-10 `E-05`, credential split, challenge lists; WP-11 deployments layout; WP-13 toggles verified off and on | phase 2 | the challenge list passes as scripted tests on a fresh install |
@@ -53,6 +53,13 @@ Described as built in [operator-split-plan.md](operator-split-plan.md) §4.1.
       cluster credential, is the obvious home for the projections — then take
       the OpenFGA write capability away from the director's token, so the
       rule is enforced by the credential and not by care.
+      **Status 2026-10-09**: the writes are moved — the store and model, the
+      cluster's roles, the tenants and their roles and the memberships are
+      the operator's (`AuthzProjectionReconciler`, `MembershipListener`), and
+      session revocation and entitlements are deleted (AD-12, AD-13, AD-3).
+      The director has no code that writes the store. Still open, and why
+      the box is unticked: its OpenFGA credential is a preshared key, which
+      cannot be made read-only ([implementation-plan.md](implementation-plan.md) S7A.2).
 - [ ] **The tile catalogue leaves the director.** It serves the kernel
       consoles from a file baked into its image. Which consoles exist is the
       operator's knowledge, since the operator routes them and refuses to
@@ -108,6 +115,10 @@ Described as built in [operator-split-plan.md](operator-split-plan.md) §4.1.
 - [ ] Materialise-on-reference: `ensureProfile` fetches the bundle at its
       digest from the catalogue repository and applies the profile CR
       **before** the commit; the only cluster write the director has.
+      **Changed 2026-10-09**: as built the director fetches the bundle from
+      the catalogue's address, checks it against the digest and commits the
+      profile and the bundle to git (`gitops.MaterialiseProfile`, AD-14);
+      Argo CD applies it. The director writes nothing to the cluster.
 - [ ] Request CRs: `TenantExport`, `TenantRestore` created by the director
       on an authenticated request; secrets as ESO references only (G7).
 - [ ] Identity writes: users and groups against Keycloak with a scoped
@@ -125,8 +136,15 @@ Described as built in [operator-split-plan.md](operator-split-plan.md) §4.1.
       `group#member` tuples, run the reconcile with a `view-users` client;
       create the store and model on first start; rebuild tuples from Keycloak
       and git.
+      **Changed 2026-10-09** (AD-12): this is the operator's, not the
+      director's. Built there: the membership events and their tuples, the
+      store and the model, and the structure projected from what git
+      declares. Not built: the reconcile toward Keycloak. Not to be built:
+      a rebuild of the tuples at start (AD-12 says why).
 - [ ] Chart, RBAC (read-only + `appprofiles` create/update; no `pods/exec`,
       no `secrets`), NetworkPolicy to git host, OpenFGA, Keycloak JWKS only.
+      **Changed 2026-10-09**: the chart gives the director's ServiceAccount no
+      role at all and does not mount its token for the API server.
 - [ ] Contract tests with no cluster: bare repo, static JWKS, OpenFGA in a
       container (cutover A).
 - [ ] Decommission: operator-side `applifecycle` copies, init container,
@@ -148,7 +166,7 @@ Described as built in [operator-split-plan.md](operator-split-plan.md) §4.1.
       Keycloak groups (`app_privilege_reconciler`).
 - [ ] Namespace constants (`meta.KernelNamespace`, `netpolicy.Config`,
       `CNPG_CLUSTER_NAME` namespace) become label selectors (WP-8 step 1).
-- [ ] `ComponentProfile`/`Component` support: `requires.contracts` fulfilled
+- [ ] `ComponentProfile`/`Component` support: `requires.services` fulfilled
       by the requirement reconcilers; `requires.privileges` intersected
       against cluster policy on one approval path; `integrations` bound
       continuously (WP-5).
@@ -169,7 +187,9 @@ Described as built in [operator-split-plan.md](operator-split-plan.md) §4.1.
 - [x] Retire `authz_bridge_reconciler` — safe because WP-3's event feed
       landed in the same phase — and `app_grant_reconciler`'s tuple writes,
       since the director is the store's only writer, which would otherwise
-      delete AppGrant tuples it did not write. (The reason was first written as
+      delete AppGrant tuples it did not write. (**Changed 2026-10-09**: the
+      store's writer is the operator, in its projection and its membership
+      listener, not the director — AD-12.) (The reason was first written as
       "rebuilds from git on start"; it does not, and must not — a grant is an
       action, not a default, so rebuilding would erase exactly the tuples this
       item is about. See AD-12.)
@@ -236,6 +256,9 @@ Specified in [authorization-model.md](authorization-model.md) and
 - [ ] `tenant#operated_by` (modelled and tested; the writers are open): platform administration of a tenant is a
       removable consent tuple, written at deploy; `session#revoked` written
       by the director on back-channel logout and read by the bouncer.
+      **Changed 2026-10-09**: `operated_by` is written by the operator's
+      projection (AD-12); `session#revoked` is withdrawn and nothing writes or
+      reads it (AD-13).
 - [ ] App-admin groups become per app — `gentian:tenant:<t>:app:<p>:admins` —
       and are created only for profiles declaring a `privilegedRole`. The
       cross-app group made a Nextcloud administrator an Odoo administrator.
@@ -265,8 +288,10 @@ Specified in [authorization-model.md](authorization-model.md) and
       `…:app:<p>` and, where the profile declares a `privilegedRole`,
       `…:app:<p>:admins`; realm
       script and console.
-- [x] Director ingestion endpoint and membership tuple writer
-      (`internal/director/membership`, `POST /v1/events/keycloak`): Ed25519
+- [x] Ingestion endpoint and membership tuple writer — built in the
+      director and moved to the operator (**changed 2026-10-09**, AD-12):
+      `internal/membership`, served by the operator's `MembershipListener`
+      (`POST /v1/events/keycloak`): Ed25519
       signature over timestamp and body, five-minute window, replay dropped by
       event id and by per-user event time; events state a user's complete
       group set, so applying one is a comparison and a lost event is repaired
@@ -393,14 +418,15 @@ Specified in [networking.md](networking.md).
 Specified in [target-component-structure.md](target-component-structure.md).
 
 - [x] CRDs `ComponentProfile` and `Component` with their CEL rules (§7, and
-      the ones the instance needs: immutable owner, approver and tenancy; an
+      the ones the instance needs: immutable owner, approver and class; an
       exposure always ends; `forwardToken` only at platform tier and never on
       the perimeter). `component_schema_test.go` runs the generated CRDs'
       OpenAPI schema and CEL the way the API server does — it caught three
       rules that would have refused every valid profile.
-- [ ] Admission policies for who may create which tenancy where (needs the
+- [ ] Admission policies for who may create which class where (needs the
       cluster's namespace tiers: lands with WP-8).
-- [x] Two-level tenancy; `trustTier` in spec; `requires` absorbing
+- [x] Two levels — `spec.classes` on the profile, `spec.class` on the
+      instance (built as `tenancy`, renamed since); `trustTier` in spec; `requires` absorbing
       `kernelRequirements`, `optionalIntegrations`, `security`;
       `integrations`; `provides`; `secrets`; `expose[]` with mandatory
       `authMode` and `surface`; `extensions`; `hooks`.
@@ -430,7 +456,7 @@ Specified in [target-component-structure.md](target-component-structure.md).
 - [ ] Retire the `catalogue-<repo>` ApplicationSet, `AppCatalogue`,
       `AppPackage`'s in-cluster role; `app-store-me` profile and its dead
       install paths (`services/gitops.py`, `add_tenant_app`).
-- [ ] Tenant desktop as a `ComponentProfile` (`tenancy: [tenant]`, `llm` and
+- [ ] Tenant desktop as a `ComponentProfile` (`classes: [app]`, `llm` and
       database requirements, realm client) — the proof of the abstraction.
 
 ## WP-6 App Store — external service (`store`, `os`)
@@ -571,7 +597,7 @@ From [security-gap-closing.md](security-gap-closing.md).
       at scheduling: one-click export, import, restore, purge and the bundle
       format stay here; scheduled backups, remote targets with key escrow,
       retention across tenants, restore drills, recovery on a click, DR and
-      the workspace converters are Aluvian's Operations Console,
+      the workspace converters are the vendor's Operations Console,
       delivered as a catalogue entry under its own license.
       `TenantExportSchedule` and `BackupPolicy` leave this repository with
       it. [sovereignty-concept.md](sovereignty-concept.md) §5 is normative.
@@ -835,7 +861,7 @@ describe a store page asking a desktop to install are superseded by it.
       source repository needs a credential the tenant is issued on purchase,
       and an OSS entry's needs none.
 - [~] **Install and read-back.** The website's checkout page and account page
-      call the store from the browser with the person's Aluvian token; the
+      call the store from the browser with the person's token at the vendor; the
       install trigger and read-back live in the tenant desktop's store screen
       (WP-7), which asks for the install with the confirmation it is handed:
       `POST /v1/tenants/{t}/apps/{p}` with the person's token, the coordinate
@@ -890,12 +916,12 @@ offboard, the bundle format); the convenience half is the Operations Console's.
       (Retain, whatever the bundle said), wait for the tenant and its apps,
       restore, follow; `kubectl gentian tenants import`, the Tenants tab card.
 - [x] The Admin Console's Backup tab became Export; the schedule, policy and
-      destination screens moved to the Operations Console (gentian-corp
-      `services/operations-console`), which the Export tab links or promotes.
+      destination screens moved to the Operations Console (in the vendor's
+      repository, `services/operations-console`), which the Export tab links or promotes.
 - [x] `install.sh --disable-api-extensions`; step 0 scaffolds the store and
       the Gentian catalogue source and materialises `GENTIAN_DEFAULT_PROFILES`
       into `clusters/<id>/catalogue/`.
-- [x] gentian-corp publishes the Operations Console chart and builds the
+- [x] The vendor's repository publishes the Operations Console chart and builds the
       flat catalogue source.
 
 **M2b — open**
@@ -914,12 +940,12 @@ offboard, the bundle format); the convenience half is the Operations Console's.
       waits for the apps, so an import onto a fresh cluster does not stall on
       entries nobody installed there.
 - [ ] **The `operations` service** (§5.2): `TenantExportSchedule`,
-      `BackupPolicy` and their controllers leave gentian-os for an Aluvian
+      `BackupPolicy` and their controllers leave gentian-os for a vendor's
       component with the `apiExtensions` privilege kind, approved by the
       security officer; `operations-console` requires it. The Cluster claim's
       default entries carry the grant from the scaffold.
-- [ ] **Where the Gentian catalogue source is served**, and the Aluvian
-      profile's chart version written at build time (the publish job produces
+- [ ] **Where the Gentian catalogue source is served**, and the Operations
+      Console profile's chart version written at build time (the publish job produces
       `0.1.0-main.<sha>`, the profile says `0.1.0`).
 - [ ] **Canonical forms** (§6): `spec.backup.canonical` on the profile, hooks
       in the first profiles (Nextcloud files, contacts, calendar; mail).

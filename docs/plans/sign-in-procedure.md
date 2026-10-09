@@ -900,8 +900,8 @@ in.
   | Odoo, Mathesar, XWiki | None found |
 
   On the platform's side, something must send the SCIM calls.
-  [iam.md §1.8](../design/iam.md) describes a "provisioning bus" that would;
-  no program in this repository sends SCIM today.
+  No program in this repository sends SCIM today, and
+  [iam.md §1.8](../design/iam.md) says so.
   Keycloak itself gained a SCIM interface in version 26.6 as an experiment
   and supports it from 26.8; that interface lets others manage Keycloak's
   people and does not make Keycloak call apps. The cluster's Keycloak is

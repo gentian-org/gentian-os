@@ -20,8 +20,8 @@ why the system-tier engines needed their admin Secrets found one at a time.
 | Repository | Catalogue entries | Other |
 |---|---|---|
 | `gentian-apps` | 33 `profiles/*/*/profile.yaml` | 2 templates, 3 `composition.yaml` |
-| `gentian-pro` | 5 `profiles/*/profile.yaml` | 3 `composition.yaml` |
-| `gentian-corp` | 0 | mentions in prose only |
+| a second, private catalogue repository | 5 `profiles/*/profile.yaml` | 3 `composition.yaml` |
+| the vendor's repository | 0 | mentions in prose only |
 | `gentian-os` | — | the CRD, `app-default.yaml`, the AppProject, the catalogue-sync path list |
 
 `gentian-ui` has 7 mentions, all prose or dead after S7A.6.
@@ -161,9 +161,18 @@ become `expose[].tile`, and an addon's exposure keeps the base's subdomain so
 
 `tile_projection_reconciler.go` mentions addons nowhere, so v5 shows none of
 these 23 tiles today. That is implementation, not design, and it is the second
-of the three gaps below.
+of the three gaps below. *(Since built: the tile projection resolves an
+addon's tile against its base's route.)*
 
 ## What is left, from the design's own list
+
+**Status 2026-10-09**: all eight items below are done, and the list stands as
+it was written, as the record of the order. `AppProfile` no longer exists in
+the API package or as a CRD; `Tenant.spec.apps[].profile` names a
+`ComponentProfile`; the component reconciler has an addon path and reads
+`backend.component`; the egress and waiver readers named in item 4 are now
+`internal/controller/component_network_policy.go`, `internal/security` and
+`internal/controller/mac_waiver_reconciler.go`.
 
 1. `Tenant.spec.apps` resolves `AppProfile` only. Until a `ComponentProfile`
    can be installed into a tenant by naming it there, the catalogue cannot

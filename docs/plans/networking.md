@@ -401,7 +401,8 @@ policy. `id-admin.<kernel>` is retired.
   mattering. Refresh tokens are session-bound and die with the Keycloak
   session; offline tokens are disabled, because they would survive it.
 - **Platform rights follow the store; app rights follow the token.**
-  Membership reaches OpenFGA from Keycloak's events through the director
+  Membership reaches OpenFGA from Keycloak's events through the operator
+  (**changed 2026-10-09** from "through the director", AD-12)
   sub-second on the normal path, and within one rolling sweep in the worst
   case (AD-12; the bound is in authorization-model.md §2), and the bouncer evicts its cached decisions on the
   `ReadChanges` poll, so a revoked platform right is gone within one poll
@@ -443,7 +444,7 @@ design cannot do for it.
 | **Automation or agent calling an app API** | `authMode: bearer` on the authenticated edge: JWT verified, no redirect; ext-auth `can_use`; the token is an exchanged one carrying `act` | L2 for reach, L4 for the ceiling | none new |
 | **Agent using tools over MCP** | the MCP gateway, itself an authenticated-edge route with `bearer` | L4 per tool call | none new |
 | **Someone types the cluster's bare domain** | Multi-tenancy: `<kernel>` → the concierge, a perimeter surface of the platform tenant (`tenant-platform-dmz`, `authMode: none`), which asks for an address and forwards to that address's desktop; `www.<kernel>` and `desktop.<kernel>` redirect to it. Single-tenancy: the edge redirects `<kernel>/` and `www.<kernel>` to the user tenant's desktop, `desktop.<kernel>` (or its custom domain), once that tenant is Ready; the concierge stays published underneath for `/branding/`. If the user tenant put a website on the main address (§8.7), the bare domain shows it, `www` leads to it, and `<kernel>/sign-in` still leads to the desktop | nobody: neither the page nor the redirect holds a session or asks the server anything | which of the two it is is the cluster's tenancy mode, not a count of tenants; before the user tenant of a single-tenancy cluster is Ready the bare domain shows the form |
-| **Tenant admin in the console** | `desktop.<t>.<kernel>` → desktop BFF → director with the user's token | L1 the session, the director its own check | the BFF is a relay; it decides nothing |
+| **Tenant admin in the console** | `admin.<t>.<kernel>` → the administration console's backend → director with the user's token | L1 the session, the director its own check | the BFF is a relay; it decides nothing |
 | **Platform admin** | `platform.<kernel>` → the platform tenant's desktop BFF in `tenant-platform`, kernel-realm session; writes through the director | same | kernel and tenant realms are different sessions by design; a platform admin acting inside a tenant does so through the director, never through that tenant's zone |
 | **App-to-app inside a tenant** (Nextcloud ↔ Collabora, OpenProject ↔ Nextcloud) | never through the edge: Service-to-Service under NetworkPolicy from `integrations`, credentials from the binding | L5 and the binding | none |
 | **App to system service** (database, S3, LLM) | Service-to-Service on the contract port | L5; the granted credential | none |

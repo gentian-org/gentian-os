@@ -77,7 +77,8 @@ embedded app windows, notifications, an AI widget. In `gentian-ui`, `frontend/sr
 `frontend/src/windows` (a window manager over iframes), served by the FastAPI
 BFF in `backend/app`.
 
-**What it holds today that it should not:**
+**What it held that it should not** — the state this plan started from; all
+four are removed ([implementation-plan.md](implementation-plan.md) S5, S7A.6):
 
 | Held | Where | Why it is authority |
 | --- | --- | --- |
@@ -91,7 +92,7 @@ BFF in `backend/app`.
 - The **shell** is the static frontend bundle, served by the tenant desktop
   BFF from the same image on the tenant's own origin: no separate
   deployment, no state of its own.
-- The **tenant desktop BFF** runs in `tenant-<t>` as a `tenancy: tenant`
+- The **tenant desktop BFF** runs in `tenant-<t>` as a `class: app`
   component of that tenant. It holds: per-viewer preferences and the
   notification inbox (UI state, SQL in the tenant's own database, granted as
   a requirement), and the same-origin reverse proxy that embedded windows
@@ -122,14 +123,15 @@ BFF in `backend/app`.
 
 **What it is.** The management screens: users and groups, notifications,
 resources and plans, credentials, backups, MAC waivers, app grants,
-customization debt. Today one set of routes in the same BFF
-(`backend/app/api/routes/admin.py` and the `k8s_*` services), one
+customization debt. When this plan started it was one set of routes in the
+desktop's BFF (`backend/app/api/routes/admin.py` and the `k8s_*` services), one
 ServiceAccount, and the tenant boundary enforced by `isPlatformAdmin` checks
 and `spec.tenant` filters in Python — which
 [rbac.yaml](https://github.com/gentian-org/gentian-ui/blob/main/chart/templates/rbac.yaml)
-says of itself: *"these verbs are the console's, not any admin's."*
+said of itself: *"these verbs are the console's, not any admin's."*
 
-**What it holds today that it should not:**
+**What it held that it should not** — removed with the bundled console
+([implementation-plan.md](implementation-plan.md) S7A.6):
 
 | Held | Why it is authority |
 | --- | --- |
@@ -155,7 +157,7 @@ token to the custodian rather than holding an OpenBao token
   [iam.md §1.3](../design/iam.md)). The desktop enforces none of this — it
   renders what the director's read API returns for the account's relations,
   and `can_launch` derives from the app's **own entitlement group**, not from
-  tenant membership — the rule `shell_apps.py` enforces today, answered by the
+  tenant membership — the rule `shell_apps.py` once enforced, answered by the
   director instead of recomputed here. A tenant admin never sees
   "deploy tenant" because no relation grants it, not because a flag hides
   it; a member never sees "install app" for the same reason.
@@ -169,10 +171,10 @@ token to the custodian rather than holding an OpenBao token
   disabled, which is the one change the identity reconciler needs.
 - **Per tenant, not shared, until certified.** The BFF holds one tenant's UI
   state and relays on one tenant's origin — per-tenant state in one instance
-  is exactly what AD-4 refuses for `tenancy: shared`. (It no longer holds a
-  client secret; the edge does.) The profile certifies
-  `[tenant]` today; when the BFF is stateless-per-request or verifies the
-  tenant natively, `shared` is added to the list and the platform admin may
+  is exactly what AD-4 refuses for `class: shared-app`. (It no longer holds a
+  client secret; the edge does.) The profile lists
+  `classes: [app]` today; when the BFF is stateless-per-request or verifies the
+  tenant natively, `shared-app` is added to the list and the platform admin may
   choose it per instance (target-component-structure.md §1) — a deployment decision,
   no schema change. The static bundle needs no such wait but gains nothing
   from sharing either (AD-10).
@@ -400,8 +402,8 @@ installs) are sensitive, never by the need to hold a secret.
 "Added to the catalogue" then means step 4: a `ComponentProfile` CR appears
 in the cluster for this app at this digest, because a tenant installed it —
 not because a catalogue was synced. The `catalogue-<repo>` ApplicationSet
-that syncs every profile to every cluster today is retired with this
-(operator-split-plan.md §4.1).
+that synced every profile of a repository to the cluster is retired (AD-14;
+operator-split-plan.md §4.1).
 
 **Without a store.** The same director route, asked from the command line:
 `kubectl gentian apps install …`. No interface on the cluster lists what

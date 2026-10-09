@@ -27,10 +27,12 @@ two of the five. The other three need a separate answer.
 
 **Status.** The schema, the two shipped profiles and the app template are
 aligned with everything below, and the rules are covered by
-`TestComponentProfileRules`. What is not built is the reconciler behind the new
-package shapes, and the catalogue conversion: 36 of the 38 entries are still
-`AppProfile`, and two of the renames break every one of them, so they are a
-change to `convert-appprofile.py` rather than an edit.
+`TestComponentProfileRules`. The reconciler behind the package shapes —
+chart, addon, API — and the catalogue conversion have landed since this was
+written: `AppProfile` is deleted, the catalogue is `ComponentProfile`
+throughout, and every installed app is a `Component`
+([ad4-migration.md](ad4-migration.md)). §12 and §13 are kept as the record
+of what changed and in which order.
 
 ---
 
@@ -57,7 +59,7 @@ invariant that fails at write time whoever is writing.
 
 **No presentation fields beyond the tile.** A catalogue listing is reference
 data outside the cluster (AD-3). The exception is the tile on an exposure,
-because the portal must show what the cluster routes without asking a service
+because the desktop must show what the cluster routes without asking a service
 outside it (§8.1).
 
 ---
@@ -806,7 +808,9 @@ profiles that actually ship.
 
 ### Promises the CRD makes and does not keep
 
-- `expose[].denyPaths` — no controller reads it (S7A.13).
+- `expose[].denyPaths` — kept since: the operator hands the list to the
+  bouncer, which refuses a match (S7A.13). When this was written no
+  controller read it.
 - `package.api.runtime: proxy` — no case in the route builder, so it falls
   through to the default service-backed rule and routes to a Service an
   API-delivered entry never creates. A silent 503 rather than a refusal.
@@ -849,6 +853,10 @@ tenant's blast radius. The escape hatch never creates a cluster-scoped object.
 
 ## 13. What has to happen first
 
+**Status 2026-10-09**: items 1 to 5 are done. Of item 6, `AppProfile` and
+`AppCatalogue` are retired; the `App` claim and its Composition remain for
+what `app-default` still renders ([ad4-migration.md](ad4-migration.md)).
+
 1. `Tenant.spec.apps` resolves `AppProfile` only, at every site that reads it.
    Until a `ComponentProfile` can be installed into a tenant by naming it
    there, the catalogue cannot move.
@@ -882,7 +890,8 @@ tenant's blast radius. The escape hatch never creates a cluster-scoped object.
 5. **Sequencing against the operator split.** The split plan edits
    `kernelRequirements` and `security.egress` in `BuildDesired`, and the
    `AppProfile` webhooks are in its critical path. §4 merges those fields. Only
-   the split has a written cutover, so land it first.
+   the split has a written cutover, so land it first. *(Overtaken: `AppProfile`
+   and its webhooks are gone.)*
 
 ---
 

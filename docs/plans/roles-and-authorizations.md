@@ -18,17 +18,17 @@ manager (3, 9); authority is derived downward, never granted sideways (5).
 | Layer | Role | Keycloak group | Responsible for | Acts through |
 | --- | --- | --- | --- | --- |
 | kernel | **Break-glass** | `gentian:platform:break-glass` | recovery when the normal path is down (every action reaching the API server is recorded by API-server audit logging, WP-10 — a kubeconfig session raises no Keycloak event, so nothing else would see it): OpenBao unseal and root, git host administration, direct `kubectl` on `kernel-*`; time-boxed, every action logged out-of-band | kubeconfig and the recovery kit — the only role that bypasses the director |
-| kernel | **Platform administrator** | `gentian:platform:admin` | installing and upgrading the OS (`install.sh`, the Cluster claim, kernel versions); granting every role below; the cluster-level policies that bound them — which `authMode`s and surfaces tenants may enable, the `PlatformSecurityPolicy` allowlist, resource-plan ceilings, entitlements | director (`/v1/clusters/{c}/…`), custodian for kernel-scoped credentials |
+| kernel | **Platform administrator** | `gentian:platform:admin` | installing and upgrading the OS (`install.sh`, the Cluster claim, kernel versions); granting every role below; the cluster-level policies that bound them — which `authMode`s and surfaces tenants may enable, the `PlatformSecurityPolicy` allowlist, resource-plan ceilings | director (`/v1/clusters/{c}/…`), custodian for kernel-scoped credentials |
 | kernel | **Security officer** | `gentian:platform:security` | approving what escapes the default posture at **cluster** scope: pod-security waivers and cluster roles, which weaken something protecting the node or reach the Kubernetes API (target-component-structure.md §4.3; egress is the tenant's to approve), the cluster exposure ceiling — modes the cluster refuses outright, whether a `none` surface must provide the exposure-policy contract, default and maximum lifetime, review interval (target-component-structure.md §8.3) — and catalogue entries at `trustTier: platform`; reviewing the decision and change logs and the cluster-wide exposure view | director (approval endpoints, `/v1/clusters/{c}/exposure`), read access to the three audit logs |
 | kernel | **Auditor** | `gentian:platform:auditor` | reading the issuer, decision and change logs across all tenants, and the cluster-wide exposure view — every public endpoint, its owner, expiry, and the condensed proxy log; nothing else | read-only routes on the director; OpenFGA read; git read |
 | system | **Service admin** | `gentian:platform:service-admin` | running the system services: capacity, backups and restores, upgrades and engine versions of `system-postgresql`, `system-mariadb`, `system-cache`, `system-s3`, `system-mail`, `system-llm`; the default fulfiller per contract | director (Cluster claim `system` section), custodian for service admin credentials |
-| shared | **Shared-apps admin** | `gentian:platform:shared-apps-admin` | installing, upgrading and removing `tenancy: shared` instances; granting and revoking tenants' access to each | director (`/v1/clusters/{c}/shared-apps/…`) |
+| shared | **Shared-apps admin** | `gentian:platform:shared-apps-admin` | installing, upgrading and removing `class: shared-app` instances; granting and revoking tenants' access to each | director (`/v1/clusters/{c}/shared-apps/…`) |
 | tenant | **Tenant administrator** | `gentian:tenant:<t>:admins` | one tenant: installing apps, addons, resource plan within the ceiling, backup policies and export schedules, integration grants (`AppGrant`), approving **tenant-scope** privilege requests — egress beyond the baseline, which leaves the tenant's own namespace (target-component-structure.md §4.3) — users and groups in the tenant realm. A dedicated account: holds no `members` or `app:*` group, launches no app | director (`/v1/tenants/{t}/…`), the tenant desktop showing admin tiles only |
 | tenant-dmz | **Perimeter approver** | `gentian:tenant:<t>:perimeter` | enabling and disabling a public surface for the tenant, within cluster policy; setting its host, owner and expiry; renewing or revoking at review; the credentials the DMZ proxies hold; reading the tenant's exposure view — surfaces, condensed proxy log, public objects — and revoking an object through the `exposure-policy` contract | director (`/v1/tenants/{t}/exposure/…`) |
 | tenant, one app | **App administrator** | `gentian:tenant:<t>:app:<p>:admins` — per app, and only for a profile that declares a `privilegedRole` | administration *inside* one installed app — the app's own admin role, reconciled from `privilegedRole`; no platform rights | the app |
 | tenant | **Member** | `gentian:tenant:<t>:members`, `gentian:tenant:<t>:app:<profile>` | using the apps they are entitled to | tenant desktop, the apps |
 | any | **Agent** | a Keycloak client per agent, token exchanged with `act` | acting for one human within that human's rights and one task's TTL | MCP gateway, apps |
-| outside the cluster | **Catalogue maintainer** | git host and App Store identity | authoring `ComponentProfile`s; certifying `tenancy` modes and `trustTier` through reviewed pull requests | catalogue repository; the store |
+| outside the cluster | **Catalogue maintainer** | git host and App Store identity | authoring `ComponentProfile`s; certifying the classes a profile lists (`spec.classes`) and its `trustTier` through reviewed pull requests | catalogue repository; the store |
 
 Separations that are load-bearing, whatever one person happens to hold:
 
@@ -57,8 +57,8 @@ Separations that are load-bearing, whatever one person happens to hold:
 - **App administrator is not a platform role.** It exists so that a tenant
   can make someone an Odoo or Nextcloud admin without making them a tenant
   administrator. It confers nothing outside the app.
-- **Members are never administrators by group inheritance.** Today's model
-  reads `admin: [user] or member`; the target model has `admin` as an
+- **Members are never administrators by group inheritance.** The earlier
+  model read `admin: [user] or member`; the model has `admin` as an
   explicit assignment only.
 - **Administrators are never members — least privilege per account, not
   per person.** An account that installs apps and sets privileges does not
@@ -66,10 +66,10 @@ Separations that are load-bearing, whatever one person happens to hold:
   group and nothing else: no `members`, no `app:*`, no app tiles, no OIDC
   scope on any app client; a person who needs both has two accounts, and
   the desktop shows each account only what its relations grant
-  ([iam.md §1.3](../design/iam.md) already states this; today's model
-  contradicts it with `can_launch: … or admin from parent`). Enforced in
-  three places, none of them the UI: the target model derives `can_launch`
-  from `member` alone (§3.1); the director refuses a membership event that
+  ([iam.md §1.3](../design/iam.md) already states this; the earlier model
+  contradicted it with `can_launch: … or admin from parent`). Enforced in
+  three places, none of them the UI: the model derives `can_launch`
+  from the app's own group alone, and never for an admin (§3.1); the director refuses a membership event that
   would put an account in both `gentian:tenant:<t>:admins` and `:members`,
   the reconcile flags any such account, and both are recorded in the
   decision log; and app OIDC clients are granted to member groups
@@ -87,7 +87,7 @@ may hold, where it runs, and what confines it.
 | --- | --- | --- | --- | --- |
 | **Controllers** | yes — that is their job | Kubernetes RBAC, up to cluster-admin-equivalent; OpenBao `kernel/*` | `kernel-*` only | unreachable from any `system-*`, `shared-*` or `tenant-*` namespace |
 | **Enforcement points** | no (one exception, below) | exactly **one** credential each, and never `pods/exec` or `secrets` | `kernel-control`, `kernel-edge` | the credential is the only thing they can misuse |
-| **Workloads** | never — **zero** Kubernetes RBAC | their own OpenBao prefix; the credentials granted to them as requirements | the tier their `tenancy` puts them in | the namespace: NetworkPolicy from the profile, quota, Kyverno |
+| **Workloads** | never — **zero** Kubernetes RBAC | their own OpenBao prefix; the credentials granted to them as requirements | the tier their `class` puts them in | the namespace: NetworkPolicy from the profile, quota, Kyverno |
 
 **Controllers** — Crossplane and its providers, Argo CD, ESO, cert-manager,
 Kyverno, CNPG, Envoy Gateway, and the **operator**. They are the cluster's
@@ -99,22 +99,28 @@ one open item is scoping Crossplane's providers per role (roadmap 1.16).
 
 | Identity | The one credential | Cluster access |
 | --- | --- | --- |
-| **Director** | the git push key (signing through OpenBao transit, so the key never leaves the vault); to OpenFGA it authenticates with its projected ServiceAccount token (`authn.method: oidc`), not a stored secret | read-only, plus create/update on `appprofiles` — the single write, for materialise-on-reference. Writes OpenFGA: the store's only writer |
+| **Director** | the git push key (signing through OpenBao transit, so the key never leaves the vault); to OpenFGA it presents a preshared key from the vault — the projected ServiceAccount token (`authn.method: oidc`) this row once stated is not built, and a preshared key cannot be made read-only ([implementation-plan.md](implementation-plan.md) S7A.2) | none — its ServiceAccount is granted nothing and its token for the API server is not mounted; a profile reaches the cluster through the commit Argo CD syncs (AD-14). Asks OpenFGA and does not write it: the operator is the store's writer (AD-12). **Changed 2026-10-09** from "read-only, plus create/update on `appprofiles` — the single write, for materialise-on-reference. Writes OpenFGA: the store's only writer" |
 | **Custodian** | none of its own — it exchanges the caller's token | read on `CredentialRequirement`, write on the handover record |
 | **Gateway ext-auth bouncer** | none — verifies the caller's token, asks OpenFGA | none |
 
 The polling bridge is gone (AD-12); what replaces it is an event path.
-Keycloak's event listener pushes membership changes to the director, which
+Keycloak's event listener pushes membership changes to the operator, which
 writes them as `group#member` tuples; a reconcile with a **read-only**
 Keycloak client corrects the projection toward Keycloak — never the other
-way. Everything else in the store is structure, and **only the director
-writes any of it** — installs, grants and the role-to-group
-assignments from the Cluster claim, each tuple written in the same
-operation as the commit it reflects. The store is a projection of Keycloak
-and git: the director creates it and the model on first start and rebuilds
-the tuples from both, so nothing is lost if it is dropped. The operator
-reads. The vocabulary is
+way (that reconcile is not built). Everything else in the store is
+structure, and **the operator writes that too** — installs, grants and the
+role-to-group assignments from the Cluster claim, projected from what git
+declares once Argo CD has applied it. The store is a projection of Keycloak
+and git. The director asks the store and writes git; it writes to the store
+only what one of its own routes is itself responsible for recording there,
+and today no route records anything. The vocabulary is
 [authorization-model.md](authorization-model.md).
+
+**Changed 2026-10-09** (AD-12) from "the event listener pushes membership
+changes to the director", "only the director writes any of it … each tuple
+written in the same operation as the commit it reflects", "the director
+creates [the store] and the model on first start and rebuilds the tuples" and
+"the operator reads".
 
 **Workloads** — everything else: system services, shared instances, tenant
 apps, both UI backends, DMZ proxies, agents. None has a ServiceAccount with
@@ -126,11 +132,11 @@ function of the namespace tier and the profile:
 | `system-<function>` | `gentian-os/kernel/<function>/*` | ingress from tenant and shared namespaces on the contract port, and from its own `-dmz`; egress only to declared upstreams (LLM providers) |
 | `system-<function>-dmz` | one credential: the backend relay or proxy credential | ingress from the internet on the protocol's ports; egress to its backend in `system-<function>` and, for mail, to the internet on `:25` |
 | `shared-<app>` | `gentian-os/shared/<app>/*`; per-tenant credentials issued by the kernel, never a shared secret | system services over granted contracts; granted tenants' gateways |
-| `tenant-<t>` | `gentian-os/tenants/<t>/apps/<app>/*` — per app; today per tenant | `requires.contracts` and granted integrations, nothing else |
+| `tenant-<t>` | `gentian-os/tenants/<t>/apps/<app>/*` — per app; today per tenant | `requires.services` and granted integrations, nothing else |
 | `tenant-<t>-dmz` | one credential: the surface's app password or scoped token | ingress on the surface's paths; egress to one backend service and port |
 
 The UI backends are ordinary workloads: the tenant desktop BFF is a
-`tenancy: tenant` component holding a granted database and no credential at
+`class: app` component holding a granted database and no credential at
 all — the edge holds the zone's OIDC client and forwards the token to the
 desktop route only (networking.md §4, ui-restructure.md §1); the platform-admin console is the same component in
 `tenant-platform`, the platform tenant whose realm is the kernel realm
@@ -156,7 +162,7 @@ Three invariants, one per class, each a scripted test:
 | Question | Answered by | Fed by |
 | --- | --- | --- |
 | Who is this? | Keycloak — realm `kernel` for platform roles, realm `<t>` for tenant roles | groups in the token |
-| May they configure this? | OpenFGA, asked by the **director** | the membership projection fed by Keycloak's events; structure (installs, grants, role assignments) written by the director |
+| May they configure this? | OpenFGA, asked by the **director** | the membership projection fed by Keycloak's events; structure (installs, grants, role assignments) projected by the operator from what git declares (AD-12; **changed 2026-10-09** from "written by the director") |
 | May they write this secret? | OpenFGA, asked by the **custodian** — `can_write_credential` on `app:<t>/<p>`, `can_configure` on `cluster:<c>` for kernel and system secrets. OpenBao's policy then bounds the *path* the request may touch; it does not make the decision (principle 2). Deciding in OpenBao policy from token groups put secret-write authority outside `ListUsers` and left it un-revoked by a tuple delete | the membership projection |
 | May they reach this app? | OpenFGA, asked by the **gateway ext-auth bouncer** — `can_use`, which is the app's own entitlement group, not tenant membership | the token; a decision cached per session and route |
 | Is this anonymous request valid? | the **publishing proxy** in the DMZ — the entry's `authMode`, and a source restriction where one is declared. It strips every inbound identity header and sets only its own | the credential presented, or none |
@@ -174,8 +180,8 @@ restated here: the roles above map onto it as `cluster#admin`,
 group each; every verb a PEP exposes is a `can_*` relation computed from
 them. Two invariants the model carries for this document: an admin account
 reaches the desktop (`tenant#can_enter`) but launches no app
-(`app#can_use: member … but not admin`), and a platform administrator acts
-inside a tenant only through `admin from cluster` — never by holding a
+(`app#can_use: entitled but not admin from tenant`), and a platform administrator acts
+inside a tenant only through `admin from operated_by` — never by holding a
 tenant group.
 
 Every relation ships with a case in `authz/model/*/tests.fga.yaml`
