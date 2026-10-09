@@ -605,6 +605,9 @@ is a copy, not a link — and `gtnctl version` shows which copy answers.
 
 ```bash
 kubectl gentian tenants create acme --display-name "ACME AG"   # --no-mfa to skip the second factor
+#   --admins-approve-public-addresses   its own admins may approve what it puts on the internet
+#   --admins-add-catalogues             its own admins may add catalogues to install from
+#   both are off unless given, and changed later with: kubectl gentian tenants set acme --...=true|false
 kubectl gentian tenants activate-admin acme --recovery-email owner@acme.example
 kubectl get tenant acme -w
 ```
@@ -842,11 +845,19 @@ differs is listed here, in the order you meet it.
 
    Publishing the entry is two commands, for whoever may publish in the
    tenant ([docs/app-customization.md](docs/app-customization.md) §2.10).
-   That is a member of the tenant's group `gentian:tenant:<tenant>:perimeter`
-   and nobody else: not the tenant's admin as such, and not the platform
-   admin. A new tenant has no such group. Its admin creates it in the admin
-   console (Groups, a group named `perimeter`) and adds whoever approves;
-   until then the approval is refused with 403.
+   That is the platform admin, in every tenant the cluster operates, and any
+   member of the tenant's group `gentian:tenant:<tenant>:perimeter`. The
+   group is made with the tenant and starts empty; the platform admin adds
+   whoever approves, in the admin console. The
+   tenant's own admin does not approve, and cannot add anybody to that
+   group, unless the platform admin switched it on for the tenant:
+
+   ```bash
+   kubectl gentian tenants set <tenant> --admins-approve-public-addresses=true
+   kubectl gentian tenants show <tenant>      # what is switched on for it
+   ```
+
+   Anybody else is refused with 403.
    The first lists what the tenant's installed apps ask to have on the
    internet: each entry's address, its paths, whether anybody signs in, and
    whether it is approved. The second shows one entry again and approves it

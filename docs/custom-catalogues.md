@@ -522,7 +522,7 @@ kubectl gentian catalogues add acme https://acme.github.io/acme-catalogue --tena
 once, and the tenant's administrator then runs the same command:
 
 ```bash
-kubectl gentian tenants delegate-catalogues demo on        # the cluster's administrator
+kubectl gentian tenants delegate-catalogues demo on        # the cluster's administrator; or: tenants set demo --admins-add-catalogues=true
 kubectl gentian catalogues add acme https://acme.github.io/acme-catalogue --tenant demo
 ```
 

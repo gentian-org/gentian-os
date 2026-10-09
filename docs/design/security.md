@@ -499,6 +499,18 @@ What follows from this: OpenFGA is reachable from the programs that ask it and f
 
 ### 2.14 What a published entry is held to, and the limits at the edge
 
+**Who may approve one.** Approving and withdrawing a perimeter entry is asked as `can_expose` on the tenant, never as `admin` (AD-6; `authz/model/v1/model.fga`). It is held by:
+
+| Who | How | Withdrawn by |
+| --- | --- | --- |
+| The members of `gentian:tenant:<t>:perimeter` | The tenant's composition creates the group with the tenant, empty; the operator projects it as `perimeter_approver` | Taking the person out of the group |
+| The cluster's administrator | The model: `admin from operated_by`, in every tenant the cluster operates. No tuple of its own, and no kernel-realm person in a tenant-realm group | The tenant withdrawing `operated_by`. Never for the platform tenant |
+| The tenant's own administrators | **Only where the cluster's administrator switched it on**: `Tenant.spec.perimeter.adminsApprove`, off by default. The operator writes the admins group into `perimeter_approver` while the manifest says so and deletes it when it does not, including one written by hand | Removing the line from the manifest |
+
+The switch is set through the director by `can_configure` on the cluster alone, at tenant creation and on `PUT`/`DELETE /v1/clusters/{c}/tenants/{t}/perimeter-delegation`; there is no such route under a tenant, and an imported tenant does not carry it. It stands beside `spec.catalogue.delegated`, the switch for a tenant's administrators adding catalogues (AD-14), which is set the same way.
+
+Who is in the perimeter group is changed through the registrar only by a caller who holds `can_expose` on the tenant. `can_manage_users` opens the route; for a caller without `can_expose` the registrar then refuses every write that would change who approves — the group's membership, the group itself, a new group of that name, and any write to an account in the group (address, password link, second factor, removal) — in the one place its writes to Keycloak leave from (`internal/registrar/identity/guard.go`). So a tenant's administrator who may not approve cannot become an approver by managing people. This is a rule in the registrar's code, like the one for the platform's role groups: its Keycloak credential could do all of it, and so can anybody with the realm's own administration console.
+
 A perimeter entry is answered by a publishing proxy in the tenant's DMZ (AD-6). The proxy checks nobody, and holds every request to the following, whatever the profile says (`internal/controller/component_perimeter_config.go`):
 
 | | |
@@ -566,6 +578,7 @@ changes only when the code does.
 | Publishing proxy: declared paths only, one reading of a path, every identity header removed, size, time and rate limits per client address | Implemented | `component_perimeter_config.go`; run against the proxy itself (§2.14) |
 | Publishing proxy: passing the caller's credential to the app (`authMode: app`) | Implemented | Only for an entry approved as that kind; `Cookie` and identity headers still removed; a lower rate per client address (§2.14). The platform checks no caller: accepted (AD-1) |
 | Publishing proxy: a caller check at the edge (`basic`, `signature`, `jwt`, `bearer`) | **Target**; the values are refused | The schema refuses them on a perimeter entry, so no entry claims a check that is not made (§2.14) |
+| Publishing an entry: who may approve (`can_expose`) | Implemented | The perimeter group's members, the cluster's administrator in a tenant its cluster operates, and the tenant's administrators only by the cluster administrator's switch; the registrar holds back who is in the group (§2.14) |
 | Publishing an entry: approval by the tenant's perimeter approver, of what an installed app declares | Implemented | The director lists every perimeter entry an installed app declares and refuses an approval of anything else, or with a main-address setting that is not the entry's (`internal/director/api/exposure_requests.go`, `internal/addresses`; [routing.md §5](routing.md)) |
 | A website on the cluster's main address | Implemented; the cookie finding is open | §2.10: single-tenancy only, two people say so, the approver acknowledges the rule. A script there can still disturb sign-in on the other addresses |
 | Address names the platform keeps | Implemented | `internal/hostnames`, asked by the director and the operator (§2.11) |

@@ -706,7 +706,7 @@ scripts, no pages uploaded by users. A script on the bare domain can set
 cookies that the browser also sends to `desktop.`, `admin.`, `platform.` and
 `id.<kernelDomain>`; it cannot read a session, but it can stop people from
 signing in and can sign a person in to an account its author chose
-([security.md §2.10](security.md)). The platform cannot check what a site
+([security.md §2.14](security.md)). The platform cannot check what a site
 loads, so the approver is told and says so: the director refuses a request
 with `apex: true` (`400`, with the warning) until it also carries
 `"acknowledgeMainAddressRule": true`, on the first publication and on every
@@ -837,10 +837,13 @@ stay controller-agnostic and do not encode implementation-specific
 annotation keys.
 
 **A perimeter entry is published only once it is approved.** Declaring it is
-a request. The tenant's perimeter approver (`can_expose`) approves it: a
-member of the tenant's group `gentian:tenant:<t>:perimeter`, which nothing
-creates and the tenant's admins do not hold by default, so a tenant's admin
-makes the group and joins it before anything can be approved. The director commits it to the tenant's registry in git with its owner, its
+a request. Whoever holds `can_expose` on the tenant approves it: a member of
+the tenant's group `gentian:tenant:<t>:perimeter`, which is created with the
+tenant and starts empty; the cluster's administrator, in a tenant its cluster
+operates (`operated_by`); and the tenant's own administrators only where the
+cluster's administrator switched that on for the tenant
+(`Tenant.spec.perimeter.adminsApprove`, off by default;
+[security.md §2.10](security.md)). The director commits it to the tenant's registry in git with its owner, its
 publish date and its review date; the operator then gives it a proxy in the
 tenant's DMZ, a listener for exactly its host and a route (§2.1).
 

@@ -137,8 +137,9 @@ gentian-subscriptions (API profile). All tenant-scoped.
 ### 2.6 Tenant DMZ
 
 `tenant-<t>-dmz` holds one publishing proxy per perimeter surface the
-perimeter approver has enabled — a role the tenant's admins hold by
-default (roles-and-authorizations.md §1). The profile declares the surface and its
+perimeter approver has enabled — the members of the tenant's perimeter
+group, the cluster's administrator, and the tenant's admins only where the
+cluster's administrator switched that on (roles-and-authorizations.md §1). The profile declares the surface and its
 `authMode`; the tenant's enablement, constrained by cluster policy, creates
 the proxy; nothing is published by default. Shared and public are
 independent: a `shared` instance is published through a tenant's DMZ only

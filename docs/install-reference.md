@@ -361,6 +361,19 @@ A website at the cluster's main address (`https://<kernel-domain>/` and
 --acknowledge-main-address-rule` publishes it; the director refuses that
 approval for any tenant but the user tenant of a single-tenancy cluster.
 
+Who approves in the user tenant is as in any tenant. The platform admin
+does, and so does a member of the group `gentian:tenant:user:perimeter`,
+which the tenant is created with, empty. The user admin does not: the install
+writes the user tenant with neither of the two switches a tenant can be
+created with. After the handover the platform admin turns them on where that
+is wanted:
+
+```bash
+kubectl gentian tenants set user --admins-approve-public-addresses=true   # the user admin approves public addresses
+kubectl gentian tenants set user --admins-add-catalogues=true             # the user admin adds catalogues
+kubectl gentian tenants show user
+```
+
 The platform tenant's admin console is two labels under the cluster's domain,
 so it has a wildcard certificate of its own, `*.platform.<kernel-domain>`,
 issued by the DNS-01 issuer every tenant's wildcard is issued by.

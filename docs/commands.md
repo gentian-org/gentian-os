@@ -68,8 +68,31 @@ tab, or the CLI:
 ```bash
 kubectl gentian tenants create demo --display-name "Demo AG"   # --no-mfa: no second factor for its admin
 kubectl gentian tenants list
+kubectl gentian tenants show demo
 kubectl get tenant demo -w
 ```
+
+Two things about a tenant are the cluster's administrator's alone to decide,
+and both are off unless switched on: whether the tenant's own administrators
+may approve what it publishes to the internet, and whether they may add
+catalogues to install from. They are stated when the tenant is created or
+changed afterwards, and `tenants list` and `tenants show` say what holds:
+
+```bash
+kubectl gentian tenants create demo --admins-approve-public-addresses --admins-add-catalogues
+kubectl gentian tenants set demo --admins-approve-public-addresses=true
+kubectl gentian tenants set demo --admins-approve-public-addresses=false --admins-add-catalogues=true
+```
+
+Each is a line in the tenant's manifest in git (`spec.perimeter.adminsApprove`,
+`spec.catalogue.delegated`), committed by the director as you
+(`PUT`/`DELETE /v1/clusters/<c>/tenants/<t>/perimeter-delegation` and
+`.../catalogue-delegation`, both `can_configure` on the cluster). The first
+takes effect once Argo CD has synced the commit and the operator has written
+it to the rights store, and is withdrawn the same way; switching it off
+withdraws nothing that is published. A tenant's own administrator can set
+neither. An imported tenant starts with both off, whatever held where its
+bundle came from.
 
 The director commits `clusters/<cluster>/tenants/demo/` as you; Argo CD syncs
 it and the operator provisions the realm, namespaces, database and desktop.
@@ -217,7 +240,7 @@ kubectl gentian catalogues add acme https://acme.github.io/acme-catalogue --tena
 kubectl gentian catalogues remove acme                 # the cluster's
 kubectl gentian catalogues remove acme --tenant demo
 kubectl gentian tenants delegate-catalogues demo on    # demo's administrators may add their own
-kubectl gentian tenants delegate-catalogues demo off
+kubectl gentian tenants delegate-catalogues demo off   # the same switch as: tenants set demo --admins-add-catalogues=true|false
 kubectl gentian catalogues residue                     # what the catalogue left on the cluster
 kubectl gentian catalogues residue remove OIDCPackCatalog/xwiki-ce-oidc   # one object, name typed again
 ```
@@ -439,10 +462,19 @@ a published address in either case. `required` is an entry behind sign-in.
 KIND, and everything `approve` prints about an entry, are the director's own
 words.
 
-`approve` is for whoever may publish in the tenant: a member of the tenant's
-group `gentian:tenant:<tenant>:perimeter`. Nothing creates that group; the
-tenant's admin creates it in the admin console (a group named `perimeter`)
-and adds the approver, and without it the director answers 403. It reads the entry from
+`approve` is for whoever may publish in the tenant (`can_expose`):
+
+- a member of the tenant's group `gentian:tenant:<tenant>:perimeter`. The
+  group is made with the tenant and starts empty;
+- the cluster's administrator, in every tenant the cluster operates — not in
+  a tenant that withdrew the operator;
+- the tenant's own administrators, only where the cluster's administrator
+  switched that on (`tenants set <tenant> --admins-approve-public-addresses=true`).
+
+Anybody else is answered 403. Who is in the perimeter group is changed in the
+admin console, by somebody who may approve: the registrar refuses a tenant's
+administrator who may not approve any change to that group or to an account
+in it. It reads the entry from
 the director and prints its kind, the address, the paths, who can reach it
 and the limit per client address, then
 asks you to type `<app instance>/<entry>` (or pass `--yes`). Without

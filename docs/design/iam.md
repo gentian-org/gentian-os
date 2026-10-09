@@ -127,6 +127,7 @@ day-to-day app user:
 |---|---|---|
 | **Member** | `members`, optional `app:*` | User app tiles only |
 | **Tenant admin** | `admins` | Admin Console (Users, Groups, Notifications) — no app tiles |
+| **Perimeter approver** | `perimeter` | Approves what the tenant publishes to the internet (`can_expose`), and nothing else. The group is created with the tenant and starts empty. The platform admin approves too, in a tenant the cluster operates; the tenant admin only where the platform admin switched that on, and only somebody who may approve changes who is in the group ([security.md §2.14](security.md)) |
 | **Platform admin** | `gentian:platform:superadmin` | Admin Console (cross-tenant during bootstrap) |
 
 Provisioning is via the [Gentian Admin Console](admin-console.md).

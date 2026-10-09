@@ -26,7 +26,7 @@ code does what the decision says; it does not mean a cluster has shown it.
 | AD-3 | The store's data is outside the cluster; its interface is an app on it | **Holds on the cluster's side.** The operator places the App Store app on every tenant but the platform's while the cluster reports its licences and names a store; an install is fetched at its digest, checked, committed, and checked again before rollout. A store address that is the cluster's own App Store host is not taken as a store |
 | AD-4 | One catalogue kind, `ComponentProfile` | **Holds.** [app-customization.md](../app-customization.md) still says `AppProfile` in many places |
 | AD-5 | Privileges are requests with one approval path | **Holds**, except that egress a profile declares reaches the network policy without an approval |
-| AD-6 | `authMode` mandatory; a perimeter surface is published per tenant by an approver | **Deviation.** Publishing works as decided: a proxy in `tenant-<t>-dmz` only for an entry an approver published under `can_expose`, with a review date. The proxy checks no caller, and no entry says it does any more: `authMode: app` passes the caller's credential to the app, which checks it (the accepted limit in AD-1), and `basic`, `signature`, `jwt` and `bearer` are refused on a perimeter entry by the schema. One thing does not work as decided: `can_expose` is held by the members of the group `gentian:tenant:<t>:perimeter` alone, a group nothing creates, so the tenant's admins do not hold it by default as the decision says |
+| AD-6 | `authMode` mandatory; a perimeter surface is published per tenant by an approver | **Holds, not yet shown on a cluster.** Publishing works as decided: a proxy in `tenant-<t>-dmz` only for an entry an approver published under `can_expose`, with a review date. The proxy checks no caller, and no entry says it does any more: `authMode: app` passes the caller's credential to the app, which checks it (the accepted limit in AD-1), and `basic`, `signature`, `jwt` and `bearer` are refused on a perimeter entry by the schema. Who approves is as the decision says since it was changed on 2026-10-09: the group `gentian:tenant:<t>:perimeter` is created with the tenant, the cluster's administrator holds `can_expose` in every tenant its cluster operates, and a tenant's admins hold it only where the cluster's administrator switched it on (part 2) |
 | AD-7 | Namespaces named by tier | **Holds** |
 | AD-8 | Kernel trust domains are separate namespaces | **Holds** |
 | AD-9 | System services have no public route | **Holds by default; one claim setting departs from it.** Mail now faces the internet only through a proxy in `system-mail-dmz` that holds nothing; Postfix and Dovecot have no load balancer of their own. The model gateway's console has a claim setting, `llm.console.enabled`, off by default: off, `llm.<kernel domain>` has no route and the edge is not admitted to the gateway, so the cluster is in line with the decision on this point. Switching it on routes the console behind the kernel realm's session and `can_configure`, and is a deliberate departure the cluster's owner takes for that cluster ([llms.md](../design/llms.md)). TURN does not exist |
@@ -63,6 +63,12 @@ been seen working on a cluster. Until it has, it is not done.
   withdrawal on the command line and in the administration console.
 - A website on the main address of a single-tenancy cluster, with the
   approver's acknowledgement.
+- Who approves a public address: the perimeter group created with a tenant,
+  the cluster's administrator approving in a tenant its cluster operates, the
+  switch by which a tenant's administrators approve
+  (`spec.perimeter.adminsApprove`) reaching the rights store and leaving it
+  again, and the registrar refusing a change of who approves to somebody who
+  may not approve.
 - The publishing proxy's limits and filters, and the limit on sign-in posts at
   the Gateway.
 - A public entry that passes its callers' credential to the app (`authMode:
@@ -138,7 +144,7 @@ Each is true of the code today.
 | 1 | **An app's own client and its token: closed in two parts, open in a third.** A browser page that sends the app's own token keeps it on an entry that declares `clientAuthorization: app`, once the tenant's perimeter approver approved it; without the declaration or the approval the Gateway still removes the header. A client with no browser session (sync client, mobile app, script, webhook) reaches the app through a public entry of `authMode: app` with a credential the app issued. **Still open**: a client that needs the app's cookies on a public address does not work, which is what Synapse's sign-in needs, so Element is not served yet; no bearer token is verified at the edge; and the catalogue's apps have to declare the entries before any of it helps them | [routing.md §4.1, §7](../design/routing.md) |
 | 2 | **Signing out does not reach most apps.** The session ends at the Gateway when its access token runs out. The realm tells only an app whose own OIDC client declares a back-channel logout address; any other session an app keeps lasts until it ends by itself, a sidecar's at most an hour | AD-13, [security.md §2.12](../design/security.md) |
 | 3 | **One key opens the rights store.** Six programs present the same OpenFGA key, and it can write | [operator-split-plan.md §6](operator-split-plan.md) |
-| 4 | **Nobody may publish by default.** `can_expose` needs the group `gentian:tenant:<t>:perimeter`, which no install and no tenant creation makes; a tenant's admin has to create it and join it before anything can be approved | part 1, AD-6 |
+| 4 | **Closed in the code on 2026-10-09, not yet shown on a cluster: nobody could publish by default.** The group `gentian:tenant:<t>:perimeter` is now created with every tenant, and the cluster's administrator approves in every tenant its cluster operates. A cluster installed before that gets both when the operator and the tenant's composition are updated; until then approving still needs a hand-made group | part 1 and 2, AD-6 |
 | 5 | **The publishing proxy checks no caller.** No entry claims otherwise any more: the modes that named a check are refused by the schema, and `authMode: app` hands the credential to the app. What stays open is the consequence the owner accepted for now: the platform does not know the caller on such a path, and a removed person's app password or token works until the app revokes it | [security.md §2.14](../design/security.md), AD-1, [roadmap.md](../roadmap.md) 1.34 |
 | 6 | **Identity headers are not signed.** An app and a sign-in sidecar believe them; network rules are what keeps another pod from sending its own | [operator-split-plan.md §6](operator-split-plan.md) |
 | 7 | **No kernel namespace restricts outgoing connections** | [security.md §2.13](../design/security.md) |
@@ -161,11 +167,14 @@ Each is true of the code today.
    profile the platform placed. Either the installer pins it to the digest the
    catalogue's index lists and refuses other bytes, or it places nothing and
    the profile is installed through the director like any other.
-2. **Who may publish by default** (AD-6). The decision gives the right to the
-   tenant's admins unless a tenant separates the role; the code gives it to a
-   group that does not exist. Either the tenant's admins group is written as
-   perimeter approver when a tenant is made, or the decision is changed to say
-   that the role is always staffed separately, and the group is created empty.
+2. **Who may publish by default** (AD-6): decided on 2026-10-09 and built.
+   The perimeter group is created with the tenant, the cluster's
+   administrator approves, and a tenant's admins approve only where the
+   cluster's administrator switched it on. One choice in it is the owner's to
+   confirm or flip: the user tenant of a single-tenancy cluster is written
+   with the switch off, so the platform admin approves there and the user
+   admin does not until `tenants set user
+   --admins-approve-public-addresses=true`.
 3. **Sessions and offline tokens when a person's groups change** (AD-12).
    Who writes the rights store is decided: the operator, and AD-12 says so.
    Two sentences of the decision have no code: a membership change revokes

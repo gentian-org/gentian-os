@@ -245,10 +245,14 @@ Specified in [authorization-model.md](authorization-model.md) and
       tile in `tenant-platform` unreachable for the platform admins it is
       built for, and the security officer and auditor cannot enter the console
       at all.
-- [ ] Default perimeter approver: the director writes
+- [x] Who approves a public address (AD-6 as changed 2026-10-09): the
+      tenant's `perimeter` group is created with the tenant; the cluster's
+      administrator holds `can_expose` in every tenant its cluster operates;
+      the operator writes
       `tenant:<t>#perimeter_approver@group:gentian/tenant/<t>/admins#member`
-      at tenant deploy. Publishing stays its own relation and its own audit
-      line; a tenant that staffs the role separately removes that tuple.
+      only while the tenant's manifest says `spec.perimeter.adminsApprove`,
+      which the cluster's administrator alone sets. Publishing stays its own
+      relation and its own audit line.
 - [x] `make verify-authz-vocabulary` (also run by `make test-policy-authz`):
       every `can_*` in `docs/plans/*.md` and the security principles exists in
       the model, every `can_*` in the model is in authorization-model.md, and
