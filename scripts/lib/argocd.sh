@@ -23,20 +23,119 @@ gentian_argocd_namespace() {
 }
 
 # -----------------------------------------------------------------------------
+# The bootstrap repository credentials
+#
+# Every repository credential reaches Argo CD from OpenBao, through the
+# repository's Repository claim: the claim composes an ExternalSecret, and
+# External Secrets writes the Secret repo-<name> that Argo CD reads. Two
+# repositories are read before that can happen:
+#
+#   gentian-os    B-01's Applications read it before OpenBao is initialised.
+#
+#   deployments   Its Repository claim is a file IN the deployments
+#                 repository (clusters/<id>/kernel/claims), delivered by the
+#                 gentian-claims Application -- which reads that repository.
+#                 Where it is private, the claim that would supply the
+#                 credential can only arrive once the credential is there: C-02
+#                 waited fifteen minutes for gentian-claims and failed. The
+#                 catalogue and the tenants ApplicationSets read the same
+#                 repository and stood beside it.
+#
+# So for those two the installer hands Argo CD the credential it collected,
+# as a repo-creds Secret (A-06), and takes it away again once the claim's own
+# Secret holds a login (C-05). The two never collide: they have different
+# names and different types, and Argo CD uses a credential template only for
+# a repository whose own Secret carries no login, so from the moment
+# repo-<name> exists it is the one that is used.
+# -----------------------------------------------------------------------------
+
+# argocd_bridged_repositories -- the requirements A-06 bridges and C-05 hands
+# over, in the order they are first read.
+argocd_bridged_repositories() {
+    echo "gentian-os-repository deployments-repository"
+}
+
+# argocd_bootstrap_repo_credential_name <requirement> -- the bridge's Secret.
+argocd_bootstrap_repo_credential_name() {
+    local name
+    name="$(_repo_credential "$1" vault)" || return 1
+    echo "argocd-repo-creds-bootstrap-${name}"
+}
+
+# argocd_repo_needs_credential <requirement> -- whether Argo CD needs a login
+# to read that repository at all: it authenticates, and it has an address.
+# False for the public default, which is why a plain install registers
+# nothing.
+argocd_repo_needs_credential() {
+    local repo_var
+    repo_var="$(_repo_credential "$1" repo)" || return 1
+    [[ "$(_repo_credential_mode "$1")" != "none" && -n "${!repo_var:-}" ]]
+}
+
+# argocd_claim_repo_credential_present <requirement> -- whether the Secret the
+# Repository claim composes for Argo CD exists AND carries a login.
+#
+# Asked of the Secret rather than of the claim's status. The claim reports
+# credentialSatisfied when the vault path has a value, which is before
+# External Secrets has written the Secret Argo CD reads; and a claim that
+# declares no credential composes a Secret with an address and no login.
+# Neither is a credential Argo CD can use yet. The value is tested for being
+# there and is never printed.
+argocd_claim_repo_credential_present() {
+    local name
+    name="$(_repo_credential "$1" vault)" || return 1
+    [[ -n "$(kubectl get secret "repo-${name}" -n "$(gentian_argocd_namespace)" \
+        -o jsonpath='{.data.password}{.data.bearerToken}' 2>/dev/null)" ]]
+}
+
+# argocd_repo_credential_ok <requirement> -- whether Argo CD has what this run
+# could give it to read that repository: nothing needed, the claim's own
+# Secret, or the bootstrap bridge.
+#
+# Two cases are decided by whether this run holds a token:
+#
+#   No credential on the cluster and a token in hand is not ok, and the next
+#   apply() registers the bridge. With no token in hand there is nothing an
+#   apply() could register, so it is not reported: a check that stays
+#   unsatisfied whatever its step does names the wrong step, and --status and
+#   --dry-run collect no credentials at all.
+#
+#   A bridge that holds a different address or token from the ones this run
+#   was given is not ok: the token was rotated, or the repository moved, while
+#   the bridge was still the credential in use, and the next apply() writes
+#   the current ones over it. A run that holds no token has nothing to
+#   compare and takes the bridge as it finds it.
+#
+# The values are compared and never printed.
+argocd_repo_credential_ok() {
+    local req="$1" bridge ns repo_var token_var have
+    argocd_repo_needs_credential "${req}" || return 0
+    argocd_claim_repo_credential_present "${req}" && return 0
+    token_var="$(_repo_credential "${req}" token)"
+    [[ -n "${!token_var:-}" ]] || return 0
+    bridge="$(argocd_bootstrap_repo_credential_name "${req}")"
+    ns="$(gentian_argocd_namespace)"
+    kubectl get secret "${bridge}" -n "${ns}" >/dev/null 2>&1 || return 1
+    repo_var="$(_repo_credential "${req}" repo)"
+    have="$(kubectl get secret "${bridge}" -n "${ns}" -o jsonpath='{.data.url}' 2>/dev/null | base64 -d 2>/dev/null || true)"
+    [[ "${have}" == "${!repo_var}" ]] || return 1
+    have="$(kubectl get secret "${bridge}" -n "${ns}" \
+        -o jsonpath='{.data.password}{.data.bearerToken}' 2>/dev/null | base64 -d 2>/dev/null || true)"
+    [[ "${have}" == "${!token_var}" ]]
+}
+
 # argocd_bootstrap_repo_credential <requirement>
 #
 # Hands Argo CD the credential the installer collected for one repository, as
-# a repo-creds Secret, before OpenBao can serve it. Every other repository
-# credential reaches Argo CD from OpenBao through the Repository claim; this is
-# for a repository a bootstrap Application has to read earlier than that, and
-# it is removed again once the claim has taken over.
+# a repo-creds Secret, before OpenBao can serve it.
 #
 # A repo-creds Secret matches by URL prefix, so the repository's own URL
 # matches that repository and nothing else.
 #
 # Does nothing for a repository that does not authenticate, and warns without
-# failing when it does but no token was collected.
-# -----------------------------------------------------------------------------
+# failing when it does but no token was collected. The token goes from the
+# environment into the Secret through jq and a pipe: it is not echoed, and it
+# is in no command line.
 argocd_bootstrap_repo_credential() {
     local req="$1" name mode repo_var user_var token_var
     name="$(_repo_credential "${req}" vault)" || {
@@ -60,16 +159,24 @@ argocd_bootstrap_repo_credential() {
     # Built by jq and applied as JSON, so a token is quoted by something that
     # knows how, whatever characters it holds. The two modes differ only in
     # the keys Argo CD reads the login from.
-    jq -n \
+    #
+    # The token is exported to jq for the one call and read there from the
+    # environment (env.T), not passed with --arg: an argument is in the
+    # process list for as long as jq runs.
+    #
+    # The username falls back to x-access-token, the same fallback the vault
+    # is seeded with (seed_repository_credentials), so the bridge and the
+    # claim's Secret that replaces it hold the same login.
+    GENTIAN_BRIDGE_TOKEN="${!token_var}" jq -n \
         --arg name "argocd-repo-creds-bootstrap-${name}" --arg ns "${ns}" \
         --arg url "${!repo_var}" --arg mode "${mode}" \
-        --arg user "${!user_var:-}" --arg token "${!token_var}" '
+        --arg user "${!user_var:-x-access-token}" '
         { kind: "Secret", apiVersion: "v1",
           metadata: { namespace: $ns, name: $name,
                       labels: { "argocd.argoproj.io/secret-type": "repo-creds" } },
           stringData: ( { url: $url, type: "git" }
-                        + if $mode == "bearer" then { bearerToken: $token }
-                          else { username: $user, password: $token } end ) }' |
+                        + if $mode == "bearer" then { bearerToken: env.GENTIAN_BRIDGE_TOKEN }
+                          else { username: $user, password: env.GENTIAN_BRIDGE_TOKEN } end ) }' |
         kubectl apply -f -
 }
 

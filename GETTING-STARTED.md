@@ -702,6 +702,17 @@ differs is listed here, in the order you meet it.
    `profiles/_base.yaml` and `profiles/prod.yaml` are in it, and have a token
    that can **write** to it: the installer pushes with it, and so does the
    director for every tenant and app afterwards.
+
+   The installer gives that token to Argo CD as well, before anything in
+   the cluster can: the claim that hands Argo CD the repository's credential
+   from the vault is itself a file in the repository. You do nothing for it.
+   `A-06-argocd` registers the login the install collected (a Secret named
+   `argocd-repo-creds-bootstrap-deployments`, beside Argo CD), and
+   `C-05-repository-handoff` removes it once Argo CD holds the same login
+   from the vault. If `C-02-appsets` waits on `gentian-claims-prod` and Argo
+   CD reports `authentication required` for the repository, that Secret is
+   what is missing: check `GENTIAN_DEPLOYMENTS_AUTH` is not `none`, and run
+   `./install.sh --only A-06` with the token.
 2. **Install and hand over** (steps 4 to 6), then create the tenant your
    services run in (step 7): `kubectl gentian tenants create <tenant>`. Do
    not commit a tenant's manifest yourself beforehand: the cluster refuses

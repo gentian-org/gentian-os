@@ -2,8 +2,8 @@
 # step: A-06-argocd
 # phase: control-plane
 # requires: A-01-namespaces
-# provides: Argo CD (server, repo-server, application controller, applicationset controller), argocd-image-updater, and the bootstrap repo-creds bridge for a private gentian-os, in the gitops namespace
-# mutates: the gitops namespace, Argo CD CRDs, cluster-scoped RBAC, the bootstrap repo-creds Secret
+# provides: Argo CD (server, repo-server, application controller, applicationset controller), argocd-image-updater, and, for gentian-os and deployments where they authenticate, the login Argo CD reads them with until the vault supplies it, in the gitops namespace
+# mutates: the gitops namespace, Argo CD CRDs, cluster-scoped RBAC, the bootstrap repo-creds Secrets (argocd-repo-creds-bootstrap-gentian-os, argocd-repo-creds-bootstrap-deployments)
 # pins: argocd
 
 # Argo CD's upstream manifests are written for a namespace called argocd:
@@ -32,12 +32,37 @@ check() {
         # console reachable at all; a step that reports satisfied without it
         # leaves a redirect loop nothing else in the sequence looks at.
         [[ "$(kubectl get configmap argocd-cmd-params-cm -n "${ns}" -o jsonpath='{.data.server\.insecure}' 2>/dev/null)" == "true" ]] &&
-        # And the diff computed the way the sync applies: see apply().
+        # And the diff computed the way the sync applies: see _a06_install.
         [[ "$(kubectl get configmap argocd-cmd-params-cm -n "${ns}" -o jsonpath='{.data.controller\.diff\.server\.side}' 2>/dev/null)" == "true" ]] &&
-        [[ "$(kubectl get clusterrolebinding argocd-application-controller -o jsonpath='{.subjects[0].namespace}' 2>/dev/null)" == "${ns}" ]]
+        [[ "$(kubectl get clusterrolebinding argocd-application-controller -o jsonpath='{.subjects[0].namespace}' 2>/dev/null)" == "${ns}" ]] &&
+        _a06_repo_credentials_ok
 }
 
-apply() {
+# check()'s last question: a credential for every repository Argo CD reads
+# before that repository's claim can hand it one from the vault.
+#
+# This used to be left out of check(), because the bridge is temporary: C-05
+# deletes it once the claim's own Secret holds the login, and a check that
+# demanded the bridge would have been unsatisfiable from then on. It asks the
+# question the step is for instead -- can Argo CD read the repository -- which
+# the claim's Secret answers as well as the bridge does. Left out, a cluster
+# whose Argo CD was installed without the credential -- by a release that
+# registered none for the deployments repository -- reported this step
+# satisfied and never got one.
+#
+# _a06_argocd_ok asks everything in check() but this, for apply().
+_a06_repo_credentials_ok() {
+    [[ "${_A06_ARGOCD_ONLY:-0}" != "1" ]] || return 0
+    local req
+    for req in $(argocd_bridged_repositories); do
+        argocd_repo_credential_ok "${req}" || return 1
+    done
+    return 0
+}
+
+_a06_argocd_ok() { _A06_ARGOCD_ONLY=1 check; }
+
+_a06_install() {
     banner "Argo CD"
     local ns version
     ns="$(_argocd_ns)"
@@ -104,18 +129,39 @@ apply() {
         --set "config.argocd\.namespace=${ns}" \
         --set "config.watch\.namespaces=${ns}" \
         --wait --timeout 5m
+}
 
-    # The bootstrap bridge for a private or mirrored gentian-os. B-01's
-    # Applications are the first thing to read that repository and they read
-    # it before OpenBao is reachable, so the only credential that can serve
-    # them is the one the installer collected. A no-op on the public default
-    # (GENTIAN_OS_AUTH=none), which is why v5 got this far without it.
-    #
-    # Deliberately not in check(): the bridge is conditional, and
-    # C-05-os-repository-handoff deletes it as soon as the Repository claim
-    # proves it can read the same credential from OpenBao. Requiring it here
-    # would leave this step unsatisfiable from that moment on.
-    argocd_bootstrap_repo_credential gentian-os-repository
+# The bootstrap bridges: see "The bootstrap repository credentials" in
+# scripts/lib/argocd.sh for why these two repositories have one.
+#
+# A no-op for a repository that does not authenticate (GENTIAN_OS_AUTH=none is
+# the default; GENTIAN_DEPLOYMENTS_AUTH=none says the same of a public
+# deployments repository), and for one whose Repository claim already supplies
+# the login: writing a bridge beside it would only give C-05 something to
+# remove again.
+_a06_register_repo_credentials() {
+    local req name
+    for req in $(argocd_bridged_repositories); do
+        argocd_repo_needs_credential "${req}" || continue
+        name="$(_repo_credential "${req}" vault)"
+        if argocd_claim_repo_credential_present "${req}"; then
+            info "Argo CD reads the ${name} repository's credential from the vault (repo-${name}); no bootstrap credential is needed."
+            continue
+        fi
+        argocd_bootstrap_repo_credential "${req}"
+    done
+}
+
+apply() {
+    # Argo CD is not installed again for a credential. Its apply restarts the
+    # server, the repo-server and the application controller, which is not
+    # something to do to a running cluster because a Secret is missing.
+    if [[ "${GENTIAN_FORCE:-0}" != "1" ]] && _a06_argocd_ok; then
+        info "Argo CD is installed and configured; registering its bootstrap repository credentials only."
+    else
+        _a06_install
+    fi
+    _a06_register_repo_credentials
 }
 
 # The Applications, removed while their controller still runs.
@@ -150,8 +196,11 @@ _a06_release_applications() {
 destroy() {
     local ns; ns="$(_argocd_ns)"
     _a06_release_applications "${ns}"
-    kubectl delete secret argocd-repo-creds-bootstrap-gentian-os -n "${ns}" \
-        --ignore-not-found >/dev/null 2>&1 || true
+    local req
+    for req in $(argocd_bridged_repositories); do
+        kubectl delete secret "$(argocd_bootstrap_repo_credential_name "${req}")" -n "${ns}" \
+            --ignore-not-found >/dev/null 2>&1 || true
+    done
     helm uninstall argocd-image-updater -n "${ns}" >/dev/null 2>&1 || true
     curl -fsSL "https://raw.githubusercontent.com/argoproj/argo-cd/$(gentian_pin argocd manifest)/manifests/install.yaml" 2>/dev/null \
         | sed "s/^\(\s*\)namespace: argocd$/\1namespace: ${ns}/" \

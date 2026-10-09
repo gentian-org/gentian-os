@@ -148,7 +148,7 @@ The template carries one line per setting; the reasoning is here.
 |---|---|
 | `GENTIAN_DEPLOYMENTS_CLUSTER_ID` | The directory name under `clusters/` — **not** the Kubernetes cluster name and not a kubeconfig context. With `_STAGE` it also names the Cluster claim on first bootstrap, so it must be right before the first run: scaffolding pushes the tree it names to a shared repository. |
 | `GENTIAN_DEPLOYMENTS_STAGE` | `dev`, `staging` or `prod`. A cluster keeps one stage for life, which is why there is no `<stage>` segment inside its own tree. |
-| `GENTIAN_*_AUTH` | `none`, `basic` (username + token) or `bearer` — how the installer authenticates to that repository. The credential itself is prompted for. Deployments defaults to `basic` because a private repository cannot describe its own access; set `none` for a public one. |
+| `GENTIAN_*_AUTH` | `none`, `basic` (username + token) or `bearer` — how the installer authenticates to that repository. The credential itself is prompted for. Deployments defaults to `basic` because a private repository cannot describe its own access; set `none` for a public one. Argo CD reads the deployments repository and `gentian-os` with the same setting — see *How Argo CD gets a repository's credential* below. |
 | `GENTIAN_*_REPO` / `_BRANCH` | Point them at a mirror for a forked or air-gapped install; the child ApplicationSets follow. |
 | `GENTIAN_OS_BRANCH` | The ref every in-cluster Application tracks — [deployment.md §4](deployment.md). |
 | `GENTIAN_CATALOGUE_URL` | The address of the default catalogue, `gentian`, written to `spec.catalogue.sources` when step 0 scaffolds a new Cluster claim. Unset, the address follows from what is installed: a cluster installed from a release tag or from `main` (`GENTIAN_OS_BRANCH`, or the checkout's branch) gets the released catalogue, `https://gentian-org.github.io/gentian-apps`; one installed from any other branch gets the development catalogue, `https://gentian-org.github.io/gentian-apps/develop`. Set, it is used whatever the ref. Step 0 prints the choice and writes the reason above the address in the claim. A public https address; the director fetches from nothing else ([custom-catalogues.md](custom-catalogues.md)). An existing claim is never rewritten: on an existing cluster the address is changed with `kubectl gentian catalogues` ([custom-catalogues.md §3](custom-catalogues.md)). |
@@ -162,6 +162,51 @@ The template carries one line per setting; the reasoning is here.
 | `GENTIAN_LICENCE_REPORT_URL` | Where the licence report goes, instead of the default address in `kernel/bootstrap/chart/values.yaml`. `https` only. |
 | `OPENBAO_CLI_VERSION` | Which `bao` to fetch when none is on `PATH`. Defaults to the pin in `versions.yaml`, which is where component versions are declared. |
 | `INFRA_CHART_REPO` / `_PRIVATE` | Where the infrastructure charts come from, and whether that registry needs a credential. Install-time rather than cluster state: it decides what the installer does before a cluster exists. |
+
+### How Argo CD gets a repository's credential
+
+Every repository credential reaches Argo CD from OpenBao: the repository's
+`Repository` claim composes an ExternalSecret, and External Secrets writes the
+Secret `repo-<name>` beside Argo CD. Two repositories are read before that can
+happen, and for those the installer bridges the gap with the credential it
+collected at the prompt.
+
+| Repository | Why it is read too early |
+|---|---|
+| `gentian-os` | The bootstrap Applications (`B-01`) read it before OpenBao is initialised. |
+| deployments | Its own `Repository` claim is `clusters/<id>/kernel/claims/deployments-repository.yaml` — a file in the repository, delivered by the `gentian-claims-<stage>` Application, which reads that repository. So do the catalogue and the tenants ApplicationSets. |
+
+Where `GENTIAN_<repository>_AUTH` is `basic` or `bearer`:
+
+1. `A-06-argocd` applies a Secret `argocd-repo-creds-bootstrap-<name>` in
+   the gitops namespace, labelled `argocd.argoproj.io/secret-type:
+   repo-creds`, for the repository's address. With `basic` it carries the
+   user name (`x-access-token` when none was given, which is also what the
+   vault is seeded with) and the token; with `bearer`, the token alone.
+2. `B-08-seed-secrets` writes the same login to
+   `gentian-os/kernel/repositories/<name>` in OpenBao.
+3. `C-02-appsets` delivers the claims; the `Repository` claim composes
+   `repo-<name>`. From the moment that Secret carries a login it is the one
+   Argo CD uses: a `repo-creds` Secret is a template Argo CD falls back to
+   only for a repository whose own Secret has no login. The two have
+   different names and types and never overwrite each other.
+4. `C-05-repository-handoff` waits for `repo-<name>` to carry a login and
+   then deletes the bridge. If it cannot confirm that within two minutes it
+   leaves the bridge in place and says so; `./install.sh --only C-05` tries
+   again.
+
+Where the setting is `none`, nothing is registered at any of these steps.
+
+After the hand-off there is one copy of the credential in the cluster, and it
+follows the vault: a rotated token is written to OpenBao through the custodian
+(or by `./install.sh --only B-08` with the new token), and External Secrets
+refreshes `repo-<name>` within the hour. A token rotated while the bridge
+still exists — an install that has not reached `C-05` — is noticed by `A-06`,
+whose check compares the bridge with the token the run was given and writes
+the new one over it; it does so without reinstalling Argo CD.
+
+The token is never printed, and is never an argument of a command: it goes
+from the installer's environment into the Secret through a pipe.
 
 ### Where app profiles come from, and upgrading a cluster that copied them
 
