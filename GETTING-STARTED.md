@@ -295,7 +295,7 @@ one. Every question shows its default; Enter takes it.
 | `certificates.issuerMode` | `acme-dns01` | The domain is not publicly resolvable (`self-signed`), or port 80 is reachable but you have no DNS API token (`acme-http01`) |
 | `certificates.acmeEnv` | `production` | Never needed for rebuilds — a purge keeps the issued wildcard in `~/.gentian/certs` and the next install reuses it (only `--purge --cluster-infra` deletes it). `staging` breaks the kernel sign-in, which does not trust its chain |
 | `certificates.dnsProvider` | `cloudflare` | The zone is hosted elsewhere |
-| `mail.serviceMode` | `external` | You want in-cluster Postfix/Dovecot (`kernel`, needs `static-ip`) |
+| `mail.serviceMode` | `external` | You want in-cluster Postfix/Dovecot (`system`, needs `static-ip`). The cluster then needs one more load-balancer address, for mail, with ports 25, 587 and 993 open to it from the internet and port 25 open outbound — see [mail.md §9b](docs/design/mail.md#9b-the-mail-edge) |
 | `mail.host` | unset | `external` mode: the relay's hostname. Its credentials are a credential, supplied in step 5 — not asked here |
 | `platform` | detected from the nodes | Detection is wrong for your provider |
 | `storageClass` | the cluster default | The cluster has more than one StorageClass |
@@ -900,9 +900,11 @@ what is already done, so convergence and update are the same operation.
 - **Add more tenants** — repeat step 7. Day-to-day operations are in
   [docs/commands.md](docs/commands.md).
 - **Configure mail** — [docs/design/mail.md](docs/design/mail.md). Mail between
-  users of this cluster works once the kernel mail stack is deployed; mail to and
-  from the internet additionally needs port 25 exposed and the MX, SPF, DKIM,
-  DMARC and PTR records described in
+  users of this cluster works once the cluster's own mail stack is deployed
+  (`mail.serviceMode: system`). Mail to and from the internet arrives on the
+  load balancer of the mail edge in `system-mail-dmz` — ports 25, 587 and 993,
+  [§9b](docs/design/mail.md#9b-the-mail-edge) — and additionally needs the MX,
+  SPF, DKIM, DMARC and PTR records described in
   [§10 DNS for real mail](docs/design/mail.md#10-dns-for-real-mail) — including
   the Cloudflare rule that MX records must stay DNS-only, never proxied.
 - **Change this cluster's configuration** — edit `claims/cluster.yaml` in your

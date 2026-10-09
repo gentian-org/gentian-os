@@ -111,7 +111,7 @@ A tenant's namespace denies egress by default. Policy `kernel-access-<app>` (`in
 | `cache`, engine `memcached` | Nothing in the system tier. The tenant's own Memcached, TCP 11211, in the tenant's namespace (policies `tenant-cache-egress` and `-ingress`, which name only the apps that declared Memcached) |
 | `storage.s3` | `system-s3`, TCP 9000 |
 | `storage.files` alone | Nothing: another app serves the files |
-| `mail` | `system-mail` and `system-mail-dmz`, every port. Not narrowed: where an app's mail goes depends on the cluster's mail mode |
+| `mail` | `system-mail` and `system-mail-dmz`, every port. Not narrowed on the app's side: where an app's mail goes depends on the cluster's mail mode. The servers' side is: the proxy in the DMZ admits its three listeners, and the mail servers admit a tenant's pod on 587, 143 and 993 only (§2.8) |
 | `identity` | The edge and the identity provider's namespace, every port. Not narrowed |
 | `llm` | `system-llm`, TCP 4000: the model gateway, and nothing else in its namespace |
 
@@ -166,26 +166,54 @@ Closed: the metrics port (9187). Not admitted: Argo CD, Crossplane and its provi
 - **CloudNativePG's operator is not selected by this policy.** It runs in `kernel-data` beside the cluster; the namespace's own rule (§2.13) leaves its webhook port open to any source, because the API server calls it from no pod, and closes its metrics port.
 - **Switched off, this one policy is kept and admits everything** rather than being removed: the Application that syncs the chart does not prune, so a policy that merely stopped being rendered would stay in force.
 
-**Dovecot and Postfix, in `system-mail`** (`templates/networkpolicy.yaml` in `kernel/services/dovecot/manifests` and `kernel/services/postfix/manifests`, policies `dovecot-ingress` and `postfix-ingress`). They exist only on a cluster whose `mail.serviceMode` is `system`; a cluster that relays its mail runs neither and has neither policy. Both run in `system-mail`: Postfix has not been split into `system-mail-dmz`, which holds no pod, and the DKIM signer runs inside Postfix's container.
+**Mail: Dovecot and Postfix in `system-mail`, and the proxy in front of them in `system-mail-dmz`** (`templates/networkpolicy.yaml` in `kernel/services/dovecot/manifests`, `kernel/services/postfix/manifests` and `kernel/services/mail-edge/manifests`; policies `dovecot-ingress`, `postfix-ingress` and `mail-edge`). They exist only on a cluster whose `mail.serviceMode` is `system`; a cluster that relays its mail runs none of the three and has none of the policies.
 
-| Server | Port | Admitted |
-| --- | --- | --- |
-| Dovecot | 24 (LMTP) | Postfix's pods, in the same namespace; the installer's check of the Deployment, which runs its probe there labelled `gentianos.io/purpose=verify` |
-| | 12345 (authentication service) | Postfix's pods |
-| | 993 (IMAPS) | any source. Rendered only when Dovecot has a certificate |
-| | 143 (IMAP) | any source |
-| Postfix | 25 | any source. Rendered only when the MX load balancer is |
-| | 587 (submission) | any source |
+Nothing in `system-mail` is reachable from outside the cluster: both servers' Services are ClusterIP. The one load balancer for mail is in the DMZ, in front of a proxy (HAProxy, TCP only) that takes 25, 587 and 993 and opens each connection again to the server it belongs to. What the proxy is and is not is in [mail.md §9b](mail.md).
 
-What this closes is the two ports that were never meant for anybody but Postfix: LMTP takes mail for any hosted domain with no credential, and the authentication service answers whether a password is good without the limits Postfix puts in front of it. On Postfix's pods it closes every port but the two listed.
+Every flow of the two namespaces. The first three rows are the only ones that begin outside the cluster.
+
+| From | To | Port | Held by |
+| --- | --- | --- | --- |
+| Any address: mail servers and mail clients on the internet, through the load balancer | the proxy | 25, 587, 993 (the pod's 2525, 2587, 2993) | `mail-edge`, ingress, no source named |
+| A tenant's app that declared mail, dialling `mail.<kernelDomain>` or `imap.<kernelDomain>` | the proxy | 587, 993 | the same rule; the app's side is `kernel-access-<app>` |
+| Keycloak, sending a realm's mail to `mail.<kernelDomain>` | the proxy | 587 | the same rule |
+| The proxy | Postfix | 10025 (inbound mail), 10587 (submission), TCP, each connection behind a PROXY-protocol header | `mail-edge` egress; `postfix-ingress` admits the proxy's pods, by the DMZ's name and their labels, and nothing else there |
+| The proxy | Dovecot | 10993 (IMAPS), TCP, behind a PROXY-protocol header | `mail-edge` egress; `dovecot-ingress` likewise |
+| The proxy | the cluster's resolver | 53, UDP and TCP | `mail-edge` egress, no destination named |
+| A pod of a tenant namespace, by the Service's name | Postfix | 587 | `postfix-ingress`, namespaces labelled `gentianos.io/tier=tenant` |
+| A pod of a tenant namespace, by the Service's name | Dovecot | 143, 993 | `dovecot-ingress`, the same |
+| Postfix | Dovecot | 24 (LMTP), 12345 (authentication service) | `dovecot-ingress`, Postfix's pods |
+| The installer's check, in `system-mail`, labelled `gentianos.io/purpose=verify` | Dovecot | 24, 143 | `dovecot-ingress` |
+| Postfix | mail servers on the internet | 25 | no policy: egress from `system-mail` is not restricted |
+| Postfix | the relay host, where the claim names one | the relay's port (587 unless set) | no policy |
+| Postfix, Dovecot | the cluster's resolver | 53 | no policy |
+| Dovecot | Keycloak, in `kernel-authentication`, to introspect a sign-in token | 8080 | no policy on Dovecot's side |
+| The kubelet, from the pod's node | the proxy's health endpoint (8404), Dovecot's 24 | | not subject to a NetworkPolicy |
+
+Closed, though something listens: Postfix's 25 (mail from outside arrives on 10025, and nothing inside the cluster is handed 25) and the proxy's health port. The proxy is the only pod of the two namespaces whose egress is restricted: it can reach the three PROXY-protocol ports and a resolver, and nothing else in any namespace or on the internet.
+
+| Control | State |
+| --- | --- |
+| No Service of `system-mail` is a load balancer or a node port; the only listener that faces the internet is the proxy's, in `system-mail-dmz` | Built |
+| The proxy holds no mail, no user database, no certificate and no key, mounts no Secret and carries no service-account token; it runs as an ordinary user with no capability on a read-only filesystem | Built |
+| TLS ends at Postfix and Dovecot: the proxy passes STARTTLS and implicit TLS through unread | Built |
+| The servers see the client's address, not the proxy's: each connection carries it in a PROXY-protocol header, which Postfix and Dovecot read on ports of their own and require there | Built; proven against the real images in local containers (`make test-mail-edge-lab`), not on a cluster |
+| A pod of the cluster cannot give itself another address: the ports that believe a PROXY header admit the proxy's pods alone, and the ports pods use take no header | Built, and only as good as the CNI's enforcement of NetworkPolicy |
+| Per client address: at most 20 connections at once and 60 a minute on 25 and on 587, 100 and 120 on 993, counted by each proxy replica; over that the connection is closed and logged | Built |
+| The proxy can reach nothing but the three PROXY-protocol ports and DNS | Built |
+| Egress from `system-mail` restricted | **Not built.** Postfix has to reach port 25 of any address; no policy says so and none denies the rest |
+| The client's address behind a load balancer that is itself a proxy (an Octavia amphora) | **Built as a setting, off by default, and no claim field sets it.** `loadBalancer.proxyProtocol` on the mail-edge chart makes the proxy take a PROXY header from the load balancer's addresses and from nobody else. Without it, on such a load balancer, every client is the load balancer's address |
+| Spam filtering, DNS blocklists, greylisting | **Not built.** Nothing scores mail; the proxy does not read it |
+| Publishing 587 and 993 only where a perimeter approver enabled it ([networking.md §5](../plans/networking.md)) | **Not built.** All three listeners are on wherever the cluster runs its own mail |
 
 What stays open, and why:
 
-- **25, 587 and 993 face the internet**, through load balancers that deliver a connection from an address that is no pod's.
-- **Apps and Keycloak reach 587 and 993 under the public names** (`mail.<kernelDomain>`, `imap.<kernelDomain>`), because the certificate is checked against the name dialled. Whether such a connection still carries its pod's address when it arrives depends on the cluster's proxy mode, so a rule naming tenant namespaces could refuse the apps it was written for. These ports are not narrowed; the credential is the check.
-- **143 is left as it was.** The operator hands it to nobody, and which pods use it by the Service's name cannot be read from this repository. It asks for the same credential as 993 and refuses it outside TLS.
+- **The proxy admits any source on its three ports.** A connection through the load balancer arrives from an address that is no pod's, and one from a pod that dialled the public name arrives from wherever the cluster's proxy mode puts it. The credential is the check on 587 and 993; on 25 it is Postfix's rule that it relays for nobody it does not know.
+- **A broken-into proxy can lie about a client's address** to the two servers, on those three ports, and can do nothing else. It could name an address inside the pod range, which Postfix lets relay without a credential unless `submission.requireAuthentication` is set on the Postfix chart; with that set, an address buys nothing.
+- **A tenant's pod reaches Postfix's 587 and Dovecot's 143 and 993 by the Service's name**, as before, now narrowed from any source to tenant namespaces. The operator hands out the public names, so these are a fallback; which pods use them cannot be read from this repository.
+- **DNS egress names no destination**, as everywhere in this repository: where a cluster's resolver is differs by cluster.
 
-The clients of all three are in the `servers` section of `scripts/tests/store-clients.yaml`, each marked proven or inferred; `make test-store-network-policies` holds the policies to it (`scripts/tests/server_network_policies.py`) and a Go test holds it to the operator's code (`internal/controller/server_clients_test.go`).
+The clients of all three are in the `servers` section of `scripts/tests/store-clients.yaml`, each marked proven or inferred; `make test-store-network-policies` holds the policies to it and holds the proxy's configuration, its egress rules and the servers' listeners to each other (`scripts/tests/server_network_policies.py`), and a Go test holds the table to the operator's code (`internal/controller/server_clients_test.go`). Where the operator writes each object a mail server mounts is held to the chart that mounts it by `internal/controller/mail_objects_test.go`.
 
 ### 2.9 Who may reach the model gateway
 
@@ -315,7 +343,7 @@ So an app that declares it can open the mailbox of a person who signed in to it,
 - **A token with the scope is a mailbox key wherever it travels.** An app should ask for `mailbox` in a sign-in of its own for mail and not relay that token.
 - **`gentian-dovecot` checks the audience like every other client.** The client attribute that exempts one client from the check is set nowhere (`TestNothingSwitchesTheIntrospectionAudienceCheckOff`).
 - **Not served:** the kernel realm, and so the platform tenant, has no `mailbox` scope; a cluster that relays its mail has no Dovecot. The declaration is accepted there and grants nothing.
-- **The network is not the gate.** A profile that declares `requires.services.mail` is opened `system-mail` (`kernel-access-<app>`), and Dovecot's IMAP ports admit any source (§2.8); the token is the check.
+- **The network is not the gate.** A profile that declares `requires.services.mail` is opened `system-mail` (`kernel-access-<app>`), and Dovecot's IMAP ports admit every tenant's pods, and the proxy for everybody else (§2.8); the token is the check.
 
 ### 2.12 What the sign-in sidecar trusts, and what remains weak
 
@@ -501,7 +529,7 @@ changes only when the code does.
 | Tenant namespace + NetworkPolicy default-deny egress | Implemented | `internal/kernel/netpolicy/` — tenant namespaces only |
 | Per-app egress to the stores a profile declares | Implemented, mail and identity not narrowed | `internal/kernel/netpolicy/kernel.go`, policy `kernel-access-<app>`; see §2.6 |
 | NetworkPolicy in the kernel namespaces | Implemented for ingress, **off by default**; egress open | With `KERNEL_NETWORK_POLICIES=true` each of the eleven kernel namespaces refuses an ingress nothing lists, from one inventory (`internal/kernel/kernelnet/inventory.yaml`) the policies are generated from; webhook ports admit any source, because no portable rule names the API server (§2.13). Applied by the installer with the namespaces. Off until a cluster has run them; without the switch a kernel pod is selected only by the policies its own chart delivers. No kernel namespace restricts egress (gap G28, the egress half) |
-| NetworkPolicy in system and shared namespaces | **Partial**: ingress to eleven servers, no egress anywhere | One on each shared store -- PostgreSQL, MariaDB, Redis, MinIO -- admitting tenant namespaces and the platform's named clients (§2.7). One each on Dovecot and Postfix, whose internet-facing ports stay open (§2.8). One on each server of the model gateway's namespace (§2.9). The kernel's own PostgreSQL and the operator keep the policies their charts deliver, beside the kernel namespaces' rules |
+| NetworkPolicy in system and shared namespaces | **Partial**: ingress to twelve servers, egress from one | One on each shared store -- PostgreSQL, MariaDB, Redis, MinIO -- admitting tenant namespaces and the platform's named clients (§2.7). One each on Dovecot and Postfix, which no longer face the internet, and one on the proxy in the mail DMZ that does -- the one pod of these whose egress is restricted too (§2.8). One on each server of the model gateway's namespace (§2.9). The kernel's own PostgreSQL and the operator keep the policies their charts deliver, beside the kernel namespaces' rules |
 | Publishing proxy: declared paths only, one reading of a path, every identity header removed, size, time and rate limits per client address | Implemented | `component_perimeter_config.go`; run against the proxy itself (§2.14). It checks nobody: an entry's `authMode` is still the app's |
 | Approval path for profile-declared egress | **Target** | `security.egress` reaches the NetworkPolicy uninspected; `PlatformSecurityPolicy` allowlists MAC waivers only (gap G27) |
 | Pod-security admission (privileged, host ns, non-root, hostPath, caps, priv-esc) | Implemented | `kernel/security/kyverno/policies/` |

@@ -14,21 +14,26 @@ Three layers are easy to conflate:
 | **Per tenant** | `Tenant.spec.mail.mode` | What the operator provisions: the tenant's mail domain, its entries in the Postfix maps, and its Dovecot realm auth |
 | **Per app** | `AppProfile` `mail.smtp` / `mail.imap` | Whether the operator hands an app kernel or external mail endpoints |
 
-Everything runs in the kernel namespace — `platform-kernel` — alongside the
-operator, because Postfix must mount a ConfigMap the operator writes and a Pod
-can only mount from its own namespace. Services are named per stage:
+Postfix and Dovecot run in `system-mail`, and the operator writes what they
+mount into that namespace: a Pod can only mount a ConfigMap or a Secret from
+its own (§5a). Neither has a load balancer. What the internet reaches is a
+proxy in `system-mail-dmz` (§9b). Services are named per stage:
 
 ```
-postfix-<stage>.platform-kernel.svc.cluster.local:587   # submission
-dovecot-<stage>.platform-kernel.svc.cluster.local:24    # LMTP, Postfix -> Dovecot
-dovecot-<stage>.platform-kernel.svc.cluster.local:143   # IMAP
+mail-edge-<stage>.system-mail-dmz                        # the load balancer: 25, 587, 993
+postfix-<stage>.system-mail.svc.cluster.local:587        # submission, for pods of the cluster
+postfix-<stage>-edge.system-mail.svc.cluster.local       # 10025, 10587: the proxy only
+dovecot-<stage>.system-mail.svc.cluster.local:24         # LMTP, Postfix -> Dovecot
+dovecot-<stage>.system-mail.svc.cluster.local:143        # IMAP, for pods of the cluster
+dovecot-<stage>-edge.system-mail.svc.cluster.local:10993 # the proxy only
 ```
 
 **Operational checks:**
 
 ```bash
-kubectl get pods -n platform-kernel -l 'app.kubernetes.io/name in (postfix,dovecot)'
-kubectl get cm postfix-kernel-virtual-mailbox-maps -n platform-kernel -o yaml
+kubectl get pods -n system-mail
+kubectl get pods,svc -n system-mail-dmz
+kubectl get cm postfix-kernel-virtual-mailbox-maps -n system-mail -o yaml
 kubectl get tenants -o custom-columns='NAME:.metadata.name,MAIL:.spec.mail.mode'
 ```
 
@@ -45,14 +50,17 @@ maildir on persistent storage at `/var/mail/<domain>/<local-part>`. A mail
 client authenticates over IMAP and reads it. Sending from a client inside the
 cluster is accepted for any domain in the map.
 
-**Not working yet:** anything involving the public internet. Port 25 is exposed
-nowhere — the Postfix Service is ClusterIP on 587 — so no external sender can
-reach this cluster, and no MX record would help until that changes. Outbound
-mail to external recipients has never been exercised, and would be refused or
-binned by most providers until the DNS records in §10 exist.
+**Built, and proven only outside a cluster:** the path from the internet. Ports
+25, 587 and 993 are published by a proxy in the mail DMZ, which passes each
+connection to Postfix or Dovecot with the client's address (§9b). That was run
+against the real images in local containers, not on a cluster with a load
+balancer in front of it. Outbound mail to external recipients would be refused
+or binned by most providers until the DNS records in §10 exist.
 
-So: mail between users of this cluster works. Mail to and from the outside
-world is the next milestone, not a finished feature.
+**Was broken until the namespaces were put right (§5a):** on the layout with
+`system-mail`, the operator wrote Postfix's maps and Dovecot's passwd-files
+into namespaces neither server runs in. Postfix knew no tenant domain and
+Dovecot no password, while every tenant reported its mail as ready.
 
 ## 1. Why Mail Is an Extension, Not Core Kernel
 
@@ -148,7 +156,7 @@ When a Tenant with `mail.mode: selfhosted` is reconciled, the
    `mail-postfix-virtual-domains` ConfigMap (registers the tenant's
    mail domain).
 3. **SASL credentials Secret** in the tenant namespace
-   (`smtp-credentials-{name}`) — host `postfix-<stage>.platform-kernel.svc.cluster.local:587`.
+   (`smtp-credentials-{name}`) — host `mail.<kernelDomain>:587`.
 4. **Dovecot domain config** patched into the shared
    `mail-dovecot-domains` ConfigMap when Dovecot is deployed.
 5. **Status update** on the Tenant CR with the DNS records the customer
@@ -167,16 +175,44 @@ rather than from Helm values (see §0). What is still operator-driven, in plain
 Go rather than a Composition, is everything in this list: the tenant is
 provisioned by `internal/controller/mail_reconciler.go`, not by Crossplane.
 
+## 5a. Where each object lives
+
+An object goes where its reader reads it. Everything the operator writes for
+mail, and who reads it:
+
+| Object | Namespace | Read by |
+|---|---|---|
+| ConfigMap `postfix-kernel-virtual-mailbox-maps` | `system-mail` | Postfix's pod mounts it: the domains it accepts, where each address is delivered, who may send, the networks it trusts. The mount is required |
+| Secret `postfix-dkim-tenants` | `system-mail` | Postfix's pod mounts the signing keys and tables |
+| Secret `dovecot-app-passwords` | `system-mail` | Dovecot's pod mounts the passwd-files: app passwords and every submission credential |
+| Secret `dovecot-realm-auth` | `system-mail` | Dovecot's pod mounts the per-realm token settings |
+| ConfigMaps `mail-postfix-virtual-domains`, `mail-dovecot-domains`; Secrets `dkim-<tenant>`, `dkim-kernel`, `mail-apppw-seed-<tenant>` | `system-mail` | the operator alone |
+| Secret `mail-submission-<tenant>` | `kernel-authentication` | the Job that configures the realm's mail, and the realm the tenant's Composition declares |
+| Secrets `mail-app-passwords`, `smtp-credentials-<tenant>` | the tenant's namespace | the tenant's mail client and apps |
+| DNSEndpoints | `system-mail-dmz` | external-dns |
+
+The operator reads `keycloak-admin` and `keycloak-smtp-credentials` in
+`kernel-authentication`, where they are written, and the address of the load
+balancer from Service `mail-edge-<stage>` in `system-mail-dmz`.
+
+A tenant's `MailReady` is true only once the map Postfix mounts names its
+domain (`PostfixMapMissing` otherwise). On start the operator deletes the maps
+and the passwd-files an earlier version wrote into `system-mail-dmz` and
+`kernel-edge`, and moves each tenant's seed and submission password out of
+`kernel-edge`: no credential is kept in the namespace of the Gateway.
+`internal/controller/mail_objects_test.go` holds every row of the table to the
+chart, Job or Composition that reads it.
+
 ## 6. Per-App Mail Wiring
 
 For each app in the tenant that declares `mail.smtp` and/or
 `mail.imap` in its `AppProfile`, the operator materialises:
 
-- **SMTP**: host (`postfix-<stage>.platform-kernel.svc.cluster.local`), port, user,
+- **SMTP**: host (`mail.<kernelDomain>`; without a kernel domain, `postfix-<stage>.system-mail.svc.cluster.local`), port, user,
   password — copied from the tenant's own `smtp-credentials-<tenant>` Secret into
   each app's OpenBao path. This is **one SASL identity shared by every app in the
   tenant**, not one per app; see the correction in §7.
-- **IMAP**: host (`dovecot-<stage>.platform-kernel.svc.cluster.local`) and port only.
+- **IMAP**: host (`imap.<kernelDomain>`) and port only.
   No password travels this path — IMAP auth is per-*user*, per-client-app, and is
   issued separately; see §7.
 
@@ -204,7 +240,7 @@ no app-specific mail logic in the platform.
   Google and Fastmail use — because Keycloak identities are OIDC and IMAP
   predates it, so a login yields no password a mail client can present. The
   password is derived (HMAC, not random) so it never needs its own storage;
-  Dovecot verifies against an Argon2id hash kept in the **kernel** namespace,
+  Dovecot verifies against an Argon2id hash kept in Dovecot's own namespace,
   and the plaintext is handed to the user once and kept only in the
   **tenant's own** namespace. A tenant therefore holds its own users'
   credentials and nobody else's — see `internal/controller/mail_apppassword.go`.
@@ -265,16 +301,16 @@ submission, but no mailbox until the cluster switches to `kernel` and
 kubectl get tenants -o custom-columns='NAME:.metadata.name,MAIL:.spec.mail.mode,DOMAIN:.spec.mail.domain'
 
 # Shared infrastructure health
-kubectl get pods -n platform-kernel -l 'app.kubernetes.io/name in (postfix,dovecot)'
-kubectl logs -n platform-kernel postfix-<stage>-0 --tail=50
+kubectl get pods -n system-mail -l 'app.kubernetes.io/name in (postfix,dovecot)'
+kubectl logs -n system-mail postfix-<stage>-0 --tail=50
 
 # Which domains may receive, and which may send. Both are written by the
 # operator from the tenant registry; a domain missing here is a domain whose
 # mail is refused.
-kubectl get cm postfix-kernel-virtual-mailbox-maps -n platform-kernel -o yaml
+kubectl get cm postfix-kernel-virtual-mailbox-maps -n system-mail -o yaml
 
 # Did a message actually land? The maildir is the ground truth, not the log.
-kubectl exec -n platform-kernel deploy/dovecot-<stage> -- find /var/mail -type f -name '*.M*'
+kubectl exec -n system-mail deploy/dovecot-<stage> -- find /var/mail -type f -name '*.M*'
 ```
 
 **When a message is refused, read the Postfix log line rather than guessing.**
@@ -293,10 +329,13 @@ decides whether self-hosting is viable at all, and it is a property of the
 network rather than of anything in this repo.
 
 **1. Inbound on port 25.** A LoadBalancer Service, not an HTTP gateway — SMTP is
-not HTTP and cannot be proxied by one. `externalTrafficPolicy: Local`, because a
-sender's IP is evidence and the default policy SNATs it away. The provider must
-attach a health monitor against `healthCheckNodePort`; without one it round-robins
-across nodes that have no mail Pod and most connections are dropped.
+not HTTP and cannot be proxied by one. Here it is the Service of the mail edge
+(§9b), with `externalTrafficPolicy: Local`, because a sender's IP is evidence
+and the default policy SNATs it away. The provider must attach a health monitor
+against `healthCheckNodePort`; without one it round-robins across nodes that
+have no proxy and most connections are dropped. A load balancer that opens its
+own connection instead of forwarding packets hides the sender whatever the
+policy says, and has to name it with the PROXY protocol (§9b).
 
 **2. An outbound address whose PTR you control.** This is the hard one. Pod
 egress usually leaves through the router's shared SNAT address, which is not the
@@ -313,7 +352,7 @@ instead of the router's shared address.
 
 ```bash
 # the node Postfix is scheduled on, and its Neutron port
-kubectl -n platform-kernel get pod postfix-<stage>-0 -o jsonpath='{.spec.nodeName}'
+kubectl -n system-mail get pod postfix-<stage>-0 -o jsonpath='{.spec.nodeName}'
 kubectl get node <node> -o jsonpath='{.spec.providerID}'      # openstack://<region>/<server-id>
 openstack port list --device-id <server-id> -f value -c ID
 
@@ -335,7 +374,7 @@ Confirm the address actually moved before testing delivery; this is the whole
 assumption and it is one command:
 
 ```bash
-kubectl -n platform-kernel exec postfix-<stage>-0 -c mail -- curl -s ifconfig.me
+kubectl -n system-mail exec postfix-<stage>-0 -c mail -- curl -s ifconfig.me
 ```
 
 Two things this arrangement does not yet do for you. Nothing publishes the
@@ -395,21 +434,120 @@ so the work is not wasted.
 
 ---
 
+## 9b. The mail edge
+
+```
+        internet                         system-mail-dmz                      system-mail
+                                                                        (no load balancer, no
+  mail servers ──25──┐                                                   node port: ClusterIP)
+  mail clients ─587──┤   ┌──────────────┐    ┌───────────────┐  10025 ┌─────────────────────┐
+  mail clients ─993──┼──▶│ load balancer│──▶ │ HAProxy       │──10587▶│ Postfix + DKIM      │──25──▶ internet
+                     │   │ mail-edge-   │    │ TCP only      │        │ certificate, queue  │
+  apps, Keycloak     │   │ <stage>      │    │ no certificate│        └────────┬────────────┘
+  (public names) ────┘   └──────────────┘    │ no mail       │           24, 12345
+                                             │ no users      │  10993 ┌────────▼────────────┐
+                                             └───────────────┘───────▶│ Dovecot             │
+  pods of a tenant, by Service name ── 587 (Postfix), 143 / 993 ─────▶│ certificate, mail   │
+                                                                      └─────────────────────┘
+```
+
+**What it is.** `kernel/services/mail-edge`: HAProxy as a TCP proxy, two
+replicas, behind the one LoadBalancer Service of the cluster's mail. It takes
+25, 587 and 993, and opens each connection again to the one server the port
+belongs to. It reads no SMTP and no IMAP, stores nothing, mounts no Secret and
+has no service-account token; it runs as an ordinary user with no capability on
+a read-only filesystem. `mail.<kernelDomain>` and `imap.<kernelDomain>` both
+resolve to its load balancer; the operator publishes both from that Service's
+address.
+
+**A proxy, not a second mail server.** The networking plan places Postfix
+itself in the DMZ. That is a mail server with a queue — stored mail — in the
+namespace that faces the internet, and it would need the tenant maps, the relay
+credential and a path to the signing keys there. AD-9 asks for a stateless edge,
+and a TCP proxy is one: Postfix stays the only MTA, in `system-mail`.
+
+**HAProxy, not the platform's Envoy.** Envoy Gateway can route TCP and send a
+PROXY header upstream (`BackendTrafficPolicy.proxyProtocol`), but by its API
+reference its connection limit counts a listener's connections as a whole and
+its rate limit counts HTTP requests -- neither is per client address on a TCP
+listener. That was read, not tried. And a mail listener on the
+shared fleet would put the cluster's mail and its web sign-in behind one
+process in `kernel-edge`, with a path from that namespace into `system-mail`.
+HAProxy is what mail operators put in this place; Postfix and Dovecot document
+it by name.
+
+**TLS ends at Postfix and Dovecot.** The proxy passes the bytes through:
+STARTTLS on 25 and 587 is negotiated by the client with Postfix, and 993 is TLS
+from the first byte with Dovecot. The certificate and its key are in
+`system-mail` and nowhere else.
+
+**The client's address survives.** In front of each connection the proxy sends
+a PROXY-protocol header (version 2) naming the client. Postfix reads it on
+10025 and 10587 (`smtpd_upstream_proxy_protocol = haproxy`), Dovecot on 10993
+(`haproxy = yes`), so Postfix's client checks and limits, Dovecot's count of
+failed logins and both logs are about the client. Without it every connection
+would come from the proxy's pod — an address inside the range Postfix trusts
+(`mynetworks`) — and the cluster would relay for the internet. Two things keep
+that from happening by accident:
+
+- the three ports that read a header **require** it: a connection without one
+  gets no SMTP greeting and no TLS handshake;
+- they admit the proxy's pods alone (NetworkPolicy), and the proxy can reach
+  only them. The ports pods of the cluster use — 587, 143, 993 — take no
+  header, so a pod cannot give itself another address.
+
+**Limits, per client address,** at the proxy and before a server process is
+spent: 20 connections at once and 60 a minute on 25 and on 587, 100 and 120 on
+993 (`listeners.<name>.*` on the chart). Over that, the connection is closed
+and logged with the client's address. Each replica counts on its own. Postfix's
+limits apply behind them, to the same address, and answer in SMTP.
+
+**No health check of the servers,** deliberately. HAProxy's check of a
+PROXY-protocol port makes Postfix 3.10's `smtpd` exit, after which Postfix
+holds that listener back for a minute. The proxy's own readiness is what the
+load balancer sees.
+
+**A load balancer that is itself a proxy** (an Octavia amphora) arrives from its
+own address, so the proxy would name the load balancer as every client.
+`loadBalancer.proxyProtocol.enabled` with `from: [<the load balancer's
+addresses>]` makes the proxy take a PROXY header from those addresses and from
+nobody else; the load balancer has to be switched to send one
+(`loadbalancer.openstack.org/proxy-protocol: "true"`). Off by default, and no
+field of the Cluster claim sets it yet.
+
+**From the layout before.** `postfix-<stage>-smtp` and `dovecot-<stage>-imaps`,
+the two load balancers in `system-mail`, are no longer rendered and Argo CD
+prunes them. The one that replaces them gets an address of its own unless
+`loadBalancer.ip` pins one; the operator republishes `mail.` and `imap.` from
+it.
+
+**Proven** by `make test-mail-edge-lab`, which runs the rendered proxy in front
+of the rendered Postfix and Dovecot in local containers: mail on 25 with
+STARTTLS, authenticated submission on 587 and IMAPS on 993 through the proxy,
+each logged by the server with the client's address; a relay refused to that
+same client; the header ports refusing a connection without a header; the
+pods' listeners unchanged; both limits; and the load-balancer setting. Not
+proven: anything that needs a cluster — the load balancer, the policies as a
+CNI enforces them, a pod reaching the public name.
+
+---
+
 ## 10. DNS for real mail
 
 None of this is needed for mail between users of one cluster, which is why it
 can be skipped while testing. All of it is needed before mail crosses the
 internet.
 
-**Prerequisite, and it is not DNS.** Inbound mail arrives on port **25**, and
-the kernel Postfix Service is ClusterIP on 587 only. An MX record pointing at a
-cluster that does not listen on 25 changes nothing. Expose 25 through a
-LoadBalancer first, then publish the records below.
+**Prerequisite, and it is not DNS.** Inbound mail arrives on port **25** of the
+mail edge's load balancer (§9b). An MX record pointing at an address that does
+not answer on 25 changes nothing: the load balancer has to have its address,
+and the provider has to let 25 in, before the records below mean anything. The
+operator publishes the MX only once the Service reports an address.
 
 | Record | Where | Value | Why |
 |---|---|---|---|
 | **MX** | `<tenant-domain>` | `0 mail.<kernel-domain>.` | Tells other servers where to deliver. Needs an A record for the target and port 25 reachable on it. Preference `0`, not `10`: external-dns's Cloudflare provider reads any preference back as `0`, so anything else never matches what it asked for and the record is deleted and recreated once a minute forever. See `mail_dnsendpoint.go`. |
-| **A** | `mail.<kernel-domain>` | the mail LoadBalancer IP | The MX target must resolve to an address, never to a CNAME. This is where mail ARRIVES; it is not the address mail leaves from, and the two differ on any cluster whose egress is not the load balancer. |
+| **A** | `mail.<kernel-domain>`, `imap.<kernel-domain>` | the address of the mail edge's load balancer (`mail-edge-<stage>` in `system-mail-dmz`); the operator publishes both | The MX target must resolve to an address, never to a CNAME. This is where mail ARRIVES; it is not the address mail leaves from, and the two differ on any cluster whose egress is not the load balancer. |
 | **A** | `<egress-host>` | the outbound floating IP | The forward half of forward-confirmed reverse DNS. Receivers check that the PTR names a host and that the host resolves back to the same address, so this record and the PTR must agree. Nothing on the cluster publishes it: the floating IP is allocated at the provider, not by Kubernetes, so this record is manual. |
 | **SPF** (TXT) | `<tenant-domain>` | `v=spf1 a:<egress-host> -all` | Declares which addresses may send as this domain. `a:` rather than an `ip4:` literal so the record follows the egress A record instead of having to be edited in two places — the one that gets forgotten fails closed and silently. Emitted only when `mail.egressHost` is set on the cluster claim; without it the operator falls back to `v=spf1 mx ~all`, which authorises the MX host — the INBOUND load balancer, which never sends anything — and so fails by construction while looking plausible. |
 | **DKIM** (TXT) | `<selector>._domainkey.<tenant-domain>` | the public half of the operator-held key | Signs outbound mail so recipients can verify it was not altered. Published from the same value that signs, so the two cannot drift. |
@@ -457,7 +595,7 @@ To read the key a domain is actually signing with, which is the value its DNS
 record must carry:
 
 ```bash
-kubectl exec -n platform-kernel postfix-<stage>-0 -- cat /etc/opendkim/keys/<domain>.txt
+kubectl exec -n system-mail postfix-<stage>-0 -- cat /etc/opendkim/keys/<domain>.txt
 ```
 
 A published record that does not match this is worse than no record at all: an
@@ -499,7 +637,7 @@ a tenant rebuilt with new keys leaves a stale record that passes that check and
 fails every signature:
 
 ```bash
-kubectl -n platform-kernel exec postfix-<stage>-0 -c mail -- \
+kubectl -n system-mail exec postfix-<stage>-0 -c mail -- \
   openssl rsa -in /etc/opendkim/keys/<domain>.private -pubout | grep -v -- ----- | tr -d '\n'
 dig +short TXT <selector>._domainkey.<domain> | tr -d '" ' | sed 's/.*p=//'
 ```

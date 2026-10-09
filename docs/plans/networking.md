@@ -255,12 +255,13 @@ The kernel's own PostgreSQL carries the same kind of policy: Keycloak's and
 OpenFGA's namespaces, the registrar and the operator by label, tenant
 namespaces for the desktop of the tenant that adopts the kernel realm, and
 its own namespace. So do the two mail servers, both of which run in
-`system-mail` today -- Postfix is not yet split into `system-mail-dmz`,
-which holds no pod. Dovecot's delivery port and its authentication service
-admit Postfix alone; the ports that face the internet (25, 587, 993) and
-plain IMAP (143) admit any source, because a connection through a load
-balancer arrives from no pod, and apps reach the same ports under the
-public names. The table is in
+`system-mail`, and neither of which faces the internet any more: 25, 587
+and 993 are taken by a proxy in `system-mail-dmz` that holds no mail and no
+key and passes each connection on with the client's address. As built it is
+a TCP proxy in front of the one Postfix, not Postfix itself in the DMZ as §5
+and §7 below have it. Dovecot's delivery port and its authentication service
+admit Postfix alone, the ports that read the proxy's header admit the proxy
+alone, and the ports pods use admit tenant namespaces. The table is in
 [security.md §2.8](../design/security.md).
 
 The model gateway is the same rule as a store. An app that declares
