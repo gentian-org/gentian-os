@@ -317,7 +317,7 @@ func TestS3RestoreWritesToPlatformStorageNotTheBundleDestination(t *testing.T) {
 // was working, and only on the tenant-wide step, which is the last one.
 func TestPostgresRestoreUsesTheRoleThatExists(t *testing.T) {
 	shell := JobParams{
-		Namespace: "platform-kernel",
+		Namespace: "system-postgresql",
 		Name:      "tx-r-shellr",
 		Tenant:    "corp",
 		App:       "gentian-tenant", // the label, deliberately
@@ -334,7 +334,7 @@ func TestPostgresRestoreUsesTheRoleThatExists(t *testing.T) {
 	}
 
 	// An app names one thing, so leaving Role empty must keep working.
-	app := JobParams{Namespace: "platform-kernel", Name: "tx-r-pgr", Tenant: "corp", App: "docmost-ce"}
+	app := JobParams{Namespace: "system-postgresql", Name: "tx-r-pgr", Tenant: "corp", App: "docmost-ce"}
 	appScript := PostgresRestoreJob(app, Decryption{Mode: "recipient", SecretName: "k", SecretKey: "identity"},
 		PostgresArtefact("corp_docmost_ce"), "corp_docmost_ce").Spec.Template.Spec.Containers[0].Args[0]
 	if !strings.Contains(appScript, "'corp_docmost-ce'") {

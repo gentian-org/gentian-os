@@ -22,7 +22,7 @@ import (
 // tenant workload egress to the infra namespace — the opposite of the MAC
 // floor the baseline establishes.
 func TestExportJobNetworkPolicyIsScopedToExportPods(t *testing.T) {
-	np := ExportJobNetworkPolicy("demo", "tenant-demo", Config{InfraNamespace: "gentian-infra-dev"})
+	np := ExportJobNetworkPolicy("demo", "tenant-demo", Config{})
 
 	sel := np.Spec.PodSelector.MatchLabels
 	if sel[meta.ComponentLabel] != "tenant-export" {

@@ -29,19 +29,12 @@ import (
 )
 
 func (r *TenantReconciler) tenantNetPolicyConfig() netpolicy.Config {
-	stage := envOrDefault("GENTIAN_STAGE", envOrDefault("ENV", "dev"))
-	infraNS := os.Getenv("INFRA_NAMESPACE")
-	if infraNS == "" {
-		infraNS = "gentian-infra-" + stage
-	}
 	cidr := os.Getenv("KUBE_APISERVER_CIDR")
 	if cidr == "" {
 		cidr = "10.0.0.0/8"
 	}
 	return netpolicy.Config{
-		InfraNamespace:    infraNS,
 		ServicesNamespace: servicesNamespace,
-		OpenbaoNamespace:  "openbao",
 		RoutingMode:       r.RoutingMode,
 		KubeAPIServerCIDR: cidr,
 		NarrowEdge:        kernelNetworkPoliciesEnabled(),

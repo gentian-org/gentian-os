@@ -64,9 +64,9 @@ const (
 
 // servicesNamespace is read from SERVICES_NAMESPACE at process startup.
 //
-// The fallback is platform-kernel, which is what gentian_services_namespace in
-// scripts/lib/common.sh answers. Kernel services — the Gateway, Keycloak's
-// HTTPRoute, Postfix and Dovecot — are not stage-scoped, so deriving
+// The fallback is the edge namespace, which is what gentian_services_namespace
+// in scripts/lib/common.sh answers. The Gateway and its routes are not
+// stage-scoped, so deriving
 // gentian-{stage} pointed this operator at a namespace nothing creates and
 // nothing tears down. The chart sets SERVICES_NAMESPACE, so the fallback only
 // decides where an operator started without it writes, which is exactly the
@@ -941,7 +941,7 @@ func (r *TenantReconciler) ensureStagingCaTrust(ctx context.Context, tenant *gen
 	const secretName = trustanchor.SecretName
 
 	if _, err := trustanchor.EnsureTrustAnchorSecret(ctx, r.Client, servicesNamespace,
-		trustanchor.DefaultCertManagerNS, trustanchor.DefaultLeafSecret); err != nil {
+		layout.Namespace(layout.Edge), trustanchor.DefaultLeafSecret); err != nil {
 		return fmt.Errorf("bootstrap staging CA in %s: %w", servicesNamespace, err)
 	}
 

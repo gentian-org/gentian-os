@@ -23,7 +23,7 @@ import (
 
 func params() JobParams {
 	return JobParams{
-		Namespace:    "platform-kernel",
+		Namespace:    "system-postgresql",
 		Name:         "tx-demo-app-pg",
 		Tenant:       "demo",
 		App:          "nextcloud-base-ce",
@@ -662,7 +662,7 @@ func TestPlatformStorageStillReadsItsEndpointFromTheSecret(t *testing.T) {
 // went to the same MinIO the apps use.
 func TestBucketCaptureReadsTheSourceFromPlatformStorage(t *testing.T) {
 	p := JobParams{
-		Namespace: "platform-kernel",
+		Namespace: "system-postgresql",
 		Name:      "tx-demo-docmost-s3",
 		Tenant:    "demo",
 		App:       "docmost-ce",
@@ -779,7 +779,7 @@ func TestAnUnheldVolumeLeavesSchedulingAlone(t *testing.T) {
 // confined to whichever node happened to be named.
 func TestJobsWithoutAVolumeAreNotPinned(t *testing.T) {
 	p := JobParams{
-		Namespace: "platform-kernel", Name: "tx-demo-pg", Tenant: "demo",
+		Namespace: "system-postgresql", Name: "tx-demo-pg", Tenant: "demo",
 		App: "docmost-ce", Bucket: "demo-backup", Prefix: "demo-export",
 	}
 	if sel := PostgresDumpJob(p, "demo_docmost").Spec.Template.Spec.NodeSelector; sel != nil {

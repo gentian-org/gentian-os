@@ -22,7 +22,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
-const ns = "gentian-system"
+const ns = "kernel-control"
 
 var (
 	first  = time.Date(2026, 8, 18, 9, 0, 0, 0, time.UTC)

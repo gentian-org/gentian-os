@@ -65,9 +65,9 @@ func annotationOf(t *testing.T, s *Server, namespace, name string) string {
 func TestStoringACredentialRefreshesWhatReadsIt(t *testing.T) {
 	const path = "gentian-os/tenants/corp/backup/destination"
 
-	reader := consumer("platform-kernel", "backup-destination-corp", path)
-	probeES := consumer("gentian-system", "credreq-backup-destination-corp", path)
-	bulk := bulkConsumer("platform-kernel", "chart-style-reader", path)
+	reader := consumer("kernel-authentication", "backup-destination-corp", path)
+	probeES := consumer("kernel-control", "credreq-backup-destination-corp", path)
+	bulk := bulkConsumer("kernel-authentication", "chart-style-reader", path)
 	// A different credential entirely. Nudging this would wake workloads that
 	// have no stake in the value that changed.
 	unrelated := consumer("tenant-corp", "nextcloud-oidc", "gentian-os/tenants/corp/apps/nextcloud/oidc")
@@ -81,9 +81,9 @@ func TestStoringACredentialRefreshesWhatReadsIt(t *testing.T) {
 	s.refreshConsumers(context.Background(), path)
 
 	for _, es := range []struct{ ns, name string }{
-		{"platform-kernel", "backup-destination-corp"},
-		{"gentian-system", "credreq-backup-destination-corp"},
-		{"platform-kernel", "chart-style-reader"},
+		{"kernel-authentication", "backup-destination-corp"},
+		{"kernel-control", "credreq-backup-destination-corp"},
+		{"kernel-authentication", "chart-style-reader"},
 	} {
 		if annotationOf(t, s, es.ns, es.name) == "" {
 			t.Errorf("%s/%s was not refreshed; it reads the path that just changed, so it "+

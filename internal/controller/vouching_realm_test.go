@@ -61,7 +61,7 @@ var vouchingRealmFixtures = []struct {
 		// differ, and the Secret follows the tenant while the realm objects
 		// follow the realm.
 		fixture: "tenant-platform", tenant: "platform", realm: "kernel", namespace: "tenant-platform",
-		internalURL: "http://gentian-idp-keycloak-keycloakx-http.platform-kernel.svc.cluster.local:8080/auth",
+		internalURL: "http://gentian-idp-keycloak-keycloakx-http.kernel-authentication.svc.cluster.local:8080/auth",
 		components: []vouchingComponent{
 			{"herald", "http://herald.tenant-platform.svc.cluster.local:8080/.well-known/jwks.json"},
 		},

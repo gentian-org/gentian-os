@@ -80,7 +80,7 @@ func probe(name string, ready bool) *unstructured.Unstructured {
 	}
 	u := &unstructured.Unstructured{}
 	u.SetGroupVersionKind(externalSecretGVK)
-	u.SetNamespace("gentian-system")
+	u.SetNamespace("kernel-control")
 	u.SetName("credreq-" + name)
 	_ = unstructured.SetNestedSlice(u.Object, []any{
 		map[string]any{"type": "Ready", "status": status, "message": "SecretSyncedError"},
@@ -149,7 +149,7 @@ func newServerAs(t *testing.T, policies []string, meta map[string]string, objs .
 	// "caller-oidc-token" (see do), and must never be what the vault is shown.
 	vault.SetStaticToken("custodian-token")
 	s := &Server{
-		Catalogue: &Catalogue{Client: c, ProbeNamespace: "gentian-system"},
+		Catalogue: &Catalogue{Client: c, ProbeNamespace: "kernel-control"},
 		Bao:       vault,
 		Validator: stubValidator{},
 		Authz:     storeFor(policies, meta),

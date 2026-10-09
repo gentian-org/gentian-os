@@ -10,16 +10,17 @@ SPDX-License-Identifier: MPL-2.0
 
 package netpolicy
 
-import "github.com/gentian-org/gentian-os/internal/meta"
+import (
+	"github.com/gentian-org/gentian-os/internal/layout"
+	"github.com/gentian-org/gentian-os/internal/meta"
+)
 
 const RoutingModeGateway = meta.RoutingModeGateway
 
 // Config carries cluster-specific namespace names and routing options used when
 // building tenant isolation NetworkPolicies.
 type Config struct {
-	InfraNamespace    string
 	ServicesNamespace string
-	OpenbaoNamespace  string
 	RoutingMode       string
 	KubeAPIServerCIDR string
 	// NarrowEdge admits, from the edge namespace, the Gateway's Envoy pods
@@ -33,9 +34,7 @@ type Config struct {
 // DefaultConfig returns test-friendly defaults; production callers should pass explicit Config.
 func DefaultConfig() Config {
 	return Config{
-		InfraNamespace:    "gentian-infra-dev",
-		ServicesNamespace: "gentian-dev",
-		OpenbaoNamespace:  "openbao",
+		ServicesNamespace: layout.Kernel(layout.Edge),
 		RoutingMode:       RoutingModeGateway,
 		KubeAPIServerCIDR: "10.0.0.0/8",
 	}

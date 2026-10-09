@@ -525,7 +525,7 @@ type forbiddenReader struct{ client.Reader }
 func (forbiddenReader) List(context.Context, client.ObjectList, ...client.ListOption) error {
 	return apierrors.NewForbidden(
 		schema.GroupResource{Resource: "persistentvolumeclaims"}, "",
-		errors.New(`User "system:serviceaccount:gentian-system:gentian-os" cannot list `+
+		errors.New(`User "system:serviceaccount:kernel-control:gentian-os" cannot list `+
 			`resource "persistentvolumeclaims" in API group "" at the cluster scope`))
 }
 

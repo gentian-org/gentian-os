@@ -36,7 +36,6 @@ func NewRunnableFromEnv(mgr manager.Manager, tenancyMode string) (*Runnable, err
 	}
 	namespace := envOrDefault("POD_NAMESPACE", layout.Namespace(layout.Control))
 	svc, err := NewService(mgr.GetClient(), mgr.GetConfig(), Options{
-		OpenBaoNamespace:  envOrDefault("OPENBAO_NAMESPACE", "openbao"),
 		OperatorNamespace: namespace,
 		OperatorSA:        envOrDefault("OPERATOR_SA", "gentian-os"),
 		MetricsEnabled:    os.Getenv("METRICS_SERVER_ENABLED") == "true",

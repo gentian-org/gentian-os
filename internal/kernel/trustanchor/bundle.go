@@ -28,6 +28,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	"github.com/gentian-org/gentian-os/internal/layout"
 )
 
 const (
@@ -39,8 +41,7 @@ const (
 	// Mozilla bundle). See docs/design/security.md §12.1.
 	NodeExtraCAKey = "node-extra-ca.crt"
 
-	DefaultCertManagerNS = "cert-manager"
-	DefaultLeafSecret    = "wildcard-kernel-tls"
+	DefaultLeafSecret = "wildcard-kernel-tls"
 
 	mozillaCABundleURL = "https://curl.se/ca/cacert.pem"
 	maxIssuerChain     = 8
@@ -182,7 +183,7 @@ func EnsureTrustAnchorSecret(ctx context.Context, c client.Client, namespace, ce
 		return false, fmt.Errorf("namespace is required")
 	}
 	if certManagerNS == "" {
-		certManagerNS = DefaultCertManagerNS
+		certManagerNS = layout.Namespace(layout.Edge)
 	}
 	if leafSecretName == "" {
 		leafSecretName = DefaultLeafSecret

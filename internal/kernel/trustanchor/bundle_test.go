@@ -136,7 +136,7 @@ func TestBuildBundleExcludesServerLeaf(t *testing.T) {
 
 func TestEnsureTrustAnchorSecretNoOpWithoutLeaf(t *testing.T) {
 	c := fake.NewClientBuilder().Build()
-	ok, err := EnsureTrustAnchorSecret(context.Background(), c, "gentian-dev", "cert-manager", "wildcard-kernel-tls")
+	ok, err := EnsureTrustAnchorSecret(context.Background(), c, "kernel-edge", "kernel-edge", "wildcard-kernel-tls")
 	if err != nil {
 		t.Fatalf("EnsureTrustAnchorSecret: %v", err)
 	}
@@ -148,11 +148,11 @@ func TestEnsureTrustAnchorSecretNoOpWithoutLeaf(t *testing.T) {
 func TestEnsureTrustAnchorSecretCreatesTargetSecret(t *testing.T) {
 	_, leafPEM := testIssuerChainServer(t)
 	c := fake.NewClientBuilder().WithObjects(&corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: DefaultLeafSecret, Namespace: DefaultCertManagerNS},
+		ObjectMeta: metav1.ObjectMeta{Name: DefaultLeafSecret, Namespace: "kernel-edge"},
 		Data:       map[string][]byte{"tls.crt": leafPEM},
 	}).Build()
 
-	ok, err := EnsureTrustAnchorSecret(context.Background(), c, "gentian-dev", DefaultCertManagerNS, DefaultLeafSecret)
+	ok, err := EnsureTrustAnchorSecret(context.Background(), c, "kernel-edge", "kernel-edge", DefaultLeafSecret)
 	if err != nil {
 		t.Fatalf("EnsureTrustAnchorSecret: %v", err)
 	}
@@ -161,7 +161,7 @@ func TestEnsureTrustAnchorSecretCreatesTargetSecret(t *testing.T) {
 	}
 
 	got := &corev1.Secret{}
-	if err := c.Get(context.Background(), client.ObjectKey{Name: SecretName, Namespace: "gentian-dev"}, got); err != nil {
+	if err := c.Get(context.Background(), client.ObjectKey{Name: SecretName, Namespace: "kernel-edge"}, got); err != nil {
 		t.Fatalf("get created secret: %v", err)
 	}
 	if len(got.Data["ca.crt"]) == 0 {

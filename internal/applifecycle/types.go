@@ -18,7 +18,6 @@ import (
 
 // Options configures the lifecycle service.
 type Options struct {
-	OpenBaoNamespace  string
 	OperatorNamespace string
 	OperatorSA        string
 	// MetricsEnabled turns on the live-consumption series read from

@@ -32,6 +32,4 @@ const (
 	ComponentLabel = "gentianos.io/component"
 	// TenantCacheComponentValue marks the shared per-tenant Memcached workload.
 	TenantCacheComponentValue = "tenant-cache"
-
-	EnvoyGatewayInstallNamespace = "envoy-gateway-system"
 )

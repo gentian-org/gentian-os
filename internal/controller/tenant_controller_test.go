@@ -356,13 +356,12 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 
-	// gentian-dev holds shared service ConfigMaps (e.g. Dovecot OIDC introspection values).
 	// The platform namespaces tenant provisioning writes to, one per function
 	// (internal/controller/namespaces.go): identity Jobs in the authentication
 	// namespace, the Gateway and its reference grants at the edge, the
 	// provisioning ConfigMap in the provisioning one, and each data-plane Job
 	// beside its system service.
-	for _, ns := range append([]string{"gentian-dev", "gentian-infra-dev", "envoy-gateway-system"}, testPlatformNamespaces[1:]...) {
+	for _, ns := range testPlatformNamespaces[1:] {
 		if err := testClient.Create(context.Background(), &corev1.Namespace{
 			ObjectMeta: metav1.ObjectMeta{Name: ns},
 		}); err != nil {
@@ -416,7 +415,7 @@ func TestMain(m *testing.M) {
 	if err := testClient.Create(context.Background(), &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: "minio-admin", Namespace: "system-s3"},
 		Data: map[string][]byte{
-			"endpoint":  []byte("http://minio.platform-kernel.svc:9000"),
+			"endpoint":  []byte("http://minio.system-s3.svc:9000"),
 			"accessKey": []byte("minioadmin"),
 			"secretKey": []byte("minioadmin"),
 		},

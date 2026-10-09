@@ -165,9 +165,9 @@ func TestTheEgressAnnotationOpensWholeNamespacesBesideTheStores(t *testing.T) {
 	maria := layout.System("mariadb")
 	database := gentianov1alpha1.ServiceRequirements{Database: &gentianov1alpha1.DatabaseRequirement{Engine: gentianov1alpha1.DatabaseEngineMariaDB}}
 	np := netpolicy.KernelAccessNetworkPolicy("demo", "tenant-demo", "notes", profileRequiring(database, map[string]string{
-		gentianov1alpha1.AnnotationProfileKernelEgressNamespaces: "gentian-system",
+		gentianov1alpha1.AnnotationProfileKernelEgressNamespaces: "kernel-control",
 	}), netpolicy.DefaultConfig())
-	if got, want := opened(t, np), []string{"gentian-system:*", maria + ":3306"}; !reflect.DeepEqual(got, want) {
+	if got, want := opened(t, np), []string{"kernel-control:*", maria + ":3306"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("opens %v, want %v", got, want)
 	}
 	np = netpolicy.KernelAccessNetworkPolicy("demo", "tenant-demo", "notes", profileRequiring(database, map[string]string{
@@ -228,7 +228,7 @@ func TestKernelAccessNetworkPolicy_ProfileKernelEgressNamespaces(t *testing.T) {
 	profile := &gentianov1alpha1.ComponentProfile{
 		ObjectMeta: metav1.ObjectMeta{
 			Annotations: map[string]string{
-				gentianov1alpha1.AnnotationProfileKernelEgressNamespaces: "gentian-system",
+				gentianov1alpha1.AnnotationProfileKernelEgressNamespaces: "kernel-control",
 			},
 		},
 		Spec: gentianov1alpha1.ComponentProfileSpec{
@@ -243,7 +243,7 @@ func TestKernelAccessNetworkPolicy_ProfileKernelEgressNamespaces(t *testing.T) {
 		t.Fatal("expected network policy")
 	}
 	if len(np.Spec.Egress) < 2 {
-		t.Fatalf("expected infra + gentian-system egress, got %d rules", len(np.Spec.Egress))
+		t.Fatalf("expected infra + kernel-control egress, got %d rules", len(np.Spec.Egress))
 	}
 }
 

@@ -28,7 +28,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/handover"
 )
 
-const gateNamespace = "gentian-system"
+const gateNamespace = "kernel-control"
 
 func gateScheme(t *testing.T) *runtime.Scheme {
 	t.Helper()

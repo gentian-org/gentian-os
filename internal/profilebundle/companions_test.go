@@ -257,7 +257,7 @@ func TestWhatTheClusterAddsIsNotADifference(t *testing.T) {
 	composition := find(t, objects, KindComposition)
 	// As Crossplane's schema fills them in.
 	set(t, composition, map[string]any{"name": "default"}, "spec", "publishConnectionDetailsWithStoreConfigRef")
-	set(t, composition, "crossplane-system", "spec", "writeConnectionSecretsToNamespace")
+	set(t, composition, "kernel-provisioning", "spec", "writeConnectionSecretsToNamespace")
 	if r := verifyOn(t, profile, objects, shopBundle); r != nil {
 		t.Fatalf("%s: %s", r.Reason, r.Message)
 	}
