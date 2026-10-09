@@ -655,8 +655,10 @@ func TestThePlatformTenantsManifestRefusesAppsAndAddons(t *testing.T) {
 // The install writes one tenant itself: the user tenant of a single-tenancy
 // cluster (scripts/lib/bootstrap.sh, scaffold_user_tenant), committed with
 // the cluster's definition before there is a director to ask. What it writes
-// is the manifest CreateTenant writes, and nothing more -- in particular no
-// annotation that would admit the tenant ahead of the handover. Two templates
+// is the manifest CreateTenant writes for a tenant whose administrators may
+// approve public addresses -- the one switch the install turns on for this
+// tenant -- and nothing more: in particular no annotation that would admit
+// the tenant ahead of the handover, and no catalogues of its own. Two templates
 // in two languages would drift apart silently, so the shell's output is
 // produced here and compared with the director's as data.
 func TestTheInstallsUserTenantIsTheManifestTheDirectorWrites(t *testing.T) {
@@ -692,7 +694,9 @@ func TestTheInstallsUserTenantIsTheManifestTheDirectorWrites(t *testing.T) {
 	// The director's.
 	remote := dt.Remote(t, "demo")
 	g := gitops.NewGitOps(dt.Clone(t, remote), remote, dt.Cluster, director)
-	if _, err := g.CreateTenant(context.Background(), gitops.NewTenant{Name: "user", DisplayName: "User"}, tenantMeta()); err != nil {
+	if _, err := g.CreateTenant(context.Background(), gitops.NewTenant{
+		Name: "user", DisplayName: "User", Perimeter: &gitops.NewTenantPerimeter{AdminsApprove: true},
+	}, tenantMeta()); err != nil {
 		t.Fatal(err)
 	}
 
