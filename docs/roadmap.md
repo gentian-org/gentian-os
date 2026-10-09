@@ -171,7 +171,7 @@ Design: see [docs/design/agentic-ai.md](design/agentic-ai.md), Scope
 * **Backlog Items**:
   - `[x]` The rights check: `requires.services.rights`, a key per component for one question at the bouncer.
   - `[x]` A granted contract opens the provider's side as well as the consumer's, for both ways a component is delivered; one that nobody granted opens nothing.
-  - `[ ]` A contract tells the provider which consumer is calling.
+  - `[x]` A contract tells the provider which consumer is calling: a key per consumer, and their hashes at the provider.
   - `[x]` The rights check is served whichever way a component is delivered.
 
 ### 1.15 Gateway External Authentication (AuthZEN PEP) (**)

@@ -268,6 +268,13 @@ NetworkPolicies enforce three rules at the CNI level:
    withdrawn takes both away. The network decides which app reaches
    which; it cannot tell one path of the provider from another, so what
    the consumer may do there is the provider's to check.
+   For that the consumer is given a key of its own, in the Secret
+   `contract-key-<consumer>-<contract>` (`CONTRACT_KEY`), and the
+   provider the Secret `contract-callers-<provider>`: per contract an
+   entry `<contract>.json`, a JSON object from the SHA-256 of each
+   granted consumer's key to that consumer's name. A provider that asks
+   for the key knows which consumer is calling, and holds nothing it
+   could call as one of them with. Both Secrets go with the grant.
 
 ## 5. Identity and OIDC Trust Chain
 

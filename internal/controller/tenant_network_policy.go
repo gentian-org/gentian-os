@@ -177,7 +177,9 @@ func (r *TenantReconciler) ensureNetworkPolicies(ctx context.Context, tenant *ge
 			return fmt.Errorf("delete stale NetworkPolicy %s: %w", np.Name, err)
 		}
 	}
-	return nil
+	// With the way between two apps goes the means to tell who is calling,
+	// and both come and go with the grant.
+	return r.ensureContractKeys(ctx, tenant, nsName, bindings, grants)
 }
 
 func (r *TenantReconciler) loadAppGrantsByConsumer(ctx context.Context, nsName string) (map[string]*gentianov1alpha1.AppGrant, error) {
