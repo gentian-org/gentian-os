@@ -369,8 +369,9 @@ the director cannot; set `GENTIAN_KIT_INCLUDE_BREAK_GLASS=0` to keep that key
 out of it.
 
 **Want to see the plan before anything runs?** Both of these change nothing —
-neither the cluster nor the deployments repository — and report a missing
-definition instead of writing one:
+not the cluster, not the deployments repository (no commit, no push), not a
+file or a key on this machine — and report a missing definition instead of
+writing one. Where the install would act, they print a line beginning `Would`:
 
 ```bash
 ./install.sh --validate      # is this configuration coherent? No cluster needed.

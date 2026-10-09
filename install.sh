@@ -52,7 +52,9 @@
 # Read before you run:
 #
 #   ./install.sh --explain          the step table and what each one mutates
-#   ./install.sh --dry-run          run every check(), print the plan, change nothing
+#   ./install.sh --dry-run          run every check(), print the plan, change nothing:
+#                                   not the cluster, not the deployments repository,
+#                                   not a file or a key on this host
 #   ./install.sh --status           where did this install get to?
 #
 # Run part of it:
@@ -157,7 +159,15 @@ Recovery:
 Looking before running:
   --explain             print what every step does, in order, and stop
   --status              report which steps this cluster has already satisfied
-  --dry-run             run every check() and print the plan; applies nothing
+  --dry-run             run every check() and print the plan. Changes nothing:
+                        no object in the cluster, no file in the deployments
+                        checkout, no commit or push, no signing key, nothing
+                        under ~/.gentian or ~/.local/bin. Where an install
+                        would do one of those, it prints a line beginning
+                        "Would". It reads: the cluster, and the deployments
+                        repository's remote (to say whether the checkout is
+                        behind it). With --uninstall or --purge it previews
+                        the teardown the same way
 
 Running part of it. A step is named by its number or its full id, so
 --only B-08 and --only B-08-seed-secrets are the same thing:
@@ -173,7 +183,8 @@ Running part of it. A step is named by its number or its full id, so
                         is asking the wrong question
 
 Other options:
-  --validate            validate config and step contracts, no cluster changes
+  --validate            validate config and step contracts. Changes nothing,
+                        on the same terms as --dry-run
   --verify-only         run post-install verification and print the summary
   --activate-admin      issue a new activation link for the cluster administrator
                         (admin@<kernel-domain>), mailed or shown once — for a lost
@@ -302,6 +313,27 @@ parse_driver_args() {
         exit 1
     fi
 
+    # --dry-run and --validate promise to change nothing, and these commands
+    # do not know the promise: each goes its own way through main() and never
+    # reaches the place a dry run is honoured. --verify-only restarts Argo
+    # CD's controller when it finds it stuck, --activate-admin issues a link
+    # and resets a password, --export-recovery-kit writes a file and may store
+    # a backup key. Refused together rather than run as if the flag were not
+    # there -- which is what happened, and is the worst of the three choices.
+    if [[ "${GENTIAN_DRY_RUN:-0}" == "1" || "${INSTALL_VALIDATE_ONLY:-0}" == "1" ]]; then
+        local _not_previewed=""
+        [[ "${INSTALL_VERIFY_ONLY:-0}" == "1" ]] && _not_previewed="--verify-only"
+        case "${GENTIAN_DIRECTION}" in
+            activate-admin) _not_previewed="--activate-admin" ;;
+            export-kit)     _not_previewed="--export-recovery-kit" ;;
+        esac
+        if [[ -n "${_not_previewed}" ]]; then
+            error "${_not_previewed} has no preview: --dry-run and --validate apply to an install, an update, an uninstall or a purge."
+            error "  Run ${_not_previewed} on its own, or drop it to preview the install."
+            exit 1
+        fi
+    fi
+
     export GENTIAN_DRY_RUN GENTIAN_ONLY GENTIAN_FROM GENTIAN_UNTIL GENTIAN_SKIP GENTIAN_PHASE
     export GENTIAN_PURGE_CLUSTER_INFRA
     export INSTALL_CLUSTER_INFRA INSTALL_CONFIG_FILE GENTIAN_TENANT_NAME
@@ -360,7 +392,8 @@ prepare_run() {
     fi
 
     # Now a genuine precondition rather than an instruction: it validates what
-    # is there and commits an edit the operator made by hand.
+    # is there and commits an edit the operator made by hand -- or, under
+    # --dry-run, says which edits an install would commit and leaves them.
     require_cluster_deployment
 
     resolve_kernel_domain_from_claim   # already-bootstrapped cluster reads its Claim
@@ -461,6 +494,11 @@ _ensure_bao() {
         return 0
     fi
     local _asset _sums _base _tmp _install_dir _want _have
+    # Downloading a binary into ~/.local/bin is a change to this host.
+    if gentian_read_only; then
+        gentian_would "install the OpenBao CLI ${OPENBAO_CLI_VERSION} to ${HOME}/.local/bin, which this host does not have"
+        return 0
+    fi
     if ! _asset="$(openbao_cli_asset "${OPENBAO_CLI_VERSION}" "$(uname -s)" "$(uname -m)")" \
         || ! _sums="$(openbao_cli_checksums_asset "$(uname -s)")"; then
         error "The installer fetches the OpenBao CLI for Linux and macOS on x86_64 and arm64,"
@@ -579,7 +617,11 @@ main() {
                 # Confirm before anything is touched, not between the reverse
                 # pass and the volume deletion — a teardown stopped half way is
                 # the state this is least able to reason about.
-                if [[ -n "${GENTIAN_PURGE_CONFIRM:-}" ]]; then
+                if [[ "${GENTIAN_DRY_RUN}" == "1" ]]; then
+                    # Nothing is purged, so there is nothing to confirm -- and
+                    # the confirmation takes the purge lock, which is a file.
+                    info "Dry run: the purge is not confirmed, because it is not carried out."
+                elif [[ -n "${GENTIAN_PURGE_CONFIRM:-}" ]]; then
                     [[ "${GENTIAN_PURGE_CONFIRM}" == "${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-}" ]] || {
                         error "GENTIAN_PURGE_CONFIRM does not match GENTIAN_DEPLOYMENTS_CLUSTER_ID."
                         exit 1

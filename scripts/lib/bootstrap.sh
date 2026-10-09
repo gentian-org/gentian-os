@@ -1787,6 +1787,31 @@ ensure_claim_catalogue_section() {
     info "  To run without a store, set 'catalogue: {}' under spec."
 }
 
+# preview_claim_catalogue_section <claim file> — what
+# ensure_claim_catalogue_section would do to the claim, without doing it.
+#
+# For --dry-run and --validate. The edit is made to a copy outside the
+# checkout, so the claim is judged by exactly the code an install runs and is
+# not touched by it; whatever that code says is printed under a line saying
+# none of it happened.
+preview_claim_catalogue_section() {
+    local claim="$1" copy said
+    [[ -f "${claim}" ]] || return 0
+    copy="$(mktemp)"
+    cat "${claim}" > "${copy}"
+    said="$(ensure_claim_catalogue_section "${copy}" 2>&1 || true)"
+    said="${said//${copy}/${claim}}"
+    if ! cmp -s "${claim}" "${copy}"; then
+        gentian_would "edit claims/cluster.yaml, then commit and push the edit signed"
+        info "  What an install would report having done to it:"
+        printf '%s\n' "${said}" | sed 's/^/    /'
+    elif [[ -n "${said}" ]]; then
+        # Nothing to edit: only what it has to say about the claim as it is.
+        printf '%s\n' "${said}"
+    fi
+    rm -f "${copy}"
+}
+
 # _claim_warn_retired_catalogue_addresses <claim file>
 #
 # Two addresses an earlier installer wrote into every new claim never served
@@ -1907,8 +1932,13 @@ _claim_default_line() {
 # Fast-forwards when that is all it takes. When it is not -- local commits
 # origin does not have, or uncommitted changes -- it refuses and says exactly
 # what to run, because either choice (keep or discard) is the operator's.
+#
 # With `check`, it only reports: --validate and --dry-run promise to change
-# nothing, and moving the checkout is a change.
+# nothing, and that includes the checkout's own .git. So origin is ASKED where
+# its branch is (ls-remote) rather than fetched from: a fetch stores origin's
+# objects in the checkout and moves its origin/<branch>, which is a write even
+# though no file anybody edits changes. The price is that a checkout which is
+# behind cannot be told by how many commits, only that it is.
 gentian_sync_deployments_checkout() {
     resolve_deployments_path
     local mode="${1:-sync}" path="${GENTIAN_DEPLOYMENTS_PATH}" branch behind ahead dirty
@@ -1916,6 +1946,12 @@ gentian_sync_deployments_checkout() {
     git -C "${path}" remote get-url origin >/dev/null 2>&1 || return 0
     branch="$(git -C "${path}" branch --show-current 2>/dev/null || true)"
     branch="${branch:-${GENTIAN_DEPLOYMENTS_BRANCH:-main}}"
+
+    if [[ "${mode}" == "check" ]]; then
+        _deployments_checkout_report "${path}" "${branch}"
+        return
+    fi
+
     if ! git -C "${path}" fetch -q origin "${branch}" 2>/dev/null; then
         warn "Could not fetch origin/${branch} of the deployments repository; using the checkout as it is."
         return 0
@@ -1928,10 +1964,6 @@ gentian_sync_deployments_checkout() {
     (( behind > 0 )) || return 0
     dirty="$(git -C "${path}" status --porcelain 2>/dev/null || true)"
     if (( ahead == 0 )) && [[ -z "${dirty}" ]]; then
-        if [[ "${mode}" == "check" ]]; then
-            warn "The deployments checkout is ${behind} commit(s) behind origin/${branch}; an install fast-forwards it."
-            return 0
-        fi
         git -C "${path}" merge -q --ff-only "origin/${branch}" >/dev/null 2>&1 || {
             error "Could not fast-forward ${path} to origin/${branch}."
             return 1
@@ -1939,7 +1971,48 @@ gentian_sync_deployments_checkout() {
         info "Deployments checkout fast-forwarded to origin/${branch} (${behind} commit(s))."
         return 0
     fi
-    error "The deployments checkout is ${behind} commit(s) behind origin/${branch} and cannot be fast-forwarded:"
+    _deployments_checkout_refuse "${path}" "${branch}" "${behind} commit(s) behind" "${ahead}" "${dirty}"
+}
+
+# _deployments_checkout_report <path> <branch> — the same verdict, read-only.
+#
+# Returns what the sync would: 0 where an install would go on (up to date, or
+# behind and able to fast-forward), 1 where it would refuse.
+_deployments_checkout_report() {
+    local path="$1" branch="$2" theirs ours ahead=0 dirty
+    if ! theirs="$(git -C "${path}" ls-remote origin "refs/heads/${branch}" 2>/dev/null)"; then
+        warn "Could not reach origin of the deployments repository; using the checkout as it is."
+        return 0
+    fi
+    theirs="${theirs%%[[:space:]]*}"
+    # An empty remote, or one without the branch: nothing to be behind.
+    [[ -n "${theirs}" ]] || return 0
+    ours="$(git -C "${path}" rev-parse -q --verify HEAD 2>/dev/null || true)"
+    [[ "${theirs}" != "${ours}" ]] || return 0
+    # origin's head is a commit this checkout already has in its own history:
+    # the checkout is ahead of origin, not behind it.
+    if git -C "${path}" merge-base --is-ancestor "${theirs}" HEAD 2>/dev/null; then
+        return 0
+    fi
+    # Local commits origin does not have, by the last origin/<branch> this
+    # checkout fetched. --no-optional-locks: without it `git status` rewrites
+    # the index to refresh it, which is a write to the checkout.
+    if git -C "${path}" rev-parse --verify -q "origin/${branch}" >/dev/null 2>&1; then
+        ahead="$(git -C "${path}" rev-list --count "origin/${branch}..HEAD" 2>/dev/null || echo 0)"
+    fi
+    dirty="$(git -C "${path}" --no-optional-locks status --porcelain 2>/dev/null || true)"
+    if (( ahead == 0 )) && [[ -z "${dirty}" ]]; then
+        warn "The deployments checkout is behind origin/${branch} (origin is at ${theirs:0:12}); an install fast-forwards it."
+        warn "  This run reads the checkout as it is, so what it reports is the definition before that."
+        return 0
+    fi
+    _deployments_checkout_refuse "${path}" "${branch}" "behind" "${ahead}" "${dirty}"
+}
+
+# _deployments_checkout_refuse <path> <branch> <how far behind> <ahead> <dirty>
+_deployments_checkout_refuse() {
+    local path="$1" branch="$2" behind="$3" ahead="$4" dirty="$5"
+    error "The deployments checkout is ${behind} origin/${branch} and cannot be fast-forwarded:"
     if (( ahead > 0 )); then
         error "  it has ${ahead} local commit(s) origin does not:"
         git -C "${path}" log --oneline "origin/${branch}..HEAD" 2>/dev/null | while IFS= read -r line; do
@@ -1954,6 +2027,13 @@ gentian_sync_deployments_checkout() {
 }
 
 scaffold_cluster_deployment() {
+    # Step 0 writes the cluster's definition, publishes its keys and pushes.
+    # prepare_run does not call it under --dry-run or --validate; this is for
+    # the caller that one day forgets.
+    if gentian_read_only; then
+        gentian_would "write whatever clusters/${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-<cluster>} still lacks, and commit and push it signed"
+        return 0
+    fi
     # The files are only useful inside the checkout they get committed from.
     # Writing them into a bare directory produces a tree nothing tracks, which
     # looks like success and installs nothing.
@@ -2652,6 +2732,11 @@ gentian_commit_cluster_deployment() {
     local kernel_dir="$1" cluster="$2" dirty sign_args branch
     local -a paths
     local _p
+    # Whoever calls it: a run that changes nothing does not commit.
+    if gentian_read_only; then
+        report_uncommitted_cluster_deployment "${kernel_dir}" "${cluster}"
+        return 0
+    fi
     paths=()
     while IFS= read -r _p; do paths+=("${_p}"); done < <(_cluster_scaffold_paths "${cluster}")
     command -v git >/dev/null 2>&1 || return 0
@@ -2748,6 +2833,8 @@ and AD-2 names that case." 2>&1; then
 # key puts a trusted one on top -- the case AD-2 names, recorded as such.
 gentian_sign_unsigned_head() {
     local kernel_dir="$1" cluster="$2" ids head_key head_sig branch sign_args
+    # It fetches, merges, commits and pushes: none of it in a read-only run.
+    gentian_read_only && return 0
     [[ -f "${kernel_dir}/signing/keys.env" ]] || return 0
     command -v git >/dev/null 2>&1 || return 0
     git -C "${GENTIAN_DEPLOYMENTS_PATH}" fetch -q origin 2>/dev/null || return 0
@@ -2782,6 +2869,32 @@ break-glass key, puts a trusted head on top; nothing else changes." 2>&1 || {
         return 1
     }
     success "Signed the head of the deployments repository (break-glass)."
+}
+
+# report_uncommitted_cluster_deployment <kernel-dir> <cluster> — what an
+# install would commit and push from the checkout, for a run that does not.
+#
+# The same paths and the same question gentian_commit_cluster_deployment
+# asks, with --no-optional-locks: without it `git status` rewrites the index
+# to refresh it, and the checkout is one of the things this run leaves alone.
+report_uncommitted_cluster_deployment() {
+    local kernel_dir="$1" cluster="$2" dirty line _p
+    local -a paths
+    paths=()
+    while IFS= read -r _p; do paths+=("${_p}"); done < <(_cluster_scaffold_paths "${cluster}")
+    command -v git >/dev/null 2>&1 || return 0
+    git -C "${GENTIAN_DEPLOYMENTS_PATH}" rev-parse --git-dir >/dev/null 2>&1 || return 0
+    dirty="$(git -C "${GENTIAN_DEPLOYMENTS_PATH}" --no-optional-locks status --porcelain -- \
+        "${paths[@]}" 2>/dev/null || true)"
+    if [[ -z "${dirty}" ]]; then
+        info "clusters/${cluster} has no uncommitted change; an install would commit nothing from it."
+        return 0
+    fi
+    gentian_would "commit these changes in clusters/${cluster}, signed with the break-glass key, and push them"
+    while IFS= read -r line; do
+        [[ -n "${line}" ]] && info "    ${line}"
+    done <<< "${dirty}"
+    return 0
 }
 
 _warn_uncommitted_cluster_deployment() {
@@ -2854,7 +2967,11 @@ require_cluster_deployment() {
     # produces a Service whose address nothing pins — the failure the old
     # requirement existed to prevent, now stated against the claim.
     local claim="${kernel_dir}/claims/cluster.yaml"
-    ensure_claim_catalogue_section "${claim}"
+    if gentian_read_only; then
+        preview_claim_catalogue_section "${claim}"
+    else
+        ensure_claim_catalogue_section "${claim}"
+    fi
     if [[ -f "${claim}" ]]; then
         local net
         net="$(yq_get '.spec.networkMode' "${claim}" 2>/dev/null || true)"
@@ -2869,6 +2986,15 @@ require_cluster_deployment() {
         # Not a warning any more. An edit sitting in the working copy at
         # install time is an edit the cluster will not get, and the operator
         # has already said what they want by making it.
+        #
+        # Under --dry-run and --validate it is reported and left where it is.
+        # This call is what committed and pushed a cluster's definition from a
+        # dry run: the guard in prepare_run covered the step that WRITES the
+        # definition and not this one, which was thought of as a check.
+        if gentian_read_only; then
+            report_uncommitted_cluster_deployment "${kernel_dir}" "${cluster}"
+            return 0
+        fi
         gentian_commit_cluster_deployment "${kernel_dir}" "${cluster}"
         return 0
     fi

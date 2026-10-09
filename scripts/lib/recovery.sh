@@ -725,7 +725,9 @@ load_recovery_kit() {
     # variable somewhere downstream: it has to be back in a KEYRING before
     # anything can sign with it. Imported here so that a --recover run can
     # commit to the deployments repository the way the original install did.
-    if [[ -n "${GENTIAN_BREAK_GLASS_KEY:-}" ]]; then
+    if [[ -n "${GENTIAN_BREAK_GLASS_KEY:-}" ]] && gentian_read_only; then
+        gentian_would "restore the kit's break-glass signing key to $(gentian_gpg_home)"
+    elif [[ -n "${GENTIAN_BREAK_GLASS_KEY:-}" ]]; then
         if gentian_import_break_glass_key "${GENTIAN_BREAK_GLASS_KEY}"; then
             info "  Break-glass signing key restored ($(gentian_signing_key_long_id break-glass))."
         else

@@ -45,7 +45,7 @@ _signing_vault_path() {
 
 check() {
     local ns dir ids id
-    ns="$(_argocd_ns)"
+    ns="$(ns_kernel gitops)"
     dir="$(_signing_kernel_dir)"
 
     # Nothing to enforce if the repository names no keys. A cluster whose
@@ -75,7 +75,7 @@ apply() {
     banner "Deployment signing"
     local ns dir role id asc body
     local -a keyfiles=()
-    ns="$(_argocd_ns)"
+    ns="$(ns_kernel gitops)"
     dir="$(_signing_kernel_dir)"
 
     if [[ ! -f "${dir}/signing/keys.env" ]]; then
@@ -156,7 +156,7 @@ PYEOF
 }
 
 destroy() {
-    local ns; ns="$(_argocd_ns)"
+    local ns; ns="$(ns_kernel gitops)"
     # The ConfigMap belongs to Argo CD; only this cluster's entries go. Left
     # whole, a rebuilt cluster would keep trusting keys nobody holds.
     kubectl delete configmap argocd-gpg-keys-cm -n "${ns}" --ignore-not-found=true >/dev/null 2>&1 || true

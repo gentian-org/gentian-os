@@ -77,13 +77,38 @@ the deployments repository.
 ```bash
 ./install.sh --explain    # every step, what it provides and what it mutates
 ./install.sh --status     # run every check() against the cluster
-./install.sh --dry-run    # run the checks, print the plan, apply nothing
+./install.sh --dry-run    # run the checks, print the plan, change nothing
+./install.sh --validate   # is the configuration coherent? changes nothing
 ```
 
-None of the three collects a credential. `--dry-run` runs the same preflight as
-an install except for that: it applies nothing, and no step's `check()` reads a
-credential, so it has everything it needs to print the plan. The install
-collects them; the preview does not.
+None of the four collects a credential. `--dry-run` runs the same preflight as
+an install except for that: no step's `check()` reads a credential, so it has
+everything it needs to print the plan. The install collects them; the preview
+does not.
+
+"Changes nothing" is meant of everything an install touches, not only of the
+cluster. Under `--dry-run` and `--validate`:
+
+| | An install | A dry run or a validation |
+|---|---|---|
+| The cluster | applies, patches, deletes | only reads (`kubectl get`, `helm list`, `GET` requests to OpenBao) |
+| The deployments checkout | fast-forwards it, completes the cluster's definition, commits what is uncommitted, pushes | reads it as it is. It asks the remote where its branch is (`git ls-remote`) without fetching, and says so if the checkout is behind |
+| The signing keys | generates the break-glass key if this cluster has none | generates nothing, imports nothing, and does not start `gpg` on a host with no keyring |
+| `~/.gentian` | writes `config`, the credential cache, the keyring | writes nothing |
+| `~/.local/bin` | fetches the OpenBao CLI when `bao` is missing | fetches nothing; says it would |
+
+Wherever an install would have acted, the run prints a line beginning
+`Would`: which uncommitted files it would commit and push, an edit it would
+make to the claim, a file it would write. `--dry-run` also applies to
+`--uninstall` and `--purge`, where it previews the teardown and asks for no
+confirmation. It does not apply to `--verify-only`, `--activate-admin` or
+`--export-recovery-kit`, which have no preview: combined with one of them it
+is refused, rather than ignored.
+
+This is held by a test that runs the installer in both modes with stand-ins
+for `git`, `gpg`, `kubectl`, `helm`, `curl` and `bao` that fail on anything
+that would change something, and with a home directory that must be
+byte-identical afterwards (`make test-dry-run-changes-nothing`).
 
 `--explain` needs no cluster connection. It reads the step headers, so it cannot
 drift from what will actually run.

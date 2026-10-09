@@ -271,6 +271,7 @@ _load_credential_cache() {
 
 _save_credential_cache() {
     [[ "${GENTIAN_NO_CREDENTIAL_CACHE:-0}" == "1" ]] && return 0
+    gentian_read_only && return 0
     local f dir var
     f="$(_credential_cache_file)"
     dir="$(dirname "${f}")"
