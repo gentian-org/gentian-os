@@ -286,8 +286,18 @@ func TestTheMainAddressIsRefusedEverywhereElse(t *testing.T) {
 		if h.tip(t) != before {
 			t.Errorf("%s: the refused request committed anyway", tc.what)
 		}
-		// Without apex the same request is an ordinary surface, as before.
-		if code, body := h.do(t, "PUT", tc.path, tok, `{"reason":"a public page"}`); code != http.StatusAccepted {
+		// The same entry without apex is no way round it: the profile
+		// declares it for the main address, and the operator would publish
+		// nothing for an approval that does not say so. The platform
+		// tenant's zone is the one the operator does not ask that of.
+		code, body = h.do(t, "PUT", tc.path, tok, `{"reason":"a public page"}`)
+		if want := map[bool]int{false: http.StatusUnprocessableEntity, true: http.StatusAccepted}[tc.platform]; code != want {
+			t.Errorf("%s: the website without apex: %d %v, want %d", tc.what, code, body, want)
+		}
+		// An entry that is not for the main address is an ordinary surface,
+		// as before.
+		ordinary := strings.TrimSuffix(tc.path, "website/site") + "nextcloud/shares"
+		if code, body := h.do(t, "PUT", ordinary, tok, `{"reason":"shared calendars"}`); code != http.StatusAccepted {
 			t.Errorf("%s: an ordinary surface: %d %v", tc.what, code, body)
 		}
 	}

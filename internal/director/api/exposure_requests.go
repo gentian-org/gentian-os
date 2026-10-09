@@ -397,3 +397,36 @@ func (v *exposureView) unmatched(install, name string) string {
 	return fmt.Sprintf("%s declares no entry named %s for the internet. What it declares: %s",
 		install, name, strings.Join(declared, ", "))
 }
+
+// mainAddressMismatch is why an approval's word on the main address is not
+// the profile's, or "".
+//
+// The main address takes two people saying so: the profile's author (apex on
+// the entry) and the approver (apex on the approval). The operator publishes
+// nothing for one without the other (addresses.PerimeterHost), and an
+// approval recorded that way lists as published something that is not. The
+// platform tenant's own zone is the one place the operator does not ask, and
+// neither does this.
+func (v *exposureView) mainAddressMismatch(install, name string, apex bool) string {
+	profile := v.profiles[install]
+	if profile == nil {
+		return ""
+	}
+	entry, _, _ := perimeterEntry(profile, name)
+	if entry == nil || entry.Apex == apex {
+		return ""
+	}
+	if addresses.ZoneOf(v.subject, v.inputs.KernelDomain, v.inputs.TenancyMode, v.inputs.KernelRealm).Kernel {
+		return ""
+	}
+	if apex {
+		return fmt.Sprintf(
+			"the request asks for the cluster's main address (\"apex\": true), and the profile of %s does not declare entry %s for the main address. "+
+				"The platform would publish nothing for it. Send the request without \"apex\" to publish the entry at its own address",
+			install, name)
+	}
+	return fmt.Sprintf(
+		"the profile of %s declares entry %s for the cluster's main address, and the request does not ask for the main address (\"apex\": true is missing). "+
+			"The platform would publish nothing for it. Such an entry is approved only as one for the main address, with \"apex\": true and \"acknowledgeMainAddressRule\": true",
+		install, name)
+}

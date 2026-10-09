@@ -413,7 +413,10 @@ that day, UTC. It is reviewed after a year at the latest. Approving an entry
 that is approved already is its review, and replaces its expiry and reason.
 The command sends nothing for an entry the director does not list, and the
 director itself refuses an app instance that is not installed in the tenant
-and an entry the profile does not declare for the internet.
+and an entry the profile does not declare for the internet. It also refuses
+an approval that asks for the main address for an entry not declared for it,
+or that does not ask for it for one that is; the command sends what the
+entry is, and prints the director's refusal as it came.
 
 An entry for the cluster's main address is approved only with
 `--acknowledge-main-address-rule`. The command first prints the director's

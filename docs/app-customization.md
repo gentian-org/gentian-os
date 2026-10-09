@@ -614,8 +614,8 @@ console shows the same under Apps → Details). The tenant's perimeter approver
 approves it with `kubectl gentian exposures approve <install> <name> --tenant
 <t>` (`PUT /v1/tenants/{t}/exposures/{install}/{name}`), with an owner and a
 review date. The director refuses an approval of an app that is not installed
-in the tenant or of an entry the profile does not declare with `surface:
-perimeter`. The entry then answers at `<subDomain or component
+in the tenant, of an entry the profile does not declare with `surface:
+perimeter`, and one whose `apex` is not the entry's. The entry then answers at `<subDomain or component
 name>.<tenant's domain>`, from a proxy that passes no cookies either way and
 checks nobody: an `authMode` other than `none` says the app itself checks its
 callers. `exposures list` shows what a tenant has published, and `exposures

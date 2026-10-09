@@ -301,6 +301,17 @@ func TestThePlatformsOwnPageCanBeReviewed(t *testing.T) {
 	if page := entryOf(t, body, "concierge", "front"); page["state"] != "approved" {
 		t.Fatalf("after the review = %v", page)
 	}
+	// Whether it is for the main address is the profile's to say, and that
+	// cannot be read: a review does not change what the registry holds.
+	before := h.tip(t)
+	code, body := h.do(t, "PUT", "/v1/tenants/demo/exposures/concierge/front", tom, mainAddress)
+	if msg, _ := body["error"].(string); code != http.StatusUnprocessableEntity ||
+		!strings.Contains(msg, "A review keeps the setting the entry has") || !strings.Contains(msg, "Nothing was changed") {
+		t.Fatalf("a review that changes the main-address setting: %d %v", code, body)
+	}
+	if h.tip(t) != before {
+		t.Fatal("the refused review committed anyway")
+	}
 	if code, body := h.do(t, "PUT", "/v1/tenants/demo/exposures/concierge/other", tom, `{}`); code != http.StatusUnprocessableEntity {
 		t.Fatalf("a new entry of a platform component: %d %v", code, body)
 	}
@@ -318,5 +329,116 @@ func TestAnAddonsEntriesAreListed(t *testing.T) {
 	_, body := h.do(t, "GET", exposuresPath("demo"), h.token(t, "tenant-demo", "tom"), "")
 	if got := entryOf(t, body, "deck", "boards"); got["state"] != "requested" || got["host"] != "share-deck.demo."+dt.KernelDomain {
 		t.Fatalf("the add-on's entry = %v", got)
+	}
+}
+
+// The main address takes the profile's author and the approver both saying
+// so. An approval that says it of an entry the profile does not declare for
+// the main address, or does not say it of one the profile does, is something
+// the operator publishes nothing for: it is refused, and nothing is committed.
+func TestAnApprovalWhoseMainAddressSettingIsNotTheEntrysIsRefused(t *testing.T) {
+	h := startTenancy(t, &residueOperator{}, "single", websites())
+	uma := h.token(t, "tenant-user", "uma")
+	before := h.tip(t)
+
+	for what, tc := range map[string]struct{ path, body, says string }{
+		"the main address for an entry under the tenant's own address": {
+			"/v1/tenants/user/exposures/nextcloud/shares", mainAddress,
+			"the profile of nextcloud does not declare entry shares for the main address"},
+		"the same without the acknowledgement": {
+			"/v1/tenants/user/exposures/nextcloud/shares", unacknowledged,
+			"the profile of nextcloud does not declare entry shares for the main address"},
+		"a website for the main address, approved as an ordinary entry": {
+			userSitePath, `{"reason":"our public website"}`,
+			"the profile of website declares entry site for the cluster's main address"},
+		"the same with apex false": {
+			userSitePath, `{"apex":false,"acknowledgeMainAddressRule":true}`,
+			"the profile of website declares entry site for the cluster's main address"},
+	} {
+		code, body := h.do(t, "PUT", tc.path, uma, tc.body)
+		msg, _ := body["error"].(string)
+		if code != http.StatusUnprocessableEntity || !strings.Contains(msg, tc.says) ||
+			!strings.Contains(msg, "would publish nothing") || !strings.HasSuffix(msg, ". Nothing was changed") {
+			t.Errorf("%s: %d %v, want 422 saying %q", what, code, body, tc.says)
+		}
+	}
+	if h.tip(t) != before {
+		t.Fatal("a refused approval committed anyway")
+	}
+	_, body := h.do(t, "GET", exposuresPath("user"), uma, "")
+	for _, name := range []string{"nextcloud shares", "website site"} {
+		f := strings.Fields(name)
+		if got := entryOf(t, body, f[0], f[1]); got["state"] != "requested" || got["approval"] != nil {
+			t.Errorf("%s after the refusals = %v", name, got)
+		}
+	}
+
+	// It is asked of whoever may publish, and of nobody else: a member is
+	// told they may not, not what the entry is.
+	if code, _ := h.do(t, "PUT", userSitePath, h.token(t, "tenant-user", "ulf"), `{}`); code != http.StatusForbidden {
+		t.Fatalf("a member, with a setting that does not match: %d", code)
+	}
+	// With the setting the entry has, each is approved as before.
+	if code, body := h.do(t, "PUT", userSitePath, uma, mainAddress); code != http.StatusAccepted {
+		t.Fatalf("the website, for the main address: %d %v", code, body)
+	}
+	if code, body := h.do(t, "PUT", "/v1/tenants/user/exposures/nextcloud/shares", uma, `{}`); code != http.StatusAccepted {
+		t.Fatalf("the entry under the tenant's own address: %d %v", code, body)
+	}
+}
+
+// What was recorded with the wrong setting before the check stays, is shown
+// as it was -- with no address and the reason -- and can be withdrawn. It
+// cannot be renewed on that setting.
+func TestARegistryEntryWithTheWrongMainAddressSettingStaysAndIsNotRenewed(t *testing.T) {
+	// shares was approved for the main address and is not declared for it;
+	// site is declared for it and was approved as an ordinary entry.
+	path, file := registryFile("user", "nextcloud shares "+stamp(48*time.Hour), "website site "+stamp(48*time.Hour))
+	file = strings.Replace(file, "      owner: olga\n", "      owner: olga\n      apex: true\n", 1)
+	files := websites()
+	files[path] = file
+	h := startTenancy(t, &residueOperator{}, "single", files)
+	uma := h.token(t, "tenant-user", "uma")
+
+	_, body := h.do(t, "GET", exposuresPath("user"), uma, "")
+	if live, _ := body["live"].([]any); len(live) != 2 {
+		t.Fatalf("the registry itself changed: live = %v", body["live"])
+	}
+	for name, says := range map[string]string{
+		"nextcloud shares": "the profile does not declare it for that address",
+		"website site":     "is published only when the approver says so",
+	} {
+		f := strings.Fields(name)
+		got := entryOf(t, body, f[0], f[1])
+		note, _ := got["note"].(string)
+		if got["state"] != "approved" || got["host"] != nil || !strings.Contains(note, says) {
+			t.Errorf("%s = %v, want it approved, without an address, saying %q", name, got, says)
+		}
+	}
+
+	before := h.tip(t)
+	// Renewed as recorded, each is the mismatch it was.
+	for path, payload := range map[string]string{
+		"/v1/tenants/user/exposures/nextcloud/shares": mainAddress,
+		userSitePath: `{"reason":"still our website"}`,
+	} {
+		if code, body := h.do(t, "PUT", path, uma, payload); code != http.StatusUnprocessableEntity {
+			t.Errorf("renewing %s on the setting it has: %d %v", path, code, body)
+		}
+	}
+	if h.tip(t) != before {
+		t.Fatal("a refused renewal committed anyway")
+	}
+	// Corrected, it is approved, and has an address again.
+	if code, body := h.do(t, "PUT", "/v1/tenants/user/exposures/nextcloud/shares", uma, `{}`); code != http.StatusAccepted {
+		t.Fatalf("the corrected approval: %d %v", code, body)
+	}
+	_, body = h.do(t, "GET", exposuresPath("user"), uma, "")
+	if got := entryOf(t, body, "nextcloud", "shares"); got["host"] != "share-nextcloud."+dt.KernelDomain {
+		t.Fatalf("after the correction = %v", got)
+	}
+	// And the other is withdrawn the way every entry is.
+	if code, body := h.do(t, "DELETE", userSitePath, uma, ""); code != http.StatusAccepted {
+		t.Fatalf("withdrawing the mismatched entry: %d %v", code, body)
 	}
 }

@@ -434,6 +434,15 @@ is "with the acknowledgement it is approved" "${RC}" "0"
 has "... the rule printed all the same" "$(tr -s ' \n' ' ' <<<"${OUT}")" "${RULE}"
 is "... and the request carries the acknowledgement" "$(grep '^PUT' "${CALLS}")" "PUT ${SITE_ROUTE} {\"apex\":true,\"acknowledgeMainAddressRule\":true}"
 
+# The command sends the setting the entry has; a director that refuses it all
+# the same is quoted, not paraphrased.
+MISMATCH="the request asks for the cluster's main address (\\\"apex\\\": true), and the profile of website does not declare entry site for the main address. The platform would publish nothing for it. Nothing was changed"
+fresh; reply GET "${READ}" 200 "${REQUESTS}"
+reply PUT "${SITE_ROUTE}" 422 "{\"error\":\"${MISMATCH}\"}"
+gentian exposures approve website site --tenant acme --yes --acknowledge-main-address-rule
+refused "an approval refused for its main-address setting ends the command non-zero"
+has "... with the director's own words" "${OUT}" "the director answered 422: ${MISMATCH//\\\"/\"}"
+
 fresh; reply GET "${READ}" 200 "${REQUESTS}"
 gentian_typing "website/site" exposures approve website site --tenant acme
 refused "at a terminal too, typing the entry does not acknowledge the rule"

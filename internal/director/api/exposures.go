@@ -132,7 +132,9 @@ func (s *Server) publishExposure(w http.ResponseWriter, r *http.Request, c call)
 	// the tenant has installed, and the entry one its profile declares for
 	// the internet. Recording anything else would list as published
 	// something the operator publishes nothing for.
-	if why, err := s.nothingToPublish(r.Context(), r.PathValue("t"), install, exposure); err != nil {
+	// Nor is an approval that the operator would publish nothing for: one
+	// whose word on the main address is not the profile's.
+	if why, err := s.nothingToPublish(r.Context(), r.PathValue("t"), install, exposure, body.Apex); err != nil {
 		s.repoError(w, r, err)
 		return
 	} else if why != "" {
@@ -261,14 +263,14 @@ const mainAddressWarning = "a website on the cluster's main address needs your a
 	"Nothing was changed"
 
 // nothingToPublish is why an approval names nothing this tenant can publish,
-// or "".
+// or "". apex is what the approval says of the main address.
 //
 // One exception, and it creates nothing. A component the platform's own
 // chart ships has no profile in the repository, so what it declares cannot
 // be read here; the installer publishes the platform tenant's page that way.
-// Such an entry can be reviewed where the registry already holds it, and
-// cannot be published where it does not.
-func (s *Server) nothingToPublish(ctx context.Context, tenant, install, exposure string) (string, error) {
+// Such an entry can be reviewed where the registry already holds it, on the
+// main-address setting it has, and cannot be published where it does not.
+func (s *Server) nothingToPublish(ctx context.Context, tenant, install, exposure string, apex bool) (string, error) {
 	if !gitops.ValidName(tenant) || !gitops.ValidName(install) || !gitops.ValidName(exposure) {
 		// The write names the value that is not a name; this has nothing to
 		// add to that.
@@ -281,15 +283,27 @@ func (s *Server) nothingToPublish(ctx context.Context, tenant, install, exposure
 	if view.unknownToTheRepository(install) != "" {
 		want := gitops.Exposure{Install: install, ExposureName: exposure}.Key()
 		for _, have := range view.published {
-			if have.Key() == want {
-				return "", nil
+			if have.Key() != want {
+				continue
 			}
+			if have.Apex != apex {
+				// What the profile says of the main address cannot be read,
+				// so a review is not where the registry's word on it changes.
+				return fmt.Sprintf(
+					"%s is a component the platform itself ships, and its profile is not in the repository, so whether entry %s is one for the cluster's main address cannot be checked. "+
+						"A review keeps the setting the entry has (\"apex\": %t), and this request says \"apex\": %t",
+					install, exposure, have.Apex, apex), nil
+			}
+			return "", nil
 		}
 		return fmt.Sprintf(
 			"%s is a component the platform itself ships, and its profile is not in the repository, so what it declares cannot be checked. "+
 				"An entry of it that is already published can be reviewed; a new one cannot be published here", install), nil
 	}
-	return view.unmatched(install, exposure), nil
+	if why := view.unmatched(install, exposure); why != "" {
+		return why, nil
+	}
+	return view.mainAddressMismatch(install, exposure, apex), nil
 }
 
 // withdrawExposure takes one down.

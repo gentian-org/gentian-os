@@ -643,7 +643,11 @@ published at, its paths and its `authMode`. The address is resolved by the
 function the operator publishes it with (`internal/addresses`). An approval
 of an app that is not installed in the tenant, or of an entry its profile
 does not declare for the perimeter, is refused (`422`) and nothing is
-committed.
+committed. So is an approval whose `apex` is not the entry's: `apex: true`
+for an entry the profile does not declare for the main address, or no `apex`
+for one it does. The operator would publish nothing for either. An entry
+recorded that way earlier stays, is listed without an address, can be
+withdrawn, and is renewed only with the setting the entry has.
 
 One surface holds the main address at a time. The director refuses a second
 request with `409` and names the holder. If two entries reach the cluster
