@@ -378,24 +378,52 @@ A cluster's stage (`dev`, `staging`, `prod`) is fixed at bootstrap via
 ### What a tenant has on the internet
 
 An entry of a profile that the public reaches (`surface: perimeter`) answers
-only once the tenant's perimeter approver has published it
-([app-customization.md](app-customization.md) §2.10). The director keeps the
-registry of what was published:
+only once the tenant's perimeter approver has approved it
+([app-customization.md](app-customization.md) §2.10). Installing the app
+publishes nothing; the director lists what the tenant's installed apps ask
+for, and keeps the registry of what was approved:
 
 ```bash
+kubectl gentian exposures requests --tenant demo
+kubectl gentian exposures approve cloud share --tenant demo     # <app instance> <entry>
+kubectl gentian exposures approve cloud share --tenant demo --expires 2027-03-31 --reason "shared calendars"
 kubectl gentian exposures list --tenant demo
-kubectl gentian exposures withdraw cloud share --tenant demo    # <app instance> <entry>
+kubectl gentian exposures withdraw cloud share --tenant demo
 ```
+
+`requests` shows every entry an installed app declares for the internet: the
+address it is published at, its paths, who can reach it, and its state.
+`requested` is declared and not approved, so nothing is published.
+`approved`, `review due` and `expired` are as in `list`, with who approved it
+and until when. `unmatched` is an entry in the registry that matches no entry
+of an installed app; nothing is published for it, and `withdraw` clears it.
+Whoever may see the tenant may read the list.
+
+Under SIGN-IN, `none: anyone` means anyone on the internet reaches the paths
+without signing in. `by the app (<mode>)` means the app's profile says the
+app checks its callers itself. The platform checks nobody at a published
+address in either case: the proxy forwards the listed paths and drops
+cookies and tokens on the way in.
+
+`approve` is for whoever may publish in the tenant. It reads the entry from
+the director and prints the address, the paths and who can reach it, then
+asks you to type `<app instance>/<entry>` (or pass `--yes`). Without
+`--expires` the entry stays until it is withdrawn; a date means the end of
+that day, UTC. It is reviewed after a year at the latest. Approving an entry
+that is approved already is its review, and replaces its expiry and reason.
+The command sends nothing for an entry the director does not list, and the
+director itself refuses an app instance that is not installed in the tenant
+and an entry the profile does not declare for the internet.
+
+An entry for the cluster's main address is approved only with
+`--acknowledge-main-address-rule`. The command first prints the director's
+rule for a website there in full. `--yes` does not acknowledge it.
 
 `list` shows each entry with who published it, when it is reviewed and when
 it ends: `published` is in force, `review due` is in force and past its
 review date, `expired` answers no longer and stays as the record. `withdraw`
 takes one down, for whoever may publish in the tenant; it is one commit, and
 the address stops answering once the cluster has taken it in.
-
-Publishing has no command. It is a request to the director,
-`PUT /v1/tenants/<tenant>/exposures/<app instance>/<entry>`, made by a console
-that offers it or with your own sign-in token.
 
 ## 6a. Resource Plans and Usage
 

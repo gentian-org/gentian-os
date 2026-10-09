@@ -14,8 +14,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"regexp"
 	"strings"
+
+	"sigs.k8s.io/yaml"
 )
 
 // ErrInvalidDomain is a custom domain that cannot be one: not a hostname, on
@@ -84,4 +87,60 @@ func renderTenantDomain(tenant, domain string) string {
 		"  name: " + tenant + "\n" +
 		"spec:\n" +
 		"  domain: " + domain + "\n"
+}
+
+// TenantPlacement is what git says about where a tenant's hosts are: the
+// realm its people are in, which is what makes it the platform tenant, and
+// the domain a TenantDomain binds it to.
+type TenantPlacement struct {
+	// Realm is spec.isolation.keycloakRealm; empty for a tenant that names
+	// none, whose realm is its own name.
+	Realm string
+	// CustomDomain is the bound domain, or "" for a tenant at its default.
+	// One on the kernel domain is "" as well: the operator refuses it and
+	// leaves the tenant where it was (resolveTenantDomain).
+	CustomDomain string
+}
+
+// TenantPlacement reads a tenant's placement from its manifest and the
+// TenantDomain beside it. It is the repository's word: the operator moves a
+// tenant to a newly bound domain a moment after the commit.
+func (g *GitOps) TenantPlacement(ctx context.Context, tenant string) (TenantPlacement, error) {
+	if !ValidName(tenant) {
+		return TenantPlacement{}, fmt.Errorf("%w: tenant %q", ErrInvalidName, tenant)
+	}
+	file, err := g.TenantFile(ctx, tenant)
+	if err != nil {
+		return TenantPlacement{}, err
+	}
+	b, err := os.ReadFile(file)
+	if err != nil {
+		return TenantPlacement{}, err
+	}
+	var doc struct {
+		Spec struct {
+			Isolation struct {
+				KeycloakRealm string `json:"keycloakRealm"`
+			} `json:"isolation"`
+		} `json:"spec"`
+	}
+	if err := yaml.Unmarshal(b, &doc); err != nil {
+		return TenantPlacement{}, fmt.Errorf("read %s: %w", file, err)
+	}
+	out := TenantPlacement{Realm: doc.Spec.Isolation.KeycloakRealm}
+	custom, err := tenantCustomDomain(file)
+	if err != nil {
+		return TenantPlacement{}, err
+	}
+	if custom == "" {
+		return out, nil
+	}
+	kernel, err := g.KernelDomain(ctx)
+	if err != nil && !errors.Is(err, ErrNoClusterClaim) {
+		return TenantPlacement{}, err
+	}
+	if kernel == "" || (custom != kernel && !strings.HasSuffix(custom, "."+kernel)) {
+		out.CustomDomain = custom
+	}
+	return out, nil
 }

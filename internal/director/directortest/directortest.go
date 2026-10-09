@@ -63,6 +63,22 @@ func ProfileYAML(name string) string {
 		"\nspec:\n  classes: [app]\n  trustTier: certified\n  version: \"1.0.0\"\n"
 }
 
+// PublishingProfileYAML is a ComponentProfile that declares one entry for the
+// internet beside its page behind sign-in: a share surface under its own
+// label, or with apex a website for the cluster's main address.
+func PublishingProfileYAML(name, entry string, apex bool) string {
+	where := "      subDomain: share-" + name + "\n      paths: [\"/s/\", \"/public.php/\"]\n      denyPaths: [\"/s/admin/\"]\n"
+	if apex {
+		where = "      apex: true\n      paths: [\"/\"]\n"
+	}
+	return ProfileYAML(name) +
+		"  expose:\n" +
+		"    - name: web\n      surface: gateway\n      authMode: oidc\n" +
+		"      backend:\n        service: " + name + "\n        port: 8080\n" +
+		"    - name: " + entry + "\n      surface: perimeter\n      authMode: none\n" + where +
+		"      backend:\n        service: " + name + "\n        port: 8080\n"
+}
+
 // CataloguePath is the repository-relative path of a file in the cluster's
 // catalogue directory.
 func CataloguePath(file string) string {
@@ -119,6 +135,13 @@ func Remote(t testing.TB, tenants ...string) string {
 		if err := os.WriteFile(filepath.Join(catalogue, name+".yaml"), []byte(ProfileYAML(name)), 0o644); err != nil {
 			t.Fatal(err)
 		}
+	}
+	// Nextcloud is what every fixture tenant has installed, and it declares
+	// a share surface for the internet: the entry the publishing tests
+	// approve.
+	if err := os.WriteFile(filepath.Join(catalogue, "nextcloud.yaml"),
+		[]byte(PublishingProfileYAML("nextcloud", "shares", false)), 0o644); err != nil {
+		t.Fatal(err)
 	}
 	for _, name := range tenants {
 		dir := filepath.Join(seed, "clusters", Cluster, "tenants", name)

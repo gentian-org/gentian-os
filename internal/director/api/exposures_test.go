@@ -176,11 +176,25 @@ const (
 	unacknowledged = `{"apex":true,"reason":"our public website"}`
 )
 
+// websites is a repository in which tenants user and demo have two apps
+// installed beside Nextcloud, each declaring a website for the cluster's
+// main address.
+func websites() map[string]string {
+	files := map[string]string{
+		dt.CataloguePath("website.yaml"): dt.PublishingProfileYAML("website", "site", true),
+		dt.CataloguePath("blog.yaml"):    dt.PublishingProfileYAML("blog", "site", true),
+	}
+	for _, tenant := range []string{"user", "demo"} {
+		files[dt.TenantPath(tenant)] = dt.TenantYAML(tenant) + "  - profile: website\n  - profile: blog\n"
+	}
+	return files
+}
+
 // On a single-tenancy cluster the user tenant's perimeter approver may ask
 // for the cluster's main address, with the same relation and the same record
 // as any other surface, and the registry says which entry it is.
 func TestTheUserTenantPublishesAWebsiteOnTheMainAddress(t *testing.T) {
-	h := startTenancy(t, &residueOperator{}, "single", nil)
+	h := startTenancy(t, &residueOperator{}, "single", websites())
 	uma := h.token(t, "tenant-user", "uma")
 
 	// A member of the tenant may not: it is can_expose, like every surface.
@@ -258,9 +272,9 @@ func TestTheMainAddressIsRefusedEverywhereElse(t *testing.T) {
 		{"the platform tenant", "single", "/v1/tenants/demo/exposures/website/site", "tenant-demo", "tom", true},
 	}
 	for _, tc := range cases {
-		h := startTenancy(t, &residueOperator{}, tc.mode, nil)
+		h := startTenancy(t, &residueOperator{}, tc.mode, websites())
 		if tc.platform {
-			adoptKernelRealm(t, h, "demo")
+			adoptKernelRealm(t, h, "demo", "website", "blog")
 		}
 		before := h.tip(t)
 		tok := h.token(t, tc.realm, tc.who)
@@ -285,7 +299,7 @@ func TestTheMainAddressIsRefusedEverywhereElse(t *testing.T) {
 // the field, and nothing is committed -- on a first publication and on a
 // review alike.
 func TestTheMainAddressNeedsTheApproversAcknowledgement(t *testing.T) {
-	h := startTenancy(t, &residueOperator{}, "single", nil)
+	h := startTenancy(t, &residueOperator{}, "single", websites())
 	uma := h.token(t, "tenant-user", "uma")
 
 	refused := func(when, tok, payload string) {

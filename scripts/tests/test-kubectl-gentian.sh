@@ -13,6 +13,13 @@
 #     first, and sends nothing until it is confirmed -- typed at a terminal,
 #     or --yes; without a terminal and without --yes nothing is asked at all;
 #   - a refusal is the director's own words and a non-zero exit;
+#   - `exposures requests` lists what a tenant's apps ask to have on the
+#     internet, as the director reads it;
+#   - `exposures approve` reads the entry from the director and shows its
+#     address, its paths and who can reach it before it asks; sends nothing
+#     for an entry the director does not list; and approves an entry for the
+#     cluster's main address only after printing the director's rule in full
+#     and only with --acknowledge-main-address-rule, which --yes does not say;
 #   - `exposures publish` is not a command and sends nothing.
 #
 # The plugin itself runs, against a kubectl and a curl that stand in for the
@@ -307,11 +314,140 @@ gentian exposures withdraw aluvian-store api --tenant aluvian
 refused "a withdrawal the director refuses ends the command non-zero"
 has "... with the director's own words" "${OUT}" "the director answered 403: publishing and withdrawing is the perimeter approver's"
 
+# What a tenant's apps ask to have on the internet, and approving it.
+RULE='Any script that runs in a page on the main address can set cookies for the whole domain. The rule: publish here only a site whose scripts your organisation itself controls -- no third-party scripts and no pages uploaded by users.'
+REQUESTS='{"tenant":"acme","live":[],"expired":[],"reviewDue":[],"entries":[
+  {"install":"cloud","exposureName":"shares","state":"requested","host":"share.acme.example","paths":["/public.php/","/s/"],"denyPaths":["/s/admin/"],"authMode":"none","anyoneWithoutSignIn":true,"access":"Reachable by anyone on the internet without sign-in.","mainAddress":false},
+  {"install":"feeds","exposureName":"hook","state":"approved","host":"hook.acme.example","paths":["/in/"],"authMode":"bearer","anyoneWithoutSignIn":false,"access":"Nobody signs in at the platform'"'"'s edge.","mainAddress":false,
+   "approval":{"install":"feeds","exposureName":"hook","owner":"u-7","reviewAt":"2027-05-01T00:00:00Z","publishedAt":"2026-05-01T00:00:00Z","expiresAt":"2027-01-01T00:00:00Z"}},
+  {"install":"website","exposureName":"site","state":"requested","host":"k.example","paths":["/"],"authMode":"none","anyoneWithoutSignIn":true,"access":"Reachable by anyone on the internet without sign-in.","mainAddress":true,"mainAddressRule":"'"${RULE}"'"},
+  {"install":"blog","exposureName":"site","state":"requested","paths":["/"],"authMode":"none","anyoneWithoutSignIn":true,"access":"Reachable by anyone on the internet without sign-in.","mainAddress":true,"note":"the main address is already held by website/site"},
+  {"install":"ghost","exposureName":"api","state":"unmatched","mainAddress":false,"note":"tenant acme has no app instance named ghost installed","approval":{"install":"ghost","exposureName":"api","owner":"u-9","reviewAt":"2027-05-01T00:00:00Z"}}]}'
+READ="/v1/tenants/acme/exposures"
+APPROVE_ROUTE="/v1/tenants/acme/exposures/cloud/shares"
+
 fresh
-gentian exposures publish aluvian-store api --tenant aluvian
+gentian exposures requests
+refused "requests without --tenant is refused"
+is "... and asks the director nothing" "$(cat "${CALLS}")" ""
+
+fresh; reply GET "${READ}" 200 "${REQUESTS}"
+gentian exposures requests --tenant acme
+is "requests succeeds" "${RC}" "0"
+is "... as one read of the tenant's entries" "$(cat "${CALLS}")" "GET ${READ} "
+has "... an entry nobody approved is requested, with its address" "$(grep '^cloud' <<<"${OUT}" | tr -s ' ')" "cloud shares requested https://share.acme.example /public.php/ /s/ none: anyone"
+has "... an approved one says by whom and until when" "$(grep '^feeds' <<<"${OUT}" | tr -s ' ')" "approved https://hook.acme.example /in/ by the app (bearer) u-7 2027-05-01 2027-01-01"
+has "... one that matches nothing is marked" "$(grep '^ghost' <<<"${OUT}")" "unmatched"
+has "... with the director's reason" "${OUT}" "ghost/api: tenant acme has no app instance named ghost installed"
+has "... and an entry with no address says why" "${OUT}" "blog/site: the main address is already held by website/site"
+
+fresh; reply GET "${READ}" 200 '{"tenant":"acme","live":[],"expired":[],"reviewDue":[],"entries":[]}'
+gentian exposures requests --tenant acme
+has "no entries is said in a sentence" "${OUT}" "No app installed in tenant acme asks to have anything on the internet"
+
+fresh; reply GET "${READ}" 200 '{"tenant":"acme","live":[],"expired":[],"reviewDue":[]}'
+gentian exposures requests --tenant acme
+refused "a director that lists no entries is not read as a tenant with none"
+gentian exposures approve cloud shares --tenant acme --yes
+refused "... and nothing is approved through it"
+has "... which is said" "${OUT}" "older than this command. Nothing was sent"
+is "... and only the read was made" "$(grep -c '^PUT' "${CALLS}")" "0"
+
+fresh
+gentian exposures approve cloud --tenant acme --yes
+refused "approve without an entry is a usage error"
+gentian exposures approve cloud shares --yes
+refused "approve without --tenant is refused"
+gentian exposures approve 'a/b' shares --tenant acme --yes
+refused "an app instance that is not a name is refused"
+gentian exposures approve cloud shares --tenant acme
+refused "approve with no terminal and no --yes is refused"
+is "... and none of them asks the director anything" "$(cat "${CALLS}")" ""
+
+fresh; reply GET "${READ}" 200 "${REQUESTS}"
+reply PUT "${APPROVE_ROUTE}" 202 '{"status":"updated","commit":"1234abcd5678"}'
+gentian exposures approve cloud shares --tenant acme --yes --reason "shared calendars" --expires 2027-03-31
+is "approve succeeds" "${RC}" "0"
+is "... as the read and then one PUT of the entry" "$(cat "${CALLS}")" "GET ${READ} 
+PUT ${APPROVE_ROUTE} {\"reason\":\"shared calendars\",\"expiresAt\":\"2027-03-31T23:59:59Z\"}"
+has "... after showing the address" "${OUT}" "address:  https://share.acme.example"
+has "... the paths" "${OUT}" "paths:    /public.php/  /s/"
+has "... what is never published" "${OUT}" "refused:  /s/admin/"
+has "... that anyone reaches it without sign-in" "${OUT}" "access:   Reachable by anyone on the internet without sign-in."
+has "... and the expiry" "${OUT}" "expires:  2027-03-31T23:59:59Z"
+has "... and names the commit" "${OUT}" "committed (1234abcd)"
+
+fresh; reply GET "${READ}" 200 "${REQUESTS}"
+reply PUT "${APPROVE_ROUTE}" 202 '{"status":"updated","commit":"1234abcd5678"}'
+gentian_typing "cloud/shares" exposures approve cloud shares --tenant acme
+is "approve at a terminal succeeds once the entry is typed" "${RC}" "0"
+has "... having shown what is approved first" "${OUT%%Type cloud/shares*}" "address:  https://share.acme.example"
+is "... and sends an approval with no terms" "$(grep '^PUT' "${CALLS}")" "PUT ${APPROVE_ROUTE} {}"
+has "... which stays until it is withdrawn" "${OUT}" "expires:  never"
+
+fresh; reply GET "${READ}" 200 "${REQUESTS}"
+gentian_typing "yes" exposures approve cloud shares --tenant acme
+refused "approve with anything else typed is refused"
+is "... and nothing was approved" "$(grep -c '^PUT' "${CALLS}")" "0"
+
+fresh; reply GET "${READ}" 200 "${REQUESTS}"
+reply PUT "/v1/tenants/acme/exposures/feeds/hook" 202 '{"status":"updated","commit":"1234abcd5678"}'
+gentian exposures approve feeds hook --tenant acme --yes
+is "approving an approved entry is a review" "${RC}" "0"
+has "... and says so, with who approved it" "${OUT}" "is approved already; approving it again is a review"
+has "... and until when" "$(grep 'so far' <<<"${OUT}")" "approved by u-7 on 2026-05-01, review 2027-05-01, expires 2027-01-01"
+
+for missing in "cloud caldav" "nothing shares" "ghost api"; do
+    fresh; reply GET "${READ}" 200 "${REQUESTS}"
+    # shellcheck disable=SC2086  # two words: the app instance and the entry
+    gentian exposures approve ${missing} --tenant acme --yes
+    refused "approve of ${missing}, which the director does not list as a request, is refused"
+    has "... saying so" "${OUT}" "the director lists no request ${missing/ //} for tenant acme"
+    is "... with nothing sent" "$(grep -c '^PUT' "${CALLS}")" "0"
+done
+
+fresh; reply GET "${READ}" 200 "${REQUESTS}"
+gentian exposures approve blog site --tenant acme --yes --acknowledge-main-address-rule
+refused "approve of an entry that would be published nowhere is refused"
+has "... with the director's reason" "${OUT}" "would be published nowhere: the main address is already held by website/site. Nothing was sent"
+is "... and nothing sent" "$(grep -c '^PUT' "${CALLS}")" "0"
+
+fresh; reply GET "${READ}" 200 "${REQUESTS}"
+reply PUT "${APPROVE_ROUTE}" 422 '{"error":"cloud declares no entry named shares for the internet. Nothing was changed"}'
+gentian exposures approve cloud shares --tenant acme --yes
+refused "an approval the director refuses ends the command non-zero"
+has "... with the director's own words" "${OUT}" "the director answered 422: cloud declares no entry named shares for the internet. Nothing was changed"
+
+# The cluster's main address.
+SITE_ROUTE="/v1/tenants/acme/exposures/website/site"
+fresh; reply GET "${READ}" 200 "${REQUESTS}"
+gentian exposures approve website site --tenant acme --yes
+refused "a website for the main address is not approved by --yes alone"
+has "... the director's rule is printed in full" "$(tr -s ' \n' ' ' <<<"${OUT}")" "${RULE}"
+has "... and the flag that acknowledges it is named" "${OUT}" "only with --acknowledge-main-address-rule"
+is "... and nothing was sent" "$(grep -c '^PUT' "${CALLS}")" "0"
+
+fresh; reply GET "${READ}" 200 "${REQUESTS}"
+reply PUT "${SITE_ROUTE}" 202 '{"status":"updated","commit":"1234abcd5678"}'
+gentian exposures approve website site --tenant acme --yes --acknowledge-main-address-rule
+is "with the acknowledgement it is approved" "${RC}" "0"
+has "... the rule printed all the same" "$(tr -s ' \n' ' ' <<<"${OUT}")" "${RULE}"
+is "... and the request carries the acknowledgement" "$(grep '^PUT' "${CALLS}")" "PUT ${SITE_ROUTE} {\"apex\":true,\"acknowledgeMainAddressRule\":true}"
+
+fresh; reply GET "${READ}" 200 "${REQUESTS}"
+gentian_typing "website/site" exposures approve website site --tenant acme
+refused "at a terminal too, typing the entry does not acknowledge the rule"
+is "... and nothing was sent" "$(grep -c '^PUT' "${CALLS}")" "0"
+
+fresh; reply GET "${READ}" 200 "${REQUESTS}"
+gentian exposures approve cloud shares --tenant acme --yes --acknowledge-main-address-rule
+refused "the acknowledgement on an entry that is not for the main address is refused"
+is "... and nothing was sent" "$(grep -c '^PUT' "${CALLS}")" "0"
+
+fresh
+gentian exposures publish cloud shares --tenant acme
 refused "publish is not a command"
-has "... and says nothing was sent" "${OUT}" "Nothing was sent"
-is "... which is so" "$(cat "${CALLS}")" ""
+is "... and asks the director nothing" "$(cat "${CALLS}")" ""
 
 echo ""
 if [[ "${fail}" -gt 0 ]]; then

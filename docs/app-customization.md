@@ -607,12 +607,19 @@ expose:
     backend: {service: website, port: 8080}
 ```
 
-Declaring it publishes nothing. The tenant's perimeter approver publishes it
-(`PUT /v1/tenants/{t}/exposures/{install}/{name}`), with an owner and a review
-date. It then answers at `<subDomain or component name>.<tenant's domain>`,
-from a proxy that passes no cookies either way. `kubectl gentian exposures
-list --tenant <t>` shows what a tenant has published, and `exposures withdraw
-<install> <name> --tenant <t>` takes one down; publishing is the request above.
+Declaring it publishes nothing. Once the app is installed the entry is a
+request: `kubectl gentian exposures requests --tenant <t>` lists it with the
+address it would be published at, its paths and who can reach it (the admin
+console shows the same under Apps → Details). The tenant's perimeter approver
+approves it with `kubectl gentian exposures approve <install> <name> --tenant
+<t>` (`PUT /v1/tenants/{t}/exposures/{install}/{name}`), with an owner and a
+review date. The director refuses an approval of an app that is not installed
+in the tenant or of an entry the profile does not declare with `surface:
+perimeter`. The entry then answers at `<subDomain or component
+name>.<tenant's domain>`, from a proxy that passes no cookies either way and
+checks nobody: an `authMode` other than `none` says the app itself checks its
+callers. `exposures list` shows what a tenant has published, and `exposures
+withdraw <install> <name> --tenant <t>` takes one down.
 
 **Address names an app cannot take.** No entry of an app or an add-on, on
 either surface, may use one of the platform's names as its `subDomain` (or as

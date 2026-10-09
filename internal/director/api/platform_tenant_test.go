@@ -27,12 +27,15 @@ import (
 // field, whatever the tenant is called. Whoever could install apps in it
 // before still holds can_install_app on it afterwards, so a refusal that
 // follows is the tenant's and not the caller's.
-func adoptKernelRealm(t *testing.T, h *harness, tenant string) {
+func adoptKernelRealm(t *testing.T, h *harness, tenant string, more ...string) {
 	t.Helper()
 	seed := filepath.Join(t.TempDir(), "seed")
 	dt.Git(t, "", "clone", h.remote, seed)
 	manifest := "apiVersion: gentianos.io/v1alpha1\nkind: Tenant\nmetadata:\n  name: " + tenant +
 		"\nspec:\n  displayName: Platform\n  isolation:\n    mode: namespace\n    keycloakRealm: kernel\n  apps:\n  - profile: nextcloud\n"
+	for _, app := range more {
+		manifest += "  - profile: " + app + "\n"
+	}
 	if err := os.WriteFile(filepath.Join(seed, dt.TenantPath(tenant)), []byte(manifest), 0o644); err != nil {
 		t.Fatal(err)
 	}

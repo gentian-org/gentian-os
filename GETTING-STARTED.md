@@ -524,8 +524,10 @@ asked for (`tenancyMode` on the Cluster claim).
 | The **platform admin** | `admin@<kernel-domain>` at `https://platform.<kernel-domain>/`; admin console at `admin.platform.<kernel-domain>` | the same |
 
 **On a single-tenancy cluster your website can live at the main address.**
-Install an app that offers a public website for it, then publish that surface
-for the main address (the user admin approves it, like every public surface).
+Install an app that offers a public website for it, then approve that surface
+for the main address (`kubectl gentian exposures approve`, by the user admin,
+like every public surface; it prints the rule for a website there and needs
+`--acknowledge-main-address-rule`).
 `https://<kernel-domain>/` and `www.` then show the website. Sign-in is at
 `https://desktop.<kernel-domain>/`, and `https://<kernel-domain>/sign-in`
 always leads there.
@@ -766,14 +768,23 @@ differs is listed here, in the order you meet it.
    kubectl gentian tenants domain <tenant>      # what git declares, and how to see that the cluster took it in
    ```
 
-   Publishing the entry is a request to the director,
-   `PUT /v1/tenants/<tenant>/exposures/<app>/<entry>`, for whoever may
-   publish in the tenant
-   ([docs/app-customization.md](docs/app-customization.md) §2.10). The
-   `gentian` CLI and the admin console have no command or screen for it; a
-   console that offers it, or a request made with your own sign-in token,
-   is how it is made today. What the tenant has published, and taking an
-   entry down again, are commands:
+   Publishing the entry is two commands, for whoever may publish in the
+   tenant ([docs/app-customization.md](docs/app-customization.md) §2.10).
+   The first lists what the tenant's installed apps ask to have on the
+   internet: each entry's address, its paths, whether anybody signs in, and
+   whether it is approved. The second shows one entry again and approves it
+   once you type its name:
+
+   ```bash
+   kubectl gentian exposures requests --tenant <tenant>
+   kubectl gentian exposures approve <app> <entry> --tenant <tenant> [--expires <date>] [--reason "<why>"]
+   ```
+
+   An entry the list does not show cannot be approved: the director refuses
+   an app that is not installed in the tenant and an entry its profile does
+   not declare for the internet. The admin console shows the same entries,
+   read-only, under **Apps → Details → Public addresses**. What the tenant
+   has published, and taking an entry down again:
 
    ```bash
    kubectl gentian exposures list --tenant <tenant>

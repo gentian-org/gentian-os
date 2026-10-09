@@ -636,6 +636,15 @@ review. The registry entry records who acknowledged and when
 `apex` alone, so an entry approved before the acknowledgement was asked
 keeps serving and is asked at its next review.
 
+*What the approver sees.* The director's read of a tenant's registry
+(`GET /v1/tenants/{t}/exposures`, `can_view`) also lists every perimeter
+entry an installed app declares, approved or not, with the address it is
+published at, its paths and its `authMode`. The address is resolved by the
+function the operator publishes it with (`internal/addresses`). An approval
+of an app that is not installed in the tenant, or of an entry its profile
+does not declare for the perimeter, is refused (`422`) and nothing is
+committed.
+
 One surface holds the main address at a time. The director refuses a second
 request with `409` and names the holder. If two entries reach the cluster
 anyway, the one published first keeps the address. The component's

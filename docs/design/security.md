@@ -222,6 +222,7 @@ It is the most visible page of the cluster and nobody is signed in on it.
 | Only the user tenant of a `single` cluster, one surface at a time | Built: the director refuses anything else (`409`), and the operator publishes nothing for it |
 | Two people say so: the profile's author (`apex: true` on the entry) and the tenant's perimeter approver (`apex: true` on the request, `can_expose`) | Built |
 | Recorded with owner, publish date and review date, like every published surface | Built (the exposure registry) |
+| The approver is shown what is approved (address, paths, whether anybody signs in) before approving, and only what an installed app declares can be approved | Built: the director's read lists it, and refuses an approval of an app that is not installed or an entry that is not declared for the perimeter (`422`). The read is from git, so it says where an entry will answer, not whether it answers yet |
 | Served from the tenant's DMZ by a proxy that passes no cookie, token or identity header in, and no `Set-Cookie` out | Built |
 | `/branding/`, `/sign-in`, `/.well-known/acme-challenge/` and `/.well-known/pki-validation/` stay the platform's | Built, twice: route precedence at the Gateway, and `404` in the website's proxy |
 | `https://<kernelDomain>/sign-in` always leads to sign-in | Built |

@@ -70,6 +70,7 @@ type Repository interface {
 	FinishImport(ctx context.Context, tenant string, meta gitops.Meta) (gitops.Result, error)
 	PendingPurges(ctx context.Context) ([]string, error)
 	SetTenantDomain(ctx context.Context, tenant, domain string, meta gitops.Meta) (gitops.Result, error)
+	TenantPlacement(ctx context.Context, tenant string) (gitops.TenantPlacement, error)
 	ClusterBranding(ctx context.Context) (*gentianov1alpha1.BrandingSpec, bool, error)
 	SetClusterBranding(ctx context.Context, spec gentianov1alpha1.BrandingSpec, meta gitops.Meta) (gitops.Result, error)
 	SetResourcePlan(ctx context.Context, tenant string, plan gitops.Plan, meta gitops.Meta) (gitops.Result, error)
