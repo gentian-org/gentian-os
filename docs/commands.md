@@ -175,9 +175,9 @@ kubectl get tenant demo -o jsonpath='{.status.conditions[?(@.type=="DomainBound"
 
 The user tenant of a single-tenancy cluster needs none of this: it is served
 on the cluster's own domain (`desktop.<kernel-domain>`, `admin.<kernel-domain>`,
-`<label>.<kernel-domain>`), and that domain cannot be bound. The command is
-not refused there; binding another domain moves the tenant off the cluster's
-addresses, and it can then hold no website at the cluster's main address.
+`<label>.<kernel-domain>`), and binding it to another domain is refused, as
+said above: it would move the tenant off the cluster's addresses, and it could
+then hold no website at the cluster's main address.
 
 ## 4. Uninstall a Tenant
 
@@ -525,8 +525,8 @@ A tenant's resource ceiling is chosen from a priced catalogue of `ResourcePlan`
 objects, never typed as a quantity — see
 [design/resource-plans.md](design/resource-plans.md). The commands below read
 the operator's answers — the same ones the Admin Console's **Resources** screen
-shows — so the rules (the downgrade guard, the entitlement ceiling) are enforced
-once. Choosing a plan is not a command here: it is a commit the director makes
+shows — so the rules (the downgrade guard, the cap on what a tenant may
+choose) are enforced once. Choosing a plan is not a command here: it is a commit the director makes
 as the person who asked, from the console or from its API with that person's
 token.
 
@@ -663,6 +663,26 @@ kubectl get integrationbindings -A
 kubectl describe application -n kernel-gitops gentian-os
 ```
 
+### Reaching OpenBao with the `bao` CLI
+
+OpenBao has no public address. From a machine with a kubeconfig for the
+cluster, forward its port and sign in as the platform admin:
+
+```bash
+kubectl port-forward -n kernel-secrets svc/openbao 8200:8200 &
+export BAO_ADDR=https://localhost:8200        # localhost is one of the certificate's names
+export BAO_SKIP_VERIFY=true                   # the certificate is self-signed; or BAO_CACERT=<ca.crt of the Secret openbao-tls there>
+bao login -method=oidc -path=oidc role=cluster-admin   # opens a browser; sign in as admin@<kernel-domain>
+export BAO_TOKEN="$(bao print token)"
+```
+
+The `cluster-admin` role admits the platform administrators' group and may
+read and write `secret/gentian-os/kernel/*`. After the handover this is the
+only way in: the installer's own token is revoked by `E-03`.
+`scripts/recovery.sh --from-vault` and the `bao kv get` examples in §11 and
+in [install-reference.md](install-reference.md) §4 assume `BAO_ADDR` and
+`BAO_TOKEN` are set this way.
+
 ### Gateway API edge routing
 
 ```bash
@@ -691,9 +711,11 @@ the Tenant and external curl to the public hostname.
 
 ### OIDC pack catalogue
 
-Apps with Path B OIDC depend on the cluster-scoped `OIDCPackCatalog` CR shipped
-from `gentian-apps` (`profiles/<app>/oidc-catalog.yaml`). Verify packs are synced
-before debugging pack Jobs or missing client scopes:
+An app whose sign-in client is configured from an OIDC pack depends on the
+cluster-scoped `OIDCPackCatalog` its profile bundle brings (a bundle from a
+catalogue added for the whole cluster; one added for a single tenant brings
+profiles alone). Check that the pack is on the cluster before debugging pack
+Jobs or missing client scopes:
 
 ```bash
 kubectl get oidcpackcatalog -l gentianos.io/profile-name=demo-app -o yaml
@@ -705,8 +727,8 @@ List pack keys and confirm a profile's `clientId` is present:
 kubectl get oidcpackcatalog -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.packs}{"\n"}{end}'
 ```
 
-Standard apps (path A — e.g. Odoo) use `app-default` Client MRs only and do
-**not** need a pack entry. See [app-profile-guide.md](../../gentian-apps/docs/app-profile-guide.md) §8.
+An app whose client the `app-default` Composition creates directly (Odoo, for
+one) needs no pack entry. See [app-profile-guide.md](../../gentian-apps/docs/app-profile-guide.md) §8.
 
 ## 10. Kernel Mail Stack (Dovecot + Postfix)
 
@@ -1025,7 +1047,7 @@ when the bundle was taken of a tenant of another name or on another cluster.
    the app's role owned), make the bucket with its user and policy and load
    it, unpack volumes, run the profile's `restore.post` hooks, run
    `restore.verify`, resume. One app at a time.
-4. **Tenant-wide, last** — Keycloak realm and the portal shell database. Last
+4. **Tenant-wide, last** — Keycloak realm and the desktop's database. Last
    deliberately: restoring identity earlier would let members sign in to
    half-restored data.
 

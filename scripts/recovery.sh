@@ -172,7 +172,7 @@ PY
 
 # identity_from_vault — the escrowed copy, when the cluster keeps one.
 identity_from_vault() {
-    need bao "See docs/commands.md §7 for reaching OpenBao." || return 1
+    need bao "See docs/commands.md §9, Reaching OpenBao with the bao CLI." || return 1
     local out
     out="$(bao kv get -mount=secret -field=identity "${VAULT_IDENTITY_PATH}" 2>/dev/null || true)"
     if [[ -z "${out}" ]]; then

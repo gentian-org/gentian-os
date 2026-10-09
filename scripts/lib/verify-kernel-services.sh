@@ -2,8 +2,10 @@
 # =============================================================================
 # scripts/lib/verify-kernel-services.sh — post-install smoke check for kernel mail
 # =============================================================================
-# Sourced from scripts/lib/load.sh. One verifier remains, called from
-# mail-lib.sh: Dovecot, when MAIL_SERVICE_MODE=system.
+# Sourced from scripts/lib/load.sh. One verifier remains: Dovecot, when the
+# cluster runs its own mail. No install step calls it; its caller is
+# crossplane/tests/e2e/scripts/e2e-verify-kernel-services.sh
+# (make verify-kernel-services), against a cluster that is already installed.
 #
 # There were three. verify_keycloak_installation, verify_keycloak_iframe_policy
 # and verify_argocd_controller were written and never wired to a caller, so they
@@ -129,7 +131,7 @@ verify_dovecot_installation() {
     local mode
 
     mode="$(gentian_mail_service_mode)"
-    if [[ "${mode}" != "kernel" ]]; then
+    if [[ "${mode}" != "system" ]]; then
         info "Skipping Dovecot verification (MAIL_SERVICE_MODE=${mode})."
         return 0
     fi
@@ -137,9 +139,10 @@ verify_dovecot_installation() {
     banner "Verify Dovecot deployment"
 
     local env="${ENV:-dev}"
-    # platform-kernel, matching the operator's SERVICES_NAMESPACE and the
-    # namespace the 09-infra-helm ApplicationSet deploys the mail stack into.
-    local ns="${SERVICES_NAMESPACE:-platform-kernel}"
+    # The system tier's mail namespace (kernel/namespaces.yaml), where the
+    # mail ApplicationSet deploys Dovecot.
+    local ns
+    ns="$(ns_system mail)" || return 1
     local deploy="dovecot-${env}"
     local svc="dovecot-${env}"
     local timeout="${DOVECOT_VERIFY_TIMEOUT:-300}"

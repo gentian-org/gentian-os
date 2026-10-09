@@ -206,7 +206,8 @@ them quietly gives you the earlier cluster instead of the one you mean:
    repository records for this cluster (`signing/keys.env`). On a machine
    whose keyring does not hold that key it **refuses to install**, before
    writing anything: run `./install.sh --recover <kit>` there first, or
-   install from the machine that has the key
+   install from the machine that has the key. Only when the key is lost for
+   good, `./install.sh --rotate-break-glass-key` records a new one
    ([install-reference.md §9](docs/install-reference.md)).
 
 ---
@@ -556,9 +557,10 @@ asked for (`tenancyMode` on the Cluster claim).
 
 **On a single-tenancy cluster your website can live at the main address.**
 Install an app that offers a public website for it, then approve that surface
-for the main address (`kubectl gentian exposures approve`, by the user admin,
-like every public surface; it prints the rule for a website there and needs
-`--acknowledge-main-address-rule`).
+for the main address (`kubectl gentian exposures approve`, by whoever
+approves public addresses in the tenant — the platform admin, unless it
+switched that on for the user admin, step 8; it prints the rule for a website
+there and needs `--acknowledge-main-address-rule`).
 `https://<kernel-domain>/` and `www.` then show the website. Sign-in is at
 `https://desktop.<kernel-domain>/`, and `https://<kernel-domain>/sign-in`
 always leads there.

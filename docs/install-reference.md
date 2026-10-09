@@ -262,8 +262,7 @@ a new claim names the default one.
 ### The default profile, and the digest it is held to
 
 One profile is placed by the installer rather than by the director: the
-Operations Console's, at step 0, before there is a director to ask
-([AD-14](plans/architectural-decisions.md)). It is held to the same rule as
+Operations Console's, at step 0, before there is a director to ask. It is held to the same rule as
 every other — a profile reaches a cluster only at a stated digest:
 
 1. The installer reads `<catalogue>/index.yaml` and takes the digest it lists
@@ -392,7 +391,7 @@ it; an `install.env` that still sets them is read without effect.
 - Step 0 removes `claims/gentian-apps-repository.yaml` from the deployments
   checkout. Claims are synced without pruning, so the `Repository` object stays
   on the cluster until it is deleted there
-  (`kubectl delete repository gentian-apps -n crossplane-system`); it composes
+  (`kubectl delete repository gentian-apps -n kernel-provisioning`); it composes
   nothing but an Argo CD repository entry in the meantime.
 - A tenant's own `Repository` of `type: git` and `role: apps` copies nothing any
   more either, and the director refuses to declare a new one. Publish those
@@ -510,9 +509,12 @@ any image under `kernel/`, `charts/` or `crossplane/` tagged `latest`.
 Nothing advances the pin on its own. `./install.sh --only B-01`
 does, which is how a cluster following a branch takes a newer build; if the
 commit has not been published yet, the preflight says so rather than leaving
-the cluster on an older image. `PORTAL_IMAGE_TAG` follows gentian-ui's tags the
-same way. A cluster pins its own tags in
-`clusters/<cluster>/kernel/values.yaml`.
+the cluster on an older image. The tag the installer resolved is written into
+the operator's Argo CD Application as an inline value, which Argo CD ranks
+above `image.tag` in `clusters/<cluster>/kernel/values.yaml`; pre-flight
+checks that both tags exist and says when they differ. `PORTAL_IMAGE_TAG`
+names the branch whose charts are installed for the platform's own apps (the
+desktop, the administration console, the sign-in page, the App Store app).
 
 ### The director's write-back
 
@@ -539,7 +541,7 @@ The bootstrap set is deliberately small and every member is validatable with
 `runtime` by that fact, and the shell never sees it — which is what stops
 credential logic accumulating in the installer.
 
-The manager holds no OpenBao token of its own: it exchanges the caller's
+The custodian holds no OpenBao token of its own: it exchanges the caller's
 Keycloak token for a short-lived one, so the write carries a human identity into
 the audit device. It has no endpoint that returns a value.
 
@@ -645,7 +647,7 @@ so anything validating a kernel hostname from outside the cluster needs the root
 CA in its trust store:
 
 ```bash
-kubectl get secret gentian-root-ca-tls -n cert-manager \
+kubectl get secret gentian-root-ca-tls -n kernel-edge \
   -o jsonpath='{.data.tls\.crt}' | base64 -d > gentian-root-ca.crt
 ```
 
@@ -686,10 +688,11 @@ mirror.
 
 ## 7. Day-2 credentials
 
-On a running cluster, credentials are supplied through the on-cluster credential
-manager rather than the installer. It validates a value against the system it is
-for before storing it, and never displays a stored value — metadata only:
-whether it exists, who set it, and when.
+On a running cluster, credentials are supplied through the custodian — the
+**Credentials** tab of the administration console — rather than the installer.
+It validates a value against the system it is for before storing it, and never
+displays a stored value — metadata only: whether it exists, who set it, and
+when.
 
 Lost credentials are rotated, not recovered.
 
