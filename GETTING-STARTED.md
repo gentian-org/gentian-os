@@ -329,6 +329,7 @@ one. Every question shows its default; Enter takes it.
 | `backup.escrowIdentity` | `true` | The backup key should live in the recovery kit only, never in OpenBao |
 | `llm.enabled` | `false` | This cluster serves models; then `llm.gpuAcceleration` is asked too |
 | `llm.console.enabled` | `false` | Not asked; set it in the claim. Platform administrators should have the model gateway's own console at `llm.<kernel-domain>`. Off, there is no such address and the gateway is reached from inside the cluster only. A cluster installed before this setting existed has it off after its next run, and the install says so |
+| `llm.providers`, `llm.instances` | none | Not asked; set them in the claim. The models the gateway offers: external OpenAI-compatible providers' models, and the models a cluster with GPUs serves itself. A commit to the claim changes the gateway's model list, with no run of the install. A provider's token is a credential, entered in the administration console; it appears there with the run after the claim first names the provider. An instance is offered by the gateway and not started by the platform ([install-reference.md](docs/install-reference.md), [llms.md](docs/design/llms.md)) |
 
 With the answers it writes `clusters/<cluster-id>/kernel` into your deployments
 checkout:

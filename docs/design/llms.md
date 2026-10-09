@@ -28,11 +28,19 @@ This document details the architecture for integrating Large Language Model (LLM
 *   **One LiteLLM team per tenant**, created by the tenant reconciler
     (`internal/controller/litellm_team.go`). The operator sets no budget and no
     rate limit on a team or a key.
-*   **Not built on the current namespace layout:** installing real vLLM
-    instances from `spec.llm.instances` (the chart `kernel/services/llm/chart`
-    exists, still names the former shared namespace, and nothing applies it),
-    and registering the claim's models — vLLM instances or `spec.llm.providers`
-    — at the gateway. LocalAI was never added.
+*   **The gateway's models are the Cluster claim's** (§5). The gateway's chart
+    writes its configuration file from `spec.llm.instances` and
+    `spec.llm.providers`, and the claim reaches the chart as a values file of
+    the `gentian-llm` ApplicationSet (`kernel/appsets/raw/09c-llm.yaml`,
+    `kernel/services/llm/manifests/templates/gateway-config.yaml`). Nothing
+    registers a model through the gateway's API, and the gateway takes none
+    from its database.
+*   **Not built:** starting the vLLM instances themselves. The gateway offers a
+    model for each entry of `spec.llm.instances` and calls it at
+    `vllm-<name>-inference.system-llm`, port 8000; the chart that holds that
+    workload (`kernel/services/llm/chart`) is delivered by nothing, so such a
+    model is listed and does not answer until somebody runs the instance (§6).
+    LocalAI was never added.
 
 ---
 
@@ -195,18 +203,37 @@ spec:
             maxTokens: 8192
 ```
 
-Each `models` entry becomes one LiteLLM registration named
+Each `models` entry becomes one model of the gateway named
 `<provider>/<model.name>` — `infomaniak/gemma-4-31b` above. The prefix is
 deliberate: upstream ids collide across providers, and a tenant reading a model
-list should be able to see who serves what.
+list should be able to see who serves what. `mode` says what the model does
+(`chat`, the default, `completion` or `embedding`); `maxTokens` is the context
+window the gateway advertises.
 
-**The claim is meant to be the only way in**: an entry added is registered, an
-entry removed is deregistered, and a model typed into LiteLLM's console is
-removed again. Nothing reconciles the gateway's model list against the claim at
-present — the installer functions that did were removed with the former step
-set and have no successor yet — so the claim's `providers` are accepted and
-their credential is delivered to the gateway's namespace, but no model is
-registered from them.
+**The claim is the only way in.** The gateway's model list is its
+configuration file, and the file is written from the claim: a commit that adds
+an entry adds the model, one that removes it removes the model, and each
+replaces the gateway's pods, which read the file when they start. The gateway
+runs with `STORE_MODEL_IN_DB` off, so it loads no model from its database and
+refuses to store one — nothing typed into its console or sent to its API
+becomes a model. No step of the installer, no Job and no controller is
+involved; Argo CD syncs the claim and the chart together.
+
+To see what the gateway was given, and what an app is offered:
+
+```bash
+# The file the gateway reads.
+kubectl -n system-llm get configmap litellm-config -o jsonpath='{.data.config\.yaml}'
+
+# The list an app sees, with the app's own key, from the app's pod.
+kubectl -n <tenant namespace> exec deploy/<app> -- sh -c \
+  'curl -s -H "Authorization: Bearer $OPENAI_API_KEY" "$OPENAI_API_BASE/models"'
+```
+
+The second needs an app that declared the gateway (`requires.services.llm`)
+and whose image has `curl`; the variables are the ones the Secret
+`llm-credentials-<app>` carries, under the names the app's profile maps them
+to.
 
 ### The API key is a credential, the product id is not
 
@@ -222,13 +249,38 @@ One requirement per provider rather than one with a field each, because
 `checkFields` requires every declared field in a single write: a combined
 credential would make the console demand every provider's token at once and
 refuse a single rotation. Adding a provider is two edits in git — a requirement
-there and an entry here — and they are checked against each other, so a provider
-whose property is missing is reported rather than registered as a model that
-answers 401.
+there and an entry here. `credentials.yaml` is this repository's and declares
+one provider today, Infomaniak; another provider needs its requirement added
+there before its token can be entered in the console. The requirement of a
+provider reaches a cluster with the installer (`C-04`), and only for the
+providers its claim names at that run: after naming a provider for the first
+time, run `./install.sh --only C-04` for its credential to appear in the
+console.
+
+**The token never leaves its Secret.** The ExternalSecret
+`llm-provider-credentials` (rendered when the claim names a provider) copies
+the vault path into a Secret of the gateway's namespace, the gateway's
+container mounts it, and sets one environment variable per property when it
+starts, `LLM_PROVIDER_KEY_<apiKeyProperty>`. The configuration file names the
+variable, not the token, and nothing writes the token to the gateway's
+database.
+
+**A model whose token is missing is listed and does not answer.** Until the
+token is supplied a call to such a model comes back as an authentication
+error from the gateway; nothing compares the claim's `apiKeyProperty` with the
+credential requirements, and nothing reports the gap. When the token is
+supplied, rotated or removed, the gateway's container restarts by itself to
+read it: a probe compares the mounted Secret with what the container started
+with. That takes up to a few minutes — the ExternalSecret's resync, the
+kubelet bringing the Secret into the pod, the probe's period — and both
+replicas may restart together, so the gateway can be away for the time it
+takes to start.
 
 > These credentials declare `validate: noop`, so the console stores the token
 > without probing it — the validator enum has no generic bearer-token check.
-> Nothing else probes it either, as long as nothing registers the models.
+> Nothing else probes it either: a wrong token, a token without the provider's
+> scope and an `apiBase` that is not reachable from the cluster all show as a
+> failing call, not as a report.
 
 The product id in `apiBase` is not secret: it selects which product is billed and
 it is part of the endpoint, so it belongs on the claim where it can be reviewed.
@@ -276,10 +328,9 @@ accounts that may configure the cluster (`can_configure`;
 admitted to the gateway's port, and such an administrator's desktop shows a
 **Model gateway** tile, projected from the route like the other kernel
 consoles' (`tile_projection_reconciler.go`). Platform administrators only,
-because the routing and budgets there apply to every tenant. Model
-registrations are still reconciled from the claim; the console is for
-inspecting them, keys and spend. The host label `llm` stays reserved either
-way.
+because the routing and budgets there apply to every tenant. The models are
+still the claim's and the console cannot add one; it is for inspecting them,
+keys and spend. The host label `llm` stays reserved either way.
 
 Three things to know before switching it on:
 
@@ -302,3 +353,49 @@ Three things to know before switching it on:
   as soon as it is applied; the NetworkPolicy rule arrives with the installer's
   next run, which is what passes the setting to the gateway's chart. Between
   the two the route exists and answers nothing.
+
+---
+
+## 6. Models the cluster serves itself
+
+`spec.llm.instances` names the models a cluster with GPUs serves from its own
+weights, one vLLM instance each. It is read only when `gpuAcceleration` is
+true.
+
+```yaml
+spec:
+  llm:
+    enabled: true
+    gpuAcceleration: true
+    instances:
+      - name: qwen
+        modelId: Qwen/Qwen2.5-7B-Instruct
+```
+
+The gateway offers each entry as a model named after `modelId`, in lower case
+with `/` as `-` — `qwen-qwen2.5-7b-instruct` above — and calls it at
+`http://vllm-<name>-inference.system-llm.svc.cluster.local:8000/v1`. That is
+the same file and the same mechanism as for a provider's models (§5).
+
+**The instance itself is not started by the platform.** The chart with the
+Deployment, Service and volume of an instance is in the repository
+(`kernel/services/llm/chart`) and no Application delivers it, so on a cluster
+installed today the model above is listed and a call to it fails with a
+connection error. What is missing before the platform can start it:
+
+- an Application that delivers the chart with the claim's `instances` — and
+  with them `gpuMemoryUtilization`, `maxModelLen`, `modelCacheSize`,
+  `imageTag` and `toolCallParser`, which only that chart reads;
+- a NetworkPolicy for the instance's pods, as every other server of
+  `system-llm` has (security.md §2.9);
+- the pod settings the kernel's admission baseline requires, which the chart's
+  Deployment does not carry;
+- a named release of the vLLM image: `imageTag` defaults to `latest`;
+- a decision on GPU time slicing (`gpuTimeSliceReplicas`), whose ConfigMap is
+  the GPU operator's and shared with every GPU workload of the node;
+- where the Hugging Face token for gated models comes from.
+
+With `gpuAcceleration` true the mock model server is not started. With it
+false the mock runs, and the gateway does not offer it as a model: a cluster
+without GPUs and without providers has a gateway with an empty model list.
+

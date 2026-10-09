@@ -241,7 +241,9 @@ The database's metrics port (9187) is closed. The rule for the gateway has the s
 
 The clients are the `store: llm` rows of `scripts/tests/store-clients.yaml`, each naming the server it connects to, and `make test-store-network-policies` holds the four policies to them.
 
-Not covered: **real vLLM instances.** Their chart (`kernel/services/llm/chart`) names the v4 namespace and nothing in this repository installs it on the current layout, so there is no pod for a policy to select. A cluster that runs one in `system-llm` gets no policy for it from here.
+Not covered: **real vLLM instances.** Their chart (`kernel/services/llm/chart`) names the v4 namespace and nothing in this repository installs it on the current layout, so there is no pod for a policy to select. A cluster that runs one in `system-llm` gets no policy for it from here. The gateway nevertheless offers a model for each instance the claim lists and calls it at `vllm-<name>-inference.system-llm`, port 8000 ([llms.md §6](llms.md)).
+
+**A provider's token stays in its Secret.** The models the gateway offers are its configuration file, written from the Cluster claim; for a model of an external provider the file names an environment variable, and the gateway's container sets it at start from the Secret `llm-provider-credentials`, which the External Secrets Operator copies from `gentian-os/kernel/llm-providers`. The token is in no ConfigMap, not in git and not in the gateway's database. The gateway stores no model (`STORE_MODEL_IN_DB` is off), so its console and its API cannot add an endpoint for tenants' prompts to be sent to; the claim is the only place that names one.
 
 ### 2.10 A tenant's website on the cluster's main address
 

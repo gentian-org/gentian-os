@@ -1178,6 +1178,27 @@ does not exist yet that something cannot be the Composition.
   - `[ ]` Give the Open WebUI profile a Redis and the setting that makes it honour a sign-out.
   - `[ ]` Show, against Open WebUI's image and the realm, that a sign-out ends the session.
 
+### 2.28 The Platform Starts the vLLM Instances the Claim Lists (**)
+* **Target Domain**: Platform Infrastructure
+* **Context**: The model gateway offers a model for each entry of
+  `spec.llm.instances` and calls it at `vllm-<name>-inference` in the
+  gateway's namespace. Nothing starts the server behind that address: the
+  chart with an instance's Deployment, Service and volume
+  (`kernel/services/llm/chart`) is delivered by no Application, so the model
+  is listed and does not answer ([llms.md §6](design/llms.md)). The models
+  of external providers are served.
+* **Proposed Solution**: Deliver the instances the way the gateway's models
+  are delivered — the Cluster claim handed to a chart as a values file — once
+  the points below are decided.
+* **Backlog Items**:
+  - `[ ]` An Application that delivers the instances from the claim, with `gpuMemoryUtilization`, `maxModelLen`, `modelCacheSize`, `imageTag` and `toolCallParser`.
+  - `[ ]` A NetworkPolicy for an instance's pods, and the pod settings the admission baseline requires.
+  - `[ ]` A named release of the vLLM image in place of the default `latest`.
+  - `[ ]` Decide who owns GPU time slicing (`gpuTimeSliceReplicas`): its ConfigMap belongs to the GPU operator and to every GPU workload of the node.
+  - `[ ]` Decide where the Hugging Face token for gated models is kept.
+  - `[ ]` A report when a provider's token is missing, refused, or its endpoint cannot be reached from the cluster, in place of a failing call.
+  - `[ ]` Serve a model on a cluster with a GPU and call it with an app's key.
+
 ## 3. User Management & Shell UI
 
 ### 3.1 SCIM & Provisioning Bus Integration (*)

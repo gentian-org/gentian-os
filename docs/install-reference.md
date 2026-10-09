@@ -515,6 +515,42 @@ line naming the setting whenever the cluster serves models and the console is
 off. After changing it, run the install again: the route follows the claim,
 the gateway's network rule follows the run ([llms.md](design/llms.md)).
 
+The models the gateway offers are the claim's, and changing them needs no run
+of the install — except that the credential of a provider the claim names for
+the first time appears in the administration console with the next run
+(`./install.sh --only C-04`), which is what creates it. `spec.llm.providers` names external OpenAI-compatible
+endpoints and their models, `spec.llm.instances` the models a cluster with
+GPUs serves itself:
+
+```yaml
+spec:
+  llm:
+    enabled: true
+    providers:
+      - name: infomaniak
+        apiBase: https://api.infomaniak.com/2/ai/<product-id>/openai/v1
+        apiKeyProperty: infomaniak_api_key   # a property of the llm-provider-infomaniak credential
+        models:
+          - name: gemma-4-31b                # offered as infomaniak/gemma-4-31b
+            model: google/gemma-4-31B-it     # the id the provider expects
+            maxTokens: 8192
+    gpuAcceleration: true                    # instances are read only with this
+    instances:
+      - name: qwen
+        modelId: Qwen/Qwen2.5-7B-Instruct    # offered as qwen-qwen2.5-7b-instruct
+```
+
+Commit the claim: Argo CD hands it to the gateway's chart, the chart writes
+the gateway's configuration file from it, and the gateway's pods are replaced
+to read it. A provider's token is entered in the administration console,
+under the credential `llm-provider-<name>`; the gateway restarts by itself
+when it arrives or changes, and until then the provider's models are listed
+and answer an authentication error. The gateway takes models from nowhere
+else, so one that was added at its console on an earlier version is no longer
+offered. An instance is offered and **not started**: nothing in the platform
+runs the vLLM server behind it yet ([llms.md §5 and §6](design/llms.md), which
+also say how to check what is served).
+
 The model gateway's image (`llm.enabled`) is not a setting. It is one chart
 value, named by tag and digest, and `make lint` (`lint-image-pins`) fails on
 any image under `kernel/`, `charts/` or `crossplane/` tagged `latest`.
