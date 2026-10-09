@@ -117,7 +117,16 @@ func run(log *slog.Logger) error {
 		log.Warn("no route table yet; every host is refused until the operator writes one", "path", tablePath, "error", err.Error())
 		table = &bouncer.Table{}
 	}
-	decider := bouncer.New(bouncer.Options{Verifier: verifier, Store: store, Table: table, CacheTTL: cacheTTL, Logger: log})
+	// The exchange of a session's token for an app's own, for the routes
+	// that ask for it. The realms are reached where their keys are fetched,
+	// and each realm's exchange client presents the secret the operator
+	// mounted for it; a realm with no secret there has no exchange, and a
+	// route of it that asks for one is refused.
+	exchanger := &bouncer.RealmExchanger{
+		TokenBase:  envOr("BOUNCER_TOKEN_BASE_URL", envOr("DIRECTOR_JWKS_BASE_URL", issuerBase)),
+		SecretsDir: envOr("BOUNCER_EXCHANGE_SECRETS", "/etc/bouncer-exchange"),
+	}
+	decider := bouncer.New(bouncer.Options{Verifier: verifier, Store: store, Table: table, CacheTTL: cacheTTL, Logger: log, Exchanger: exchanger})
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()

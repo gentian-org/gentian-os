@@ -54,6 +54,10 @@ spec:
             # minMatch 0 because the projection does not exist until the
             # operator has run once: a tenant reconciling before then gets the
             # base hosts and the rest on the next pass.
+            #
+            # The same projection names the profiles whose components ask for
+            # an exchanged token, for the same reason it names the hosts: the
+            # operator composes the routes that ask, so it is what knows.
             - kind: ConfigMap
               into: zoneHosts
               apiVersion: v1
@@ -424,6 +428,24 @@ spec:
             {{- end }}
             {{- /* Where a person lands: the zone's desktop. */}}
             {{- $zoneDesktop := ternary $zoneDomain (printf "desktop.%s" $zoneDomain) (not (not $adoptsKernelRealm)) }}
+            {{- /* The client the edge exchanges a session's token with, and
+                 the Secret that holds its secret. One per realm, so the
+                 clientId is the same in every realm and the Secret is named
+                 after the zone, beside the zone's own. */}}
+            {{- $exchangeClientID := "gentian-edge-exchange" }}
+            {{- $exchangeSecret   := printf "edge-%s-exchange" $zone }}
+            {{- /* The profiles whose components ask for an exchanged token
+                 (exposure exchangeToken), read from the operator's projection
+                 like the hosts above and for the same reason. Not spec.apps:
+                 the components every tenant is given are not on it, and one
+                 of those may ask as well as an installed app may. */}}
+            {{- $exchangeProfiles := list }}
+            {{- range $p := (splitList "\n" (dig "exchangeProfiles" "" $zhData)) }}
+            {{- $p = trim $p }}
+            {{- if and $p (not (has $p $exchangeProfiles)) }}
+            {{- $exchangeProfiles = append $exchangeProfiles $p }}
+            {{- end }}
+            {{- end }}
 
             {{- /* The secret exists before the client does, and is generated
                  here rather than minted by Keycloak. A client created with no
@@ -715,6 +737,49 @@ spec:
               providerConfigRef:
                 name: keycloak
 
+            {{- /* The exchange client in the zone token's audience.
+
+                 Keycloak admits a client to a token exchange only when the
+                 token it presents names that client in aud. The session's
+                 token is this client's, so this mapper is what lets
+                 gentian-edge-exchange, further down, trade it for an app's --
+                 and without it every exchange is refused, whatever the
+                 exchange client itself is allowed.
+
+                 A custom audience like the director's beside it, here so that
+                 the mapper does not wait on the exchange client existing: the
+                 name is written into the token either way, and it only has to
+                 be the clientId the exchange client is made with.
+
+                 All five config keys and no external-name, for the reasons
+                 given at director-audience above. */}}
+            ---
+            apiVersion: client.keycloak.crossplane.io/v1alpha1
+            kind: ProtocolMapper
+            metadata:
+              name: {{ $tenant }}-edge-zone-exchange-audience
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-edge-zone-exchange-audience
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $realm }}
+                clientIdRef:
+                  name: {{ $tenant }}-edge-zone-client
+                  policy:
+                    resolve: Always
+                name: exchange-audience
+                protocol: openid-connect
+                protocolMapper: oidc-audience-mapper
+                config:
+                  included.custom.audience: {{ $exchangeClientID }}
+                  id.token.claim: "false"
+                  access.token.claim: "true"
+                  introspection.token.claim: "true"
+                  userinfo.token.claim: "false"
+              providerConfigRef:
+                name: keycloak
+
             {{- /* Keycloak's six own defaults and deliberately not groups.
 
                  This list is replaced wholesale on reconcile, so it has to name
@@ -751,6 +816,320 @@ spec:
                   - web-origins
               providerConfigRef:
                 name: keycloak
+
+            {{- /* ── the token exchange client, its secret and the app scopes ──
+                 A backend behind the edge is told who the person is in
+                 headers, which anything that can reach it could set. An app
+                 whose exposure says exchangeToken is handed a token instead:
+                 the bouncer exchanges the session's token at this realm
+                 (RFC 8693, Keycloak's standard token exchange) for one whose
+                 audience is that app and nothing else, and the app verifies
+                 it.
+
+                 Three things in the realm make that possible and each is
+                 useless alone: the mapper above, which puts this client in
+                 the session token's audience; this client, which is the one
+                 allowed to exchange; and one scope per app, which is the only
+                 thing that can put the app in the new token's audience.
+
+                 Rendered wherever the zone's client is, the tenant that
+                 adopts the kernel realm included: the exchange is the edge's,
+                 and a realm backs exactly one zone.
+
+                 The secret is generated and delivered exactly as the zone
+                 client's is, and everything said there holds here: generated
+                 by External Secrets and not minted by Keycloak, once and
+                 never again, no symbols, and owned by the ExternalSecret so
+                 it goes when the zone does. */}}
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              name: {{ $tenant }}-edge-exchange-password
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: edge-exchange-password
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: generators.external-secrets.io/v1alpha1
+                  kind: Password
+                  metadata:
+                    name: {{ $exchangeSecret }}
+                    namespace: {{ $edgeNs }}
+                    labels:
+                      app.kubernetes.io/managed-by: crossplane
+                      gentianos.io/edge-exchange-realm: {{ $realm }}
+                  spec:
+                    length: 48
+                    digits: 8
+                    symbols: 0
+                    noUpper: false
+                    allowRepeat: true
+                    secretKeys:
+                      - client-secret
+              providerConfigRef:
+                name: kubernetes
+
+            {{- /* The Secret the bouncer authenticates the exchange with, in
+                 the edge namespace because that is where the bouncer runs.
+
+                 The label on the Secret itself is how it is found and what it
+                 says: the operator lists the Secrets that carry
+                 gentianos.io/edge-exchange-realm and reads the realm's name
+                 from the value, so no name is derived a second time on the
+                 other side. It is the realm and not the zone or the tenant,
+                 because the realm is what a token is exchanged at -- and for
+                 the tenant that adopts the kernel realm those three differ. */}}
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              name: {{ $tenant }}-edge-exchange-client-secret
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: edge-exchange-client-secret
+            spec:
+              {{- /* Ready when the ExternalSecret is, as for the zone's: the
+                   sequencer rule below holds the Client back on it. */}}
+              readiness:
+                policy: DeriveFromObject
+              forProvider:
+                manifest:
+                  apiVersion: external-secrets.io/v1
+                  kind: ExternalSecret
+                  metadata:
+                    name: {{ $exchangeSecret }}
+                    namespace: {{ $edgeNs }}
+                    labels:
+                      app.kubernetes.io/managed-by: crossplane
+                      gentianos.io/edge-exchange-realm: {{ $realm }}
+                  spec:
+                    refreshPolicy: CreatedOnce
+                    refreshInterval: "0"
+                    target:
+                      name: {{ $exchangeSecret }}
+                      creationPolicy: Owner
+                      template:
+                        metadata:
+                          labels:
+                            app.kubernetes.io/managed-by: gentian-os
+                            gentianos.io/edge-exchange-realm: {{ $realm }}
+                    dataFrom:
+                      - sourceRef:
+                          generatorRef:
+                            apiVersion: generators.external-secrets.io/v1alpha1
+                            kind: Password
+                            name: {{ $exchangeSecret }}
+              providerConfigRef:
+                name: kubernetes
+
+            {{- /* The client that exchanges, and does nothing else.
+
+                 Confidential, with every flow off: no standard flow, no
+                 direct access grants, no service account. Nobody signs in
+                 through it and it is nobody -- it can only turn a token a
+                 person already holds into a narrower one of the same person,
+                 which is the one grant standardTokenExchangeEnabled switches
+                 on (the client attribute standard.token.exchange.enabled).
+                 No redirect URIs and no web origins, since nothing is ever
+                 redirected to it.
+
+                 fullScopeAllowed false, as on the zone's client and for more
+                 reason: with it on, the exchanged token would carry every
+                 role of the person, and with them the audience of every
+                 client those roles belong to. The token is to be worth
+                 something at one app.
+
+                 Orphan and everything except LateInitialize, as on the
+                 zone's client above. */}}
+            ---
+            apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+            kind: Client
+            metadata:
+              name: {{ $tenant }}-edge-exchange-client
+              annotations:
+                crossplane.io/external-name: {{ $exchangeClientID }}
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-edge-exchange-client
+            spec:
+              deletionPolicy: Orphan
+              managementPolicies: ["Observe", "Create", "Update", "Delete"]
+              forProvider:
+                clientId: {{ $exchangeClientID }}
+                name: {{ printf "%s edge (token exchange)" $brandName | quote }}
+                realmId: {{ $realm }}
+                accessType: CONFIDENTIAL
+                enabled: true
+                standardFlowEnabled: false
+                implicitFlowEnabled: false
+                directAccessGrantsEnabled: false
+                serviceAccountsEnabled: false
+                fullScopeAllowed: false
+                standardTokenExchangeEnabled: true
+                clientSecretSecretRef:
+                  name: {{ $exchangeSecret }}
+                  namespace: {{ $edgeNs }}
+                  key: client-secret
+              providerConfigRef:
+                name: keycloak
+
+            {{- /* One default scope, basic, where the intent is none.
+
+                 Keycloak gives a new client the realm's six defaults, and an
+                 exchanged token would carry what they map: the person's
+                 profile, their email, their roles. None of that is what the
+                 token is for, so the list is stated and stated short.
+
+                 It cannot be stated empty. The provider's schema requires
+                 defaultScopes and its Go type drops an empty list when the
+                 provider writes the object back, which it does on its first
+                 pass to record the client it resolved -- so an empty list is
+                 accepted once and refused from then on ("defaultScopes is a
+                 required parameter"), and the six stay on the client. basic
+                 is the least there is: it maps sub and auth_time, which say
+                 whose token it is and nothing about them. */}}
+            ---
+            apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+            kind: ClientDefaultScopes
+            metadata:
+              name: {{ $tenant }}-edge-exchange-default-scopes
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-edge-exchange-default-scopes
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $realm }}
+                clientIdRef:
+                  name: {{ $tenant }}-edge-exchange-client
+                  policy:
+                    resolve: Always
+                defaultScopes:
+                  - basic
+              providerConfigRef:
+                name: keycloak
+
+            {{- /* Which app a token is for: the scope "app-<profile>".
+
+                 One per profile that asks, named exactly what AppTokenScope
+                 in the operator (component_reconciler.go) returns for it.
+                 That function is what writes the scope's name onto the app's
+                 routes for the bouncer to ask for, so the two have to agree
+                 letter for letter: a scope the realm does not hold under
+                 that name is an exchange Keycloak refuses (invalid_scope).
+
+                 Its one mapper puts the profile's name in the audience of an
+                 ACCESS token, and nothing else in the realm does. A custom
+                 audience, like the director's and unlike the mailbox scope's
+                 below: an app need not be a client of this realm to be an
+                 audience -- many have no sign-in of their own, which is why
+                 they are handed a token at all -- and Keycloak drops a client
+                 audience whose client does not exist.
+
+                 includeInTokenScope puts the name in the token's scope claim
+                 too, so a backend can see what it was issued as.
+
+                 The scope's observed id rather than a ref, as for the mailbox
+                 scope: a mapper's API path needs the UUID, so the mapper is
+                 not rendered until the scope has been observed once. */}}
+            {{- $exchangeScopes := list }}
+            {{- range $p := $exchangeProfiles }}
+            {{- $scope := printf "app-%s" $p }}
+            ---
+            apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+            kind: ClientScope
+            metadata:
+              name: {{ $tenant }}-edge-exchange-scope-{{ $p }}
+              annotations:
+                crossplane.io/external-name: {{ $scope }}
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-edge-exchange-scope-{{ $p }}
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $realm }}
+                name: {{ $scope }}
+                description: {{ printf "A token of the signed-in person for %s and nothing else" $p | quote }}
+                includeInTokenScope: true
+              providerConfigRef:
+                name: keycloak
+            {{- $scopeID := dig "resources" (printf "keycloak-edge-exchange-scope-%s" $p) "resource" "status" "atProvider" "id" "" $observed }}
+            {{- if $scopeID }}
+            {{- $exchangeScopes = append $exchangeScopes $scope }}
+            ---
+            apiVersion: client.keycloak.crossplane.io/v1alpha1
+            kind: ProtocolMapper
+            metadata:
+              name: {{ $tenant }}-edge-exchange-scope-{{ $p }}-audience
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-edge-exchange-scope-{{ $p }}-audience
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $realm }}
+                clientScopeId: {{ $scopeID }}
+                name: app-audience
+                protocol: openid-connect
+                protocolMapper: oidc-audience-mapper
+                config:
+                  included.custom.audience: {{ $p }}
+                  id.token.claim: "false"
+                  access.token.claim: "true"
+                  introspection.token.claim: "true"
+                  userinfo.token.claim: "false"
+              providerConfigRef:
+                name: keycloak
+            {{- end }}
+            {{- end }}
+
+            {{- /* The app scopes as the exchange client's OPTIONAL scopes, and
+                 its only ones.
+
+                 Optional is what makes the exchange narrow: the bouncer asks
+                 for one scope by name and the token names one app. As
+                 defaults they would all be in every token, which is the
+                 token this replaces. And only a scope the client has can be
+                 asked for at all, so a profile that is not on this list
+                 cannot be exchanged for.
+
+                 Replaced wholesale on reconcile, like the default scopes, so
+                 naming exactly these also takes away the optional scopes
+                 Keycloak gives every client -- offline_access among them,
+                 which nothing that only exchanges has a use for.
+
+                 Only scopes that have been observed. A scope is attached by
+                 its name and has to exist first; one that is seconds away
+                 would fail the whole list, and it is here on the next pass.
+
+                 Not rendered while the list is empty, which is a limit and
+                 not a choice: the provider cannot hold an empty
+                 optionalScopes, for the reason given at the default scopes
+                 above. So a realm no app of which asks keeps Keycloak's own
+                 optional scopes on this client until the first one does, and
+                 the last app to stop asking leaves its scope attached --
+                 dropping the object detaches nothing, since it is Orphan like
+                 the rest. Neither is reachable: the bouncer asks only for
+                 the scope a route names, and a route names one only while
+                 its profile asks. */}}
+            {{- if gt (len $exchangeScopes) 0 }}
+            ---
+            apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+            kind: ClientOptionalScopes
+            metadata:
+              name: {{ $tenant }}-edge-exchange-optional-scopes
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-edge-exchange-optional-scopes
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $realm }}
+                clientIdRef:
+                  name: {{ $tenant }}-edge-exchange-client
+                  policy:
+                    resolve: Always
+                optionalScopes:
+                  {{- range $scope := $exchangeScopes }}
+                  - {{ $scope }}
+                  {{- end }}
+              providerConfigRef:
+                name: keycloak
+            {{- end }}
 
             {{- if not $adoptsKernelRealm }}
             {{- /* The realm states its memberships to the platform.
@@ -1828,3 +2207,9 @@ spec:
             - edge-zone-password
             - edge-zone-client-secret
             - keycloak-edge-zone-client
+          # The exchange client's secret before the exchange client, for the
+          # same reason and in the same shape.
+          - sequence:
+            - edge-exchange-password
+            - edge-exchange-client-secret
+            - keycloak-edge-exchange-client

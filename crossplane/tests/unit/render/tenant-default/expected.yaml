@@ -7,10 +7,95 @@ status:
   conditions:
   - lastTransitionTime: "2024-01-01T00:00:00Z"
     message: 'Unready resources: keycloak-broker-client, keycloak-broker-client-id,
-      keycloak-dovecot-oidc-client, and 20 more'
+      keycloak-dovecot-oidc-client, and 26 more'
     reason: Creating
     status: "False"
     type: Ready
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: edge-exchange-client-secret
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-edge-exchange-client-secret
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: external-secrets.io/v1
+      kind: ExternalSecret
+      metadata:
+        labels:
+          app.kubernetes.io/managed-by: crossplane
+          gentianos.io/edge-exchange-realm: render-fixture
+        name: edge-render-fixture-exchange
+        namespace: kernel-edge
+      spec:
+        dataFrom:
+        - sourceRef:
+            generatorRef:
+              apiVersion: generators.external-secrets.io/v1alpha1
+              kind: Password
+              name: edge-render-fixture-exchange
+        refreshInterval: "0"
+        refreshPolicy: CreatedOnce
+        target:
+          creationPolicy: Owner
+          name: edge-render-fixture-exchange
+          template:
+            metadata:
+              labels:
+                app.kubernetes.io/managed-by: gentian-os
+                gentianos.io/edge-exchange-realm: render-fixture
+  providerConfigRef:
+    name: kubernetes
+  readiness:
+    policy: DeriveFromObject
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: edge-exchange-password
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-edge-exchange-password
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: generators.external-secrets.io/v1alpha1
+      kind: Password
+      metadata:
+        labels:
+          app.kubernetes.io/managed-by: crossplane
+          gentianos.io/edge-exchange-realm: render-fixture
+        name: edge-render-fixture-exchange
+        namespace: kernel-edge
+      spec:
+        allowRepeat: true
+        digits: 8
+        length: 48
+        noUpper: false
+        secretKeys:
+        - client-secret
+        symbols: 0
+  providerConfigRef:
+    name: kubernetes
 ---
 apiVersion: kubernetes.crossplane.io/v1alpha2
 kind: Object
@@ -270,6 +355,221 @@ apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
 kind: Client
 metadata:
   annotations:
+    crossplane.io/composition-resource-name: keycloak-edge-exchange-client
+    crossplane.io/external-name: gentian-edge-exchange
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-edge-exchange-client
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    accessType: CONFIDENTIAL
+    clientId: gentian-edge-exchange
+    clientSecretSecretRef:
+      key: client-secret
+      name: edge-render-fixture-exchange
+      namespace: kernel-edge
+    directAccessGrantsEnabled: false
+    enabled: true
+    fullScopeAllowed: false
+    implicitFlowEnabled: false
+    name: Acme Cloud edge (token exchange)
+    realmId: render-fixture
+    serviceAccountsEnabled: false
+    standardFlowEnabled: false
+    standardTokenExchangeEnabled: true
+  managementPolicies:
+  - Observe
+  - Create
+  - Update
+  - Delete
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+kind: ClientDefaultScopes
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-edge-exchange-default-scopes
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-edge-exchange-default-scopes
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    clientIdRef:
+      name: render-fixture-edge-exchange-client
+      policy:
+        resolve: Always
+    defaultScopes:
+    - basic
+    realmId: render-fixture
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+kind: ClientOptionalScopes
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-edge-exchange-optional-scopes
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-edge-exchange-optional-scopes
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    clientIdRef:
+      name: render-fixture-edge-exchange-client
+      policy:
+        resolve: Always
+    optionalScopes:
+    - app-notes
+    - app-wiki
+    realmId: render-fixture
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+kind: ClientScope
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-edge-exchange-scope-notes
+    crossplane.io/external-name: app-notes
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-edge-exchange-scope-notes
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    description: A token of the signed-in person for notes and nothing else
+    includeInTokenScope: true
+    name: app-notes
+    realmId: render-fixture
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: client.keycloak.crossplane.io/v1alpha1
+kind: ProtocolMapper
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-edge-exchange-scope-notes-audience
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-edge-exchange-scope-notes-audience
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    clientScopeId: 00000000-0000-4000-8000-0000000e0001
+    config:
+      access.token.claim: "true"
+      id.token.claim: "false"
+      included.custom.audience: notes
+      introspection.token.claim: "true"
+      userinfo.token.claim: "false"
+    name: app-audience
+    protocol: openid-connect
+    protocolMapper: oidc-audience-mapper
+    realmId: render-fixture
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+kind: ClientScope
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-edge-exchange-scope-wiki
+    crossplane.io/external-name: app-wiki
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-edge-exchange-scope-wiki
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    description: A token of the signed-in person for wiki and nothing else
+    includeInTokenScope: true
+    name: app-wiki
+    realmId: render-fixture
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: client.keycloak.crossplane.io/v1alpha1
+kind: ProtocolMapper
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-edge-exchange-scope-wiki-audience
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-edge-exchange-scope-wiki-audience
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    clientScopeId: 00000000-0000-4000-8000-0000000e0002
+    config:
+      access.token.claim: "true"
+      id.token.claim: "false"
+      included.custom.audience: wiki
+      introspection.token.claim: "true"
+      userinfo.token.claim: "false"
+    name: app-audience
+    protocol: openid-connect
+    protocolMapper: oidc-audience-mapper
+    realmId: render-fixture
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+kind: Client
+metadata:
+  annotations:
     crossplane.io/composition-resource-name: keycloak-edge-zone-client
     crossplane.io/external-name: gentian-edge-render-fixture
   labels:
@@ -379,6 +679,41 @@ spec:
       introspection.token.claim: "true"
       userinfo.token.claim: "false"
     name: director-audience
+    protocol: openid-connect
+    protocolMapper: oidc-audience-mapper
+    realmId: render-fixture
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: client.keycloak.crossplane.io/v1alpha1
+kind: ProtocolMapper
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-edge-zone-exchange-audience
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-edge-zone-exchange-audience
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    clientIdRef:
+      name: render-fixture-edge-zone-client
+      policy:
+        resolve: Always
+    config:
+      access.token.claim: "true"
+      id.token.claim: "false"
+      included.custom.audience: gentian-edge-exchange
+      introspection.token.claim: "true"
+      userinfo.token.claim: "false"
+    name: exchange-audience
     protocol: openid-connect
     protocolMapper: oidc-audience-mapper
     realmId: render-fixture

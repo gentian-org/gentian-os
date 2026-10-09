@@ -103,3 +103,31 @@ status:
     status: "True"
   - type: Synced
     status: "True"
+---
+# The exchange client's secret, generated and delivered: the sequencer holds
+# the client back on these two exactly as it holds the zone's.
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  name: user-edge-exchange-password
+  annotations:
+    crossplane.io/composition-resource-name: edge-exchange-password
+status:
+  conditions:
+  - type: Ready
+    status: "True"
+  - type: Synced
+    status: "True"
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  name: user-edge-exchange-client-secret
+  annotations:
+    crossplane.io/composition-resource-name: edge-exchange-client-secret
+status:
+  conditions:
+  - type: Ready
+    status: "True"
+  - type: Synced
+    status: "True"

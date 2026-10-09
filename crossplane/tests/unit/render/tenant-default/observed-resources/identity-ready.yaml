@@ -119,3 +119,63 @@ status:
     status: "True"
   - type: Synced
     status: "True"
+---
+# The exchange client's secret, generated and delivered: the sequencer holds
+# the client back on these two exactly as it holds the zone's.
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  name: render-fixture-edge-exchange-password
+  annotations:
+    crossplane.io/composition-resource-name: edge-exchange-password
+status:
+  conditions:
+  - type: Ready
+    status: "True"
+  - type: Synced
+    status: "True"
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  name: render-fixture-edge-exchange-client-secret
+  annotations:
+    crossplane.io/composition-resource-name: edge-exchange-client-secret
+status:
+  conditions:
+  - type: Ready
+    status: "True"
+  - type: Synced
+    status: "True"
+---
+# The app scopes, observed: an id is what a scope's audience mapper is made
+# on, and what puts the scope among the exchange client's optional scopes.
+apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+kind: ClientScope
+metadata:
+  name: render-fixture-edge-exchange-scope-notes
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-edge-exchange-scope-notes
+status:
+  atProvider:
+    id: 00000000-0000-4000-8000-0000000e0001
+  conditions:
+  - type: Ready
+    status: "True"
+  - type: Synced
+    status: "True"
+---
+apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+kind: ClientScope
+metadata:
+  name: render-fixture-edge-exchange-scope-wiki
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-edge-exchange-scope-wiki
+status:
+  atProvider:
+    id: 00000000-0000-4000-8000-0000000e0002
+  conditions:
+  - type: Ready
+    status: "True"
+  - type: Synced
+    status: "True"

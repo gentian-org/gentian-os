@@ -67,6 +67,11 @@ type Route struct {
 	// route whose exposure declares it -- the desktop, which relays to the
 	// director -- has it; every other backend gets identity headers instead.
 	ForwardToken bool `json:"forwardToken,omitempty"`
+	// ExchangeScope makes the backend's Authorization header a token of the
+	// person that is valid at this app alone: the session's token exchanged
+	// at the realm, asking for this one scope, which names the app as the
+	// audience (exchange.go). Empty on every route that did not ask for it.
+	ExchangeScope string `json:"exchangeScope,omitempty"`
 	// DenyPaths are refused before anything else is asked, whoever is
 	// calling. It is what lets a component publish a UI without publishing
 	// its own administrative endpoints, and the alternative is every app
@@ -167,6 +172,9 @@ func ParseTable(b []byte) (*Table, error) {
 		}
 		if r.AuthMode != AuthModeOIDC && r.AuthMode != AuthModeBearer {
 			return nil, fmt.Errorf("route table: entry %d (%q) needs authMode oidc or bearer", i, r.Host)
+		}
+		if r.ExchangeScope != "" && (r.AuthMode != AuthModeOIDC || r.ForwardToken || r.KeepClientToken) {
+			return nil, fmt.Errorf("route table: entry %d (%q) exchanges a token only behind a session, and hands on one token", i, r.Host)
 		}
 		if seen[host] {
 			return nil, fmt.Errorf("route table: host %q listed twice", host)

@@ -143,6 +143,9 @@ func (r *GatewayPlatformReconciler) reconcileKernelHTTPRoutes(ctx context.Contex
 	// The bouncer's table first: a route whose policy asks the bouncer before the
 	// bouncer knows the host is refused, which is the right direction, but a
 	// short one.
+	if err := r.ensureBouncerExchangeSecrets(ctx); err != nil {
+		return err
+	}
 	if err := r.ensureBouncerRouteTable(ctx, specs); err != nil {
 		return fmt.Errorf("ensure bouncer route table: %w", err)
 	}

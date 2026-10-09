@@ -130,7 +130,11 @@ const (
 	bouncerRelationAnnotation = "gentianos.io/bouncer-relation"
 	bouncerObjectAnnotation   = "gentianos.io/bouncer-object"
 	bouncerForwardAnnotation  = "gentianos.io/bouncer-forward-token"
-	bouncerAuthModeAnnotation = "gentianos.io/bouncer-mode"
+	// bouncerExchangeScopeAnnotation names the scope the bouncer exchanges
+	// the session's token for on this route: the app's own, which makes the
+	// app the token's audience.
+	bouncerExchangeScopeAnnotation = "gentianos.io/bouncer-exchange-scope"
+	bouncerAuthModeAnnotation      = "gentianos.io/bouncer-mode"
 	// bouncerDenyPathsAnnotation carries the exposure's denyPaths to the
 	// bouncer's table. Comma-separated because an annotation is a string and a
 	// path cannot contain a comma without being escaped, which none are.
@@ -1397,6 +1401,9 @@ func buildExposureRoute(comp *gentianov1alpha1.Component, name, host string, zon
 		bouncerForwardAnnotation:  fmt.Sprint(authz.forwardToken),
 		bouncerAuthModeAnnotation: mode,
 	}
+	if e.ExchangeToken && e.AuthMode == gentianov1alpha1.AuthModeOIDC && !authz.forwardToken {
+		annotations[bouncerExchangeScopeAnnotation] = AppTokenScope(comp.Spec.ProfileRef.Name)
+	}
 	// denyPaths is not a route rule. A gateway route matches by prefix, so
 	// the denied path is already inside the rule that serves the host, and
 	// the more specific rule that would shadow it still needs a backend to
@@ -1615,3 +1622,9 @@ func (r *ComponentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	}
 	return b.Complete(r.guarded())
 }
+
+// AppTokenScope is the client scope of a tenant's realm that names one app
+// as a token's audience. The bouncer asks for it when it exchanges a
+// session's token for that app's (exposure exchangeToken), and the realm
+// holds one per app that asked.
+func AppTokenScope(profile string) string { return "app-" + profile }

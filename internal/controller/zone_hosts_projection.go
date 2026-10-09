@@ -50,6 +50,19 @@ const (
 	// zoneHostsKey is the one key: a sorted, newline-separated list of host
 	// labels, which is what a Composition can read without parsing.
 	zoneHostsKey = "hosts"
+	// zoneExchangeProfilesKey is the second thing the zone's realm has to be
+	// told about the components, in the same shape: the sorted,
+	// newline-separated names of the profiles whose exposures ask for an
+	// exchanged token (exchangeToken). The Composition makes one client scope
+	// in the realm per name, called what AppTokenScope calls it, and that
+	// scope is what the bouncer asks for on the component's routes.
+	//
+	// Here and not on the composite's spec.apps: that list holds what a
+	// tenant installed, and the components every tenant is given -- the
+	// desktop, the administration console -- are not on it. A route of one
+	// of those would name a scope the realm never had. This follows the
+	// Components, as the routes do.
+	zoneExchangeProfilesKey = "exchangeProfiles"
 )
 
 // zoneHostsConfigMapName is one ConfigMap per tenant, in the control
@@ -59,7 +72,8 @@ const (
 func zoneHostsConfigMapName(tenant string) string { return "gentian-zone-hosts-" + tenant }
 
 // projectZoneHosts writes, for every tenant, the host labels its components'
-// gateway exposures serve.
+// gateway exposures serve, and the profiles among them that ask for an
+// exchanged token.
 //
 // Labels and not full hostnames: the Composition builds the redirect URI from
 // the tenant's effective domain, which it knows and this does not -- a tenant
@@ -85,8 +99,10 @@ func (r *TileProjectionReconciler) projectZoneHosts(ctx context.Context) error {
 	// need nothing added", and its absence would be indistinguishable from
 	// "the operator has not looked yet".
 	hosts := map[string]map[string]bool{}
+	exchange := map[string]map[string]bool{}
 	for i := range tenants.Items {
 		hosts[tenants.Items[i].Name] = map[string]bool{}
+		exchange[tenants.Items[i].Name] = map[string]bool{}
 	}
 
 	for i := range components.Items {
@@ -105,6 +121,12 @@ func (r *TileProjectionReconciler) projectZoneHosts(ctx context.Context) error {
 				continue
 			}
 			return err
+		}
+		if asksForExchangedToken(profile) {
+			// The profile's name and not the component's: the route builder
+			// names the scope after the profile (AppTokenScope), and two
+			// components of one profile share the one audience.
+			exchange[tenant][profile.Name] = true
 		}
 		for j := range profile.Spec.Expose {
 			e := &profile.Spec.Expose[j]
@@ -126,11 +148,28 @@ func (r *TileProjectionReconciler) projectZoneHosts(ctx context.Context) error {
 	}
 
 	for tenant, set := range hosts {
-		if err := r.writeZoneHosts(ctx, tenant, sortedKeys(set)); err != nil {
+		if err := r.writeZoneHosts(ctx, tenant, sortedKeys(set), sortedKeys(exchange[tenant])); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// asksForExchangedToken reports whether any exposure of the profile declares
+// exchangeToken. One entry is enough: the scope is the app's, not the
+// entry's, and every route of the app that asks is given the same one.
+//
+// Deliberately wider than the route builder, which also wants the entry
+// behind a session and not already forwarding the session's own token. A
+// scope no route asks for costs the realm one unused object; a route asking
+// for a scope the realm does not hold costs the person the page.
+func asksForExchangedToken(profile *gentianov1alpha1.ComponentProfile) bool {
+	for i := range profile.Spec.Expose {
+		if profile.Spec.Expose[i].ExchangeToken {
+			return true
+		}
+	}
+	return false
 }
 
 func sortedKeys(set map[string]bool) []string {
@@ -145,7 +184,7 @@ func sortedKeys(set map[string]bool) []string {
 // writeZoneHosts creates the ConfigMap the first time and patches it only
 // when the content differs, so a projection that did not change does not wake
 // every Composition that reads it.
-func (r *TileProjectionReconciler) writeZoneHosts(ctx context.Context, tenant string, hosts []string) error {
+func (r *TileProjectionReconciler) writeZoneHosts(ctx context.Context, tenant string, hosts, exchangeProfiles []string) error {
 	key := types.NamespacedName{
 		Name:      zoneHostsConfigMapName(tenant),
 		Namespace: layout.Namespace(layout.Control),
@@ -160,7 +199,10 @@ func (r *TileProjectionReconciler) writeZoneHosts(ctx context.Context, tenant st
 				tenantLabel:                tenant,
 			},
 		},
-		Data: map[string]string{zoneHostsKey: strings.Join(hosts, "\n")},
+		Data: map[string]string{
+			zoneHostsKey:            strings.Join(hosts, "\n"),
+			zoneExchangeProfilesKey: strings.Join(exchangeProfiles, "\n"),
+		},
 	}
 
 	existing := &corev1.ConfigMap{}

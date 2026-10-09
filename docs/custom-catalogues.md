@@ -321,6 +321,16 @@ key, no Secret and no network path to the gateway, whatever the cluster runs. Wi
 that serves no models, the app is held and its Component says why
 ([app-customization.md §1.1](app-customization.md)).
 
+**An app that verifies who is asking, and does not take the front door's headers on trust**, sets
+`exchangeToken: true` on its gateway entry (`authMode: oidc`). Every request then reaches it with
+`Authorization: Bearer <token>`: a token of the signed-in person from the tenant's realm, good for a
+few minutes, whose audience (`aud`) is the app's profile name and nothing else. The app, or a
+sidecar in front of it, checks the signature against the realm's keys, the issuer, the audience and
+the expiry. The identity headers are still set; an app that verifies the token has no need to believe
+them. Any profile may ask for this, since the token is worth nothing anywhere else. It is not
+`forwardToken`, which hands on the session's own token and is for a component of platform trust; a
+profile sets one or the other.
+
 **A component that acts for a person who is not at a browser** has no session the edge could
 check, and must still not act for somebody who may no longer use an app. It declares the rights
 check (`spec.requires.services.rights: {}`) and receives, in the Secret `rights-check-<profile>`,

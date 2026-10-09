@@ -1,0 +1,24 @@
+# What the operator projects from this tenant's components: the host labels
+# they are served at, and the profiles among them that ask for an exchanged
+# token (exposure exchangeToken).
+#
+# desktop and admin are what the base list already has, so the zone's client
+# is what it was without this. exchangeProfiles is what this fixture is for:
+# "notes" and "wiki" each get a client scope that names them as a token's
+# audience, and catalogue-test-app -- installed, on spec.apps, and not asking
+# -- gets none.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gentian-zone-hosts-render-fixture
+  namespace: kernel-control
+  labels:
+    gentianos.io/config-type: zone-hosts
+    gentianos.io/tenant: render-fixture
+data:
+  hosts: |
+    admin
+    desktop
+  exchangeProfiles: |
+    notes
+    wiki

@@ -13,6 +13,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -326,7 +327,10 @@ type bouncerRoute struct {
 	// caller's own token: whose ID token proves the session there.
 	IDTokenAudience string `json:"idTokenAudience,omitempty"`
 	ForwardToken    bool   `json:"forwardToken,omitempty"`
-	AuthMode        string `json:"authMode"`
+	// ExchangeScope makes the backend's token one the realm issued for this
+	// app alone (internal/bouncer, exchange.go).
+	ExchangeScope string `json:"exchangeScope,omitempty"`
+	AuthMode      string `json:"authMode"`
 	// DenyPaths are refused at L2 before identity is looked at. Unioned
 	// across every exposure that shares the host.
 	DenyPaths []string `json:"denyPaths,omitempty"`
@@ -480,6 +484,9 @@ func componentRouteTableEntries(ctx context.Context, c client.Reader) ([]bouncer
 			// deny wins.
 			if cur, ok := byHost[host]; ok {
 				cur.ForwardToken = cur.ForwardToken || ann[bouncerForwardAnnotation] == "true"
+				if cur.ExchangeScope == "" {
+					cur.ExchangeScope = ann[bouncerExchangeScopeAnnotation]
+				}
 				cur.DenyPaths = mergeDenyPaths(cur.DenyPaths, denied)
 				cur.SessionCookies = mergeDenyPaths(cur.SessionCookies, cookies)
 				if cur.SessionCookiePrefixes == nil {
@@ -489,8 +496,9 @@ func componentRouteTableEntries(ctx context.Context, c client.Reader) ([]bouncer
 			}
 			byHost[host] = &bouncerRoute{
 				Host: host, Relation: ann[bouncerRelationAnnotation], Object: ann[bouncerObjectAnnotation],
-				ForwardToken: ann[bouncerForwardAnnotation] == "true",
-				AuthMode:     mode, DenyPaths: denied,
+				ForwardToken:  ann[bouncerForwardAnnotation] == "true",
+				ExchangeScope: ann[bouncerExchangeScopeAnnotation],
+				AuthMode:      mode, DenyPaths: denied,
 				SessionCookies: cookies, SessionCookiePrefixes: prefixes,
 			}
 			order = append(order, host)
@@ -498,7 +506,15 @@ func componentRouteTableEntries(ctx context.Context, c client.Reader) ([]bouncer
 	}
 	out := make([]bouncerRoute, 0, len(order))
 	for _, h := range order {
-		out = append(out, *byHost[h])
+		route := *byHost[h]
+		// A host's backends are handed one token or the other, and the
+		// bouncer refuses a table that says both. A profile cannot declare
+		// both; should two routes of a host ever disagree, the exchange is
+		// what goes, and the host behaves as it did before it was asked for.
+		if route.ForwardToken || route.AuthMode != "oidc" {
+			route.ExchangeScope = ""
+		}
+		out = append(out, route)
 	}
 	return out, nil
 }
@@ -534,4 +550,75 @@ func mergeDenyPaths(have, add []string) []string {
 		}
 	}
 	return have
+}
+
+// The exchange of a session's token for an app's own (exposure
+// exchangeToken) is asked of the tenant's realm by that realm's exchange
+// client, and the bouncer is who asks. Each tenant's realm has its own
+// client and its own secret, written by the tenant's Composition into a
+// Secret of the edge namespace that carries the realm's name in a label. The
+// bouncer is one program for all of them and mounts one Secret, so they are
+// gathered into it here: one entry per realm, named after the realm.
+const (
+	// exchangeRealmLabel marks a Secret holding one realm's exchange client
+	// secret, and its value is the realm.
+	exchangeRealmLabel = "gentianos.io/edge-exchange-realm"
+	// exchangeSecretKey is the entry of such a Secret that holds the secret.
+	exchangeSecretKey = "client-secret"
+	// bouncerExchangeSecret is the one Secret the bouncer mounts
+	// (charts/gentian-os, bouncer.yaml: the two must agree).
+	bouncerExchangeSecret = "bouncer-exchange"
+)
+
+// exchangeRealmName is what a realm may be called to become a file name in
+// the bouncer's mount and a path of the token endpoint (internal/bouncer,
+// realmNamePattern: the two must agree).
+var exchangeRealmName = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
+
+func (r *GatewayPlatformReconciler) ensureBouncerExchangeSecrets(ctx context.Context) error {
+	list := &corev1.SecretList{}
+	if err := r.List(ctx, list, client.InNamespace(servicesNamespace), client.HasLabels{exchangeRealmLabel}); err != nil {
+		return err
+	}
+	data := map[string][]byte{}
+	for i := range list.Items {
+		s := &list.Items[i]
+		realm := s.Labels[exchangeRealmLabel]
+		secret := s.Data[exchangeSecretKey]
+		// The gathered Secret is itself in this namespace; it carries no
+		// such label, and is skipped by name as well in case one is ever put
+		// on it.
+		if s.Name == bouncerExchangeSecret || s.DeletionTimestamp != nil || len(secret) == 0 || !exchangeRealmName.MatchString(realm) {
+			continue
+		}
+		data[realm] = secret
+	}
+	key := types.NamespacedName{Name: bouncerExchangeSecret, Namespace: servicesNamespace}
+	existing := &corev1.Secret{}
+	err := r.Get(ctx, key, existing)
+	if errors.IsNotFound(err) {
+		if len(data) == 0 {
+			return nil
+		}
+		return r.Create(ctx, &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: key.Name, Namespace: key.Namespace,
+				Labels: map[string]string{managedByLabel: managedByValue, gatewayComponentLabel: gatewayComponentKernel},
+			},
+			Type: corev1.SecretTypeOpaque,
+			Data: data,
+		})
+	}
+	if err != nil {
+		return err
+	}
+	if existing.Labels[managedByLabel] != managedByValue {
+		return fmt.Errorf("secret %s/%s exists and is not the operator's", key.Namespace, key.Name)
+	}
+	if equality.Semantic.DeepEqual(existing.Data, data) || (len(existing.Data) == 0 && len(data) == 0) {
+		return nil
+	}
+	patch := client.MergeFrom(existing.DeepCopy())
+	existing.Data = data
+	return r.Patch(ctx, existing, patch)
 }

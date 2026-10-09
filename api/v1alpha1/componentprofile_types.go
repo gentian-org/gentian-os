@@ -81,6 +81,8 @@ const (
 // +kubebuilder:validation:XValidation:rule="!has(self.classes) || !('shared-app' in self.classes) || self.trustTier == 'platform'",message="shared-app requires trustTier platform"
 // +kubebuilder:validation:XValidation:rule="!has(self.expose) || self.expose.all(e, !(has(e.forwardToken) && e.forwardToken) || self.trustTier == 'platform')",message="forwardToken requires trustTier platform: the edge token is valid at the director and at every sibling"
 // +kubebuilder:validation:XValidation:rule="!has(self.requires) || !has(self.requires.services) || !has(self.requires.services.rights) || self.trustTier == 'platform'",message="requires.services.rights requires trustTier platform: the answer says who in the tenant may use what"
+// +kubebuilder:validation:XValidation:rule="!has(self.expose) || self.expose.all(e, !(has(e.exchangeToken) && e.exchangeToken) || (e.surface == 'gateway' && e.authMode == 'oidc'))",message="exchangeToken is for a gateway entry behind a session (authMode oidc): there is a session's token to exchange only there"
+// +kubebuilder:validation:XValidation:rule="!has(self.expose) || !(self.expose.exists(e, has(e.forwardToken) && e.forwardToken) && self.expose.exists(e, has(e.exchangeToken) && e.exchangeToken))",message="a component asks for forwardToken or for exchangeToken, not both: its entries share one host, and a host's backends are handed one token or the other"
 // A service may expose -- a console is not a contract surface -- but only on
 // the gateway. The perimeter has no session, and a service console published
 // there is never what anybody meant.
@@ -492,6 +494,20 @@ type ExposureSpec struct {
 	// also valid at the director and at every sibling.
 	// +optional
 	ForwardToken bool `json:"forwardToken,omitempty"`
+
+	// ExchangeToken asks the front door to hand this backend a token of the
+	// person that is valid at this app and nowhere else: the session's token
+	// exchanged at the tenant's realm for one whose audience is the app. The
+	// backend verifies it -- signature, issuer, audience, expiry -- and need
+	// not trust the identity headers, which anything that can reach it could
+	// set.
+	//
+	// Not forwardToken: that passes the session's own token, which is valid
+	// at the director and at every sibling, and so is for a component of
+	// platform trust. An exchanged token is worth nothing outside the app it
+	// names, and any app may ask for it.
+	// +optional
+	ExchangeToken bool `json:"exchangeToken,omitempty"`
 
 	// Annotations are gateway policy for this host, by the same keys
 	// AppProfile's ingress carried: gentianos.io/gateway-frame-ancestors and

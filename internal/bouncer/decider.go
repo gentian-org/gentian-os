@@ -89,6 +89,8 @@ type Decider struct {
 	log    *slog.Logger
 	now    func() time.Time
 
+	exchange *exchangeCache
+
 	mu    sync.RWMutex
 	table *Table
 }
@@ -103,6 +105,10 @@ type Options struct {
 	CacheTTL time.Duration
 	Logger   *slog.Logger
 	Now      func() time.Time
+	// Exchanger obtains the app-bound token of a route that asks for one.
+	// Without it such a route is refused: there is nothing to hand its
+	// backend in place of the session's token.
+	Exchanger Exchanger
 }
 
 // New returns a Decider.
@@ -116,7 +122,10 @@ func New(o Options) *Decider {
 	if o.CacheTTL <= 0 {
 		o.CacheTTL = 5 * time.Minute
 	}
-	return &Decider{verify: o.Verifier, store: o.Store, cache: newCache(o.CacheTTL, o.Now), log: o.Logger, now: o.Now, table: o.Table}
+	return &Decider{
+		verify: o.Verifier, store: o.Store, cache: newCache(o.CacheTTL, o.Now), log: o.Logger, now: o.Now, table: o.Table,
+		exchange: newExchangeCache(o.Exchanger, o.Now),
+	}
 }
 
 // SetTable replaces the route table.
@@ -222,7 +231,7 @@ func (d *Decider) Decide(ctx context.Context, req Request) Decision {
 	}
 	who := identity{subject: id.Subject, realm: id.Realm, session: id.SessionID, email: id.Email, name: id.Name}
 	if cached, ok := d.cache.get(id.Subject, id.SessionID, route.Host); ok {
-		return allow(route, req, cached)
+		return d.finish(ctx, route, req, cached)
 	}
 	user, err := authz.User(id.Subject)
 	if err != nil {
@@ -241,7 +250,34 @@ func (d *Decider) Decide(ctx context.Context, req Request) Decision {
 		return browserRefusal(route, deny(http.StatusForbidden, "not "+route.Relation+" on "+route.Object))
 	}
 	d.cache.put(id.Subject, id.SessionID, route.Host, who)
-	return allow(route, req, who)
+	return d.finish(ctx, route, req, who)
+}
+
+// finish lets an allowed request through, and on a route that asks for it
+// puts the app-bound token in place of the session's.
+//
+// Fail closed here too. A backend that verifies a token and is handed none
+// would refuse the request anyway, with less to say about why; and handing
+// it the session's token instead is exactly what the route asked not to get.
+func (d *Decider) finish(ctx context.Context, route *Route, req Request, who identity) Decision {
+	dec := allow(route, req, who)
+	if route.ExchangeScope == "" {
+		return dec
+	}
+	token, err := d.exchange.token(ctx, who, bearer(req.Authorization), route.ExchangeScope)
+	if err != nil {
+		d.log.WarnContext(ctx, "token exchange failed; failing closed", "host", req.Host, "realm", who.realm, "error", err.Error())
+		return deny(http.StatusServiceUnavailable, "the app's token could not be obtained")
+	}
+	dec.Headers["authorization"] = "Bearer " + token
+	kept := dec.RemoveHeaders[:0]
+	for _, h := range dec.RemoveHeaders {
+		if h != "authorization" {
+			kept = append(kept, h)
+		}
+	}
+	dec.RemoveHeaders = kept
+	return dec
 }
 
 // session verifies the one token the route's mode says proves who is asking.

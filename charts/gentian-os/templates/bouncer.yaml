@@ -156,11 +156,22 @@ spec:
             - name: routes
               mountPath: /etc/bouncer
               readOnly: true
+            - name: exchange
+              mountPath: /etc/bouncer-exchange
+              readOnly: true
       volumes:
         # The operator's route table. Optional: before the first route is
         # written the bouncer runs with an empty table and refuses every host.
         - name: routes
           configMap:
             name: bouncer-routes
+            optional: true
+        # The secret of each tenant realm's exchange client, one file per
+        # realm, written by the operator. Optional: a cluster on which no app
+        # asks for an exchanged token has none, and a route that asks for one
+        # in a realm with no file here is refused.
+        - name: exchange
+          secret:
+            secretName: bouncer-exchange
             optional: true
 {{- end }}

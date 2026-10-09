@@ -360,7 +360,16 @@ policy. `id-admin.<kernel>` is retired.
   to the director — and gives every other backend identity headers it sets
   after stripping inbound ones. An app that needs a session of its own runs a
   silent login with its own client and audience, exactly as it would on a
-  direct link. The desktop BFF in
+  direct link. **A backend that should not have to believe a header** sets
+  `exchangeToken` on its entry instead. The bouncer then exchanges the
+  session's token at the tenant's realm (RFC 8693) for one whose audience is
+  that app and nothing else, and puts it in the request's `Authorization`
+  header. The exchange is asked by a client of the realm that exists for it,
+  `gentian-edge-exchange`: it signs nobody in, has no token of its own, and
+  is admitted only for a session's token that names it. One exchange serves
+  a session for the token's lifetime, and a request for which none can be
+  had is refused, never let through with the session's token or with none.
+  The desktop BFF in
   particular holds no OIDC client secret: a second confidential client in the
   same realm is a second session with its own lifetime and its own logout,
   and in `tenant-platform` it would put a kernel-realm client secret inside a
