@@ -32,9 +32,11 @@ import (
 // "tenant/<tenant>/<source>" for one that belongs to a tenant.
 //
 // It is the director's to write, beside the bundle, and never a source's to
-// state. A profile without it is one nobody recorded an origin for -- shipped
-// by the platform's chart, scaffolded by the installer, or materialised before
-// origins were recorded -- and it belongs to no tenant.
+// state; the installer writes it the same way for the default profile it
+// places before there is a director (scripts/lib/catalogue.sh). A profile
+// without it is one nobody recorded an origin for -- shipped by the
+// platform's chart, scaffolded by an installer that recorded none, or
+// materialised before origins were recorded -- and it belongs to no tenant.
 const OriginAnnotation = "gentianos.io/catalogue-origin"
 
 // ReasonOtherTenant is the condition reason of a Component whose profile

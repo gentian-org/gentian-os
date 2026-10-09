@@ -276,6 +276,15 @@ test-signing-key-lookup:
 
 ## The OpenBao CLI archive's name for every host the installer supports, and
 ## that an archive which does not match the release's checksum list installs
+## The default profile step 0 places (the Operations Console) is written only
+## when it hashes to the digest the catalogue's index lists, or to a pin given
+## in GENTIAN_DEFAULT_PROFILES; a mismatch stops, an unreachable catalogue
+## warns, an existing definition is kept. curl is a stand-in catalogue; no
+## network. That the files are the director's, byte for byte, is a Go test
+## (internal/director/gitops/installer_profiles_test.go).
+test-default-profile-digest:
+	@bash scripts/tests/test-default-profile-digest.sh
+
 ## nothing. curl and uname are stand-ins; no network.
 test-openbao-cli-download:
 	@bash scripts/tests/test-openbao-cli-download.sh
@@ -443,17 +452,6 @@ lint-eso-readable-paths:
 lint-provider-rbac:
 	@python3 scripts/lint/lint-provider-rbac.py
 
-## Shell placeholders in Helm templates, which nothing expands
-lint-template-placeholders:
-	@python3 scripts/lint/lint-template-placeholders.py
-
-## Report macOS/BSD portability violations. Expected non-zero until Phase 13
-## migrates the call sites; the count must only go down.
-lint-portability:
-	@bash scripts/lint/lint-portability.sh
-
-## Assert every bootstrap Application name resolves to a chart template.
-## Reads only the repository — no cluster.
 ## Fail when a provider resource type in use -- in a Composition, a render
 ## fixture, a kernel chart, Go or a script, here or in the gentian-apps checkout
 ## beside this one -- is not in crossplane/providers/activation.yaml, or when
@@ -476,6 +474,17 @@ refresh-provider-types:
 
 ## Assert every shell function is reached by something that runs. The other
 ## half of lint-resolvable: that one catches a call with no definition, this
+## Shell placeholders in Helm templates, which nothing expands
+lint-template-placeholders:
+	@python3 scripts/lint/lint-template-placeholders.py
+
+## Report macOS/BSD portability violations. Expected non-zero until Phase 13
+## migrates the call sites; the count must only go down.
+lint-portability:
+	@bash scripts/lint/lint-portability.sh
+
+## Assert every bootstrap Application name resolves to a chart template.
+## Reads only the repository — no cluster.
 ## one a definition with no call.
 lint-unreachable:
 	@python3 scripts/lint/lint-unreachable.py

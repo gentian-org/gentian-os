@@ -531,7 +531,7 @@ func (s *Service) unusedProfiles(ctx context.Context, reader client.Reader, view
 		switch {
 		case strings.TrimSpace(p.Annotations[profilebundle.Annotation]) == "":
 			// Not materialised from a catalogue: the platform's chart
-			// shipped it, or the installer wrote it.
+			// shipped it, or an earlier installer wrote it.
 		case p.Labels["app.kubernetes.io/managed-by"] == "Helm", p.Annotations[platformAppAnnotation] == "true":
 		case p.Spec.DefaultForTenants, p.Spec.DefaultForPlatform, p.Spec.DefaultWhereStoreOffered:
 		case p.DeletionTimestamp != nil, len(p.OwnerReferences) > 0:

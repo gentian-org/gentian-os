@@ -113,7 +113,7 @@ type MaterialisedProfile struct {
 	Origin string
 	// Digest is the build the directory holds: the digest of the bundle's
 	// bytes as they were committed beside the profile; empty when the profile
-	// has no bundle, as one the installer scaffolded has none.
+	// has no bundle, as one an earlier installer scaffolded has none.
 	Digest string
 }
 

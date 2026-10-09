@@ -34,7 +34,7 @@ code does what the decision says; it does not mean a cluster has shown it.
 | AD-11 | The target layout applies to fresh installs | **Holds** |
 | AD-12 | The authorization store is a projection: the operator writes it, from git and from Keycloak's events; the director asks it | **Holds for who writes, with four things not built and one credential too many.** The operator receives Keycloak's signed statements and projects memberships, and projects roles, tenants, apps and grants from what git declares; the director asks the store and writes nothing to it. **Not built:** no code revokes a person's sessions when their groups change; no realm setting disables offline tokens (an app's client is left the optional scope `offline_access`); nothing reconciles the stored memberships toward Keycloak, so a statement that never arrives is repaired only by the next one about the same person; and the check at start that the defaults git implies are the ones the store holds does not exist. **Against the decision:** the operator still holds Keycloak's master administrator credential (defect 15) |
 | AD-13 | The edge is the only session authority | **Holds, with the two exceptions the entry names**: the App Store app's sign-in to a store, and the sign-in sidecar. An approved entry that keeps the app's own `Authorization` header is no exception to it: the session is still the edge's and still required |
-| AD-14 | Catalogue sources on the Cluster claim; a profile reaches a cluster only at a verified digest | **Deviation, not decided.** Sources on the claim and per tenant, delegation, one bundle under one digest, and the console's catalogue view hidden: as decided. But the installer fetches the Operations Console's profile by address at install and commits it with no digest (see part 4) |
+| AD-14 | Catalogue sources on the Cluster claim; a profile reaches a cluster only at a verified digest | **Holds, with the exception the entry names**: the installer places the Operations Console's profile at install, at the digest its catalogue's index lists or a pin, written as the director writes it. Its default Component is not pinned, so the operator does not compare it at rollout (part 3) |
 | AD-15 | Multi-language is a core requirement | **Partly.** Desktop, console and sign-in pages are translated. A component's `description` and a store listing's text are single strings; the desktop has no check for a missing translation in CI |
 
 ## 2. Built, and never run on a cluster
@@ -151,7 +151,7 @@ Each is true of the code today.
 | 8 | **An import carries the source's approvals.** The new tenant's manifest is written from the bundle, so the privileges granted and the entries approved in the exported tenant — public addresses, with their kind, and kept `Authorization` headers — arrive approved, and nobody on the importing cluster approved them | [data-lifecycle.md](../design/data-lifecycle.md) |
 | 9 | **A deleted tenant leaves entries behind**: its rights and memberships in the rights store, which a later tenant of the same name would inherit, and its keys in the shared cache. Not now: on the roadmap, item 1.38 | [data-lifecycle.md](../design/data-lifecycle.md), [roadmap.md](../roadmap.md) |
 | 10 | **A removed person's mailbox stays** until the tenant is deleted | [mail.md](../design/mail.md) |
-| 11 | **The Operations Console's profile arrives without a digest** | part 4 |
+| 11 | **The Operations Console's default Component is not pinned.** The installer now places its profile only at a stated digest, with its bundle and origin; the operator compares a profile with its bundle at rollout only for a Component pinned to a digest, and the one it creates for a `defaultForTenants` profile carries none. The digest the installer uses comes from the catalogue's own unsigned index unless the person installing pins one | AD-14, [security.md §2.10](../design/security.md) |
 | 12 | **The model gateway's console switch has not run on a cluster.** The console is off unless the claim says `llm.console.enabled: true`, so the defect as it stood -- no way to serve models without the console -- is closed in the code. Not yet seen: that an upgraded cluster loses the route and the edge's rule at the gateway, and that the console works behind the edge when switched on (its own sign-in and its `Authorization` header are held by tests of the rendered policy only) | part 1, AD-9; [llms.md](../design/llms.md) |
 | 13 | **A cluster installed before 2026-10-09 keeps every Crossplane resource type** — about 380 CRDs. A fresh install creates the 25 the platform uses (`crossplane/providers/activation.yaml`, held by `make lint-provider-activation`); Crossplane never deactivates a type, so nothing narrows an existing cluster. The narrowed list has not run on a cluster yet (part 2) | [install-reference.md §4](../install-reference.md) |
 | 14 | **Two images float.** `vllm/vllm-openai` falls back to `latest` when the claim names no tag, and the model gateway's cache runs `redis:alpine`. `lint-image-pins` lists the first as known and does not look at the second | `kernel/services/llm/` |
@@ -161,12 +161,13 @@ Each is true of the code today.
 
 ## 4. Decisions waiting for the owner
 
-1. **The Operations Console's profile at install** (AD-14). The installer
-   fetches it by address and commits it with no digest; since the catalogue
-   address answers, it really arrives that way, and the cluster takes it for a
-   profile the platform placed. Either the installer pins it to the digest the
-   catalogue's index lists and refuses other bytes, or it places nothing and
-   the profile is installed through the director like any other.
+1. **Whether a default Component is pinned** (AD-14). The installer places
+   the Operations Console's profile at a stated digest, with its bundle. The
+   operator compares a profile with its bundle only for a Component pinned to
+   a digest, and gives the Component it creates for a `defaultForTenants`
+   profile none. Either the operator pins such a Component to the digest of
+   the bundle its profile carries, which makes the comparison run for it, or
+   the default stays unpinned and the comparison is an install's alone.
 2. **Who may publish by default** (AD-6): decided on 2026-10-09 and built.
    The perimeter group is created with the tenant, the cluster's
    administrator approves, and a tenant's admins approve only where the

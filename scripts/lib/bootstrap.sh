@@ -2370,7 +2370,12 @@ EOF
     # The profiles every tenant gets without asking (sovereignty-concept.md
     # §5.4): materialised into the same directory the director materialises an
     # installed entry into, so the operator sees them like any other.
-    _scaffold_default_profiles "${cluster}" || true
+    #
+    # Not `|| true` any more: a catalogue that cannot be reached returns 0 and
+    # the install goes on, and what returns 1 -- a profile that is not the
+    # build its digest names -- is a reason to stop before anything of this
+    # run is committed.
+    _scaffold_default_profiles "${cluster}" || return 1
 
     # Nothing is APPLIED: this still contacts no cluster.
     gentian_commit_cluster_deployment "${kernel_dir}" "${cluster}"
@@ -2686,13 +2691,24 @@ print_roles_summary() {
 # _scaffold_default_profiles <cluster> -- the Aluvian entries a vanilla
 # installation comes with, written as materialised profiles.
 #
-# GENTIAN_DEFAULT_PROFILES lists them: local files or https URLs, comma
-# separated, each a ComponentProfile document. The default is the Operations
-# Console from the Gentian catalogue source. One that cannot be fetched is a
-# warning and not a failed install: the OS needs none of them, and the Admin
-# Console promotes what is missing. --disable-api-extensions writes none.
+# GENTIAN_DEFAULT_PROFILES lists them, comma separated: each the https address
+# of a profile in a catalogue (<catalogue>/profiles/<name>.yaml), optionally
+# pinned with @sha256:<digest>. The default is the Operations Console from the
+# store's catalogue. --disable-api-extensions writes none.
+#
+# Each is held to a digest before a byte of it is written -- the pin, or else
+# what the catalogue's index lists -- and written as the director writes an
+# install of the same bundle, with its origin and its bundle recorded
+# (scripts/lib/catalogue.sh; AD-14).
+#
+# A catalogue that cannot be reached is a warning and not a failed install:
+# the OS needs none of these, and the Admin Console promotes what is missing.
+# Everything else that keeps a profile from being placed stops step 0 -- bytes
+# that do not hash to the digest above all -- because the alternative is a
+# cluster that came up without saying which build it was given.
 _scaffold_default_profiles() {
-    local cluster="$1" dir list item name tmp
+    local cluster="$1" dir list entry
+    local -a entries=()
     dir="${GENTIAN_DEPLOYMENTS_PATH}/clusters/${cluster}/catalogue"
     # The directory and its kustomization exist whatever goes in them: the
     # gentian-catalogue Application syncs this path from the first install,
@@ -2705,39 +2721,15 @@ _scaffold_default_profiles() {
         info "Default profiles skipped (--disable-api-extensions)."
         return 0
     fi
-    list="${GENTIAN_DEFAULT_PROFILES-${GENTIAN_STORE_CATALOGUE_URL:-https://catalogue.aluvian.io}/profiles/operations-console.yaml}"
+    list="$(_default_profiles_configured)"
     [[ -n "${list}" ]] || return 0
-    mkdir -p "${dir}"
-    tmp="$(mktemp)"
-    local IFS=','
-    for item in ${list}; do
-        item="${item## }"; item="${item%% }"
-        [[ -n "${item}" ]] || continue
-        if [[ "${item}" == http://* || "${item}" == https://* ]]; then
-            if ! curl -sfL --max-time 30 -o "${tmp}" "${item}"; then
-                warn "Default profile ${item} could not be fetched; skipped."
-                warn "  The Admin Console promotes it; install it from the App Store later."
-                continue
-            fi
-        elif [[ -f "${item}" ]]; then
-            cp "${item}" "${tmp}"
-        else
-            warn "Default profile ${item} is neither a file nor a URL; skipped."
-            continue
-        fi
-        name="$(sed -n 's/^  name: *//p' "${tmp}" | head -1 | tr -d "'\"")"
-        if [[ -z "${name}" ]] || ! grep -q '^kind: ComponentProfile$' "${tmp}"; then
-            warn "Default profile ${item} is not a ComponentProfile; skipped."
-            continue
-        fi
-        cp "${tmp}" "${dir}/${name}.yaml"
-        # An empty list is written as `resources: []`; the first entry turns
-        # it into a block list.
-        sed_inplace 's/^resources: \[\]$/resources:/' "${dir}/kustomization.yaml"
-        grep -q "^- ${name}.yaml$" "${dir}/kustomization.yaml" || printf -- '- %s.yaml\n' "${name}" >> "${dir}/kustomization.yaml"
-        info "  default profile ${name} (from ${item})"
+    IFS=',' read -r -a entries <<< "${list}"
+    for entry in ${entries[@]+"${entries[@]}"}; do
+        entry="$(printf '%s' "${entry}" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+        [[ -n "${entry}" ]] || continue
+        _default_profile_place "${cluster}" "${dir}" "${entry}" || return 1
     done
-    rm -f "${tmp}"
+    return 0
 }
 
 gentian_commit_cluster_deployment() {
@@ -2810,7 +2802,9 @@ gentian_commit_cluster_deployment() {
 
 Written by install.sh (step 0) and signed with this cluster's
 break-glass key: before the cluster exists there is no director to write it,
-and AD-2 names that case." 2>&1; then
+and AD-2 names that case.${_GENTIAN_DEFAULT_PROFILE_NOTES:+
+
+${_GENTIAN_DEFAULT_PROFILE_NOTES}}" 2>&1; then
         error "The commit failed; clusters/${cluster} is still uncommitted."
         _warn_uncommitted_cluster_deployment "${kernel_dir}" "${cluster}"
         return 1
@@ -2981,6 +2975,7 @@ require_cluster_deployment() {
     local claim="${kernel_dir}/claims/cluster.yaml"
     if gentian_read_only; then
         preview_claim_catalogue_section "${claim}"
+        preview_default_profiles "${cluster}"
     else
         ensure_claim_catalogue_section "${claim}"
     fi

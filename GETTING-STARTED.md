@@ -172,11 +172,14 @@ them quietly gives you the earlier cluster instead of the one you mean:
    (step 2).
 3. **A list of default profiles in `install.env`.** A line
    `GENTIAN_DEFAULT_PROFILES=…` (or `GENTIAN_STORE_CATALOGUE_URL=…`) is used
-   in place of the default too, an empty value included. One that names an
-   address that no longer serves is a warning (`could not be fetched;
-   skipped`), and the cluster then comes without the profile the default
-   would have brought. Delete the line; unset, step 0 fetches
-   `https://catalogue.aluvian.io/profiles/operations-console.yaml`.
+   in place of the default too, an empty value included. An entry that is a
+   local file — the form earlier installs used — is now refused and **stops
+   step 0**, and so does one whose catalogue lists no digest for it; one whose
+   catalogue cannot be reached is a warning, and the cluster then comes
+   without the profile. Delete the line; unset, step 0 places the Operations
+   Console from `https://catalogue.aluvian.io`, only if the file hashes to the
+   digest that catalogue's index lists
+   ([install-reference.md §4](docs/install-reference.md)).
 4. **The cluster's definition in the deployments repository.** If
    `clusters/<cluster-id>/` exists there, step 0 asks nothing and rewrites
    nothing: the domain, the tenancy mode, the catalogue and the store are the
@@ -975,10 +978,6 @@ Store — no personal data. `./install.sh --no-licence-report` (or
 sent, and the App Store is not offered: no tenant has the App Store tile. What is sent, and where to read the
 last report, is in [docs/design/operations.md §6.2](docs/design/operations.md).
 
-### Running one step, or stopping early
-
-```bash
-./install.sh --explain            # what each step does, in order
 ### Which Crossplane resource types exist
 
 A fresh install creates only the provider resource types the platform uses —
@@ -995,6 +994,10 @@ that is the old behaviour, every type installed. The list, and how to add a
 type to it, are in [docs/install-reference.md §4](docs/install-reference.md).
 
 ./install.sh --status             # which steps this cluster has already satisfied
+### Running one step, or stopping early
+
+```bash
+./install.sh --explain            # what each step does, in order
 ./install.sh --only B-08          # a single step
 ./install.sh --from C-01          # resume from a step
 ./install.sh --until D-01         # stop after a step

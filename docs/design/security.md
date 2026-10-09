@@ -327,18 +327,28 @@ cluster directly is not constrained by this: that is the cluster owner's
 authority, and a ComponentProfile written there with no origin is taken for
 what its name says.
 
-**The installer is such a writer, and what it writes is not checked.** At
-install it fetches the default profiles -- the Operations Console's, from
+**The installer is such a writer, and what it writes is held to a digest.**
+At install it places the default profiles -- the Operations Console's, from
 `<catalogue address>/profiles/operations-console.yaml`, by default at
 `https://catalogue.aluvian.io` (`GENTIAN_STORE_CATALOGUE_URL`,
-`GENTIAN_DEFAULT_PROFILES`) -- over HTTPS and commits each to the cluster's
-catalogue directory under the name the file states
-(`_scaffold_default_profiles`). There is no digest or signature to hold the
-file to, and it is written without an origin, so the cluster takes it for a
-profile no catalogue brought. Every other profile from a catalogue is
-materialised by the director with its origin and bundle recorded. This is a
-known deviation, not an approved exception; what the installer should hold
-the file to is undecided.
+`GENTIAN_DEFAULT_PROFILES`) -- in the cluster's catalogue directory
+(`_scaffold_default_profiles`; AD-14). A file is written only when it hashes
+to the digest the same catalogue's `index.yaml` lists for the entry, or to a
+digest the person installing pinned (`@sha256:<digest>`), which the index does
+not override; a mismatch stops the install. It is written as the director
+writes an install, with its bundle and with the catalogue as its origin, so it
+is a catalogue's profile and not one "no catalogue brought"; an entry under a
+name the platform ships is refused.
+
+What that is worth, precisely. The index is served by the catalogue the file
+comes from, over HTTPS, and is not signed: a digest from it catches a file
+that changed without its index, not a catalogue that publishes a file and an
+index that agree with each other. A pin is the person's own statement and
+catches that too. Nothing compares the profile on the cluster with its bundle
+afterwards unless an install pins it: the Component the operator creates for a
+`defaultForTenants` profile carries no digest. And the installer applies the
+part of the director's bundle check that concerns kinds, names and metadata,
+not the rules inside a companion's body.
 
 ---
 
@@ -603,7 +613,7 @@ changes only when the code does.
 | Commit signing and verification | Implemented, where the deployments repository names the keys | The director signs every commit (`internal/director/gitops/signing.go`); the installer signs its own with the break-glass key, found by its recorded id (`scripts/lib/signing.sh`). Argo CD verifies through the AppProject's `sourceIntegrity` and its keyring (step `B-10`). A repository without key ids renders no policy, and the director then commits unsigned and says so |
 | Images named by release | **Partial** | No image under `kernel/`, `charts/` or `crossplane/` may name `latest`, and the model gateway's is held to tag and digest (`make lint-image-pins`, §2.9). Other images are pinned by tag; the Keycloak event listener's follows a branch tag |
 | Image signature verification | **Target** | — |
-| What the installer downloads | **Partial** | The OpenBao CLI is fetched from the release's address and held to a checksum (`make test-openbao-cli-download`). The default profiles are not held to anything (above) |
+| What the installer downloads | **Partial** | The OpenBao CLI is fetched from the release's address and held to a checksum (`make test-openbao-cli-download`). The default profiles are held to the digest their catalogue's index lists, or to a pin (`make test-default-profile-digest`); the index itself is unsigned (above) |
 | Rotation rolling app workloads (Reloader) | Partial | annotation on the operator Deployment and a few kernel services; no composition adds it, so no tenant app is rolled (gap G13) |
 | Admission guard against literal secrets in `Release.set` | **Target** | — |
 

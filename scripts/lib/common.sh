@@ -478,9 +478,11 @@ GENTIAN_DISABLE_API_EXTENSIONS="${GENTIAN_DISABLE_API_EXTENSIONS:-0}"
 # turned off then keeps it off (gentian_licence_report_enabled); 0 turns it on.
 GENTIAN_NO_LICENCE_REPORT="${GENTIAN_NO_LICENCE_REPORT:-}"
 GENTIAN_LICENCE_REPORT_URL="${GENTIAN_LICENCE_REPORT_URL:-}"
-# The profiles a vanilla installation materialises for every tenant: files
-# or https URLs, comma separated. Unset means the Operations Console from the
-# Gentian catalogue source; empty means none.
+# The profiles a vanilla installation materialises for every tenant: https
+# addresses of profiles in a catalogue (<catalogue>/profiles/<name>.yaml),
+# comma separated, each optionally pinned with @sha256:<digest>. Unset means
+# the Operations Console from the store's catalogue, at the digest that
+# catalogue's index lists; empty means none.
 # Operator-managed env files (config + secrets). These are optional, but when
 # present they are sourced automatically before prompting so installs can be
 # fully declarative and non-interactive.
@@ -581,7 +583,7 @@ Environment overrides:
   GENTIAN_DISABLE_API_EXTENSIONS=1|0
   GENTIAN_NO_LICENCE_REPORT=1|0
   GENTIAN_LICENCE_REPORT_URL=https://...
-  GENTIAN_DEFAULT_PROFILES=<file-or-url>[,...]
+  GENTIAN_DEFAULT_PROFILES=<https address of a catalogue profile>[@sha256:<digest>][,...]
   INSTALL_CONFIG_FILE=/path/to/install.env
   INSTALL_VALIDATE_ONLY=1
 EOF

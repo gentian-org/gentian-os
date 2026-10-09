@@ -1019,19 +1019,32 @@ ApplicationSet that synced every profile of a git repository with role
 `apps` is retired, and such a repository is no longer declared (§7). A
 profile reaches a cluster when it is installed, with one exception.
 
-**The installer's default profiles: a known deviation.** At install the
-installer places the Operations Console's profile in the cluster's catalogue
-directory. It fetches the file by address —
+**The installer's default profile: the one exception, at a digest.** At
+install, before there is a director, the installer places the Operations
+Console's profile in the cluster's catalogue directory (AD-14, decided
+2026-10-09). The address is
 `https://catalogue.aluvian.io/profiles/operations-console.yaml` by default;
-`GENTIAN_STORE_CATALOGUE_URL` or `GENTIAN_DEFAULT_PROFILES` name others —
-checks that it is a `ComponentProfile`, and commits it. No digest is stated
-and none is checked, the director is not involved, and the profile carries
-neither the bundle nor a record of the catalogue it came from, so an install
-of it is not pinned and not checked at rollout (§4). A file that cannot be
-fetched is a warning, and `--disable-api-extensions` places none. This is
-the one path by which bytes from an address become a profile on a cluster
-without a digest. It is described here as it is built; whether it stays is
-not decided.
+`GENTIAN_STORE_CATALOGUE_URL` or `GENTIAN_DEFAULT_PROFILES` name others, each
+the https address of a profile in a catalogue. The installer reads that
+catalogue's `index.yaml`, takes the digest listed for the entry — or the
+digest the person installing pinned with `@sha256:<digest>`, which the index
+does not override — downloads the file, and writes nothing unless the bytes
+hash to it. Bytes that do not, an entry the index does not list when nothing
+is pinned, and a file that holds what a bundle may not all stop the install;
+a catalogue that cannot be reached is a warning, and
+`--disable-api-extensions` places none. What is written is what the director
+writes for an install of the same bundle, byte for byte: the file as served,
+and its bundle and the catalogue's origin on the profile, so the director
+reads it as a materialised profile with an origin and a digest. The digest
+and who stated it are in the signed commit. A definition that already holds
+another build is kept and reported.
+
+Two things it is not. It is not checked at rollout by default: the operator
+makes that comparison for a Component pinned to a digest (§4), and the
+Component it creates for a profile that declares `defaultForTenants` carries
+no pin. And the installer does not run the whole of the check the director
+runs on what travels with a profile, only the part on kinds, names and
+metadata; the Operations Console's bundle is the profile alone.
 
 What does not change without a store: the install mechanism (fetch the
 bundle at the digest, apply the profile, commit as the person), the

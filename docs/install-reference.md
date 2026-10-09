@@ -201,7 +201,8 @@ The template carries one line per setting; the reasoning is here.
 | `GENTIAN_NO_LICENCE_REPORT` | `1` turns the licence report off, as `--no-licence-report` does; `0` turns it back on. Unset keeps what the cluster has. Off, nothing is sent and the App Store is not offered: no tenant gets the App Store app — [design/operations.md §6.2](design/operations.md). |
 | `GENTIAN_LICENCE_REPORT_URL` | Where the licence report goes, instead of the default address in `kernel/bootstrap/chart/values.yaml`. `https` only. |
 | `OPENBAO_CLI_VERSION` | Which `bao` to fetch when none is on `PATH`. Defaults to the pin in `versions.yaml`, which is where component versions are declared. The archive is fetched from the OpenBao release for Linux or macOS on x86_64 or arm64, compared with that release's checksum list, and installed to `~/.local/bin` only when it matches; on any other host install `bao` yourself. |
-| `GENTIAN_DEFAULT_PROFILES` | The profiles step 0 writes into `clusters/<cluster>/catalogue/`, on every install run: local files or https addresses, comma separated. Unset, it is one profile, the Operations Console's, from `https://catalogue.aluvian.io/profiles/operations-console.yaml` (`GENTIAN_STORE_CATALOGUE_URL` replaces the address before `/profiles/`). Set, the value is used as it stands, and set empty writes none. One that cannot be fetched is a warning, not a failed install. `--disable-api-extensions` writes none. Remove a line an earlier install left here. |
+| `GENTIAN_DEFAULT_PROFILES` | The profiles step 0 places in `clusters/<cluster>/catalogue/`, on every install run: https addresses of profiles in a catalogue (`<catalogue>/profiles/<name>.yaml`), comma separated, each optionally pinned as `<address>@sha256:<digest>`. Unset, it is one profile, the Operations Console's, from `https://catalogue.aluvian.io/profiles/operations-console.yaml` (`GENTIAN_STORE_CATALOGUE_URL` replaces the address before `/profiles/`). Set, the value is used as it stands, and set empty places none; `--disable-api-extensions` places none. A profile is written only when it hashes to a stated digest — see *The default profile* below. A local file or an `http` address is refused. Remove a line an earlier install left here. |
+| `CROSSPLANE_ACTIVATE_ALL` | `true` installs every resource type of every Crossplane provider, as installs did before; unset, only the types `crossplane/providers/activation.yaml` names exist. The way back if a fresh install waits on a type that list lacks — see *Provider resource types* below. |
 | `INFRA_CHART_REPO` / `_PRIVATE` | Where the infrastructure charts come from, and whether that registry needs a credential. Install-time rather than cluster state: it decides what the installer does before a cluster exists. |
 
 ### How Argo CD gets a repository's credential
@@ -249,7 +250,7 @@ the new one over it; it does so without reinstalling Argo CD.
 The token is never printed, and is never an argument of a command: it goes
 from the installer's environment into the Secret through a pipe.
 
-### Where app profiles come from, and upgrading a cluster that copied them
+### Where app profiles come from
 
 A `ComponentProfile` reaches a cluster when a tenant installs the app: the
 director fetches that one profile from a catalogue, checks it against the
@@ -257,6 +258,104 @@ digest the install names, and commits it under `clusters/<cluster>/catalogue/`
 in the deployments repository. The catalogues are addresses declared on the
 Cluster claim and on tenants ([custom-catalogues.md](custom-catalogues.md));
 a new claim names the default one.
+
+### The default profile, and the digest it is held to
+
+One profile is placed by the installer rather than by the director: the
+Operations Console's, at step 0, before there is a director to ask
+([AD-14](plans/architectural-decisions.md)). It is held to the same rule as
+every other — a profile reaches a cluster only at a stated digest:
+
+1. The installer reads `<catalogue>/index.yaml` and takes the digest it lists
+   for the entry. A pin in `GENTIAN_DEFAULT_PROFILES`
+   (`https://…/profiles/<name>.yaml@sha256:<digest>`) is used instead, and the
+   index does not override it.
+2. It downloads `<catalogue>/profiles/<name>.yaml` and writes nothing unless
+   the bytes hash to that digest.
+3. It writes what the director writes for an install of the same bundle, byte
+   for byte: `<name>.yaml` as served (the profile and whatever travels with
+   it), `<name>.bundle.yaml` carrying the same bytes and the catalogue's
+   origin (`cluster/<source>`: the name the Cluster claim gives the catalogue
+   at that address, else one made of the address), and both listed in
+   `kustomization.yaml`.
+4. The digest, who stated it — the index or the pin — and the address go into
+   the signed commit that carries the profile.
+
+| What happens | The install |
+|---|---|
+| The catalogue cannot be reached (no answer, or a 5xx) | goes on without the profile, with a warning. Run the installer again later, or install the profile through the director |
+| The bytes do not hash to the digest | **stops** at step 0; nothing of the profile was written |
+| The index does not list the entry, or there is no index, and nothing is pinned | **stops**: there is no digest to hold the file to |
+| The file is at the right digest and holds what a bundle may not (another kind, a name that is not this profile's) | **stops** |
+| An entry is a local file, an `http` address, or not `<catalogue>/profiles/<name>.yaml` | **stops**, and says what to write instead |
+| The cluster's definition already holds the profile at that digest | nothing changes; the profile is not fetched |
+| It holds **another** build | it is kept and reported with both digests; nothing is fetched or replaced. Move to the new build through the director, or remove the files and run again |
+| It holds a copy an earlier installer wrote, with no record | the record is added if the copy hashes to the digest; otherwise the copy is replaced by the verified file, as earlier installers replaced it on every run, and the run says so |
+
+`--dry-run` says which address would be read and which digest would be
+required, and asks no catalogue.
+
+The operator compares a profile with its bundle at rollout for a Component
+pinned to a digest. The Component it creates by default for the Operations
+Console carries no pin, so that comparison is not made for it; an install of
+the same profile through the director is pinned and compared.
+
+### Provider resource types
+
+Crossplane's providers ship far more resource types than the platform uses:
+the vault and Keycloak providers 374 between them, of which the Compositions,
+the kernel charts and the operator use 25. Every installed type costs
+API-server memory, which is what a managed control plane charges for. So the
+installer creates only the ones in use:
+
+- `A-04` installs Crossplane without its default policy that activates every
+  type (`provider.defaultActivations: []`).
+- `B-05` applies `crossplane/providers/activation.yaml` — one
+  `ManagedResourceActivationPolicy` listing the 25 types — before the
+  providers, and waits until each of them is an established CRD.
+- `provider-http`, which nothing used, is no longer installed, and is removed
+  from a cluster that has it.
+
+provider-kubernetes and provider-helm do not declare Crossplane's safe-start
+capability; all of their (seven) types are installed whatever the list says.
+
+**This takes effect on a fresh install.** Crossplane never deactivates a type
+and leaves an existing default policy in place, so a cluster that was
+installed with every type keeps every type; the list is applied there too and
+changes nothing.
+
+To see it:
+
+```bash
+kubectl get mrap                      # the policies: gentian-platform, and "default" only on an older cluster
+kubectl get mrd | grep -c Active      # the types that exist as CRDs
+kubectl get mrd | grep -v Active      # the ones that were left off
+```
+
+**If a fresh install waits on a type the list lacks** — `B-05` stops and names
+it, or a composite stays unready with a composed resource of a kind the API
+server does not know — the way back is one line in `install.env`, and a
+second run:
+
+```bash
+CROSSPLANE_ACTIVATE_ALL=true
+```
+
+`A-04` then reinstalls Crossplane with every type activated. It cannot be
+taken back on that cluster; report the missing type so the list gets it.
+
+**Adding a resource of a new provider type** — to a Composition here, to one
+an app bundle brings, to a kernel chart or to operator code — needs its
+`<plural>.<group>` in `crossplane/providers/activation.yaml`.
+`make lint-provider-activation` (part of `make lint`) finds every provider
+type in use and fails with the exact line to add when one is missing; it
+reads the gentian-apps checkout beside this one too, and
+`scripts/lint/lint-provider-activation.py --tree <dir>` runs the same check
+on any other tree. The plural comes from `crossplane/providers/types/`, the
+providers' own type lists at the pinned versions; after moving a provider pin
+in `providers.yaml`, run `make refresh-provider-types`.
+
+### Upgrading a cluster that copied its profiles
 
 Earlier installs worked differently: step 0 scaffolded a `Repository` claim for
 the gentian-apps git repository (`type: git`, `role: apps`), and an
@@ -575,7 +674,8 @@ App profiles are not part of this: they are fetched from a catalogue, which is
 a public https address (`GENTIAN_CATALOGUE_URL` for the default one). A
 catalogue on a private network is refused, so a cluster that cannot reach a
 public catalogue has profiles committed into `clusters/<cluster>/catalogue/` by
-hand, as step 0 does for `GENTIAN_DEFAULT_PROFILES` (§4).
+hand. (Step 0's own default profile is fetched from a public https catalogue
+too, and is skipped with a warning when that cannot be reached — §4.)
 
 `versions.yaml` is the inventory of everything else the install pulls —
 Crossplane, cert-manager, External Secrets Operator, ArgoCD, Envoy Gateway and
