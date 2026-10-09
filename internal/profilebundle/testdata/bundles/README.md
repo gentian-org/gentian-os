@@ -5,10 +5,10 @@ Profile bundles exactly as gentian-apps publishes them: the output of its
 copied here unchanged so that these tests need no other repository.
 
 Built from gentian-apps commit `f52a204` (branch `develop`), as published at
-`https://gentian-org.github.io/gentian-apps/develop` -- except `activepieces-me`
-and `docmost-ce`, which are from commit `26b260a` of the same branch, the first
-to declare the sign-in sidecar, and `openproject-ce`, from commit `9985a61`,
-where it declares the sidecar too and no longer brings a Composition.
+`https://gentian-org.github.io/gentian-apps/develop` -- except `activepieces-me`,
+`docmost-ce` and `openproject-ce`, which are from commit `9cdb51a` of the same
+branch: the three that declare the sign-in sidecar, with the handlers that
+settle who administers the app, and `docmost-ce` with its post-install job.
 
 They are fixtures for what the two repositories have to agree on: each must be
 a bundle the director accepts and the operator verifies
@@ -19,7 +19,7 @@ copy the affected files again; do not edit them here.
 | Bundle | Beside the profile |
 |---|---|
 | `activepieces-me` | a ConfigMap (the sign-in handler), two Customizations |
-| `docmost-ce` | a ConfigMap (the sign-in handler), a Customization |
+| `docmost-ce` | a ConfigMap (the sign-in handler), a Customization; the profile has a post-install job |
 | `element-ce` | a Composition, a ConfigMap, an OIDCPackCatalog |
 | `nextcloud-base-ce` | a ConfigMap, an OIDCPackCatalog |
 | `nextcloud-base-od` | an OIDCPackCatalog |

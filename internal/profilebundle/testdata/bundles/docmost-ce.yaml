@@ -22,7 +22,8 @@
 # assets/sign-in-handler.js, which makes the account if the person has none
 # and the session. A person who is signed in at the platform opens Docmost
 # and is in. Nobody has a password in Docmost, the account that owns the
-# workspace included.
+# workspace included. Who administers Docmost is who holds the platform's App
+# Admin role; the handler gives and takes the workspace role at every sign-in.
 #
 # What the handler is handed, and nothing else: Docmost's database, its
 # signing key (the generated secret app_secret), and the path to Docmost's own
@@ -121,8 +122,124 @@ spec:
       podAnnotations:
         secret.reloader.stakater.com/reload: docmost-ce-sensitive-values
 
-  # No post-install job: the workspace is created by the sign-in handler, with
-  # Docmost's own setup call, at the first sign-in.
+  # What a tenant's Docmost has from the start, made once by this job with
+  # Docmost's own calls, inside the cluster, as the account the workspace is
+  # created with:
+  #
+  #   - the workspace itself, so nobody meets the "create workspace" page (the
+  #     sign-in handler makes it too, if a person is there first);
+  #   - a group named after the tenant. The sign-in handler puts every person
+  #     in it at their first sign-in;
+  #   - a space named after the tenant, shared for writing with the group
+  #     Docmost puts every member in, so everybody in the tenant sees it.
+  #
+  # The job is told the tenant's name; the handler is not, and finds the group
+  # as the one group this account made. The job holds what Docmost itself
+  # holds -- its database and its APP_SECRET -- and no password: the account's
+  # password is a random value that is removed again at once, and a call is
+  # made with a token of a minute signed here. It is run again from time to
+  # time and makes nothing twice. A space or a group of the tenant's that an
+  # administrator of the app deleted comes back; one that was renamed is left
+  # as it is (the group) or made again beside it (the space, found by its
+  # address).
+  hooks:
+    postInstall:
+      # Docmost's own image, for its node and the two libraries below.
+      image: docker.io/docmost/docmost:0.95.0
+      script: |
+        #!/bin/sh
+        set -eu
+        cd /app/apps/server
+        TENANT='${TENANT_ID}' DOCMOST_URL='http://docmost-ce:3000' exec node - <<'JS'
+        'use strict';
+        const crypto = require('crypto');
+        const jwt = require('jsonwebtoken');
+        const postgres = require('postgres');
+
+        const TENANT = process.env.TENANT;
+        const BASE = process.env.DOCMOST_URL;
+        // The same account, under the same name, as the sign-in handler's.
+        const OWNER = { name: 'Config Account', email: 'config-account@docmost.internal' };
+        const WORKSPACE_NAME = 'Docmost';
+
+        const sql = postgres({
+          host: process.env.DB_HOST, port: Number(process.env.DB_PORT || 5432), database: process.env.DB_NAME,
+          username: process.env.DB_USER, password: process.env.DB_PASSWORD, max: 1, connect_timeout: 10, onnotice() {},
+        });
+        const q = (text, params) => sql.unsafe(text, params || []);
+
+        async function call(path, body, token) {
+          const headers = { 'Content-Type': 'application/json' };
+          if (token) headers.Authorization = 'Bearer ' + token;
+          const res = await fetch(BASE + path, { method: 'POST', headers, body: JSON.stringify(body), signal: AbortSignal.timeout(15000) });
+          return res.status;
+        }
+
+        async function main() {
+          if (!TENANT || !process.env.APP_SECRET) throw new Error('not told the tenant or the key');
+          // Docmost answers on its port before its tables are there.
+          const health = await fetch(BASE + '/api/health', { signal: AbortSignal.timeout(10000) });
+          if (health.status !== 200) throw new Error('Docmost is not ready (' + health.status + ')');
+
+          let workspace = await q('select id from workspaces order by created_at asc limit 1');
+          if (workspace.length === 0) {
+            // 403 is "there is a workspace already": a sign-in got here first.
+            const status = await call('/api/auth/setup',
+              { name: OWNER.name, email: OWNER.email, password: crypto.randomBytes(32).toString('base64url'), workspaceName: WORKSPACE_NAME });
+            if (status !== 200 && status !== 403) throw new Error('workspace setup answered ' + status);
+            workspace = await q('select id from workspaces order by created_at asc limit 1');
+            if (workspace.length === 0) throw new Error('no workspace after setup');
+            await q("update users set password = null where workspace_id = $1 and role = 'owner' and lower(email) = $2", [workspace[0].id, OWNER.email]);
+            console.log('workspace made');
+          }
+          const workspaceId = workspace[0].id;
+
+          const owner = await q(
+            "select id, email from users where workspace_id = $1 and role = 'owner' and deleted_at is null order by created_at asc limit 1", [workspaceId]);
+          if (owner.length === 0) throw new Error('the workspace has no owner');
+          const token = jwt.sign({ sub: owner[0].id, email: owner[0].email, workspaceId, type: 'access' },
+            process.env.APP_SECRET, { algorithm: 'HS256', issuer: 'Docmost', expiresIn: 60 });
+
+          // The tenant's group: the one group this account made.
+          const group = await q(
+            'select id from groups where workspace_id = $1 and creator_id = $2 and is_default = false and deleted_at is null order by created_at asc limit 1',
+            [workspaceId, owner[0].id]);
+          if (group.length === 0) {
+            const name = TENANT.length >= 2 ? TENANT : 'Tenant ' + TENANT;
+            const status = await call('/api/groups/create', { name, description: 'Members of the ' + TENANT + ' tenant.' }, token);
+            if (status !== 200) throw new Error('making the group answered ' + status);
+            console.log('group made');
+          }
+
+          // The tenant's space, found by its address, as Docmost itself asks
+          // whether an address is taken.
+          const slug = TENANT.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 100);
+          const address = slug.length >= 2 ? slug : 'tenant';
+          const space = await q('select id from spaces where workspace_id = $1 and lower(slug) = $2 limit 1', [workspaceId, address]);
+          if (space.length === 0) {
+            const name = TENANT.length >= 2 ? TENANT : 'Tenant ' + TENANT;
+            const made = await call('/api/spaces/create', { name, slug: address }, token);
+            const now = await q('select id from spaces where workspace_id = $1 and lower(slug) = $2 limit 1', [workspaceId, address]);
+            if (made !== 200 || now.length === 0) throw new Error('making the space answered ' + made);
+            // Shared with the group Docmost puts every member in.
+            const everyone = await q('select id from groups where workspace_id = $1 and is_default = true and deleted_at is null limit 1', [workspaceId]);
+            const shared = everyone.length === 0 ? 0
+              : await call('/api/spaces/members/add', { spaceId: now[0].id, role: 'writer', userIds: [], groupIds: [everyone[0].id] }, token);
+            if (shared !== 200) {
+              // Not left behind unshared: it would be found next time and
+              // taken for done.
+              await call('/api/spaces/delete', { spaceId: now[0].id }, token);
+              throw new Error('sharing the space answered ' + shared);
+            }
+            console.log('space made');
+          }
+        }
+
+        main().then(() => sql.end({ timeout: 5 }), (err) => {
+          console.error(String((err && err.message) || err));
+          return sql.end({ timeout: 5 }).then(() => process.exit(1));
+        });
+        JS
 
   requires:
     services:
@@ -141,8 +258,9 @@ spec:
           database: true
         # The key Docmost signs sessions with.
           secrets: [app_secret]
-        # Docmost's own calls for creating the workspace and inviting a
-        # person, made inside the cluster.
+        # Docmost's own calls for creating the workspace, inviting a person,
+        # changing a member's role and making a person's space, made inside
+        # the cluster.
           appPort: 3000
       database:
         engine: postgresql
@@ -229,7 +347,7 @@ metadata:
     "gentianos.io/asset": "sign-in-handler"
     "gentianos.io/profile-name": "docmost-ce"
 data:
-  "handler.js": "'use strict';\n\n// Sign-in handler for Docmost (community edition), run by the platform's\n// sign-in sidecar. See customization.md beside this file for the review.\n//\n// Docmost's own single sign-on is a paid feature and is not used or touched\n// here. What the free edition has is an account per person and a session\n// that is a token signed with the installation's APP_SECRET, kept in the\n// cookie \"authToken\" and recorded in the table user_sessions. This handler\n// makes exactly that, for the person the sidecar names:\n//\n//   1. the workspace, if this is the first sign-in ever: Docmost's own setup\n//      call, so that nobody meets the \"create workspace\" page;\n//   2. the person's account, if they have none: Docmost's own invitation,\n//      created and accepted here, as a member;\n//   3. a session row and the token that names it, both ending when the\n//      sidecar says the session ends.\n//\n// Nobody has a password. Docmost's calls demand one for a new account, so a\n// random value is given and the stored hash is removed again at once.\n//\n// What it is given (see the profile's requires.services.identity.sidecar):\n//   DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD   Docmost's own database\n//   SECRET_APP_SECRET                                 Docmost's signing key\n//   APP_URL                                           Docmost inside the cluster\n\nconst crypto = require('crypto');\nconst jwt = require('jsonwebtoken');\nconst { Pool } = require('pg');\n\nconst WORKSPACE_NAME = 'Docmost';\n// The account the workspace is created with. Docmost has no service account,\n// so it is listed among the members; nobody can sign in as it.\nconst OWNER = { name: 'Config Account', email: 'config-account@docmost.internal' };\n\nconst pool = new Pool({\n    host: process.env.DB_HOST,\n    port: parseInt(process.env.DB_PORT || '5432', 10),\n    database: process.env.DB_NAME,\n    user: process.env.DB_USER,\n    password: process.env.DB_PASSWORD,\n    max: 4,\n    connectionTimeoutMillis: 5000,\n});\n\nfunction sign(payload, seconds) {\n    // The issuer and the algorithm are the ones Docmost signs with\n    // (core/auth/token.module.js); it accepts no other.\n    return jwt.sign(payload, process.env.SECRET_APP_SECRET, { algorithm: 'HS256', issuer: 'Docmost', expiresIn: seconds });\n}\n\nasync function app(path, body, token) {\n    const res = await fetch(process.env.APP_URL + path, {\n        method: 'POST',\n        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },\n        body: JSON.stringify(body),\n        signal: AbortSignal.timeout(10000),\n    });\n    return res.status;\n}\n\nfunction unknownPassword() {\n    return crypto.randomBytes(32).toString('base64url');\n}\n\nasync function ensureWorkspace() {\n    const found = await pool.query('select id from workspaces order by created_at asc limit 1');\n    if (found.rows.length > 0) return found.rows[0].id;\n    // 403 is \"there is a workspace already\": another sign-in got here first.\n    const status = await app('/api/auth/setup', { ...OWNER, password: unknownPassword(), workspaceName: WORKSPACE_NAME });\n    if (status !== 200 && status !== 403) throw new Error(`workspace setup answered ${status}`);\n    const made = await pool.query('select id from workspaces order by created_at asc limit 1');\n    if (made.rows.length === 0) throw new Error('no workspace after setup');\n    await pool.query(\"update users set password = null where workspace_id = $1 and role = 'owner' and lower(email) = $2\",\n        [made.rows[0].id, OWNER.email]);\n    return made.rows[0].id;\n}\n\nasync function findUser(workspaceId, email) {\n    const found = await pool.query(\n        'select id, email, deactivated_at, deleted_at from users where workspace_id = $1 and lower(email) = $2 limit 1',\n        [workspaceId, email]);\n    return found.rows[0] || null;\n}\n\nasync function createUser(workspaceId, person) {\n    const owner = await pool.query(\n        \"select id, email from users where workspace_id = $1 and role = 'owner' and deleted_at is null order by created_at asc limit 1\",\n        [workspaceId]);\n    if (owner.rows.length === 0) throw new Error('the workspace has no owner');\n    // A token of a minute for the owner, to make the invitation with.\n    const ownerToken = sign({ sub: owner.rows[0].id, email: owner.rows[0].email, workspaceId, type: 'access' }, 60);\n    const invited = await app('/api/workspace/invites/create', { emails: [person.email], role: 'member', groupIds: [] }, ownerToken);\n    if (invited !== 200) throw new Error(`invitation answered ${invited}`);\n    const invitation = await pool.query(\n        'select id, token from workspace_invitations where workspace_id = $1 and lower(email) = $2 order by created_at desc limit 1',\n        [workspaceId, person.email]);\n    if (invitation.rows.length === 0) throw new Error('no invitation after it was created');\n    const name = person.name.trim().length >= 2 ? person.name.trim().slice(0, 60) : person.email.split('@')[0].padEnd(2, '_');\n    const accepted = await app('/api/workspace/invites/accept', {\n        invitationId: invitation.rows[0].id, token: invitation.rows[0].token, name, password: unknownPassword(),\n    });\n    if (accepted !== 200) throw new Error(`accepting the invitation answered ${accepted}`);\n    const user = await findUser(workspaceId, person.email);\n    if (!user) throw new Error('no account after the invitation was accepted');\n    await pool.query('update users set password = null where id = $1', [user.id]);\n    return user;\n}\n\n// One account is made once, however many sign-ins of the same person arrive\n// together. The sidecar is a single process.\nconst creating = new Map();\n\nasync function ensureUser(workspaceId, person) {\n    const existing = await findUser(workspaceId, person.email);\n    if (existing) return existing;\n    if (!creating.has(person.email)) {\n        creating.set(person.email, createUser(workspaceId, person).finally(() => creating.delete(person.email)));\n    }\n    return creating.get(person.email);\n}\n\nmodule.exports = {\n    async onLogin(person, ctx) {\n        const workspaceId = await ensureWorkspace();\n        const user = await ensureUser(workspaceId, person);\n        // An account an administrator of the app has switched off stays off.\n        if (user.deactivated_at || user.deleted_at) return { refuse: true };\n\n        const session = await pool.query(\n            \"insert into user_sessions (user_id, workspace_id, device_name, expires_at) \" +\n            \"values ($1, $2, 'Platform sign-in', now() + make_interval(secs => $3)) returning id\",\n            [user.id, workspaceId, ctx.sessionSeconds]);\n        const token = sign(\n            { sub: user.id, email: user.email, workspaceId, type: 'access', sessionId: session.rows[0].id },\n            ctx.sessionSeconds);\n        return {\n            // Not \"/\": the platform sends \"/\" to the sign-in, and Docmost\n            // itself sends it on to /home.\n            redirect: '/home',\n            cookies: [{ name: 'authToken', value: token }],\n        };\n    },\n};\n"
+  "handler.js": "'use strict';\n\n// Sign-in handler for Docmost (community edition), run by the platform's\n// sign-in sidecar. See customization.md beside this file for the review.\n//\n// Docmost's own single sign-on is a paid feature and is not used or touched\n// here. What the free edition has is an account per person and a session\n// that is a token signed with the installation's APP_SECRET, kept in the\n// cookie \"authToken\" and recorded in the table user_sessions. This handler\n// makes exactly that, for the person the sidecar names:\n//\n//   1. the workspace, if this is the first sign-in ever: Docmost's own setup\n//      call, so that nobody meets the \"create workspace\" page;\n//   2. the person's account, if they have none: Docmost's own invitation,\n//      created and accepted here, as a member;\n//   3. who administers Docmost: the person the sidecar says holds the\n//      platform's App Admin role has the workspace role \"admin\", and a\n//      person it does not say so of has \"member\" -- set with Docmost's own\n//      call for changing a member's role, and only when the account is not\n//      already what it should be. Nobody is an administrator for having been\n//      the first, or for administering the tenant. The role \"owner\" stays\n//      with the account the workspace was created with.\n//   4. at a person's first sign-in, what the tenant's people share and what\n//      is theirs alone: a space of their own, and membership of the tenant's\n//      group. The group and the tenant's shared space are made once, by the\n//      profile's post-install job, which is told the tenant's name; this\n//      handler is not.\n//   5. a session row and the token that names it, both ending when the\n//      sidecar says the session ends.\n//\n// Nobody has a password. Docmost's calls demand one for a new account, so a\n// random value is given and the stored hash is removed again at once.\n//\n// What it is given (see the profile's requires.services.identity.sidecar):\n//   DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD   Docmost's own database\n//   SECRET_APP_SECRET                                 Docmost's signing key\n//   APP_URL                                           Docmost inside the cluster\n\nconst crypto = require('crypto');\nconst jwt = require('jsonwebtoken');\nconst { Pool } = require('pg');\n\nconst WORKSPACE_NAME = 'Docmost';\n// The account the workspace is created with. Docmost has no service account,\n// so it is listed among the members; nobody can sign in as it.\nconst OWNER = { name: 'Config Account', email: 'config-account@docmost.internal' };\n\nconst pool = new Pool({\n    host: process.env.DB_HOST,\n    port: parseInt(process.env.DB_PORT || '5432', 10),\n    database: process.env.DB_NAME,\n    user: process.env.DB_USER,\n    password: process.env.DB_PASSWORD,\n    max: 4,\n    connectionTimeoutMillis: 5000,\n});\n\nfunction sign(payload, seconds) {\n    // The issuer and the algorithm are the ones Docmost signs with\n    // (core/auth/token.module.js); it accepts no other.\n    return jwt.sign(payload, process.env.SECRET_APP_SECRET, { algorithm: 'HS256', issuer: 'Docmost', expiresIn: seconds });\n}\n\nasync function app(path, body, token) {\n    const res = await fetch(process.env.APP_URL + path, {\n        method: 'POST',\n        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },\n        body: JSON.stringify(body),\n        signal: AbortSignal.timeout(10000),\n    });\n    return res.status;\n}\n\n// The account the workspace was created with, and a token of a minute for\n// it: what Docmost's own calls for inviting a person, changing a role and\n// making a space are made with. It is shown to nothing but Docmost inside\n// the cluster.\nasync function ownerOf(workspaceId) {\n    const owner = await pool.query(\n        \"select id, email from users where workspace_id = $1 and role = 'owner' and deleted_at is null order by created_at asc limit 1\",\n        [workspaceId]);\n    if (owner.rows.length === 0) throw new Error('the workspace has no owner');\n    return {\n        id: owner.rows[0].id,\n        token: sign({ sub: owner.rows[0].id, email: owner.rows[0].email, workspaceId, type: 'access' }, 60),\n    };\n}\n\nfunction unknownPassword() {\n    return crypto.randomBytes(32).toString('base64url');\n}\n\nasync function ensureWorkspace() {\n    const found = await pool.query('select id from workspaces order by created_at asc limit 1');\n    if (found.rows.length > 0) return found.rows[0].id;\n    // 403 is \"there is a workspace already\": another sign-in got here first.\n    const status = await app('/api/auth/setup', { ...OWNER, password: unknownPassword(), workspaceName: WORKSPACE_NAME });\n    if (status !== 200 && status !== 403) throw new Error(`workspace setup answered ${status}`);\n    const made = await pool.query('select id from workspaces order by created_at asc limit 1');\n    if (made.rows.length === 0) throw new Error('no workspace after setup');\n    await pool.query(\"update users set password = null where workspace_id = $1 and role = 'owner' and lower(email) = $2\",\n        [made.rows[0].id, OWNER.email]);\n    return made.rows[0].id;\n}\n\nasync function findUser(workspaceId, email) {\n    const found = await pool.query(\n        'select id, email, name, role, deactivated_at, deleted_at from users where workspace_id = $1 and lower(email) = $2 limit 1',\n        [workspaceId, email]);\n    return found.rows[0] || null;\n}\n\nasync function createUser(workspaceId, person) {\n    const ownerToken = (await ownerOf(workspaceId)).token;\n    const invited = await app('/api/workspace/invites/create', { emails: [person.email], role: 'member', groupIds: [] }, ownerToken);\n    if (invited !== 200) throw new Error(`invitation answered ${invited}`);\n    const invitation = await pool.query(\n        'select id, token from workspace_invitations where workspace_id = $1 and lower(email) = $2 order by created_at desc limit 1',\n        [workspaceId, person.email]);\n    if (invitation.rows.length === 0) throw new Error('no invitation after it was created');\n    const name = person.name.trim().length >= 2 ? person.name.trim().slice(0, 60) : person.email.split('@')[0].padEnd(2, '_');\n    const accepted = await app('/api/workspace/invites/accept', {\n        invitationId: invitation.rows[0].id, token: invitation.rows[0].token, name, password: unknownPassword(),\n    });\n    if (accepted !== 200) throw new Error(`accepting the invitation answered ${accepted}`);\n    const user = await findUser(workspaceId, person.email);\n    if (!user) throw new Error('no account after the invitation was accepted');\n    await pool.query('update users set password = null where id = $1', [user.id]);\n    return user;\n}\n\n// One account is made once, however many sign-ins of the same person arrive\n// together. The sidecar is a single process.\nconst creating = new Map();\n\nasync function ensureUser(workspaceId, person) {\n    const existing = await findUser(workspaceId, person.email);\n    if (existing) return existing;\n    if (!creating.has(person.email)) {\n        creating.set(person.email, createUser(workspaceId, person).finally(() => creating.delete(person.email)));\n    }\n    return creating.get(person.email);\n}\n\n// Who administers Docmost is who holds the platform's App Admin role, and it\n// is settled at every sign-in: given to a person who holds it, taken from a\n// person who does not. person.appAdmin is the sidecar's reading of the\n// realm's signed answer; a sidecar that does not say is one that says no.\n// The session is made only once the account is what it should be, so a\n// person the role was withdrawn from is not signed in as an administrator\n// because a call failed.\nasync function settleAdministrator(workspaceId, user, person) {\n    const wanted = person.appAdmin === true ? 'admin' : 'member';\n    // \"owner\" is the workspace's own account's, and no sign-in changes it.\n    if (user.role === wanted || user.role === 'owner') return false;\n    const status = await app('/api/workspace/members/change-role', { userId: user.id, role: wanted }, (await ownerOf(workspaceId)).token);\n    const now = await pool.query('select role from users where id = $1 and workspace_id = $2', [user.id, workspaceId]);\n    if (now.rows.length !== 1 || now.rows[0].role !== wanted) throw new Error(`changing the role answered ${status}`);\n    return true;\n}\n\n// The tenant's group: the one group the workspace's own account made. That\n// account is nobody's -- it has no password and is signed in as by nothing\n// -- so the only group it ever made is the one the profile's post-install\n// job made with it, named after the tenant. Found this way and not by name:\n// the handler is not told the tenant's name, and an administrator of the app\n// may rename the group without its people falling out of it.\nasync function tenantGroup(workspaceId, ownerId) {\n    const found = await pool.query(\n        'select id from groups where workspace_id = $1 and creator_id = $2 and is_default = false and deleted_at is null ' +\n        'order by created_at asc limit 1', [workspaceId, ownerId]);\n    return found.rows.length > 0 ? found.rows[0].id : null;\n}\n\n// A space's address, as Docmost wants one: letters, digits, \"-\" and \"_\",\n// starting with a letter or digit, at least two characters.\nfunction slugOf(text) {\n    const slug = text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 100);\n    return slug.length >= 2 ? slug : '';\n}\n\n// What a person has from their first sign-in on: a space of their own and\n// membership of the tenant's group. (The tenant's shared space needs nothing\n// here: it is shared with the group Docmost puts every member in.)\n//\n// Membership of the tenant's group is added last and is what says this was\n// done, so every later sign-in costs one query and creates nothing.\n//\n// The space is made by the workspace's own account, because a member may not\n// make one, and the person is then made its administrator. It is found again\n// by its address, which is the part of the person's e-mail address before\n// the \"@\". An address already taken -- by another person of the same name at\n// another domain, or by a space somebody made -- is left alone: nobody is\n// added to a space that already existed.\n//\n// None of it may cost a person their sign-in: a failure is noted and tried\n// again at the next one.\nasync function welcome(workspaceId, user, person, ctx) {\n    const owner = await ownerOf(workspaceId);\n    const groupId = await tenantGroup(workspaceId, owner.id);\n    if (groupId) {\n        const member = await pool.query('select 1 from group_users where group_id = $1 and user_id = $2 limit 1', [groupId, user.id]);\n        if (member.rows.length > 0) return;\n    }\n\n    const slug = slugOf(person.email.split('@')[0]);\n    if (slug) {\n        // As Docmost itself asks whether an address is taken.\n        const taken = await pool.query('select 1 from spaces where workspace_id = $1 and lower(slug) = $2 limit 1', [workspaceId, slug]);\n        if (taken.rows.length === 0) {\n            const name = (user.name || '').trim().length >= 2 ? user.name.trim().slice(0, 100) : slug;\n            const made = await app('/api/spaces/create', { name, slug }, owner.token);\n            const space = await pool.query(\n                'select id from spaces where workspace_id = $1 and lower(slug) = $2 and creator_id = $3 limit 1',\n                [workspaceId, slug, owner.id]);\n            if (made !== 200 || space.rows.length === 0) throw new Error(`making the person's space answered ${made}`);\n            const added = await app('/api/spaces/members/add',\n                { spaceId: space.rows[0].id, role: 'admin', userIds: [user.id], groupIds: [] }, owner.token);\n            if (added !== 200) throw new Error(`giving the person their space answered ${added}`);\n            ctx.log('personal-space-made');\n        }\n    }\n\n    if (!groupId) {\n        // The post-install job has not run yet. Asked again at the next sign-in.\n        ctx.log('no-tenant-group-yet');\n        return;\n    }\n    const joined = await app('/api/groups/members/add', { groupId, userIds: [user.id] }, owner.token);\n    if (joined !== 200) throw new Error(`adding the person to the tenant's group answered ${joined}`);\n}\n\nmodule.exports = {\n    async onLogin(person, ctx) {\n        // The account the workspace was created with is nobody's: a person at\n        // the platform who holds its address is not signed in as it.\n        if (person.email === OWNER.email) return { refuse: true };\n        const workspaceId = await ensureWorkspace();\n        const user = await ensureUser(workspaceId, person);\n        // An account an administrator of the app has switched off stays off.\n        if (user.deactivated_at || user.deleted_at) return { refuse: true };\n\n        if (await settleAdministrator(workspaceId, user, person)) {\n            ctx.log(person.appAdmin === true ? 'administrator-made' : 'administrator-unmade');\n        }\n        try {\n            await welcome(workspaceId, user, person, ctx);\n        } catch (err) {\n            ctx.log('welcome-incomplete', { detail: String((err && err.message) || 'error').slice(0, 120) });\n        }\n\n        const session = await pool.query(\n            \"insert into user_sessions (user_id, workspace_id, device_name, expires_at) \" +\n            \"values ($1, $2, 'Platform sign-in', now() + make_interval(secs => $3)) returning id\",\n            [user.id, workspaceId, ctx.sessionSeconds]);\n        const token = sign(\n            { sub: user.id, email: user.email, workspaceId, type: 'access', sessionId: session.rows[0].id },\n            ctx.sessionSeconds);\n        return {\n            // Not \"/\": the platform sends \"/\" to the sign-in, and Docmost\n            // itself sends it on to /home.\n            redirect: '/home',\n            cookies: [{ name: 'authToken', value: token }],\n        };\n    },\n};\n"
 ---
 # Customization record — see gentian-os/docs/app-customization.md §5
 #
@@ -276,10 +394,10 @@ spec:
   artifacts:
     - repo: gentian-org/gentian-apps
       path: profiles/docmost/docmost-ce/assets/sign-in-handler.js
-      version: "1.0.0"
+      version: "1.1.0"
     - repo: gentian-org/gentian-apps
       path: images/gentian-sidecar-sso-saml
-      version: "0.2.0"
+      version: "0.3.0"
 
   origin:
     authorship: gentian
@@ -295,8 +413,10 @@ spec:
     edition installed (the profile then declares identity.oidc), or when it can take
     the person from the front door's headers. Until then, on every Docmost upgrade:
     run images/gentian-sidecar-sso-saml/e2e/docmost.e2e.js against the new image
-    before the chart's image tag moves. It fails if the session token, the
-    user_sessions table, the setup call or the invitation calls have changed.
+    before the chart's image tag moves, and move the image of hooks.postInstall
+    with it. It fails if the session token, the user_sessions table, the setup
+    call, the invitation calls, the role call or the calls and tables for spaces
+    and groups have changed.
   upgradeRisk: high
   testedAgainst: ["0.95.0"]
 
@@ -313,6 +433,10 @@ spec:
       uses what the free edition has for everybody: an account, made with the free
       edition's own setup and invitation calls, and a session signed with the
       installation's own APP_SECRET and recorded in user_sessions as Docmost records
-      one. Whether making that session from outside the app, in place of the paid
+      one. A member's role is changed with the free edition's own call for it. OPEN,
+      for the owner: at a person's first sign-in the handler makes an ordinary space
+      with that person as its only member, through the free edition's own calls.
+      Docmost 0.95 sells "personal spaces" in its paid edition; that feature and its
+      switch are not used or touched, but what is made here resembles what it gives. Whether making that session from outside the app, in place of the paid
       single sign-on, is acceptable to the vendor is the owner's judgement and is
       not settled by this record.
