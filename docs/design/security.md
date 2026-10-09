@@ -344,9 +344,13 @@ What that is worth, precisely. The index is served by the catalogue the file
 comes from, over HTTPS, and is not signed: a digest from it catches a file
 that changed without its index, not a catalogue that publishes a file and an
 index that agree with each other. A pin is the person's own statement and
-catches that too. Nothing compares the profile on the cluster with its bundle
-afterwards unless an install pins it: the Component the operator creates for a
-`defaultForTenants` profile carries no digest. And the installer applies the
+catches that too. Afterwards the operator compares the profile on the cluster,
+and what its bundle brings, with that bundle before it rolls out the
+Component it creates for a default profile, and holds the Component when they
+differ (`internal/profilebundle/recorded.go`). The digest it uses is the one
+recorded with the profile, the bundle's own: no second place states it, as
+the tenant's manifest does for an install, so a profile replaced together
+with its bundle is not caught. And the installer applies the
 part of the director's bundle check that concerns kinds, names and metadata,
 not the rules inside a companion's body.
 
@@ -745,7 +749,7 @@ the code does.
 | Publishing an entry: approval by the tenant's perimeter approver, of what an installed app declares | Implemented | The director lists every perimeter entry an installed app declares and refuses an approval of anything else, or with a main-address setting that is not the entry's (`internal/director/api/exposure_requests.go`, `internal/addresses`; [routing.md §5](routing.md)) |
 | A website on the cluster's main address | Implemented; the cookie finding is open | §2.10: single-tenancy only, two people say so, the approver acknowledges the rule. A script there can still disturb sign-in on the other addresses |
 | Address names the platform keeps | Implemented | `internal/hostnames`, asked by the director and the operator (§2.11) |
-| Default profiles the installer places | Implemented at a stated digest; **the default Component is not pinned** | Written only when the file hashes to the digest its catalogue's index lists, or to a pin, with its bundle and origin (§2.11). The index is not signed, and the operator makes no comparison at rollout for the unpinned Component it creates for a `defaultForTenants` profile. Whether to pin it is an open decision |
+| Default profiles the installer places | Implemented at a stated digest, and compared with the recorded bundle at rollout | Written only when the file hashes to the digest its catalogue's index lists, or to a pin, with its bundle and origin (§2.11). The index is not signed. The operator holds the Component it creates for a default profile to the bundle recorded with the profile; nothing apart from the profile states that digest |
 | Mail: one proxy faces the internet, the mail servers do not | Implemented; proven in local containers, not on a cluster | `kernel/services/mail-edge`, in `system-mail-dmz`: PROXY protocol, TLS passed through, limits per client address (§2.8). Egress from `system-mail` is open |
 | A mailbox opened with a sign-in token | Implemented | Only for an app that declares `requires.services.mail.imap.tokenSignIn`, by the scope `mailbox` (§2.16) |
 | Sign-in sidecar | Implemented, with the weaknesses listed | Only from a cluster catalogue's bundle pinned by digest, never in the kernel realm (§2.12). It can become anybody in its app |

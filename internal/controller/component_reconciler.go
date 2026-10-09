@@ -243,6 +243,26 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			// has yet to apply arrives without either changing.
 			return r.status(ctx, comp, metav1.ConditionFalse, refusal.Reason, message, heldRequeue(refusal))
 		}
+	} else if comp.Labels[componentOriginLabel] == componentOriginDefault {
+		// A Component the platform placed comes from no install and names
+		// no digest. Where its profile was placed from a catalogue -- the
+		// installer's default profile is -- the digest is the one recorded
+		// with the profile, and the profile and its companions are held to
+		// it at the same point and in the same way. A default whose profile
+		// the platform's chart ships has no record and is not asked.
+		refusal, err := profilebundle.VerifyRecordedOnCluster(ctx, r.Client, catalogueNamespace(), profile)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		if refusal != nil {
+			message := refusal.Message + "; nothing is rolled out from it, and what is running is left as it is"
+			if r.Recorder != nil && !componentReports(comp, refusal.Reason, message) {
+				r.Recorder.Event(comp, corev1.EventTypeWarning, refusal.Reason, message)
+			}
+			logger.Info("component held: its profile is not the build recorded for it",
+				"component", comp.Name, "namespace", comp.Namespace, "reason", refusal.Reason, "detail", refusal.Message)
+			return r.status(ctx, comp, metav1.ConditionFalse, refusal.Reason, message, heldRequeue(refusal))
+		}
 	}
 	// The same for every addon this instance activates at a pinned build.
 	//

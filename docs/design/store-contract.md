@@ -265,7 +265,9 @@ It is not signed and it is not a permission. What it does:
   the companion), and an event says the same. Nothing is
   rendered from that profile, and nothing already rolled out is removed: the
   component is held as it runs until the profile is the pinned build again or
-  the pin is moved. An install with no digest is not checked.
+  the pin is moved. An install with no digest is not checked. A Component
+  the operator placed by default is, against the bundle recorded with its
+  profile (§9).
 
   What this does not cover. Only the component reconciler is held; the other
   readers of a profile -- the tile, the app's groups, the authorization
@@ -1039,10 +1041,21 @@ reads it as a materialised profile with an origin and a digest. The digest
 and who stated it are in the signed commit. A definition that already holds
 another build is kept and reported.
 
-Two things it is not. It is not checked at rollout by default: the operator
-makes that comparison for a Component pinned to a digest (§4), and the
-Component it creates for a profile that declares `defaultForTenants` carries
-no pin. And the installer does not run the whole of the check the director
+It is checked at rollout. The Component the operator creates for a profile
+that declares itself a default names no digest, so the digest is the one
+recorded with the profile: that of the bundle it carries. Before anything is
+rendered for such a Component the operator makes the comparison of §4 with
+it -- the profile is what the bundle says, the bundle holds only what a
+bundle may, and every companion is there as the bundle says -- and holds the
+Component with the same reasons when it is not. A default whose profile the
+platform's chart ships carries no bundle and no origin, and is not asked; one
+that states a catalogue origin and carries no bundle is held
+(`DigestUnverifiable`).
+
+Two things it is not. It is not a pin: an install's digest is stated on the
+tenant's manifest, apart from the profile, and a default's is stated nowhere
+but on the profile, so a profile replaced together with its bundle passes.
+And the installer does not run the whole of the check the director
 runs on what travels with a profile, only the part on kinds, names and
 metadata; the Operations Console's bundle is the profile alone.
 

@@ -20,6 +20,9 @@ import (
 	"strings"
 	"testing"
 
+	"sigs.k8s.io/yaml"
+
+	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	dt "github.com/gentian-org/gentian-os/internal/director/directortest"
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
 	"github.com/gentian-org/gentian-os/internal/profilebundle"
@@ -161,6 +164,17 @@ func TestTheInstallerMaterialisesAProfileAsTheDirectorDoes(t *testing.T) {
 				res, err := after.MaterialiseProfile(context.Background(), name, profilebundle.Digest(body), body, origin, meta("u-ada"))
 				if err != nil || res.Status != "unchanged" || res.Changed {
 					t.Fatalf("the director's install over the installer's files = %+v, %v; it should have nothing to change", res, err)
+				}
+
+				// And it is the record the operator holds a Component nobody
+				// pinned to: the annotations the installer's patch puts on
+				// the profile state this bundle's digest.
+				patched := &gentianov1alpha1.ComponentProfile{}
+				if err := yaml.Unmarshal([]byte(files[dt.CataloguePath(gitops.BundleFile(name))]), patched); err != nil {
+					t.Fatal(err)
+				}
+				if recorded, refusal := profilebundle.RecordedDigest(patched); refusal != nil || recorded != profilebundle.Digest(body) {
+					t.Fatalf("the operator reads the installer's record as %q, %+v", recorded, refusal)
 				}
 
 				// A second run of the installer changes nothing either.

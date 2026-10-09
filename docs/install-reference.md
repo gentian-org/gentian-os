@@ -294,10 +294,16 @@ every other — a profile reaches a cluster only at a stated digest:
 `--dry-run` says which address would be read and which digest would be
 required, and asks no catalogue.
 
-The operator compares a profile with its bundle at rollout for a Component
-pinned to a digest. The Component it creates by default for the Operations
-Console carries no pin, so that comparison is not made for it; an install of
-the same profile through the director is pinned and compared.
+The operator compares a profile with its bundle at rollout. For a Component
+pinned to a digest the bundle must hash to that digest. The Component the
+operator creates by default for the Operations Console names no digest: the
+digest it is held to is the one recorded here, that of the bundle beside the
+profile. A profile, or anything its bundle brings, that is not what that
+bundle says stops the rollout, and the Component says why (`DigestMismatch`,
+`DigestUnverifiable`, `BundleRefused`, `CompanionMissing`,
+`CompanionMismatch`); what is running is left as it is. A profile replaced
+together with its bundle is not noticed: nothing outside the profile states
+a digest for a default.
 
 ### Provider resource types
 

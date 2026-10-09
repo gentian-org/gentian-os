@@ -130,6 +130,13 @@ func Short(digest string) string {
 //
 // digest is "sha256:<hex>", as a Component's profileRef carries it.
 func Verify(profile *gentianov1alpha1.ComponentProfile, digest string) *Refusal {
+	return verify(profile, digest, "as pinned")
+}
+
+// verify is Verify. stated says in a refusal where the digest comes from:
+// "as pinned" for an install's, "as recorded" for the one the cluster's
+// definition records for a profile nobody pinned (recorded.go).
+func verify(profile *gentianov1alpha1.ComponentProfile, digest, stated string) *Refusal {
 	want := strings.ToLower(strings.TrimSpace(digest))
 	encoded, ok := profile.Annotations[Annotation]
 	if !ok || strings.TrimSpace(encoded) == "" {
@@ -159,19 +166,19 @@ func Verify(profile *gentianov1alpha1.ComponentProfile, digest string) *Refusal 
 			reason = ReasonUnverifiable
 		} else if head := headOf(docs[0]); head.kind != "ComponentProfile" || head.name != profile.Name {
 			return &Refusal{Reason: ReasonMismatch, Message: fmt.Sprintf(
-				"the bundle of ComponentProfile %q is %s as pinned, and is the %s %q",
-				profile.Name, Short(want), head.kind, head.name)}
+				"the bundle of ComponentProfile %q is %s %s, and is the %s %q",
+				profile.Name, Short(want), stated, head.kind, head.name)}
 		}
 		return &Refusal{Reason: reason, Message: fmt.Sprintf(
-			"the bundle of ComponentProfile %q is %s as pinned, and is not one that is rolled out: %v",
-			profile.Name, Short(want), err)}
+			"the bundle of ComponentProfile %q is %s %s, and is not one that is rolled out: %v",
+			profile.Name, Short(want), stated, err)}
 	}
 	// Whether the profile is the build, is the other half.
 	said, err := decode(read.Profile)
 	if err != nil {
 		return &Refusal{Reason: ReasonUnverifiable, Message: fmt.Sprintf(
-			"the bundle of ComponentProfile %q is %s as pinned, and cannot be read as a profile: %v",
-			profile.Name, Short(want), err)}
+			"the bundle of ComponentProfile %q is %s %s, and cannot be read as a profile: %v",
+			profile.Name, Short(want), stated, err)}
 	}
 	differs, err := specDiffers(&said.Spec, &profile.Spec)
 	if err != nil {
@@ -180,13 +187,13 @@ func Verify(profile *gentianov1alpha1.ComponentProfile, digest string) *Refusal 
 	}
 	if len(differs) > 0 {
 		return &Refusal{Reason: ReasonMismatch, Message: fmt.Sprintf(
-			"the bundle of ComponentProfile %q is %s as pinned, and the profile in the cluster is not what it says: spec.%s differs",
-			profile.Name, Short(want), strings.Join(differs, ", spec."))}
+			"the bundle of ComponentProfile %q is %s %s, and the profile in the cluster is not what it says: spec.%s differs",
+			profile.Name, Short(want), stated, strings.Join(differs, ", spec."))}
 	}
 	if key := metadataDiffers(said, profile); key != "" {
 		return &Refusal{Reason: ReasonMismatch, Message: fmt.Sprintf(
-			"the bundle of ComponentProfile %q is %s as pinned, and the profile in the cluster is not what it says: %s differs",
-			profile.Name, Short(want), key)}
+			"the bundle of ComponentProfile %q is %s %s, and the profile in the cluster is not what it says: %s differs",
+			profile.Name, Short(want), stated, key)}
 	}
 	return nil
 }

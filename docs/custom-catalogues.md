@@ -27,8 +27,9 @@ before there is a director to ask. It is held to a digest like any other: the on
 Bytes that do not hash to it stop the install; a catalogue that cannot be reached is a warning;
 `--disable-api-extensions` places none. What is written is what the director writes — the file, and
 its bundle and origin on the profile — so everything below about a materialised profile holds for it.
-Of the checks of §2 the installer runs those on kinds, names and metadata, and nothing compares it
-at rollout unless an install pins it ([install-reference.md §4](install-reference.md)).
+Of the checks of §2 the installer runs those on kinds, names and metadata. At rollout the operator
+holds the profile and what its bundle brings to that recorded bundle, for the Component it creates
+by default as for a pinned install ([install-reference.md §4](install-reference.md)).
 
 A catalogue exists on a cluster in one of three ways:
 
@@ -791,8 +792,9 @@ they are done once by the tenant's administrator.
   catalogue; across catalogues nothing does.
 - **Nothing a bundle brought is removed automatically.** It is listed, and removed one object at a
   time by the cluster's administrator (§6).
-- **The installer's default profile is not pinned.** It is fetched by address at install and
-  committed unchecked (§1).
+- **The installer's default profile has no pin of its own.** It is placed at a stated digest and
+  compared with its recorded bundle at rollout (§1), but no second place states that digest: a
+  profile replaced together with its bundle is not noticed.
 - **No password-protected catalogues.** No credential is sent to a catalogue. Keep what is private in
   the registry (§8), not in the profile.
 - **No proxy.** The director connects to the catalogue directly.
