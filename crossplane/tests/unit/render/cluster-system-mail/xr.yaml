@@ -10,6 +10,10 @@
 # system-dmz rather than system -- the label the policies deciding what may
 # reach the internet select on. The sibling fixture, with mail relayed, must
 # compose neither.
+#
+# It is also the one cluster fixture whose claim says secretMode: random, so
+# the golden shows the mode reaching gentian-cluster-config, which is where the
+# operator reads it. The others say nothing and must come out as derived.
 apiVersion: gentianos.io/v1alpha1
 kind: XCluster
 metadata:
@@ -18,6 +22,7 @@ metadata:
     crossplane.io/external-name: dev-cluster
 spec:
   kernelDomain: platform.example.test
+  secretMode: random
   masterPasswordSecretRef:
     name: gentian-os-master-password
     namespace: kernel-provisioning

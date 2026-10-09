@@ -24,6 +24,10 @@ SPDX-License-Identifier: MPL-2.0
 // consumed by the app reconciler (Pattern B Terraform CRs via set_sensitive
 // and Pattern A ExternalSecrets via ESO).
 //
+// That is the cluster's secretMode derived. With secretMode random the Seeder
+// draws each value from crypto/rand instead and the path holds the only copy;
+// an app's own secrets stay derived in both modes (see Mode, SeedAppSecret).
+//
 // The package intentionally exposes a narrow surface — one method per
 // kernel-requirement category — so every reconciler performs the same
 // "derive → write-once → return derived struct → pass to provisioning Job

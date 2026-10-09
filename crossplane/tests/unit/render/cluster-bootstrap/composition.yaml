@@ -1125,6 +1125,13 @@ spec:
                     # tenant is reachable at is derived from this, so the two disagreeing
                     # is not cosmetic.
                     tenancyMode: {{ default "multi" (dig "tenancyMode" "" $spec) | quote }}
+                    # How a credential nothing has stored yet is made: derived
+                    # from the master password, or random. The installer reads
+                    # the claim for the kernel's credentials; this is where the
+                    # operator reads it for each app's. The field was on the
+                    # claim with nothing passing it on, so an app's credentials
+                    # were derived on a cluster whose claim said random.
+                    secretMode: {{ default "derived" (dig "secretMode" "" $spec) | quote }}
                     tenant.limitRange.default.cpu: {{ default "500m" (dig "tenantDefaults" "limitRange" "defaultCpu" "" $spec) | quote }}
                     tenant.limitRange.default.memory: {{ default "512Mi" (dig "tenantDefaults" "limitRange" "defaultMemory" "" $spec) | quote }}
                     tenant.limitRange.defaultRequest.cpu: {{ default "100m" (dig "tenantDefaults" "limitRange" "defaultRequestCpu" "" $spec) | quote }}

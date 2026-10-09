@@ -12,6 +12,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -20,6 +21,8 @@ import (
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 )
 
 func fakeClusterConfigClient(t *testing.T, objs ...client.Object) client.Client {
@@ -112,5 +115,68 @@ func TestTheModelGatewayConsoleIsOffUnlessTheClaimSwitchesItOn(t *testing.T) {
 	}
 	if clusterLLMConsoleRouted(ctx, nil) {
 		t.Error("no client to ask the claim with, and the console is routed")
+	}
+}
+
+// The claim's secretMode reaches the Seeder through the ConfigMap. A cluster
+// whose ConfigMap does not say reads as derived, which is what it was doing.
+func TestClusterSecretModeFollowsTheClaim(t *testing.T) {
+	ctx := context.Background()
+	for name, tc := range map[string]struct {
+		objs []client.Object
+		want secrets.Mode
+	}{
+		"random":           {[]client.Object{clusterConfigWith(map[string]string{clusterConfigSecretModeKey: "random"})}, secrets.ModeRandom},
+		"derived":          {[]client.Object{clusterConfigWith(map[string]string{clusterConfigSecretModeKey: "derived"})}, secrets.ModeDerived},
+		"key not written":  {[]client.Object{clusterConfigWith(map[string]string{clusterConfigTenancyKey: "multi"})}, secrets.ModeDerived},
+		"no ConfigMap yet": {nil, secrets.ModeDerived},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got, err := ClusterSecretMode(fakeClusterConfigClient(t, tc.objs...))(ctx)
+			if err != nil || got != tc.want {
+				t.Fatalf("mode = %q, %v; want %q", got, err, tc.want)
+			}
+		})
+	}
+}
+
+// unreadable fails every read, as an API server does that is away.
+type unreadable struct{ client.Reader }
+
+func (unreadable) Get(context.Context, client.ObjectKey, client.Object, ...client.GetOption) error {
+	return errors.New("api server away")
+}
+
+// What cannot be known is not guessed: an unreadable ConfigMap and a value
+// that is neither mode are errors, so nothing is made until the answer is in.
+func TestClusterSecretModeDoesNotGuess(t *testing.T) {
+	ctx := context.Background()
+	if got, err := ClusterSecretMode(unreadable{})(ctx); err == nil {
+		t.Errorf("an unreadable ConfigMap read as %q", got)
+	}
+	if got, err := ClusterSecretMode(nil)(ctx); err == nil {
+		t.Errorf("no client read as %q", got)
+	}
+	c := fakeClusterConfigClient(t, clusterConfigWith(map[string]string{clusterConfigSecretModeKey: "Random"}))
+	if got, err := ClusterSecretMode(c)(ctx); err == nil {
+		t.Errorf("a misspelt mode read as %q", got)
+	}
+}
+
+// One answer serves the passes that follow it closely, and a failed read is
+// asked again rather than remembered.
+func TestClusterSecretModeIsReadOncePerInterval(t *testing.T) {
+	ctx := context.Background()
+	cm := clusterConfigWith(map[string]string{clusterConfigSecretModeKey: "random"})
+	c := fakeClusterConfigClient(t, cm)
+	mode := ClusterSecretMode(c)
+	if got, err := mode(ctx); err != nil || got != secrets.ModeRandom {
+		t.Fatalf("first read: %q, %v", got, err)
+	}
+	if err := c.Delete(ctx, cm); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := mode(ctx); err != nil || got != secrets.ModeRandom {
+		t.Fatalf("within the interval: %q, %v; want the answer already held", got, err)
 	}
 }

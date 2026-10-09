@@ -130,6 +130,7 @@ spec:
         mail.smtpHost: ""
         network.edgeNamespace: kernel-edge
         node.ip: ""
+        secretMode: random
         tenancyMode: multi
         tenant.limitRange.default.cpu: 500m
         tenant.limitRange.default.memory: 512Mi

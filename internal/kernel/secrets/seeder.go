@@ -25,28 +25,63 @@ type Writer interface {
 	Get(ctx context.Context, logicalPath string) (map[string]string, error)
 }
 
+// Mode is how the Seeder makes a value that nothing has stored yet. It is the
+// cluster's secretMode, a field of the Cluster claim.
+type Mode string
+
+const (
+	// ModeDerived computes the value from the master password, so a cluster
+	// rebuilt from the same master password and salt arrives at it again.
+	ModeDerived Mode = "derived"
+	// ModeRandom draws the value from crypto/rand. Nothing reproduces it: the
+	// stored copy is the only one.
+	ModeRandom Mode = "random"
+)
+
+// ModeFunc reports the cluster's mode. It is asked each time a value is made,
+// so a Seeder built before the claim could be read does not keep a guess. An
+// error means the mode is not known, and then no value is made.
+type ModeFunc func(ctx context.Context) (Mode, error)
+
 // Seeder generates per-tenant-per-app credentials and persists them
 // write-once to OpenBao. Reconcilers hold a *Seeder, call the
 // category-specific method before creating their provisioning Job, and pass
 // the returned credential struct to the Job via an env var.
 //
-// Generation strategy: HKDF-SHA256(master, salt=KV path, info=field) — fully
-// deterministic, so an app uninstalled and reinstalled gets identical
-// credentials back without external state. Tenant-app salts include the
-// tenant component (CategoryPath/InternalPath); kernel-shared salts do not
-// (KernelPath). When the master password is unavailable the seeder falls
-// back to crypto/rand and PutOnce semantics keep the first random value
-// authoritative.
+// Generation strategy, in ModeDerived: HKDF-SHA256(master, salt=KV path,
+// info=field) — fully deterministic, so an app uninstalled and reinstalled
+// gets identical credentials back without external state. Tenant-app salts
+// include the tenant component (CategoryPath/InternalPath); kernel-shared
+// salts do not (KernelPath). When the master password is unavailable the
+// seeder falls back to crypto/rand.
+//
+// In ModeRandom every value is drawn from crypto/rand and the master password
+// is not used, whether or not the Seeder holds it -- but for an app's own
+// secrets, which stay derived (see SeedAppSecret).
+//
+// In both modes the first value stored at a path stays the path's value: a
+// later pass reads it back and never replaces it. That is what keeps a random
+// credential the same over reconciles and restarts, and what makes a change
+// of mode leave every credential that exists as it is — only a credential
+// made afterwards follows the new mode.
 type Seeder struct {
-	w Writer
-	d *Deriver
+	w    Writer
+	d    *Deriver
+	mode ModeFunc
 }
 
 // NewSeeder constructs a Seeder backed by w (typically a *KVClient) and
 // derivation backed by d. d may be nil, in which case credentials are
-// generated with crypto/rand instead of derived.
+// generated with crypto/rand instead of derived. The Seeder is in
+// ModeDerived until WithMode says where the mode is read from.
 func NewSeeder(w Writer, d *Deriver) *Seeder {
 	return &Seeder{w: w, d: d}
+}
+
+// WithMode makes the Seeder ask mode before it makes a value, and returns it.
+func (s *Seeder) WithMode(mode ModeFunc) *Seeder {
+	s.mode = mode
+	return s
 }
 
 // KV returns the KV client backing this Seeder, or nil when the Writer is
@@ -57,30 +92,89 @@ func (s *Seeder) KV() *KVClient {
 	return kv
 }
 
-// gen returns n hex characters: HKDF-derived from (salt, info) when a master
-// is configured, otherwise crypto/rand.
-func (s *Seeder) gen(salt, info string, n int) string {
+// derives reports whether a value made now is computed from the master
+// password, and so comes out the same whenever it is made again.
+func (s *Seeder) derives(ctx context.Context) (bool, error) {
+	mode := ModeDerived
+	if s.mode != nil {
+		m, err := s.mode(ctx)
+		if err != nil {
+			return false, fmt.Errorf("secret mode: %w", err)
+		}
+		mode = m
+	}
+	switch mode {
+	case ModeDerived:
+		return s.d != nil && s.d.HasMaster(), nil
+	case ModeRandom:
+		return false, nil
+	default:
+		return false, fmt.Errorf("secret mode: %q is neither %q nor %q", mode, ModeDerived, ModeRandom)
+	}
+}
+
+// generated is a value the Seeder made, and whether making it again would
+// give the same one.
+type generated struct {
+	value        string
+	reproducible bool
+}
+
+// gen returns n hex characters: HKDF-derived from (salt, info) in ModeDerived
+// when a master is configured, otherwise crypto/rand.
+func (s *Seeder) gen(ctx context.Context, salt, info string, n int) (generated, error) {
 	if n <= 0 {
 		n = 40
 	}
-	if s.d != nil && s.d.HasMaster() {
-		return s.d.Derive(salt, info, n)
+	derives, err := s.derives(ctx)
+	if err != nil {
+		return generated{}, err
 	}
+	if derives {
+		return generated{value: s.d.Derive(salt, info, n), reproducible: true}, nil
+	}
+	return generated{value: randomHex(n)}, nil
+}
+
+// randomHex returns n hex characters from crypto/rand.
+func randomHex(n int) string {
 	buf := make([]byte, (n+1)/2)
 	if _, err := rand.Read(buf); err != nil {
-		panic("secrets.Seeder.gen: crypto/rand failed: " + err.Error())
+		panic("secrets.Seeder: crypto/rand failed: " + err.Error())
 	}
 	return hex.EncodeToString(buf)[:n]
 }
 
+// genDerived is gen as it is in ModeDerived, whatever the cluster's mode: the
+// value is computed from the master password where there is one. It is for a
+// value that has to come out the same when it is made again somewhere else.
+func (s *Seeder) genDerived(salt, info string, n int) generated {
+	if n <= 0 {
+		n = 40
+	}
+	if s.d != nil && s.d.HasMaster() {
+		return generated{value: s.d.Derive(salt, info, n), reproducible: true}
+	}
+	return generated{value: randomHex(n)}
+}
+
 // seedAndRead writes data with PutOnce, then re-reads to honour any value
 // already present (manual overrides or values from a prior reconcile).
-func (s *Seeder) seedAndRead(ctx context.Context, path string, data map[string]string) (map[string]string, error) {
+//
+// reproducible says the values in data would come out the same if made again;
+// only then may they stand in for a read that failed. A random value that was
+// not read back may not be the stored one — PutOnce leaves an existing path
+// alone — and handing it on would set a database role or a bucket user to a
+// password nothing holds.
+func (s *Seeder) seedAndRead(ctx context.Context, path string, data map[string]string, reproducible bool) (map[string]string, error) {
 	if err := s.w.PutOnce(ctx, path, data); err != nil {
 		return nil, err
 	}
 	out, err := s.w.Get(ctx, path)
 	if err != nil {
+		if !reproducible {
+			return nil, fmt.Errorf("read back %s: %w", path, err)
+		}
 		return data, nil //nolint:nilerr // value was written; tolerate read failure
 	}
 	return out, nil
@@ -101,11 +195,17 @@ type OIDCCreds struct {
 func (s *Seeder) SeedOIDC(ctx context.Context, tenant, app, issuer, clientID string) (OIDCCreds, error) {
 	salt := CategoryPath(tenant, app, "oidc")
 	existing, _ := s.w.Get(ctx, salt)
-	secret := s.gen(salt, "client-secret", 40)
+	// The stored secret stands; one is made only where none is stored.
+	secret, certain := "", true
 	if existing != nil {
-		if v := existing["client-secret"]; v != "" {
-			secret = v
+		secret = existing["client-secret"]
+	}
+	if secret == "" {
+		g, err := s.gen(ctx, salt, "client-secret", 40)
+		if err != nil {
+			return OIDCCreds{}, fmt.Errorf("seed oidc(%s/%s): %w", tenant, app, err)
 		}
+		secret, certain = g.value, g.reproducible || existing != nil
 	}
 	want := map[string]string{
 		"issuer":        issuer,
@@ -123,6 +223,11 @@ func (s *Seeder) SeedOIDC(ctx context.Context, tenant, app, issuer, clientID str
 	}
 	got, err := s.w.Get(ctx, salt)
 	if err != nil {
+		// A random secret offered to a path that may already have held one
+		// is not known to be the stored one until it has been read back.
+		if !certain {
+			return OIDCCreds{}, fmt.Errorf("seed oidc(%s/%s): read back: %w", tenant, app, err)
+		}
 		got = want
 	}
 	return OIDCCreds{
@@ -147,8 +252,13 @@ type DatabaseCreds struct {
 // connection record under gentian-os/kernel/database/{category}.
 func (s *Seeder) SeedKernelDatabase(ctx context.Context, category string, conn DatabaseCreds) (DatabaseCreds, error) {
 	salt := KernelPath("database", category)
+	reproducible := true
 	if conn.Password == "" {
-		conn.Password = s.gen(salt, "password", 40)
+		g, err := s.gen(ctx, salt, "password", 40)
+		if err != nil {
+			return DatabaseCreds{}, fmt.Errorf("seed kernel database(%s): %w", category, err)
+		}
+		conn.Password, reproducible = g.value, g.reproducible
 	}
 	got, err := s.seedAndRead(ctx, salt, map[string]string{
 		"host":     conn.Host,
@@ -156,7 +266,7 @@ func (s *Seeder) SeedKernelDatabase(ctx context.Context, category string, conn D
 		"name":     conn.Name,
 		"user":     conn.User,
 		"password": conn.Password,
-	})
+	}, reproducible)
 	if err != nil {
 		return DatabaseCreds{}, fmt.Errorf("seed kernel database(%s): %w", category, err)
 	}
@@ -170,8 +280,13 @@ func (s *Seeder) SeedKernelDatabase(ctx context.Context, category string, conn D
 // host/port/name/user are supplied by the caller.
 func (s *Seeder) SeedDatabase(ctx context.Context, tenant, app string, conn DatabaseCreds) (DatabaseCreds, error) {
 	salt := CategoryPath(tenant, app, "database")
+	reproducible := true
 	if conn.Password == "" {
-		conn.Password = s.gen(salt, "password", 40)
+		g, err := s.gen(ctx, salt, "password", 40)
+		if err != nil {
+			return DatabaseCreds{}, fmt.Errorf("seed database(%s/%s): %w", tenant, app, err)
+		}
+		conn.Password, reproducible = g.value, g.reproducible
 	}
 	got, err := s.seedAndRead(ctx, salt, map[string]string{
 		"host":     conn.Host,
@@ -179,7 +294,7 @@ func (s *Seeder) SeedDatabase(ctx context.Context, tenant, app string, conn Data
 		"name":     conn.Name,
 		"user":     conn.User,
 		"password": conn.Password,
-	})
+	}, reproducible)
 	if err != nil {
 		return DatabaseCreds{}, fmt.Errorf("seed database(%s/%s): %w", tenant, app, err)
 	}
@@ -210,11 +325,20 @@ type S3Creds struct {
 // SeedS3 derives the access/secret key pair from the master.
 func (s *Seeder) SeedS3(ctx context.Context, tenant, app string, base S3Creds) (S3Creds, error) {
 	salt := CategoryPath(tenant, app, "s3")
+	reproducible := true
 	if base.AccessKey == "" {
-		base.AccessKey = s.gen(salt, "access-key", 20)
+		g, err := s.gen(ctx, salt, "access-key", 20)
+		if err != nil {
+			return S3Creds{}, fmt.Errorf("seed s3(%s/%s): %w", tenant, app, err)
+		}
+		base.AccessKey, reproducible = g.value, g.reproducible
 	}
 	if base.SecretKey == "" {
-		base.SecretKey = s.gen(salt, "secret-key", 40)
+		g, err := s.gen(ctx, salt, "secret-key", 40)
+		if err != nil {
+			return S3Creds{}, fmt.Errorf("seed s3(%s/%s): %w", tenant, app, err)
+		}
+		base.SecretKey, reproducible = g.value, reproducible && g.reproducible
 	}
 	got, err := s.seedAndRead(ctx, salt, map[string]string{
 		"endpoint":   base.Endpoint,
@@ -222,7 +346,7 @@ func (s *Seeder) SeedS3(ctx context.Context, tenant, app string, base S3Creds) (
 		"region":     base.Region,
 		"access-key": base.AccessKey,
 		"secret-key": base.SecretKey,
-	})
+	}, reproducible)
 	if err != nil {
 		return S3Creds{}, fmt.Errorf("seed s3(%s/%s): %w", tenant, app, err)
 	}
@@ -252,12 +376,16 @@ type CacheCreds struct {
 func (s *Seeder) SeedCache(ctx context.Context, tenant, app string, base CacheCreds) (CacheCreds, error) {
 	salt := CategoryPath(tenant, app, "cache")
 	existing, _ := s.w.Get(ctx, salt)
-	password := base.Password
+	password, certain := base.Password, true
 	if password == "" {
 		if existing != nil && existing["password"] != "" {
 			password = existing["password"]
 		} else {
-			password = s.gen(salt, "password", 40)
+			g, err := s.gen(ctx, salt, "password", 40)
+			if err != nil {
+				return CacheCreds{}, fmt.Errorf("seed cache(%s/%s): %w", tenant, app, err)
+			}
+			password, certain = g.value, g.reproducible || existing != nil
 		}
 	}
 	want := map[string]string{
@@ -286,6 +414,11 @@ func (s *Seeder) SeedCache(ctx context.Context, tenant, app string, base CacheCr
 	}
 	got, err := s.w.Get(ctx, salt)
 	if err != nil {
+		// As for the OIDC secret: a random password is only the app's once it
+		// has been read back from the path.
+		if !certain {
+			return CacheCreds{}, fmt.Errorf("seed cache(%s/%s): read back: %w", tenant, app, err)
+		}
 		return CacheCreds{
 			Host: want["host"], Port: want["port"], User: want["user"], Password: want["password"],
 		}, nil //nolint:nilerr
@@ -325,7 +458,11 @@ func (s *Seeder) SeedModelAccess(ctx context.Context, tenant, app, prefix, baseU
 		key = existing["api-key"]
 	}
 	if key == "" {
-		key = prefix + s.gen(salt, "api-key", 48)
+		g, err := s.gen(ctx, salt, "api-key", 48)
+		if err != nil {
+			return ModelAccessCreds{}, fmt.Errorf("seed model access(%s/%s): %w", tenant, app, err)
+		}
+		key = prefix + g.value
 	}
 	want := map[string]string{"base-url": baseURL, "api-key": key}
 	var err error
@@ -366,7 +503,7 @@ func (s *Seeder) SeedSMTP(ctx context.Context, tenant, app string, base SMTPCred
 		"port":     base.Port,
 		"user":     base.User,
 		"password": base.Password,
-	})
+	}, true)
 	if err != nil {
 		return SMTPCreds{}, fmt.Errorf("seed smtp(%s/%s): %w", tenant, app, err)
 	}
@@ -395,11 +532,19 @@ func (s *Seeder) SeedIMAP(ctx context.Context, tenant, app string, base IMAPCred
 
 // SeedAppSecret derives a single AppSecret by name and writes it as
 // {"value": "<derived>"} under …/internal/{name}.
+//
+// Derived in ModeRandom as well, and it is the one value that is. An app
+// encrypts and signs its own data with these, and a bundle holds no stored
+// credential: an app purged and installed again, or a tenant imported again
+// under its name, reads the data a bundle brings back only because the secret
+// comes out the same. A random one would have to travel with the data, and
+// whether a bundle may carry it is not decided.
 func (s *Seeder) SeedAppSecret(ctx context.Context, tenant, app, name string) (string, error) {
 	salt := InternalPath(tenant, app, name)
+	g := s.genDerived(salt, "value", 40)
 	got, err := s.seedAndRead(ctx, salt, map[string]string{
-		"value": s.gen(salt, "value", 40),
-	})
+		"value": g.value,
+	}, g.reproducible)
 	if err != nil {
 		return "", fmt.Errorf("seed app-secret(%s/%s/%s): %w", tenant, app, name, err)
 	}
@@ -416,9 +561,13 @@ type ContractCreds struct {
 // SeedContract writes a unique password into OpenBao for an integration contract.
 func (s *Seeder) SeedContract(ctx context.Context, tenant, contract string) (ContractCreds, error) {
 	salt := ContractPath(tenant, contract)
+	g, err := s.gen(ctx, salt, "password", 40)
+	if err != nil {
+		return ContractCreds{}, fmt.Errorf("seed contract(%s/%s): %w", tenant, contract, err)
+	}
 	got, err := s.seedAndRead(ctx, salt, map[string]string{
-		"password": s.gen(salt, "password", 40),
-	})
+		"password": g.value,
+	}, g.reproducible)
 	if err != nil {
 		return ContractCreds{}, fmt.Errorf("seed contract(%s/%s): %w", tenant, contract, err)
 	}

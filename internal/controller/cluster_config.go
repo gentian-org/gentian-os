@@ -12,12 +12,17 @@ package controller
 
 import (
 	"context"
+	"fmt"
 	"os"
+	"sync"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"github.com/gentian-org/gentian-os/internal/layout"
 )
 
@@ -33,6 +38,7 @@ const (
 	clusterConfigTenancyKey    = "tenancyMode"
 	clusterConfigMailModeKey   = "mail.serviceMode"
 	clusterConfigMailEgressKey = "mail.egressHost"
+	clusterConfigSecretModeKey = "secretMode"
 )
 
 // clusterConfigValue returns what the claim says for key, or the named
@@ -138,4 +144,67 @@ func clusterLLMConsoleRouted(ctx context.Context, c client.Reader) bool {
 // record that reads as correct.
 func clusterMailEgressHost(ctx context.Context, c client.Reader, fallback string) string {
 	return clusterConfigValueOr(ctx, c, clusterConfigMailEgressKey, fallback)
+}
+
+// clusterSecretModeTTL is how long one answer about the secret mode is used.
+// A credential is made once and the mode is set at install, so the answer may
+// be a little old; it may not cost an API call for every value of every pass.
+const clusterSecretModeTTL = 30 * time.Second
+
+// ClusterSecretMode gives the Seeder its window onto the claim's secretMode:
+// derived, where a credential nothing has stored yet is computed from the
+// master password, or random, where it is drawn anew and the master password
+// is not used.
+//
+// There is no environment fallback, and that is deliberate: this decides for
+// good how a credential is made, so a Helm value that disagreed with the claim
+// would be a second opinion on exactly the wrong question.
+//
+// A ConfigMap that is not there yet, or that was written before the key
+// existed, reads as derived: the schema's default, and what every cluster did
+// before the mode was read here. Any other failure to read, and any value that
+// is neither of the two, is an error -- the Seeder then makes nothing and the
+// reconcile comes back, which is better than a credential made on a guess.
+func ClusterSecretMode(c client.Reader) secrets.ModeFunc {
+	var (
+		mu     sync.Mutex
+		cached secrets.Mode
+		readAt time.Time
+	)
+	return func(ctx context.Context) (secrets.Mode, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		if cached != "" && time.Now().Sub(readAt) < clusterSecretModeTTL {
+			return cached, nil
+		}
+		mode, err := readClusterSecretMode(ctx, c)
+		if err != nil {
+			return "", err
+		}
+		cached, readAt = mode, time.Now()
+		return mode, nil
+	}
+}
+
+func readClusterSecretMode(ctx context.Context, c client.Reader) (secrets.Mode, error) {
+	if c == nil {
+		return "", fmt.Errorf("%s cannot be read: no client", clusterConfigName)
+	}
+	cm := &corev1.ConfigMap{}
+	k := types.NamespacedName{Namespace: clusterConfigNamespace, Name: clusterConfigName}
+	if err := c.Get(ctx, k, cm); err != nil {
+		if apierrors.IsNotFound(err) {
+			return secrets.ModeDerived, nil
+		}
+		return "", fmt.Errorf("read %s/%s: %w", k.Namespace, k.Name, err)
+	}
+	switch v := cm.Data[clusterConfigSecretModeKey]; secrets.Mode(v) {
+	case "", secrets.ModeDerived:
+		return secrets.ModeDerived, nil
+	case secrets.ModeRandom:
+		return secrets.ModeRandom, nil
+	default:
+		return "", fmt.Errorf("%s/%s: %s is %q, which is neither %q nor %q",
+			k.Namespace, k.Name, clusterConfigSecretModeKey, v, secrets.ModeDerived, secrets.ModeRandom)
+	}
 }

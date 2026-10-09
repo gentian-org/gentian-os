@@ -674,10 +674,12 @@ func kernelRealmOrDefault(realm string) string {
 //	BAO_ROLE  — Kubernetes auth role name (default: gentian-os-operator)
 //
 // The platform master password is read once at startup from
-// secrets.MasterPasswordPath and fed into an HKDF-SHA256 deriver so that
-// every (tenant, app, category) credential the operator generates is fully
-// deterministic — uninstalling and reinstalling an app yields the same
-// credentials.
+// secrets.MasterPasswordPath and fed into an HKDF-SHA256 deriver so that,
+// on a cluster whose claim says secretMode: derived, every (tenant, app,
+// category) credential the operator generates is fully deterministic —
+// uninstalling and reinstalling an app yields the same credentials. With
+// secretMode: random the deriver is not used and each credential is drawn
+// from crypto/rand once and kept in OpenBao.
 //
 // Returns nil (with a warning) when BAO_ADDR is unset — in that mode
 // reconcilers skip the seeding step and behave as they did pre-Inc 21a.
@@ -721,9 +723,17 @@ func buildSeeder() *secrets.Seeder {
 		deriver = secrets.NewDeriver(master["value"], master["salt"])
 	}
 
+	// How a credential is made is the claim's to say (secretMode), and it is
+	// asked each time one is made: the master password read above is used in
+	// derived mode only.
+	mode := controller.ClusterSecretMode(bootClient())
+	configured, modeErr := mode(ctx)
+	if modeErr != nil {
+		setupLog.Error(modeErr, "the secret mode could not be read; no credential is made until it can be")
+	}
 	setupLog.Info("secret seeder enabled",
-		"bao_addr", baoAddr, "bao_role", role, "deterministic", deriver != nil)
-	return secrets.NewSeeder(kv, deriver)
+		"bao_addr", baoAddr, "bao_role", role, "deterministic", deriver != nil, "secretMode", configured)
+	return secrets.NewSeeder(kv, deriver).WithMode(mode)
 }
 
 // withoutVault is the operator's statement that it runs without a vault:
