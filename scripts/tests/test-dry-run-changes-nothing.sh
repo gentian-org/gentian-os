@@ -322,7 +322,11 @@ scenario() {
     if [[ "${want}" != "any" && "${out}" != *"exit=${want}" ]]; then
         problems+=$'\n'"    wanted exit ${want}: $(tail -1 <<< "${out}")"
     fi
-    [[ "${out}" != *"unbound variable"* && "${out}" != *"command not found"* ]] || problems+=$'\n'"    the run broke on the way"
+    # The shell's own two complaints, in the shell's wording ("name: command
+    # not found"): the preflight says "Optional command not found: qrencode"
+    # on a host without it, and that is not a fault.
+    local broke; broke="$(grep -E 'unbound variable|: command not found' <<< "${out}" | head -5 || true)"
+    [[ -z "${broke}" ]] || problems+=$'\n'"    the run broke on the way:"$'\n'"${broke}"
 
     if [[ -z "${problems}" ]]; then
         ok "${what}"
