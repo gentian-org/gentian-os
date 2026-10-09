@@ -77,14 +77,6 @@ spec:
 apiVersion: pkg.crossplane.io/v1
 kind: Provider
 metadata:
-  name: provider-http
-spec:
-  # crossplane-contrib/provider-http: full CRUD against arbitrary HTTP/REST APIs.
-  package: xpkg.upbound.io/crossplane-contrib/provider-http:v1.0.14
----
-apiVersion: pkg.crossplane.io/v1
-kind: Provider
-metadata:
   name: provider-keycloak
 spec:
   # crossplane-contrib/provider-keycloak: Upjet bridge over mrparkers/keycloak TF provider.

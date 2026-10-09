@@ -979,6 +979,21 @@ last report, is in [docs/design/operations.md §6.2](docs/design/operations.md).
 
 ```bash
 ./install.sh --explain            # what each step does, in order
+### Which Crossplane resource types exist
+
+A fresh install creates only the provider resource types the platform uses —
+25 of the 374 the vault and Keycloak providers ship — because every installed
+type costs API-server memory on a managed control plane. `kubectl get mrap`
+shows the policy that lists them (`gentian-platform`) and `kubectl get mrd`
+every type with whether it is active. A cluster installed before this keeps
+every type: Crossplane does not take one away.
+
+If a fresh install stops in `B-05` naming a type that did not appear, or a
+composite waits on a kind the API server does not know, set
+`CROSSPLANE_ACTIVATE_ALL=true` in `install.env` and run the installer again:
+that is the old behaviour, every type installed. The list, and how to add a
+type to it, are in [docs/install-reference.md §4](docs/install-reference.md).
+
 ./install.sh --status             # which steps this cluster has already satisfied
 ./install.sh --only B-08          # a single step
 ./install.sh --from C-01          # resume from a step

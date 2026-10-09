@@ -243,7 +243,7 @@ namespaces:
               the same port number as the providers' webhooks, which is open;
               the rule is by port for the whole namespace, because Crossplane
               labels these pods and the labels are not in this repository
-            evidence: [crossplane/providers/providers.yaml:5, scripts/steps/B-05-crossplane-providers.sh:50]
+            evidence: [crossplane/providers/providers.yaml:5, scripts/steps/B-05-crossplane-providers.sh:129]
           - port: 8080
             what: metrics
             closed: nothing the platform runs scrapes it
@@ -273,7 +273,7 @@ namespaces:
                 evidence: [charts/gentian-os/templates/custodian.yaml:244, internal/custodian/openbao.go:166]
               - peer: provisioning
                 why: provider-vault configures mounts, policies and roles
-                evidence: [crossplane/providers/provider-configs.yaml:34, scripts/steps/B-05-crossplane-providers.sh:33]
+                evidence: [crossplane/providers/provider-configs.yaml:34, scripts/steps/B-05-crossplane-providers.sh:115]
             also:
               - External Secrets, in this namespace (crossplane/compositions/cluster-default.yaml:33)
               - the installer, from the install host; by port-forward where the host does not reach the pod (scripts/lib/portforward.sh:107)

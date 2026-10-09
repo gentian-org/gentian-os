@@ -134,6 +134,13 @@ selects nothing — an app whose bundle brings no Composition is rendered by `ap
 
 ### `index.yaml`
 
+**A Composition composes only resource types the cluster has.** A cluster creates the Crossplane
+provider types listed in gentian-os's `crossplane/providers/activation.yaml` and no others, so a
+resource of a vault or Keycloak provider kind outside that list never appears and its app waits. The
+check that says so is `scripts/lint/lint-provider-activation.py --tree <your catalogue's sources>`
+from a gentian-os checkout; a type that is missing is added to that list, in gentian-os, before the
+bundle that needs it is published ([install-reference.md §4](install-reference.md)).
+
 ```yaml
 entries:
 - name: acme-notes          # the profile's metadata.name, and the file name

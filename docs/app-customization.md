@@ -498,6 +498,11 @@ sidecar injection, or a Kustomize post-render over an upstream chart.
 This is where most Gentian upstream apps already sit (`charts/odoo`, `charts/gentian-sidecar-*`,
 per-profile `composition.yaml`).
 
+A `composition.yaml` may compose only the Crossplane provider resource types a cluster creates:
+those in gentian-os's `crossplane/providers/activation.yaml`. One of another type renders and
+never appears. `make lint-provider-activation` in gentian-os reads the gentian-apps checkout beside
+it and names the type to add ([install-reference.md §4](install-reference.md)).
+
 **The L4 boundary test:** if you would have to change the file when upstream reorganises its chart
 or its filesystem layout, it is L4. If upstream *promises* the path, it is L1.
 

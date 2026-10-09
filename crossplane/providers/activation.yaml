@@ -1,0 +1,81 @@
+---
+# The provider resource types this platform uses -- and so the only ones that
+# exist on a cluster.
+#
+# Crossplane is installed without its default "activate everything" policy
+# (scripts/steps/A-04-crossplane.sh). A provider that declares the safe-start
+# capability -- provider-vault and provider-keycloak here -- then ships its
+# types as ManagedResourceDefinitions, and a type becomes a
+# CustomResourceDefinition with a running controller only when a policy like
+# this one names it. Together the two ship 374 managed types; the platform
+# uses the 25 below. On a managed control plane every installed type costs
+# API-server memory whether or not anything uses it.
+#
+# provider-kubernetes and provider-helm do not declare safe-start: all of
+# their types are installed whatever is written here, and none is listed.
+#
+# ADDING A RESOURCE OF A NEW TYPE
+# -------------------------------
+# A Composition (here or in an app bundle), a kernel chart or operator code
+# that creates a provider kind not listed below gets nothing on a cluster: the
+# kind does not exist there. Add its `<plural>.<group>` to the list.
+# `make lint-provider-activation` finds the gap for you and prints the exact
+# line to add; the plural comes from crossplane/providers/types/, which is read
+# from the provider packages at the pinned versions.
+#
+# Names are `<plural>.<group>`. A leading wildcard (`*.kv.vault.upbound.io`)
+# is allowed by Crossplane; spelling each type out is what keeps the count
+# visible. Several policies add up, so a deployment may apply one of its own
+# beside this one.
+#
+# Activation only ever adds: a type activated once stays a CRD until its
+# provider is removed. So this list takes effect on a fresh install; a cluster
+# that was installed with every type keeps every type.
+#
+# The way back, if a fresh install waits on a type that is missing here:
+# CROSSPLANE_ACTIVATE_ALL=true in install.env, and re-run the installer.
+#
+# Applied by scripts/steps/B-05-crossplane-providers.sh, before the providers.
+apiVersion: apiextensions.crossplane.io/v1alpha1
+kind: ManagedResourceActivationPolicy
+metadata:
+  name: gentian-platform
+spec:
+  activate:
+    # -- provider-keycloak (18 of 126) ------------------------------------
+    - realms.realm.keycloak.crossplane.io
+    - realmevents.realm.keycloak.crossplane.io
+    - requiredactions.realm.keycloak.crossplane.io
+    - userprofiles.realm.keycloak.crossplane.io
+    - clients.openidclient.keycloak.crossplane.io
+    - clientscopes.openidclient.keycloak.crossplane.io
+    - clientdefaultscopes.openidclient.keycloak.crossplane.io
+    - clientoptionalscopes.openidclient.keycloak.crossplane.io
+    - protocolmappers.client.keycloak.crossplane.io
+    - groupmembershipprotocolmappers.openidgroup.keycloak.crossplane.io
+    - clients.samlclient.keycloak.crossplane.io
+    - groups.group.keycloak.crossplane.io
+    - roles.group.keycloak.crossplane.io
+    - roles.role.keycloak.crossplane.io
+    - identityproviders.oidc.keycloak.crossplane.io
+    - identityprovidermappers.identityprovider.keycloak.crossplane.io
+    - flows.authenticationflow.keycloak.crossplane.io
+    - executions.authenticationflow.keycloak.crossplane.io
+    # -- provider-vault (7 of 248) ----------------------------------------
+    - backends.auth.vault.upbound.io
+    - authbackends.jwt.vault.upbound.io
+    - authbackendroles.jwt.vault.upbound.io
+    - authbackendconfigs.kubernetes.vault.upbound.io
+    - authbackendroles.kubernetes.vault.upbound.io
+    - secretv2s.kv.vault.upbound.io
+    - policies.vault.vault.upbound.io
+    # -- provider configuration kinds -------------------------------------
+    # Crossplane 2.2.1 never turns these into ManagedResourceDefinitions
+    # (internal/converter/custom_to_managed.go): they are plain CRDs and need
+    # no activation. They are listed all the same, because an entry that
+    # matches nothing costs nothing, and B-05 and every Composition stop dead
+    # without them should a later Crossplane start gating them.
+    - providerconfigs.keycloak.crossplane.io
+    - providerconfigusages.keycloak.crossplane.io
+    - providerconfigs.vault.upbound.io
+    - providerconfigusages.vault.upbound.io

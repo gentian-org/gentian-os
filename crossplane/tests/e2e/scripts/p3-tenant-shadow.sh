@@ -150,7 +150,7 @@ check_exists "namespace ${NS}" kubectl get namespace "${NS}"
 check_exists "Object MR ${SHADOW_TENANT}-namespace" \
     kubectl get object.kubernetes.crossplane.io "${SHADOW_TENANT}-namespace"
 check_exists "Vault policy MR ${SHADOW_TENANT}-tenant-policy" \
-    kubectl get policy.vault.upbound.io "${SHADOW_TENANT}-tenant-policy"
+    kubectl get policy.vault.vault.upbound.io "${SHADOW_TENANT}-tenant-policy"
 
 # At least one Crossplane job Object MR (realm provisioning).
 job_mr_count=$(kubectl get object.kubernetes.crossplane.io -o name 2>/dev/null \

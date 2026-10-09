@@ -454,6 +454,26 @@ lint-portability:
 
 ## Assert every bootstrap Application name resolves to a chart template.
 ## Reads only the repository — no cluster.
+## Fail when a provider resource type in use -- in a Composition, a render
+## fixture, a kernel chart, Go or a script, here or in the gentian-apps checkout
+## beside this one -- is not in crossplane/providers/activation.yaml, or when
+## that list names a type the pinned provider packages do not ship. Crossplane
+## installs only the listed types, so an unlisted one never appears on a cluster.
+lint-provider-activation:
+	@python3 scripts/lint/lint-provider-activation.py
+
+## A-04 passes an empty default activation list and B-05 applies ours before
+## the providers; the lint above fails on what it should. kubectl and helm are
+## stand-ins; no cluster.
+test-provider-activation:
+	@bash scripts/tests/test-provider-activation.sh
+
+## Re-read every provider package's resource types at the versions
+## crossplane/providers/providers.yaml pins, into crossplane/providers/types/.
+## Needs the crossplane CLI and the network; run it when a provider pin moves.
+refresh-provider-types:
+	python3 scripts/gen/gen-provider-types.py
+
 ## Assert every shell function is reached by something that runs. The other
 ## half of lint-resolvable: that one catches a call with no definition, this
 ## one a definition with no call.
