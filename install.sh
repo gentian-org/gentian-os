@@ -452,30 +452,46 @@ prepare_tenant_run() {
 }
 
 # _ensure_bao — install the OpenBao CLI to ~/.local/bin when absent.
+#
+# The archive is checked against the release's own checksum list before
+# anything is unpacked from it: this is a binary the installer goes on to hand
+# the cluster's root token to.
 _ensure_bao() {
     if command -v bao >/dev/null 2>&1; then
         return 0
     fi
-    local _os _arch _archive _install_dir
-    _os=$(uname -s | tr '[:upper:]' '[:lower:]')
-    case "$(uname -m)" in
-        x86_64|amd64) _arch=amd64 ;;
-        aarch64|arm64) _arch=arm64 ;;
-        *) error "Unsupported architecture for the OpenBao CLI: $(uname -m)"; return 1 ;;
-    esac
+    local _asset _sums _base _tmp _install_dir _want _have
+    if ! _asset="$(openbao_cli_asset "${OPENBAO_CLI_VERSION}" "$(uname -s)" "$(uname -m)")" \
+        || ! _sums="$(openbao_cli_checksums_asset "$(uname -s)")"; then
+        error "The installer fetches the OpenBao CLI for Linux and macOS on x86_64 and arm64,"
+        error "  and this host is $(uname -s) on $(uname -m). Install bao ${OPENBAO_CLI_VERSION} and run again."
+        return 1
+    fi
+    _base="https://github.com/openbao/openbao/releases/download/${OPENBAO_CLI_VERSION}"
     _install_dir="${HOME}/.local/bin"
-    mkdir -p "${_install_dir}"
-    _archive="$(mktemp -d)/bao.tar.gz"
+    _tmp="$(mktemp -d)"
     info "Installing the OpenBao CLI ${OPENBAO_CLI_VERSION} to ${_install_dir}..."
-    curl -fsSL --connect-timeout 30 --max-time 300 \
-        "https://github.com/openbao/openbao/releases/download/${OPENBAO_CLI_VERSION}/bao_${OPENBAO_CLI_VERSION#v}_${_os}_${_arch}.tar.gz" \
-        -o "${_archive}"
-    tar -xzf "${_archive}" -C "${_install_dir}" bao
+    if ! curl -fsSL --connect-timeout 30 --max-time 300 "${_base}/${_asset}" -o "${_tmp}/${_asset}" \
+        || ! curl -fsSL --connect-timeout 30 --max-time 60 "${_base}/${_sums}" -o "${_tmp}/${_sums}"; then
+        error "Could not download ${_base}/${_asset} and its checksums (${_sums})."
+        rm -rf "${_tmp}"
+        return 1
+    fi
+    _want="$(awk -v f="${_asset}" '$2 == f {print $1}' "${_tmp}/${_sums}")"
+    _have="$(sha256_of "${_tmp}/${_asset}" || true)"
+    if [[ -z "${_want}" || "${_want}" != "${_have}" ]]; then
+        error "The OpenBao CLI archive does not match the release's checksum; nothing was installed."
+        error "  ${_asset}: expected ${_want:-<not listed in ${_sums}>}, got ${_have:-<no checksum tool>}"
+        rm -rf "${_tmp}"
+        return 1
+    fi
+    mkdir -p "${_install_dir}"
+    tar -xzf "${_tmp}/${_asset}" -C "${_install_dir}" bao
     chmod +x "${_install_dir}/bao"
-    rm -rf "$(dirname "${_archive}")"
+    rm -rf "${_tmp}"
     export PATH="${_install_dir}:${PATH}"
     command -v bao >/dev/null 2>&1 || { error "OpenBao CLI install failed."; return 1; }
-    success "OpenBao CLI installed."
+    success "OpenBao CLI installed (checksum verified)."
 }
 
 # =============================================================================

@@ -73,3 +73,54 @@ xargs_r() {
     [[ -n "${input}" ]] || return 0
     printf '%s\n' "${input}" | xargs "$@"
 }
+
+# sha256_of <file> — the file's SHA-256, hex, nothing else.
+#
+# GNU coreutils ships sha256sum; macOS ships shasum and no sha256sum. Both
+# print "<hash>  <name>", so the first field is the answer under either.
+sha256_of() {
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$1" | awk '{print $1}'
+    elif command -v shasum >/dev/null 2>&1; then
+        shasum -a 256 "$1" | awk '{print $1}'
+    else
+        echo "sha256_of: neither sha256sum nor shasum is installed" >&2
+        return 1
+    fi
+}
+
+# openbao_cli_asset <version> <uname -s> <uname -m> — the release archive name.
+#
+# OpenBao names its archives the way goreleaser does by default: the system as
+# uname -s prints it (Linux, Darwin) and the 64-bit Intel architecture as
+# x86_64, not amd64. The installer used to build bao_<ver>_linux_amd64.tar.gz
+# from its own lower-cased, Go-style names, an address the release has never
+# served, so every host without bao already installed stopped on a 404.
+#
+# Takes uname's two answers as arguments rather than calling uname, so the
+# mapping can be tested for every host the installer supports from one.
+# Fails for a host the release has an archive for and the installer is not
+# tested on, rather than guessing a name.
+openbao_cli_asset() {
+    local version="${1#v}" os arch
+    case "${2:-}" in
+        Linux|Darwin) os="$2" ;;
+        *) return 1 ;;
+    esac
+    case "${3:-}" in
+        x86_64|amd64)  arch=x86_64 ;;
+        aarch64|arm64) arch=arm64 ;;
+        *) return 1 ;;
+    esac
+    printf 'bao_%s_%s_%s.tar.gz' "${version}" "${os}" "${arch}"
+}
+
+# openbao_cli_checksums_asset <uname -s> — the release's checksum list for
+# that system: one file per system, each line "<sha256>  <archive name>".
+openbao_cli_checksums_asset() {
+    case "${1:-}" in
+        Linux)  printf 'checksums-linux.txt' ;;
+        Darwin) printf 'checksums-darwin.txt' ;;
+        *) return 1 ;;
+    esac
+}

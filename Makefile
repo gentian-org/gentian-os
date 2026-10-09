@@ -22,7 +22,7 @@ CROSSPLANE_IMAGE ?= xpkg.crossplane.io/crossplane/crossplane:$(CROSSPLANE_CLI_VE
 KUBEBUILDER_ASSETS ?= /tmp/envtest-bins/k8s/1.32.0-linux-amd64
 export KUBEBUILDER_ASSETS
 
-.PHONY: verify all build generate manifests test lint docker-build clean install-plugin uninstall-plugin validate-steps gen-credentials gen-authz-model check-credentials lint-cluster-config-keys lint-rbac-coverage lint-marker-ascii test-bootstrap-token-classification test-cert-manager-dns01-args test-step0-sync test-user-tenant-scaffold test-catalogue-default test-kubectl-gentian test-bootstrap-switches test-operator-network-policy test-store-network-policies test-kernel-network-policies gen-kernel-network-policies test-wildcard-cache test-dns-credential-single-writer lint-composed-resource-names lint-sequencer-targets lint-eso-readable-paths lint-template-placeholders lint-portability lint-image-digests check-render-fixtures lint-resolvable lint-unreachable lint-bootstrap-apps lint-step-contracts lint-job-scripts lint-claim-defaults lint-live-identifiers lint-password-schemes test-policy test-policy-openbao test-policy-authz verify-authz-vocabulary test-director-contract run-director-dev lint-namespace-layout verify-claim-applied verify-argocd-config verify-image-updates gen-provider-rbac lint-provider-rbac lint-credential-validators lint-credential-catalogue
+.PHONY: verify all build generate manifests test lint docker-build clean install-plugin uninstall-plugin validate-steps gen-credentials gen-authz-model check-credentials lint-cluster-config-keys lint-rbac-coverage lint-marker-ascii test-bootstrap-token-classification test-cert-manager-dns01-args test-step0-sync test-user-tenant-scaffold test-catalogue-default test-kubectl-gentian test-bootstrap-switches test-operator-network-policy test-store-network-policies test-kernel-network-policies gen-kernel-network-policies test-wildcard-cache test-dns-credential-single-writer lint-composed-resource-names lint-sequencer-targets lint-eso-readable-paths lint-template-placeholders lint-portability lint-image-digests check-render-fixtures lint-resolvable lint-unreachable lint-bootstrap-apps lint-step-contracts lint-job-scripts lint-claim-defaults lint-live-identifiers lint-password-schemes test-policy test-policy-openbao test-policy-authz verify-authz-vocabulary test-director-contract run-director-dev lint-namespace-layout verify-claim-applied verify-argocd-config verify-image-updates gen-provider-rbac lint-provider-rbac lint-credential-validators lint-credential-catalogue test-openbao-cli-download verify-openbao-cli-release
 
 all: generate build test
 
@@ -161,7 +161,7 @@ lint-yaml:
 ## The file list and flags must match CI exactly: -x follows sourced files, and no
 ## -S filter means info/style findings fail the build too. Hand-rolling a narrower
 ## invocation is how an SC2153 reached develop green-looking.
-lint-shell: validate-steps lint-step-contracts lint-resolvable lint-unreachable lint-bootstrap-apps lint-credential-fields lint-credential-validators lint-credential-catalogue lint-claim-defaults lint-live-identifiers lint-cluster-config-keys lint-template-placeholders lint-provider-rbac lint-password-schemes lint-rbac-coverage lint-composed-resource-names lint-sequencer-targets lint-eso-readable-paths lint-marker-ascii lint-scaffold-schemas lint-plan-defaults lint-legacy-profile-fields lint-step-order test-bootstrap-token-classification test-cert-manager-dns01-args test-step0-sync test-user-tenant-scaffold test-catalogue-default test-kubectl-gentian test-bootstrap-switches test-operator-network-policy test-store-network-policies test-kernel-network-policies test-wildcard-cache test-dns-credential-single-writer
+lint-shell: validate-steps lint-step-contracts lint-resolvable lint-unreachable lint-bootstrap-apps lint-credential-fields lint-credential-validators lint-credential-catalogue lint-claim-defaults lint-live-identifiers lint-cluster-config-keys lint-template-placeholders lint-provider-rbac lint-password-schemes lint-rbac-coverage lint-composed-resource-names lint-sequencer-targets lint-eso-readable-paths lint-marker-ascii lint-scaffold-schemas lint-plan-defaults lint-legacy-profile-fields lint-step-order test-bootstrap-token-classification test-cert-manager-dns01-args test-step0-sync test-user-tenant-scaffold test-catalogue-default test-kubectl-gentian test-bootstrap-switches test-operator-network-policy test-store-network-policies test-kernel-network-policies test-wildcard-cache test-dns-credential-single-writer test-openbao-cli-download
 	@git ls-files -z -- '*.sh' | xargs -0 shellcheck -x scripts/kubectl-gentian
 
 ## Round-trip the recovery kit: export one, load it back, prove every value
@@ -248,6 +248,18 @@ test-wildcard-cache:
 
 test-dns-credential-single-writer:
 	@bash scripts/tests/test-dns-credential-single-writer.sh
+
+## The OpenBao CLI archive's name for every host the installer supports, and
+## that an archive which does not match the release's checksum list installs
+## nothing. curl and uname are stand-ins; no network.
+test-openbao-cli-download:
+	@bash scripts/tests/test-openbao-cli-download.sh
+
+## The same, and that each address answers for the version versions.yaml pins.
+## Queries the release, so it needs network and is not part of the offline
+## lint set. Run it when the pin moves.
+verify-openbao-cli-release:
+	@GENTIAN_TEST_ONLINE=1 bash scripts/tests/test-openbao-cli-download.sh
 
 ## Report which declared credentials are satisfied. --source picks where to look:
 ## vault (installer preflight), cluster (day-2), git (CI on a deployments branch).
