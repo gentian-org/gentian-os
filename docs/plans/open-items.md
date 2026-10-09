@@ -32,7 +32,7 @@ code does what the decision says; it does not mean a cluster has shown it.
 | AD-9 | System services have no public route | **Holds by default; one claim setting departs from it.** Mail now faces the internet only through a proxy in `system-mail-dmz` that holds nothing; Postfix and Dovecot have no load balancer of their own. The model gateway's console has a claim setting, `llm.console.enabled`, off by default: off, `llm.<kernel domain>` has no route and the edge is not admitted to the gateway, so the cluster is in line with the decision on this point. Switching it on routes the console behind the kernel realm's session and `can_configure`, and is a deliberate departure the cluster's owner takes for that cluster ([llms.md](../design/llms.md)). TURN does not exist |
 | AD-10 | The portal splits two ways; the platform is a tenant | **Holds** |
 | AD-11 | The target layout applies to fresh installs | **Holds** |
-| AD-12 | The authorization store is a projection: the operator writes it, from git and from Keycloak's events; the director asks it | **Holds for who writes, with four things not built and one credential too many.** The operator receives Keycloak's signed statements and projects memberships, and projects roles, tenants, apps and grants from what git declares; the director asks the store and writes nothing to it. **Not built:** no code revokes a person's sessions when their groups change; no realm setting disables offline tokens (an app's client is left the optional scope `offline_access`); nothing reconciles the stored memberships toward Keycloak, so a statement that never arrives is repaired only by the next one about the same person; and the check at start that the defaults git implies are the ones the store holds does not exist. **Against the decision:** the operator still holds Keycloak's master administrator credential (defect 15) |
+| AD-12 | The authorization store is a projection: the operator writes it, from git and from Keycloak's events; the director asks it | **Holds for who writes, with two things not built, two stated as aims and one credential too many.** The operator receives Keycloak's signed statements and projects memberships, and projects roles, tenants, apps and grants from what git declares; the director asks the store and writes nothing to it. **Not built:** nothing reconciles the stored memberships toward Keycloak, so a statement that never arrives is repaired only by the next one about the same person; and the check at start that the defaults git implies are the ones the store holds does not exist. **An aim since 2026-10-09, not something the platform does:** no code revokes a person's sessions when their groups change, and no realm setting disables offline tokens (an app's client is left the optional scope `offline_access`). **Against the decision:** the operator still holds Keycloak's master administrator credential (defect 15) |
 | AD-13 | The edge is the only session authority | **Holds, with the two exceptions the entry names**: the App Store app's sign-in to a store, and the sign-in sidecar. An approved entry that keeps the app's own `Authorization` header is no exception to it: the session is still the edge's and still required |
 | AD-14 | Catalogue sources on the Cluster claim; a profile reaches a cluster only at a verified digest | **Holds, with the exception the entry names**: the installer places the Operations Console's profile at install, at the digest its catalogue's index lists or a pin, written as the director writes it. Its default Component is not pinned, so the operator does not compare it at rollout (part 3) |
 | AD-15 | Multi-language is a core requirement | **Partly.** Desktop, console and sign-in pages are translated. A component's `description` and a store listing's text are single strings; the desktop has no check for a missing translation in CI |
@@ -75,6 +75,8 @@ been seen working on a cluster. Until it has, it is not done.
   (`spec.perimeter.adminsApprove`) reaching the rights store and leaving it
   again, and the registrar refusing a change of who approves to somebody who
   may not approve.
+- The user tenant of a single-tenancy cluster written by the install with
+  that switch on, so that the user admin approves there.
 - The publishing proxy's limits and filters, and the limit on sign-in posts at
   the Gateway.
 - A public entry that passes its callers' credential to the app (`authMode:
@@ -101,6 +103,9 @@ been seen working on a cluster. Until it has, it is not done.
 - Every mail object written into the namespace of the server that reads it,
   and a tenant's mail held as not ready (`PostfixMapMissing`) until Postfix's
   map names its domain.
+- Mail to a removed person's address refused at `RCPT` while the record of
+  the removal stands and nobody holds the address. Shown against the rendered
+  Postfix in local containers.
 
 ### Catalogue and apps
 
@@ -108,6 +113,8 @@ been seen working on a cluster. Until it has, it is not done.
   into a cluster ahead of an install.
 - A profile bundle with its companions under one digest, and the operator's
   check of all of it before rollout.
+- The same check for a Component the operator places by default, against the
+  bundle recorded with its profile.
 - What a newer build of an app left behind, listed and removed.
 - The App Store app placed on tenants where the cluster offers a store.
 - The model gateway as a requirement an app declares, with its image named by
@@ -166,7 +173,7 @@ Each is true of the code today.
 | | Defect | Where it is described |
 | --- | --- | --- |
 | 1 | **An app's own client and its token: closed in two parts, open in a third.** A browser page that sends the app's own token keeps it on an entry that declares `clientAuthorization: app`, once the tenant's perimeter approver approved it; without the declaration or the approval the Gateway still removes the header. A client with no browser session (sync client, mobile app, script, webhook) reaches the app through a public entry of `authMode: app` with a credential the app issued. **Still open**: a client that needs the app's cookies on a public address does not work, which is what Synapse's sign-in needs, so Element is not served yet; no bearer token is verified at the edge; and the catalogue's apps have to declare the entries before any of it helps them | [routing.md §4.1, §7](../design/routing.md) |
-| 2 | **Signing out does not reach every app.** The session ends at the Gateway when its access token runs out, and the realm now tells an app inside the cluster where the app can be told (built 2026-10-09): Nextcloud (`nextcloud-base-ce`) and XWiki through their own client, Docmost and OpenProject through the sign-in sidecar. Still open: Activepieces 0.28.0 has nothing to end a session with (an hour at most); Open WebUI needs a switch and Redis; Element needs Synapse's switch and its own Composition to register an address; `nextcloud-base-od` declares it and has not been run; Mathesar and Odoo cannot be told at all. The realm tells once and not when a session only runs out, so an app's own session lifetime remains the bound | AD-13, [iam.md §1.12](../design/iam.md), [security.md §2.12, §2.15](../design/security.md) |
+| 2 | **Signing out does not reach every app.** The session ends at the Gateway when its access token runs out, and the realm now tells an app inside the cluster where the app can be told (built 2026-10-09): Nextcloud (`nextcloud-base-ce`) and XWiki through their own client, Docmost and OpenProject through the sign-in sidecar. Still open: Activepieces 0.28.0 has nothing to end a session with (an hour at most); Open WebUI needs a switch and Redis (on the roadmap, item 2.27); Element needs Synapse's switch and its own Composition to register an address; `nextcloud-base-od` declares it and has not been run; Mathesar and Odoo cannot be told at all. The realm tells once and not when a session only runs out, so an app's own session lifetime remains the bound | AD-13, [iam.md §1.12](../design/iam.md), [security.md §2.12, §2.15](../design/security.md) |
 | 3 | **One key opens the rights store.** Six programs present the same OpenFGA key, and it can write | [operator-split-plan.md §6](operator-split-plan.md) |
 | 4 | **Closed in the code on 2026-10-09, not yet shown on a cluster: nobody could publish by default.** The group `gentian:tenant:<t>:perimeter` is now created with every tenant, and the cluster's administrator approves in every tenant its cluster operates. A cluster installed before that gets both when the operator and the tenant's composition are updated; until then approving still needs a hand-made group | part 1 and 2, AD-6 |
 | 5 | **The publishing proxy checks no caller.** No entry claims otherwise any more: the modes that named a check are refused by the schema, and `authMode: app` hands the credential to the app. What stays open is the consequence the owner accepted for now: the platform does not know the caller on such a path, and a removed person's app password or token works until the app revokes it | [security.md §2.14](../design/security.md), AD-1, [roadmap.md](../roadmap.md) 1.34 |
@@ -174,14 +181,14 @@ Each is true of the code today.
 | 7 | **No kernel namespace restricts outgoing connections** | [security.md §2.13](../design/security.md) |
 | 8 | **An import carries the source's approvals.** The new tenant's manifest is written from the bundle, so the privileges granted and the entries approved in the exported tenant — public addresses, with their kind, and kept `Authorization` headers — arrive approved, and nobody on the importing cluster approved them | [data-lifecycle.md](../design/data-lifecycle.md) |
 | 9 | **A deleted tenant leaves entries behind**: its rights and memberships in the rights store, which a later tenant of the same name would inherit, and its keys in the shared cache. Not now: on the roadmap, item 1.38 | [data-lifecycle.md](../design/data-lifecycle.md), [roadmap.md](../roadmap.md) |
-| 10 | **Mail to a removed person's address is still accepted** where the recipient policy is `catchall` (the default), and an IMAP session open at the removal is not ended. The mailbox itself is archived or deleted as chosen | [mail.md §5c](../design/mail.md) |
-| 11 | **The Operations Console's default Component is not pinned.** The installer now places its profile only at a stated digest, with its bundle and origin; the operator compares a profile with its bundle at rollout only for a Component pinned to a digest, and the one it creates for a `defaultForTenants` profile carries none. The digest the installer uses comes from the catalogue's own unsigned index unless the person installing pins one | AD-14, [security.md §2.10](../design/security.md) |
+| 10 | **Mail to a removed person's address is accepted again once the record of the removal is gone.** Closed in the code on 2026-10-09 for as long as the record stands, and shown against Postfix in local containers, not on a cluster: the address is refused at `RCPT`, archived or deleted. The record of a deleted mailbox is removed after 30 days, and under the recipient policy `catchall` (the default) the address is accepted from then like any other nobody owns. A person removed before this was built is not known. An IMAP session open at the removal is not ended | [mail.md §5c](../design/mail.md) |
+| 11 | **A default Component's digest is stated only on its profile.** Closed in part on 2026-10-09: the operator now compares the profile, and what its bundle brings, with the bundle recorded with it before it rolls out a Component it placed by default, and holds the Component when they differ. Open: no second place states that digest, as the tenant's manifest does for an install, so a profile replaced together with its bundle passes. The digest the installer uses comes from the catalogue's own unsigned index unless the person installing pins one | AD-14, [security.md §2.11](../design/security.md) |
 | 12 | **The model gateway's console switch has not run on a cluster.** The console is off unless the claim says `llm.console.enabled: true`, so the defect as it stood -- no way to serve models without the console -- is closed in the code. Not yet seen: that an upgraded cluster loses the route and the edge's rule at the gateway, and that the console works behind the edge when switched on (its own sign-in and its `Authorization` header are held by tests of the rendered policy only) | part 1, AD-9; [llms.md](../design/llms.md) |
 | 13 | **A cluster installed before 2026-10-09 keeps every Crossplane resource type** — the 391 CRDs of the four providers, and provider-http's until `B-05` removes that provider. A fresh install creates 42: the 25 types the platform uses and the 17 that cannot be left out (`crossplane/providers/activation.yaml`, held by `make lint-provider-activation`); Crossplane never deactivates a type, so nothing narrows an existing cluster. The narrowed list has not run on a cluster yet (part 2) | [install-reference.md §4](../install-reference.md) |
 | 14 | **Two images float.** `vllm/vllm-openai` falls back to `latest` when the claim names no tag, and the model gateway's cache runs `redis:alpine`. `lint-image-pins` lists the first as known and does not look at the second | `kernel/services/llm/` |
 | 15 | **The operator holds Keycloak's master administrator credential.** It reads the `keycloak-admin` Secret and hands it to the Jobs that configure realms, clients and groups. The process that writes the rights store can therefore change any identity as well | part 1, AD-12; `identity_reconciler.go` |
 | 16 | **Argo CD's repository credential can push** | [operator-split-plan.md §6](operator-split-plan.md) |
-| 17 | **A change of a person's groups does not end their sessions**, and offline tokens are not disabled. AD-12 states both; no code does either. An app that read groups from its own token keeps them until that token or the app's session ends | part 1, AD-12 |
+| 17 | **A change of a person's groups does not end their sessions**, and offline tokens are not disabled. AD-12 states both as an aim since 2026-10-09; no code does either. An app that read groups from its own token keeps them until that token or the app's session ends | part 1, AD-12 |
 | 18 | **The development catalogue is not republished until the released branch can be built.** The catalogue repository's publishing job builds the released and the development catalogue together, and fails while the released branch lacks the catalogue build script. A profile changed on the development branch therefore does not reach `…/gentian-apps/develop`, and a cluster installed from a branch keeps reading the last catalogue that was published | [custom-catalogues.md §3](../custom-catalogues.md) |
 | 19 | **The XWiki profile on the development catalogue cannot be installed.** It names a chart (`xwiki-ce` in the upstream chart repository, which serves `xwiki`) and an image that do not exist. Sign-out reaching XWiki (defect 2, part 2) is therefore held by tests of the profile only | the catalogue repository, `profiles/xwiki/xwiki-ce` |
 | 20 | **`backchannelLogoutUrl` remains in profiles outside this repository.** The schema refuses the field (`OIDCClientSpec`, `api/v1alpha1/profile_parts.go`): a bundle that still carries it is not admitted, and the app is not installed or updated from it, until the profile declares `backchannelLogout` (exposure and path) instead. The catalogue's released branch and some extension profiles still carry the old field | [app-customization.md](../app-customization.md) §2, [iam.md §1.12](../design/iam.md) |
@@ -191,28 +198,21 @@ Each is true of the code today.
 
 ## 4. Decisions waiting for the owner
 
-1. **Whether a default Component is pinned** (AD-14). The installer places
-   the Operations Console's profile at a stated digest, with its bundle. The
-   operator compares a profile with its bundle only for a Component pinned to
-   a digest, and gives the Component it creates for a `defaultForTenants`
-   profile none. Either the operator pins such a Component to the digest of
-   the bundle its profile carries, which makes the comparison run for it, or
-   the default stays unpinned and the comparison is an install's alone.
+1. **Whether a default Component is pinned** (AD-14). **Decided
+   2026-10-09** and built: the operator compares a Component it places by
+   default with the digest of the bundle recorded with its profile, at
+   rollout, as it does for an install. What is left is defect 11.
 2. **Who may publish by default** (AD-6): decided on 2026-10-09 and built.
    The perimeter group is created with the tenant, the cluster's
    administrator approves, and a tenant's admins approve only where the
-   cluster's administrator switched it on. One choice in it is the owner's to
-   confirm or flip: the user tenant of a single-tenancy cluster is written
-   with the switch off, so the platform admin approves there and the user
-   admin does not until `tenants set user
-   --admins-approve-public-addresses=true`.
+   switch is on. **Decided 2026-10-09**, the one choice that was left: the
+   install writes the user tenant of a single-tenancy cluster with the switch
+   on, so the user admin approves there. Every other tenant starts with it
+   off, and a user tenant that exists is not rewritten.
 3. **Sessions and offline tokens when a person's groups change** (AD-12).
-   Who writes the rights store is decided: the operator, and AD-12 says so.
-   Two sentences of the decision have no code: a membership change revokes
-   the person's sessions, and offline tokens are disabled. Either they are
-   built, or the decision is changed to say what bounds a stale group
-   instead (the access token's lifetime and `sessionMaxAge`). The operator's
-   hold on Keycloak's master administrator credential is defect 15.
+   **Decided 2026-10-09**: AD-12 states both as an aim, not as something the
+   platform does. Neither is built (defect 17). The operator's hold on
+   Keycloak's master administrator credential is defect 15.
 4. **What `basic`, `signature` and `jwt` mean on a perimeter entry** (AD-6,
    AD-1). **Decided 2026-10-09**: the schema refuses them there, with
    `bearer`, until they can be enforced; what can be delivered now is
@@ -237,6 +237,14 @@ Each is true of the code today.
    does today, because some entries are both. The sign-in sidecar removed one
    reason for an app to bring its own Composition; if the others go the same
    way the rule can return to exactly one.
+10. **Mail to a removed person's address** (defect 10). **Decided
+    2026-10-09** and built: it is refused, whether the mailbox was archived
+    or deleted.
+11. **Whether a perimeter approver who is not a tenant administrator is let
+    into the admin console.** **Decided 2026-10-09: no.** The console stays
+    the tenant administrators'.
+12. **Open WebUI ending a session at a sign-out.** **Decided 2026-10-09**:
+    not built now; on the roadmap, item 2.27.
 
 ## 5. Known and deliberately not now
 

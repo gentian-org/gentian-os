@@ -1164,6 +1164,20 @@ does not exist yet that something cannot be the Composition.
   - `[ ]` Sign in through Element on a cluster, and reach the chat server with a second Matrix client.
   - `[ ]` Decide federation separately: it needs a published port of its own.
 
+### 2.27 Open WebUI Ends a Session When the Realm Signs a Person Out (*)
+* **Target Domain**: App Catalogue & Sessions
+* **Context**: Open WebUI can be told of a sign-out by the realm and checks
+  what it is told, but it ends the session only when it runs with Redis. Its
+  profile declares the sign-out and runs it without, so the declaration has
+  no effect and a session there lasts as long as Open WebUI's own token
+  ([iam.md §1.12](design/iam.md)). The front door refuses a signed-out
+  person's next request either way.
+* **Proposed Solution**: Run Open WebUI with Redis and its switch for
+  sign-out, so that a sign-out at the realm ends the person's session in it.
+* **Backlog Items**:
+  - `[ ]` Give the Open WebUI profile a Redis and the setting that makes it honour a sign-out.
+  - `[ ]` Show, against Open WebUI's image and the realm, that a sign-out ends the session.
+
 ## 3. User Management & Shell UI
 
 ### 3.1 SCIM & Provisioning Bus Integration (*)

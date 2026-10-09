@@ -611,7 +611,8 @@ Nextcloud's `user_oidc` checks signature, audience, event, the absence of a nonc
 holds a session for the token's `sid`, `sub` and issuer together; XWiki's OIDC authenticator
 checks signature, issuer and audience against the keys the realm publishes, provided a provider
 is configured, which the profile does. (Open WebUI checks the token as well, and cannot end the
-session without Redis, so its declaration has no effect yet.)
+session without Redis, so its declaration has no effect yet;
+[roadmap.md](../roadmap.md) 2.27.)
 
 **(b) Who can reach the path.** Nothing new. The address is the app's Service inside the
 cluster, and what reaches an app's pods is what the tenant's network policies already admit

@@ -399,7 +399,8 @@ policy. `id-admin.<kernel>` is retired.
   survives. Every app in the zone becomes unreachable whatever its own cookie
   says, and which of thirty apps implement back-channel logout stops
   mattering. Refresh tokens are session-bound and die with the Keycloak
-  session; offline tokens are disabled, because they would survive it.
+  session; offline tokens are to be disabled, because they would survive it
+  (an aim, not built: AD-12).
 - **Platform rights follow the store; app rights follow the token.**
   Membership reaches OpenFGA from Keycloak's events through the operator
   (**changed 2026-10-09** from "through the director", AD-12)
@@ -407,8 +408,9 @@ policy. `id-admin.<kernel>` is retired.
   case (AD-12; the bound is in authorization-model.md §2), and the bouncer evicts its cached decisions on the
   `ReadChanges` poll, so a revoked platform right is gone within one poll
   interval without any token being touched. Apps, however, read groups from
-  their own tokens, so for *their* rights the rule stays: **a membership
-  change revokes the user's Keycloak sessions.** The operator, on applying
+  their own tokens, so for *their* rights the aim stays: **a membership
+  change revokes the user's Keycloak sessions.** Not built, and stated as an
+  aim since 2026-10-09 (AD-12). As drawn, the operator, on applying
   a group change, calls the admin API's logout for that user; the back-channel
   logout reaches the director, the bouncer denies the revoked `sid` at L2; the next
   request is a silent re-login with the new groups. The hard bound for
