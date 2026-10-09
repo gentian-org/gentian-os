@@ -162,16 +162,27 @@ refused. A backup and a restore say what they did not do: the result of a
 backup names what the bundle does not hold, and a step that fails fails the
 whole act with its reason.
 
+A bundle states its format in its manifest (`schemaVersion`), now 3. Format 3
+adds what a bundle did not hold before: the data of apps uninstalled with
+their data kept, the mailboxes, and the access rights that follow from
+nothing else. A restore reads formats 1 to 3, puts back what the bundle
+holds, and refuses a format newer than its own.
+
 **Import = create + restore.** The director first makes sure the cluster
 has the definition of every app the bundle's tenant lists: already there at
 the same build, or fetched at that build from one of the cluster's
 catalogues. If one cannot be had, the import is refused, names it, and has
 changed nothing. Then it commits the new tenant by the code a normal create
-uses, waits until the platform has made it and its apps empty, and starts an
-ordinary restore.
+uses, waits until the platform has made it and its apps empty, and starts a
+restore that says the tenant was made new for the bundle
+(`TenantRestore.spec.intoNewTenant`).
 
 The new tenant takes its settings from the bundle and its *names* from its
-own name: its realm, its database prefix and its bucket prefix. So a bundle
+own name: its realm, its database prefix and its bucket prefix. Three
+settings are not the bundle's: the new tenant keeps its data when retired
+(`deletionPolicy: Retain`) whatever the old one said, it has no catalogues of
+its own, and a namespace of another name that the old tenant was placed in
+is not carried. So a bundle
 imported under another name beside the tenant it came from touches nothing of
 that tenant. What the bundle names after the old tenant comes back under the
 new one's names: databases an app made for itself, the platform's groups
@@ -179,7 +190,9 @@ with their members, mailboxes (by the part of each address before the @, in
 the new tenant's mail domain) and entries of the rights store. The old
 tenant's sign-in clients are not imported.
 
-Two things are different from a restore, because the tenant is new. The data
+Two things are different from a restore, because the tenant is new; both
+follow from `intoNewTenant`, and the second holds for any bundle taken of a
+tenant of another name or on another cluster, whatever the restore says. The data
 of apps the bundle holds as uninstalled comes with stores made for it — the
 database and its role, the bucket, the volume claims — and the apps stay
 uninstalled; an app whose definition this cluster does not have is left out
@@ -264,8 +277,10 @@ much it matters.
    granted beyond them. Consequence: they outlive a deleted tenant, and a
    tenant created later under the same name finds the old rights on its name.
 2. **An import carries the privileges and published addresses** the bundle's
-   tenant had approved (`spec.privileges`, `spec.exposures`) as approved.
-   Open, until an import has been drilled. Rights *in the rights store* are
+   tenant had approved (`spec.privileges`, `spec.exposures`) as approved: the
+   new tenant's entry in git is written from the bundle's settings, and these
+   two are among them. Nobody on the importing cluster approved them. Open,
+   until an import has been drilled. Rights *in the rights store* are
    not carried (§4); these are settings of the tenant's entry in git.
 3. **An import brings an uninstalled app's data only if the cluster has the
    app's definition.** It fetches the definitions of the apps the tenant

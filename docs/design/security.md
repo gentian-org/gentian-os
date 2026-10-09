@@ -227,6 +227,10 @@ On a cluster that serves models, `system-llm` holds four pod sets that listen, a
 | Its Redis | `llm-cache-ingress` | 6379 | the gateway's pods |
 | The mock model server (clusters without GPUs) | `llm-mock-ingress` | 8000 | the gateway's pods |
 
+**The console has no switch of its own.** `llm.<kernelDomain>` is routed wherever the cluster serves models (the claim's `llm.enabled`, `kernel_gateway_routes.go`), behind the kernel session and for whoever may configure the cluster (`can_configure`). A cluster cannot serve models and leave the console unpublished.
+
+**The gateway's image is a named release.** `kernel/services/llm/manifests/values.yaml` names LiteLLM by tag and digest. `make lint-image-pins` fails on an image under `kernel/`, `charts/` or `crossplane/` that names `latest`, and on the gateway's image written without its digest, in the values and in the rendered chart. One `latest` is known and listed there: the fallback tag of a real vLLM instance.
+
 The database's metrics port (9187) is closed. The rule for the gateway has the same two sides as a store's: its policy admits every tenant namespace, and the tenant's side (§2.6) opens port 4000 for the apps that declared the gateway and for no other. Unlike a store, no pod of `system-llm` itself is admitted to the gateway: nothing there is its client.
 
 **The desktop is a client of the gateway**, for the assistant on it. Its profile declares the gateway as an app's does, optionally, and the operator serves it per tenant (`internal/controller/model_access_reconciler.go`): a key generated in the vault for this tenant's desktop alone, registered under the alias `<tenant>-desktop`, delivered in the Secret `llm-credentials-desktop` of the tenant's namespace, and written on the tenant's record so that deleting the tenant with its data removes it. The desktop's chart is told the gateway's address and that Secret's name; the key is in no release value and no Component. The desktop's pods reach port 4000 of `system-llm` by a rule of `component-desktop`, written once the key is delivered, and nothing else in that namespace. The platform tenant's desktop is served the same way -- its namespace is a tenant-tier namespace like any other. What this leaves as it was:
@@ -323,6 +327,19 @@ cluster directly is not constrained by this: that is the cluster owner's
 authority, and a ComponentProfile written there with no origin is taken for
 what its name says.
 
+**The installer is such a writer, and what it writes is not checked.** At
+install it fetches the default profiles -- the Operations Console's, from
+`<catalogue address>/profiles/operations-console.yaml`, by default at
+`https://catalogue.aluvian.io` (`GENTIAN_STORE_CATALOGUE_URL`,
+`GENTIAN_DEFAULT_PROFILES`) -- over HTTPS and commits each to the cluster's
+catalogue directory under the name the file states
+(`_scaffold_default_profiles`). There is no digest or signature to hold the
+file to, and it is written without an origin, so the cluster takes it for a
+profile no catalogue brought. Every other profile from a catalogue is
+materialised by the director with its origin and bundle recorded. This is a
+known deviation, not an approved exception; what the installer should hold
+the file to is undecided.
+
 ---
 
 ### 2.11 Who may open a mailbox with a sign-in token
@@ -388,7 +405,8 @@ within the hour a session lasts.
 **Which code is handed the app's keys.** The handler is part of the app's bundle. It is run only
 from a bundle of a catalogue of the whole cluster, for an install pinned to that bundle's digest;
 the operator gives the sidecar the bundle's bytes and their sha256, and the sidecar loads no
-other file. A tenant's own catalogue cannot bring one. What it is handed is this app's own
+other file. A tenant's own catalogue cannot bring one, and no sidecar runs for a tenant that signs
+in in the kernel realm: the Component is held with `SignInSidecarRefused`. What it is handed is this app's own
 database login and the secrets of this app the profile lists, read from this app's vault paths; a
 profile names which, never where.
 
@@ -481,7 +499,7 @@ What follows from this: OpenFGA is reachable from the programs that ask it and f
 
 ### 2.14 What a published entry is held to, and the limits at the edge
 
-A perimeter entry is answered by a publishing proxy in the tenant's DMZ (AD-6). The proxy checks nobody -- that is the app's -- and holds every request to the following, whatever the profile says (`internal/controller/component_perimeter_config.go`):
+A perimeter entry is answered by a publishing proxy in the tenant's DMZ (AD-6). The proxy checks nobody, for any `authMode`, and holds every request to the following, whatever the profile says (`internal/controller/component_perimeter_config.go`):
 
 | | |
 | --- | --- |
@@ -507,7 +525,9 @@ With the kernel's network rules on (§2.13) the proxy's pods admit the Gateway's
 
 **The numbers** are the platform's, and the cluster's administrator may change them through the operator's environment: `PERIMETER_MAX_BODY`, `PERIMETER_RATE_PER_SECOND`, `PERIMETER_RATE_BURST`, `PERIMETER_CONCURRENT_PER_CLIENT`, `PERIMETER_CLIENT_ADDRESS_HEADER` (a header name, or `none`), `EDGE_SIGN_IN_POSTS_PER_MINUTE` (`0` turns that limit off). A profile cannot change any of them.
 
-**Not built.** Limits on routes behind a session (sync clients and uploads have bursts of their own); a limit on the token endpoint; a cap on a WebSocket's duration; a global limit across Envoy pods, which needs a rate limit service; a web application firewall; and the checks an entry's `authMode` names (`basic`, `signature`, a bearer verified at the edge) -- the proxy still checks nobody.
+**What an entry's `authMode` means today: nothing at the platform.** A perimeter entry states `jwt`, `bearer`, `basic`, `signature` or `none`, and the proxy is rendered the same for all five. No credential is verified at the edge. For `jwt`, `bearer` and `basic` the app cannot verify one either: the proxy removes `Authorization` and `Cookie` from every request, so a caller's credential in either does not arrive. What still reaches the app is the path, the query, the body and the other headers, so a link that carries its own secret and a signature in a header of its own can be checked by the app. The director says the same to the approver: an entry other than `none` is listed as reachable by anyone, with the app named as the only check.
+
+**Not built.** Limits on routes behind a session (sync clients and uploads have bursts of their own); a limit on the token endpoint; a cap on a WebSocket's duration; a global limit across Envoy pods, which needs a rate limit service; a web application firewall; and the checks an entry's `authMode` names (`basic`, `signature`, a bearer verified at the edge).
 
 **How it is held.** The proxy's rules are asked of the proxy: `TestTheProxyItself*` (`internal/controller/component_perimeter_nginx_test.go`) start the image the operator deploys with the configuration it renders, in front of a server that says back what it was sent, and send it some ninety paths written to leave a prefix or reach a denied path, every identity header in three spellings, oversized bodies and headers, and bursts from two addresses. They need docker and are skipped without it. The sign-in limits are validated against the pinned release's definitions, and `TestEnvoyGatewayAcceptsTheRateLimits` puts them through that release's own translator where its `egctl` is installed.
 
@@ -521,20 +541,35 @@ changes only when the code does.
 | Control | Status | Where |
 | --- | --- | --- |
 | Keycloak per-tenant realms, kernel realm, OIDC for portal and apps | Implemented | Suze composition, `identity_reconciler.go` |
-| Keycloak group → OpenFGA tuple sync | Implemented as a poll; **the poll is retired by AD-12** | `authz_bridge_reconciler.go` polls on a timer with an admin credential. Membership stays stored as `group#member` tuples, as a projection the **operator** writes from Keycloak's signed event-listener statements (`membership_listener.go`). The director was to be that writer and is not: it writes nothing to the store |
+| Keycloak group → OpenFGA tuple sync | Implemented, from events | Membership is stored as `group#member` tuples, a projection the **operator** writes from Keycloak's signed event-listener statements (`membership_listener.go`, `internal/membership`). The poll on a timer is gone from the code. The director was to be that writer (AD-12) and is not: it writes nothing to the store |
+| Keycloak's master administrator credential | **Held by the operator** | The operator reads the `keycloak-admin` Secret and hands it to the Jobs that configure realms, clients and groups (`identity_reconciler.go`, `internal/keycloak/shell_helpers.go`). The process that writes the rights store is therefore also the one that can change any identity. Narrowing it is **Target** |
 | `AppGrant` → tuples | Implemented | `app_grant_reconciler.go`; grants are structure and stay stored. AD-12 would have made the director the store's only writer; as built the operator writes the store and the director only asks it |
 | Gateway ext-auth calling OpenFGA `Check` on every session route | Implemented | `internal/bouncer`, attached by `internal/controller/bouncer.go`; the session filter runs first and the bouncer refuses a request without a token it verified ([routing.md §4.1](routing.md)). Fails closed |
 | Session cookies: per host, encrypted, `SameSite=Lax`; frame policy naming the tenant's own desktop | Implemented | `zoneSecurityPolicySpec`, `componentFramers` ([routing.md §4.2, §4.3](routing.md)) |
+| Sign-out reaching the apps | **Target** | Sign-out ends the realm session and the edge's cookies. The realm calls an app only where the app's own OIDC client declares a `backchannelLogoutUrl`; any other session an app keeps itself lasts as long as the app lets it, though the front door refuses the person's next request ([routing.md §4.2](routing.md)) |
+| Identity headers to a backend, signed | **Target** | `x-gentian-*` are plain headers. What makes them the bouncer's word is that only the Gateway's Envoy pods reach the backend: a NetworkPolicy, and for the kernel side one that is off by default (§2.13). The same holds for a sign-in sidecar's `/sso/login` (§2.12) |
+| An app's own bearer token through the front door | **Not carried** | On a session route the Gateway drops a client's `Authorization` header before it writes the session's, so an app whose client sends a token of the app's own loses it there ([routing.md §4.1](routing.md)). Only Keycloak's administration console is exempt |
 | The session's tokens stop at the edge: a backend gets its own cookies, the identity headers, and a bearer only where its exposure says `forwardToken` | Implemented | `internal/bouncer/cookies.go` rewrites the `Cookie` header without the edge's cookies on every allowed request of a session route; the names come from the route table ([routing.md §4.1](routing.md)) |
 | Tenant namespace + NetworkPolicy default-deny egress | Implemented | `internal/kernel/netpolicy/` — tenant namespaces only |
 | Per-app egress to the stores a profile declares | Implemented, mail and identity not narrowed | `internal/kernel/netpolicy/kernel.go`, policy `kernel-access-<app>`; see §2.6 |
 | NetworkPolicy in the kernel namespaces | Implemented for ingress, **off by default**; egress open | With `KERNEL_NETWORK_POLICIES=true` each of the eleven kernel namespaces refuses an ingress nothing lists, from one inventory (`internal/kernel/kernelnet/inventory.yaml`) the policies are generated from; webhook ports admit any source, because no portable rule names the API server (§2.13). Applied by the installer with the namespaces. Off until a cluster has run them; without the switch a kernel pod is selected only by the policies its own chart delivers. No kernel namespace restricts egress (gap G28, the egress half) |
 | NetworkPolicy in system and shared namespaces | **Partial**: ingress to twelve servers, egress from one | One on each shared store -- PostgreSQL, MariaDB, Redis, MinIO -- admitting tenant namespaces and the platform's named clients (§2.7). One each on Dovecot and Postfix, which no longer face the internet, and one on the proxy in the mail DMZ that does -- the one pod of these whose egress is restricted too (§2.8). One on each server of the model gateway's namespace (§2.9). The kernel's own PostgreSQL and the operator keep the policies their charts deliver, beside the kernel namespaces' rules |
-| Publishing proxy: declared paths only, one reading of a path, every identity header removed, size, time and rate limits per client address | Implemented | `component_perimeter_config.go`; run against the proxy itself (§2.14). It checks nobody: an entry's `authMode` is still the app's |
+| Publishing proxy: declared paths only, one reading of a path, every identity header removed, size, time and rate limits per client address | Implemented | `component_perimeter_config.go`; run against the proxy itself (§2.14) |
+| Publishing proxy: the caller check an entry's `authMode` names | **Target**, for every mode | The proxy checks no caller. `basic`, `signature`, `jwt` and `bearer` on a perimeter entry change nothing in what is rendered, and `Authorization` is removed on the way in (§2.14) |
+| Publishing an entry: approval by the tenant's perimeter approver, of what an installed app declares | Implemented | The director lists every perimeter entry an installed app declares and refuses an approval of anything else, or with a main-address setting that is not the entry's (`internal/director/api/exposure_requests.go`, `internal/addresses`; [routing.md §5](routing.md)) |
+| A website on the cluster's main address | Implemented; the cookie finding is open | §2.10: single-tenancy only, two people say so, the approver acknowledges the rule. A script there can still disturb sign-in on the other addresses |
+| Address names the platform keeps | Implemented | `internal/hostnames`, asked by the director and the operator (§2.11) |
+| Default profiles the installer places | **Unverified** | Fetched by address at install, with no digest or signature, and written with no origin (§2.11). A decision is open |
+| Mail: one proxy faces the internet, the mail servers do not | Implemented; proven in local containers, not on a cluster | `kernel/services/mail-edge`, in `system-mail-dmz`: PROXY protocol, TLS passed through, limits per client address (§2.8). Egress from `system-mail` is open |
+| A mailbox opened with a sign-in token | Implemented | Only for an app that declares `requires.services.mail.imap.tokenSignIn`, by the scope `mailbox` (§2.11, the section on mailboxes) |
+| Sign-in sidecar | Implemented, with the weaknesses listed | Only from a cluster catalogue's bundle pinned by digest, never in the kernel realm (§2.12). It can become anybody in its app |
+| The rights check for a component (`requires.services.rights`) | Implemented | A key per component for one question at the bouncer -- may this person use that app of my tenant -- instead of the store's key (`rights_check.go`, `internal/bouncer/check.go`). Platform-trust profiles only |
+| A tenant's backup and deletion | Implemented | A bundle (format 3) holds what a deletion destroys, mailboxes included, and a deletion destroys the mailboxes. Rights recorded as granted are not written into a tenant made new for the restore (`TenantRestore.spec.intoNewTenant`); they are named instead ([data-lifecycle.md](data-lifecycle.md)) |
 | Approval path for profile-declared egress | **Target** | `security.egress` reaches the NetworkPolicy uninspected; `PlatformSecurityPolicy` allowlists MAC waivers only (gap G27) |
 | Pod-security admission (privileged, host ns, non-root, hostPath, caps, priv-esc) | Implemented | `kernel/security/kyverno/policies/` |
 | Gateway rate limit | **Partial**: sign-in posts only | Envoy's local limit per client address on the identity provider's sign-in pages and on a sign-in sidecar's answer path (`edge_rate_limit.go`, §2.14). Routes behind a session, the token endpoint and WebSocket duration: **Target** |
 | Service mesh, SPIFFE/SPIRE, workload identity | **Target**, with one exception | The operator's app-lifecycle listener admits its two callers, the director and the usher, by ServiceAccount: each presents a projected token for the audience `gentian-os-operator` and the operator asks the API server whose it is (`internal/applifecycle/auth.go`). Every other call between platform services still rests on a shared key or on the person's token |
+| One credential per process at the rights store | **Target** | OpenFGA has one preshared key. The operator, the director, the bouncer, the usher, the custodian and the registrar all present it, and it can write |
 | Agent identities, RFC 8693 exchange, `agent`/`task` types | **Target** | model v0 has no such types |
 | Human-identified secret writes (token exchange, no service token) | Implemented | `internal/custodian/` |
 | Human-identified configuration writes | **Target** | the director verifies the person and commits; the operator's lifecycle API admits only the director's ServiceAccount to its commands and still trusts the `X-Gentian-Actor` name it passes |
@@ -542,7 +577,10 @@ changes only when the code does.
 | OpenBao policy per (tenant, app) | **Target** | `app-default.yaml` composes none |
 | Console admin-action audit | Implemented | BFF `audit_log.py` |
 | Decision log, request-id correlation | **Target** | — |
-| Commit / image signing and verification | **Target** | — |
+| Commit signing and verification | Implemented, where the deployments repository names the keys | The director signs every commit (`internal/director/gitops/signing.go`); the installer signs its own with the break-glass key, found by its recorded id (`scripts/lib/signing.sh`). Argo CD verifies through the AppProject's `sourceIntegrity` and its keyring (step `B-10`). A repository without key ids renders no policy, and the director then commits unsigned and says so |
+| Images named by release | **Partial** | No image under `kernel/`, `charts/` or `crossplane/` may name `latest`, and the model gateway's is held to tag and digest (`make lint-image-pins`, §2.9). Other images are pinned by tag; the Keycloak event listener's follows a branch tag |
+| Image signature verification | **Target** | — |
+| What the installer downloads | **Partial** | The OpenBao CLI is fetched from the release's address and held to a checksum (`make test-openbao-cli-download`). The default profiles are not held to anything (above) |
 | Rotation rolling app workloads (Reloader) | Partial | annotation on the operator Deployment and a few kernel services; no composition adds it, so no tenant app is rolled (gap G13) |
 | Admission guard against literal secrets in `Release.set` | **Target** | — |
 
@@ -561,9 +599,9 @@ on every Keycloak upgrade.
 | **OpenFGA** | ReBAC authorization PDP (*what you may do*). Relationship tuples for humans/agents/apps/assets; Conditions + contextual tuples for ABAC; the derived-ceiling schema. | Apache 2.0 |
 | **Director** | Turns an authorised request into a signed commit to the deployments repository. It asks OpenFGA before each one and writes nothing there. Keycloak decides no permission; OpenFGA changes no identity. | Implemented (`cmd/director`) |
 | **Operator, as the store's writer** | The authorization store is written by the operator and by nothing else on purpose: role-to-group assignments from the Cluster claim, tenants and apps from what Argo CD applied, grants from the CRs, and membership as `group#member` tuples from Keycloak's signed event-listener statements -- a projection, never edited in place. The design named the director for this (AD-2, AD-12); the code does not, so that the process holding the push credential holds no reason to write a relation. What enforces "on purpose" is weak: OpenFGA has one preshared key, every process that asks the store presents it, and it can write. | Implemented (`authz_projection_reconciler.go`, `membership_listener.go`, `app_grant_reconciler.go`); per-process store credentials are **Target** |
-| **Provisioning bridge** | What does this today: reconciles `IntegrationBinding` credentials and `AppGrant` into the graph, and polls Keycloak on a timer with an admin credential for group membership. The poll is **retired by AD-12** in favour of the event feed; the credential is why. | **Partial**, and superseded |
+| **Provisioning bridge** | Reconciles `IntegrationBinding` credentials and `AppGrant` into the graph. It no longer polls Keycloak for group membership: that arrives as events (row above). The operator still holds Keycloak's master administrator credential, for the Jobs that configure realms. | **Partial** |
 | **MAC backbone** | K8s namespaces per tenant, NetworkPolicy default-deny egress in those namespaces, Kyverno pod-security admission (implemented); the same default-deny in the platform tiers, service mesh + SPIFFE/SPIRE (target). | Apache 2.0 / OSS |
-| **PEP** | Named enforcement points — Envoy Gateway ext-auth, the director, the custodian, the MCP gateway — calling OpenFGA `Check`, ideally over the OpenID **AuthZEN** Authorization API so PDPs stay swappable. Target: no PEP calls `Check` today (§3.0). | OSS |
+| **PEP** | Named enforcement points — Envoy Gateway ext-auth, the director, the custodian, the MCP gateway — calling OpenFGA `Check`, ideally over the OpenID **AuthZEN** Authorization API so PDPs stay swappable. The bouncer behind the Gateway, the director, the custodian, the usher and the registrar call `Check` today (§3.0), over OpenFGA's own API; AuthZEN and the MCP gateway are target. | OSS |
 | **ITAM source of truth (optional)** | NetBox (best license fit) / GLPI / Snipe-IT feeding device & asset objects into the graph. | Apache 2.0 / GPL / AGPL |
 
 ### 3.2 Design rationale
@@ -613,7 +651,7 @@ flowchart TD
     ITAM -.->|"device/asset + contract-consumer edges"| OpenFGA
 ```
 
-**Decision flow (target):** (1) principal authenticates to Keycloak → OIDC token (agents via client-credentials or Token Exchange carrying `act`). (2) Keycloak's event listener pushes signed membership changes to the operator, which writes them as `group#member` tuples — a projection, never edited in place; the operator also writes structure (roles, tenants, installs, grants) from the objects Argo CD applied from the director's commits, so a relation follows a commit only once it has been applied; `IntegrationBinding` reconciles cross-app credentials. (3) PEP receives request + token, calls OpenFGA `Check` (over AuthZEN), passing runtime facts — a task's TTL, `acting_for`, device posture — as contextual tuples. Memberships are already in the graph and no group travels in a token for a platform decision. (4) OpenFGA traverses the graph (principal → group/org → resource/device, plus task-scoped delegation with TTL Conditions, plus derived-ceiling) → allow/deny. (5) Independently, the MAC backbone enforces tenant isolation and egress *regardless* of the authZ result. (6) Sensitive ops use consistent reads; the Watch API streams tuple changes to an audit log. Today steps (1) and (5) run; (2) runs only in its superseded form — the polling bridge with an admin credential, not the event feed, and no director; (3), (4) and (6) are target.
+**Decision flow (target):** (1) principal authenticates to Keycloak → OIDC token (agents via client-credentials or Token Exchange carrying `act`). (2) Keycloak's event listener pushes signed membership changes to the operator, which writes them as `group#member` tuples — a projection, never edited in place; the operator also writes structure (roles, tenants, installs, grants) from the objects Argo CD applied from the director's commits, so a relation follows a commit only once it has been applied; `IntegrationBinding` reconciles cross-app credentials. (3) PEP receives request + token, calls OpenFGA `Check` (over AuthZEN), passing runtime facts — a task's TTL, `acting_for`, device posture — as contextual tuples. Memberships are already in the graph and no group travels in a token for a platform decision. (4) OpenFGA traverses the graph (principal → group/org → resource/device, plus task-scoped delegation with TTL Conditions, plus derived-ceiling) → allow/deny. (5) Independently, the MAC backbone enforces tenant isolation and egress *regardless* of the authZ result. (6) Sensitive ops use consistent reads; the Watch API streams tuple changes to an audit log. Today (1) runs for people, (2) runs as written, and (5) runs for tenant namespaces and, for the platform's namespaces, as far as §3.0 says. (3) and (4) run at the front door and at the platform's own services, with the relation and the object and no contextual tuples; agents, tasks, AuthZEN and (6) are target.
 
 ### 3.4 Application permissions — catalogue contracts and grants
 
@@ -649,7 +687,7 @@ Contract **names** (e.g. `file-store`, `project-management`) are shared vocabula
 |---|---|---|---|---|
 | **Declaration** | `AppProfile` | Cluster (one per catalogue entry) | Catalogue maintainer (`gentian-apps/profiles/`) | **Implemented** |
 | **Wiring** | `IntegrationBinding` | Namespace (per tenant, per provider↔consumer pair) | gentian-os operator (auto when peers match) | **Implemented** |
-| **Grant (ReBAC)** | `AppGrant` | Per tenant install | Tenant admin at install | **Partial** (CRD + OpenFGA tuple sync; no PEP reads the tuples yet; install-time UI pending) |
+| **Grant (ReBAC)** | `AppGrant` | Per tenant install | Tenant admin at install | **Partial** (CRD + OpenFGA tuple sync; a granted contract opens the network path between the two apps and an ungranted one opens nothing; no PEP reads the tuples on an app-to-app call; install-time UI pending) |
 
 Do not conflate them:
 

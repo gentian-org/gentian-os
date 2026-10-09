@@ -34,7 +34,7 @@ MPL-2.0, like the rest of the repository; see
 | A page of the store's inside the cluster's interface | never. The store's content arrives as data and is rendered by the cluster's own app. No frame, no script, no message passed between a store page and the cluster |
 | What the store can state | what an app is, and which build an entry is: its coordinate and the content digest of its profile bundle |
 | What the store can hand over | a credential for the repository an app's artefacts are pulled from, which that repository checks |
-| What the store can never supply | an artefact. Profile bundles come from the catalogue source the Cluster claim names, by digest; charts and images from where the bundle says |
+| What the store can never supply | an artefact. Profile bundles come from a catalogue the cluster or the tenant declares (§9), by digest; charts and images from where the bundle says |
 | What the store can never decide | whether a person may install. The cluster holds no key of the store's and verifies no statement from it |
 
 The cluster asks and the store answers. The store may describe and may hand
@@ -135,11 +135,12 @@ realm is taken to be the tenant's name on this path, as it is for
 
 | Field | Rule |
 |---|---|
-| `coordinate` | `<catalogue>/<app>`, optional. The catalogue must be one of the cluster's sources (§9): the profile bundle is fetched from it and committed before the install. A coordinate in any other catalogue is refused. The app named must be the `{profile}` in the path |
+| `coordinate` | `<catalogue>/<app>`, optional. The catalogue must be one the tenant sees (§9): a source of the whole cluster, or a catalogue of this tenant's own. The profile bundle is fetched from it and committed before the install. A coordinate in any other catalogue is refused. The app named must be the `{profile}` in the path |
 | `digest` | travels with a `coordinate`, and only with one: required beside it, refused without it. Stated with or without capitals; recorded as `sha256:<lowercase hex>` |
 | `defaultGrant` | optional boolean. `true` installs for everyone and needs `can_grant` as well; `false` states that access is given per person and removes the key from an entry that had it; absent leaves an installed app's entry as it is, so moving a pin does not change who may open the app |
 
-**An install comes from a catalogue source the cluster declares.** A pin is
+**An install comes from a catalogue source the cluster declares,** for all
+its tenants or for this one (§9). A pin is
 recorded only for a bundle the director fetched from such a source and saw
 hash to the digest, so the two fields travel together or not at all:
 
@@ -205,6 +206,9 @@ the few other objects the app needs on a cluster, its companions
 the request: a store's confirmation carries it (§6.4), and so does a
 catalogue source's own index (§9). The digest pins the profile and its
 companions; it does not pin the chart or the images the profile names.
+One bundle is one digest: there is none for a profile apart from its
+companions. Companions are taken from a catalogue of the whole cluster only;
+a bundle from a tenant's own catalogue that holds one is refused (§3).
 
 It is not signed and it is not a permission. What it does:
 
@@ -412,7 +416,8 @@ and gives the reason when there is none: `licence-report-disabled`,
 It answers at `store.<the tenant's base domain>`, behind the tenant's
 session. A store's API must therefore not be given an address a cluster's
 own App Store app could have — `store.<a domain a cluster is installed
-under>` — which is why the installer's default is `store-service.…`; a
+under>` — which is why the installer's default for a new claim is
+`https://store-service.aluvian.io` (`GENTIAN_STORE_URL` names another); a
 cluster whose claim names the host of one of its own tenants' App Store app
 offers no store and says `store-address-is-own-host`. Its routes and its tile ask the same question, `can_install_app` on
 the tenant: a member who knows the address is refused at the edge. `/api`,
@@ -714,22 +719,23 @@ not from what the App Store app is expected to do.
 **It cannot:**
 
 * **Change which bytes are installed.** The director fetches the bundle from
-  the catalogue source the Cluster claim names for the coordinate's
-  catalogue, at `profiles/<app>.yaml`. A source is addressed by name, not by
+  the catalogue source declared on the cluster's side under the name of the
+  coordinate's catalogue (§9), at `profiles/<app>.yaml`. A source is addressed by name, not by
   digest: it serves one build of an entry. A digest the store invents
   therefore does not select another build — it matches what the source
   serves, or the install is refused with `502` and nothing is written. The
   same holds for the digest of an older build the source no longer serves.
 * **Install something from a place of its choosing.** A coordinate in a
-  catalogue the cluster names no source for is refused by the director
+  catalogue the tenant sees no source for is refused by the director
   (§3), and so is a digest with no coordinate. No digest is recorded that
   the director did not check against bytes it fetched from a declared
   source.
 * **Supply a profile through the repository.** The App Store app declares
   what a store names as an OCI registry with role `apps`, and refuses any
-  other type. This matters: on a cluster, a *git* repository with role
-  `apps` is a source of profiles that Argo CD syncs, with no digest
-  involved. A store that could name one would be supplying. The declaration
+  other type. A *git* repository with role `apps` used to be a source of
+  profiles that Argo CD copied into the cluster, with no digest involved.
+  That copying is retired: the composition makes no ApplicationSet for such
+  a claim, and the director refuses to declare one. The declaration
   an OCI registry gets carries a credential and names no content: what is
   pulled is what the verified bundle names.
 * **Replace a repository the tenant already has.** A store names nothing
@@ -745,7 +751,9 @@ not from what the App Store app is expected to do.
 
 **The real bound on a lying store** is therefore this. It can bring an
 administrator to install an entry they did not mean — but only an entry that
-a catalogue source named by the platform administrator serves right now, at
+a catalogue source named on the cluster's side (by the platform
+administrator, or by the tenant's own where that was delegated, §9) serves
+right now, at
 the build that source serves, by a person who holds `can_install_app`, in a
 commit with their name and the coordinate on it. The app shows the
 coordinate and the digest it is about to send, on the cluster's side, before
@@ -955,8 +963,9 @@ barer shop beside the one that is maintained would be worse at everything a
 shop is for, and an install action in an administrative screen is one more
 place that logic would live.
 
-A **catalogue source** remains what it was: the repository of profile
-bundles the director fetches from, named on the Cluster claim:
+A **catalogue source** remains what it was: an https address serving
+profile bundles, which the director fetches from. Those of the whole cluster
+are named on the Cluster claim:
 
 ```yaml
 catalogue:
@@ -977,16 +986,52 @@ index — `GET /v1/tenants/{t}/catalogues` and
 `pe` entries only — so that the digest of an entry can be looked up without
 a store; no screen lists it.
 
-A cluster or a tenant may also have catalogues of its own — added by the
-cluster's administrator, or by a tenant's administrator where the cluster's
-administrator delegated it. They are outside the store and are documented
-with the catalogue format.
+**The default source.** A new claim names one source, `gentian`: the public
+catalogue of the platform's apps repository. Which of its two the installer
+writes follows from the ref the cluster is installed from: a release tag or
+`main` gets the released catalogue
+(`https://gentian-org.github.io/gentian-apps`), any other branch the one
+under development (`…/gentian-apps/develop`), and a ref that cannot be read
+the released one. `GENTIAN_CATALOGUE_URL` names another address whatever the
+ref. The reason is written above the address in the claim. A claim that
+exists is not rewritten.
 
-A source says nothing about tenants. One the claim names can be installed
-from by every tenant of the cluster; naming it is the platform
-administrator's act, a commit on the claim. There is no tuple for it and no
-per-tenant list: the install route asks whether the person may install apps
-in the tenant and never asked about the source (§3).
+**Catalogues exist at two levels.**
+
+| | Where it is declared | Who adds it | Who installs from it |
+|---|---|---|---|
+| A catalogue of the whole cluster | `catalogue.sources` on the Cluster claim | whoever may configure the cluster | every tenant |
+| A tenant's own catalogue | `spec.catalogue.sources` on the Tenant | the cluster's administrator; or the tenant's own, where the cluster's administrator turned that on (`spec.catalogue.delegated`) | that tenant only |
+
+Both are written by the director's catalogue routes
+(`kubectl gentian catalogues`), are outside the store, and are documented
+with the catalogue format ([custom-catalogues.md](../custom-catalogues.md)).
+A profile materialised from a tenant's catalogue records where it came from
+and is installable in that tenant only; such a catalogue brings no
+companions (§4).
+
+There is no tuple for a source: the install route asks whether the person
+may install apps in the tenant, and resolves the coordinate's catalogue among
+those the tenant sees (§3).
+
+**Nothing copies profiles into a cluster ahead of an install.** The
+ApplicationSet that synced every profile of a git repository with role
+`apps` is retired, and such a repository is no longer declared (§7). A
+profile reaches a cluster when it is installed, with one exception.
+
+**The installer's default profiles: a known deviation.** At install the
+installer places the Operations Console's profile in the cluster's catalogue
+directory. It fetches the file by address —
+`https://catalogue.aluvian.io/profiles/operations-console.yaml` by default;
+`GENTIAN_STORE_CATALOGUE_URL` or `GENTIAN_DEFAULT_PROFILES` name others —
+checks that it is a `ComponentProfile`, and commits it. No digest is stated
+and none is checked, the director is not involved, and the profile carries
+neither the bundle nor a record of the catalogue it came from, so an install
+of it is not pinned and not checked at rollout (§4). A file that cannot be
+fetched is a warning, and `--disable-api-extensions` places none. This is
+the one path by which bytes from an address become a profile on a cluster
+without a digest. It is described here as it is built; whether it stays is
+not decided.
 
 What does not change without a store: the install mechanism (fetch the
 bundle at the digest, apply the profile, commit as the person), the

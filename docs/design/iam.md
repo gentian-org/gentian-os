@@ -27,7 +27,7 @@ user and group store for that organisation.
 - The canonical, bookmarkable entry point is the tenant's desktop, **`https://desktop.<tenant>.<KERNEL_DOMAIN>/`** (on a single-tenancy cluster, `https://desktop.<KERNEL_DOMAIN>/`, §1.1a): the edge sends the browser to the tenant realm's form, which asks for email and password together.
 - What the cluster's bare domain does (the apex; `www` leads where it does) depends on the cluster's tenancy mode (§1.1a). On a **multi-tenancy** cluster it is the **concierge**, a page the platform tenant publishes with no session in front of it. It asks for the email only and sends the browser to the desktop of the workspace the address belongs to (`@<tenant>.<KERNEL_DOMAIN>`, `@<KERNEL_DOMAIN>` for the platform's own people, or a tenant's custom domain); an address it cannot place is asked for the workspace's name. It asks the server nothing about accounts, and hands the address on as `login_hint`. On a **single-tenancy** cluster nobody is asked anything: the bare domain leads to the one user tenant's desktop.
 - **The edge keeps the session**, not the app and not the desktop: on every host behind a session the Gateway runs the code flow against the zone's client (`gentian-edge-<zone>`), keeps the tokens in encrypted, host-scoped, `SameSite=Lax` cookies, renews them with the refresh token, and only then asks the bouncer whether this person may reach the host. The order, what the bouncer is shown and what it refuses are in [routing.md §4.1](routing.md).
-- **Signing out** is `/oauth2/logout` on the host the person is on: the Gateway drops that host's cookies and sends the browser to the realm's end-session endpoint with the session's ID token as the hint, so Keycloak ends the realm session without asking and returns to the host's front page, which is the realm's sign-in again. Ending the realm session is what signs the person out of the zone's other hosts, within one access-token lifetime ([routing.md §4.2](routing.md)).
+- **Signing out** is `/oauth2/logout` on the host the person is on: the Gateway drops that host's cookies and sends the browser to the realm's end-session endpoint with the session's ID token as the hint, so Keycloak ends the realm session without asking and returns to the host's front page, which is the realm's sign-in again. Ending the realm session is what signs the person out of the zone's other hosts, within one access-token lifetime ([routing.md §4.2](routing.md)). Sign-out does not reach the apps, with one exception: an app whose own OIDC client declares a `backchannelLogoutUrl` in its profile is called there by the realm. Any other session an app keeps of its own outlives the sign-out until the app ends it. The front door still refuses that person's next request to the app.
 - **Tenant apps** use the same tenant realm for OIDC, so a session created at portal login is reused silently by every app launch — no broker hop, no second login screen.
 - The **platform admin** signs in in the kernel realm, at `https://platform.<KERNEL_DOMAIN>/`; there is no tenant realm for them to be routed to. The kernel realm holds the platform's administrators and nobody else: a cluster's users are never the kernel realm's, on a single-tenancy cluster any more than on a shared one.
 
@@ -109,10 +109,14 @@ membership, and per-app entitlements:
 | `gentian:platform:break-glass` | Future audited emergency access |
 | `gentian:tenant:<t>:members` | All workspace members |
 | `gentian:tenant:<t>:admins` | Tenant IT admins |
+| `gentian:tenant:<t>:app-admins` | The App Admin role: who administers the tenant's apps. One group for the whole tenant, not one per app (§1.11) |
 | `gentian:tenant:<t>:app:<profile>` | App entitlement (portal tile + provisioning) |
 | `gentian:role:member` | Token marker for workspace members |
 
-The **authz bridge** syncs membership into **OpenFGA** for PEP checks (`can_launch`, etc.).
+Membership reaches **OpenFGA** as events: Keycloak's event listener posts signed statements to the
+operator, which writes them as `group#member` tuples (`internal/controller/membership_listener.go`).
+Nothing polls Keycloak for it. The front door asks `can_use` on an app
+([routing.md §4.1](routing.md)).
 
 ### 1.3 Roles: member vs administrator
 
@@ -131,10 +135,10 @@ Provisioning is via the [Gentian Admin Console](admin-console.md).
 
 | Principal | Login email | Password source |
 |---|---|---|
-| Platform admin | `administrator@<KERNEL_DOMAIN>` | `MASTER_PASSWORD` → OpenBao / kernel bootstrap Job (Suze) |
-| Tenant admin | `admin@<tenant-domain>` — derived, and both the username and the address | OpenBao `gentian-os/tenants/<tenant>/admin` |
+| Platform admin | `admin@<KERNEL_DOMAIN>`, in the kernel realm | Set by its holder through a single-use activation link, which the installer issues (`./install.sh --activate-admin` for a new one). Never stored or printed |
+| Tenant admin | The address on the tenant's `status.adminEmail`: `admin@<tenant-domain>`, both the username and the address; `user-admin@<KERNEL_DOMAIN>` for the user tenant of a single-tenancy cluster | The same, issued by the registrar: `kubectl gentian tenants activate-admin <tenant>` |
 
-Retrieved after `kubectl gentian tenants deploy <instance>` (see [commands.md](../commands.md)).
+The link is mailed to a recovery address or shown once (see [commands.md](../commands.md)).
 
 ### 1.5 User attributes
 
@@ -270,7 +274,7 @@ names `gentian-dovecot`, and which tokens do is declared:
 `gentian-dovecot` does not carry the client attribute that switches the audience
 check off for it. The kernel realm has no `mailbox` scope, so no token of the
 kernel realm opens a mailbox; app passwords are unaffected everywhere. Who may
-do what with such a token: [security.md §2.11](security.md).
+do what with such a token: [security.md §2.11](security.md), the section on mailboxes.
 
 **Upgrading an existing cluster.** Keycloak migrates its database on first
 start of the new version, and the migration is one-way: 26.0 cannot run on a
@@ -337,6 +341,17 @@ the app still holds.
 
 No password exists for the app. The sidecar is registered per app and per tenant, in the tenant's
 realm, and is removed with the app.
+
+**When the platform runs a sidecar at all.** Only for an install pinned to a digest, whose bundle
+comes from a catalogue of the whole cluster and brings the handler; never from a tenant's own
+catalogue, and never for a tenant that signs in in the kernel realm. Otherwise the Component is
+held with `SignInSidecarRefused` and says why ([security.md §2.12](security.md)).
+
+**What none of the three ways gives.** The identity headers an app or a sidecar receives are not
+signed; network rules are what keep another pod from sending them. An app whose own client sends
+a bearer token of the app's loses it on a session route: the Gateway drops the client's
+`Authorization` header ([routing.md §4.1](routing.md)). And sign-out does not reach an app's own
+session, unless its OIDC client declares a back-channel logout address (§1.1).
 
 ## 2. Administration UI
 

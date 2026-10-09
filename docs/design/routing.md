@@ -18,8 +18,11 @@ The edge plane has three responsibilities:
 The control model is:
 
 - **GatewayClass**: `gentian-envoy`
-- **Gateway**: a single cluster Gateway, `kernel-public-gateway`, terminating TLS
-  for every external hostname — kernel hosts and tenant app hosts alike
+- **Gateways**: two, both the kernel's, in the edge namespace (`kernel-edge`):
+  `authenticated`, for every host behind a session, and `perimeter`, for the
+  hosts that take none. They terminate TLS for every external hostname —
+  kernel hosts and tenant app hosts alike — and are merged into one Envoy
+  deployment
 - **HTTPRoute**: one route object per exposed app endpoint, living in the
   namespace that owns its backend
 - **Envoy policy CRDs**: security, traffic, and header policy attached to
@@ -31,10 +34,13 @@ The control model is:
 
 ### 2.1 The cluster Gateway
 
-`kernel-public-gateway` lives in the kernel services namespace and owns the
-cluster's external address. Every externally reachable hostname is served by it.
+The edge is two Gateways in the edge namespace, `authenticated` and
+`perimeter`, programmed into one Envoy deployment that owns the cluster's
+external address (`ensureEdgeGateways`). Every externally reachable hostname
+is served by it. Where this document says "the Gateway" it means that one
+deployment; a route names the Gateway of the two whose listener it pins to.
 
-One Gateway, rather than one per tenant, is a requirement rather than a
+One deployment, rather than one per tenant, is a requirement rather than a
 simplification. A Gateway maps to an Envoy deployment with its own Service, and
 each such Service claims the cluster's external address; two of them contend for
 one address, and a client's TLS handshake succeeds or fails depending on which
@@ -42,11 +48,19 @@ one holds it at that moment.
 
 Its listeners are:
 
-| Listener | Port | Hostname | Certificate |
-| --- | --- | --- | --- |
-| `http-redirect` | 80 | none | none — redirects to `https` |
-| `https-wildcard` | 443 | none | kernel wildcard, `kernel-wildcard-tls` |
-| `https-tenant-<name>-wildcard` | 443 | `*.${effectiveDomain}` | `tenant-<name>-wildcard-tls` |
+| Gateway | Listener | Port | Hostname | Certificate |
+| --- | --- | --- | --- | --- |
+| `authenticated` | `https-wildcard` | 443 | none | kernel wildcard, `wildcard-tls` |
+| `authenticated` | `https-tenant-<name>-wildcard` | 443 | `*.${effectiveDomain}` | `tenant-<name>-wildcard-tls` |
+| `perimeter` | `http-redirect` | 80 | none | none — the ACME HTTP-01 answer, and a redirect to `https` for everything else |
+| `perimeter` | `https-id` | 443 | `id.<kernelDomain>` | kernel wildcard |
+| `perimeter` | `perimeter-<host, dots as dashes>` | 443 | one published host, exactly | the tenant's wildcard; the kernel's for a host that is the cluster's domain or one label under it |
+
+A perimeter listener exists for each host a tenant has an approved perimeter
+entry on (§7), and for the bare domain. It names the host exactly: merged
+Gateways may not repeat a port and hostname, and the exact name is the more
+specific match, so that one host leaves the session and the rest of the
+zone stays behind it.
 
 `https-wildcard` carries no hostname. Envoy selects a certificate by SNI, so an
 unset hostname means "serve whatever this certificate covers", and the
@@ -105,7 +119,7 @@ listeners are programmed into one Envoy deployment.
 A tenant namespace owns its certificate and its routes, not a Gateway.
 
 - TLS certificate: `tenant-<name>-wildcard-tls`, in the tenant namespace
-- Gateway listener: `https-tenant-<name>-wildcard` on `kernel-public-gateway`
+- Gateway listener: `https-tenant-<name>-wildcard` on the `authenticated` Gateway
 - ReferenceGrant: permits the Gateway to read that certificate across the
   namespace boundary
 - HTTPRoutes: in the tenant namespace, attached to the tenant's listener
@@ -118,8 +132,9 @@ is granted per tenant, for one Secret, in one direction.
 
 For each app endpoint, Gentian OS creates an HTTPRoute with:
 
-- `parentRefs` naming `kernel-public-gateway` in the kernel services namespace,
-  with `sectionName` pinning it to one listener
+- `parentRefs` naming the `authenticated` Gateway in the edge namespace (the
+  `perimeter` one for a published entry), with `sectionName` pinning it to
+  one listener
 - `hostnames` set to `<subDomain>.<effectiveDomain>`
 - one `PathPrefix` match for `/`
 - one backendRef to the app Service
@@ -155,6 +170,26 @@ The domain model is:
 A host is `<subDomain>.<effectiveDomain>`. The one exception is the platform
 tenant's desktop, whose `desktop` entry answers on `platform.<kernelDomain>`
 itself (`exposureHostIn`).
+
+| | `multi` | `single` |
+| --- | --- | --- |
+| A user tenant's hosts | `<label>.<tenant>.<kernelDomain>` | `<label>.<kernelDomain>`, for the one tenant `user` |
+| The platform tenant's hosts | `platform.<kernelDomain>`, `<label>.platform.<kernelDomain>` | the same |
+| With a domain of its own | `<label>.<custom domain>` | the same |
+
+Where an entry answers is decided in one package, `internal/addresses`, which
+the operator (to write the route and the listener) and the director (to show
+an approver the address before it is approved) both import.
+
+**A domain of its own.** `kubectl gentian tenants domain <name> [<domain> |
+--remove]` binds a tenant to a custom domain or puts it back, in one commit by
+the director (`PUT`/`DELETE /v1/clusters/{c}/tenants/{t}/domain`,
+`can_configure` on the cluster). The director refuses a name that is not a
+hostname, a domain that is the cluster's or under it, and one another tenant
+holds (`422`). It does not ask the tenancy mode: the user tenant of a
+single-tenancy cluster can be bound like any other, and is then on that
+domain and no longer on the cluster's. Nobody checks the DNS record or the
+certificate.
 
 TLS issuance is handled by cert-manager:
 
@@ -423,7 +458,10 @@ something did, the answer would be `401`. The one path of an app that takes no
 session is not an exception written into a policy: it is a route of its own
 that no policy names (below). A client cannot present a bearer of
 its own on these routes: `forwardAccessToken` makes the filter drop the
-incoming `Authorization` header before it writes its own. Command-line
+incoming `Authorization` header before it writes its own. That includes an
+app whose own page or client sends the app's API a bearer token of the app's:
+the token does not arrive, and the app has to go by the identity headers or
+by a session of its own. Command-line
 clients do not come through the edge at all (`kubectl gentian` reaches the
 director through the API server).
 
@@ -439,7 +477,10 @@ Identity headers (`x-gentian-subject`, `-realm`, `-session`, `-email`,
 `-name`) are set by the bouncer on every request it allows, replacing
 client-sent ones, and no request reaches a backend on a session route any
 other way. The edge's access token goes on to a backend only where its
-exposure says `forwardToken`, and then in the `Authorization` header.
+exposure says `forwardToken`, and then in the `Authorization` header. The
+identity headers are not signed: a backend believes them because only the
+Gateway's Envoy pods can reach it, which is a network rule
+([security.md §2.13](security.md)) and nothing in the request.
 
 **What a backend receives of the session** is those headers, and that bearer
 where it is forwarded. It does not receive the session's cookies. The OAuth2
@@ -475,7 +516,8 @@ A bearer route has no session and its `Cookie` header is not touched.
 
 Routes without a session policy are unchanged and never ask the bouncer:
 perimeter surfaces (a tenant's DMZ, the concierge), the identity provider's
-realm endpoints on `id.<kernelDomain>`, and the redirects. What
+realm endpoints on `id.<kernelDomain>`, and the redirects. Nobody checks the
+caller of a perimeter surface, whatever its `authMode` says (§7). What
 `id.<kernelDomain>` refuses is a route with `authorization: Deny`.
 
 **The sign-in sidecar's answer path.** An app whose profile declares
@@ -519,7 +561,11 @@ component reconciler with the sidecar.
   hosts' cookies cannot be refreshed, so each stops within one access-token
   lifetime (five minutes in a tenant realm). A right withdrawn in OpenFGA is
   refused within about two seconds, the bouncer's poll of the change log; its
-  cached allows live five minutes at most. There is no back-channel logout.
+  cached allows live five minutes at most. The edge has no back-channel
+  logout. An app is told only if its own OIDC client declares a
+  `backchannelLogoutUrl`, which the realm then calls; otherwise a session it keeps of its own (a sign-in sidecar's
+  lasts up to an hour, [iam.md §1.11](iam.md)) ends when the app ends it.
+  The app is not reachable meanwhile, because the front door comes first.
 
 ### 4.3 Embedding
 
@@ -727,10 +773,12 @@ Tenant isolation is preserved in four layers:
    namespace.
 2. **Tenant-scoped TLS secrets** for certificate separation, exposed to the
    Gateway one Secret at a time by per-tenant ReferenceGrants.
-3. **NetworkPolicies** allowing ingress from Envoy data-plane namespaces to
-   tenant workloads, and egress from tenant pods to the Envoy Gateway Service
-   ClusterIP (via namespace selector on `envoy-gateway-system`) so in-cluster
-   hairpin DNS overrides for kernel hostnames reach the programmed edge routes.
+3. **NetworkPolicies** allowing ingress to tenant workloads from the edge
+   namespace -- from its Envoy pods alone where the kernel's network rules are
+   on ([security.md §2.13](security.md)) -- and egress to the edge namespace
+   for an app that declared `identity`, so in-cluster hairpin DNS overrides
+   for kernel hostnames reach the programmed edge routes
+   ([security.md §2.6](security.md)).
 4. **Identity and token exchange controls** at app/service layers via
    IntegrationBindings and OIDC policy.
 
@@ -741,16 +789,52 @@ allowed by policy resources.
 
 ## 7. App Catalogue Contract
 
-App catalogue entries declare HTTP exposure using typed route intent:
+A profile declares each entry point under `expose[]` (`ExposureSpec`): a
+name, a `surface` (`gateway`, behind the zone's session, or `perimeter`, with
+none), a mandatory `authMode`, the host label (`subDomain`, else the
+component's name; `apex` for the bare domain, §5), `paths` and `denyPaths`,
+and the backend Service and port. It has no field for a timeout, a body size
+or a rate: those are the platform's.
 
-- hostname/subdomain intent
-- backend service name/port
-- TLS requirement
-- optional edge policy profile (timeouts, body limits, headers)
-
-The platform renders this intent into HTTPRoute and policy resources, so app
-profiles stay controller-agnostic and do not encode implementation-specific
+The platform renders this into HTTPRoute and policy resources, so profiles
+stay controller-agnostic and do not encode implementation-specific
 annotation keys.
+
+**A perimeter entry is published only once it is approved.** Declaring it is
+a request. The tenant's perimeter approver (`can_expose`) approves it: a
+member of the tenant's group `gentian:tenant:<t>:perimeter`, which nothing
+creates and the tenant's admins do not hold by default, so a tenant's admin
+makes the group and joins it before anything can be approved. The director commits it to the tenant's registry in git with its owner, its
+publish date and its review date; the operator then gives it a proxy in the
+tenant's DMZ, a listener for exactly its host and a route (§2.1).
+
+| | Command line | Director |
+| --- | --- | --- |
+| What the tenant's apps ask for, and what is approved | `kubectl gentian exposures requests --tenant <t>` | `GET /v1/tenants/{t}/exposures`, `entries[]`: state (`requested`, `approved`, `reviewDue`, `expired`, `unmatched`), address, paths, `authMode` |
+| What is published | `kubectl gentian exposures list --tenant <t>` | the same read: `live`, `reviewDue`, `expired` |
+| Approve, or review again | `kubectl gentian exposures approve <app-instance> <entry> --tenant <t> [--expires <date>] [--reason <text>]` | `PUT /v1/tenants/{t}/exposures/{inst}/{name}` |
+| Withdraw | `kubectl gentian exposures withdraw <app-instance> <entry> --tenant <t>` | `DELETE` on the same path |
+
+The administration console shows the same list per app, with Approve, Review
+and Withdraw for whoever may. An approval of an app that is not installed, of
+an entry its profile does not declare for the perimeter, or with a
+main-address setting that is not the entry's, is refused (`422`) and nothing
+is committed (§5). The read is from git: it says where an entry will answer,
+not whether it answers yet.
+
+**What a published entry is held to.** The proxy forwards the declared paths
+and nothing else, lets a path through only if it has one reading, removes
+every identity header, `Cookie` and `Authorization` on the way in and
+`Set-Cookie` on the way out, and limits each client address: 10 MB a body,
+20 requests a second with 200 more at once, 100 at a time. The numbers are
+the cluster administrator's to change and no profile's. Sign-in posts are
+limited at the Gateway, 60 a minute for each client address. The full list,
+and whose address is counted: [security.md §2.14](security.md).
+
+**It checks no caller.** `authMode` on a perimeter entry (`jwt`, `bearer`,
+`basic`, `signature`, `none`) changes nothing the platform does, and since
+`Authorization` is removed, a credential sent in it does not reach the app
+either. The approver is told so for every entry other than `none`.
 
 ---
 
@@ -804,16 +888,16 @@ services and tenant applications.
 Pods that call kernel public hostnames (for example `https://id.<kernelDomain>/…`
 during Synapse OIDC bootstrap) cannot rely on external DNS alone. Gentian OS
 reconciles a CoreDNS `hosts` override block (`# BEGIN gentian-hairpin`) so those
-names resolve to the kernel Envoy Gateway Service ClusterIP in
-`envoy-gateway-system`.
+names resolve to the ClusterIP of the edge's Envoy Service, which is found by
+the GatewayClass it serves and not by a namespace's name.
 
-The `mail.<kernelDomain>` entry is managed separately and continues to target
-the Dovecot Service ClusterIP (see [mail.md](mail.md)).
+A `mail.<kernelDomain>` line already in the block is left as it is. Nothing
+in this repository writes one: the cluster's mail names are published as DNS
+records for the mail edge's load balancer (see [mail.md](mail.md)).
 
 The gateway-platform controller updates the hairpin block when the Envoy
 Service or routing mode changes and rolls CoreDNS. Tenant NetworkPolicies are
-refreshed when the edge Service changes so egress to `envoy-gateway-system`
-stays allowed.
+refreshed when the edge Service changes so egress to the edge stays allowed.
 
 The block holds `<kernelDomain>` itself, and a CoreDNS `hosts` entry answers
 every query type for its name. In-cluster lookups of the zone apex's SOA and NS

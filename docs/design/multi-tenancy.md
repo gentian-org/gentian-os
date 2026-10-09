@@ -66,8 +66,11 @@ the sign-in side and the table of addresses):
 2. **Users live in a user tenant**, which is what a tenant has always been:
    its own realm, namespaces and zone.
 3. **`multi`: any number of user tenants**, each on its own subdomain or a
-   custom domain. The install creates none; the platform admin does, in the
-   admin console or with `kubectl gentian tenants create`. The bare domain,
+   custom domain: its desktop is `desktop.<tenant>.<KERNEL_DOMAIN>`, its
+   admin console `admin.<tenant>.<KERNEL_DOMAIN>`, its apps
+   `<label>.<tenant>.<KERNEL_DOMAIN>`, or the same labels under the domain a
+   `TenantDomain` binds it to. The install creates none; the platform admin
+   does, in the admin console or with `kubectl gentian tenants create`. The bare domain,
    `www` and `desktop.<KERNEL_DOMAIN>` lead to the concierge's address form.
    No tenant can put a website on the main address here: it belongs to all
    of them. A tenant publishes its website under its own hosts, or on a
@@ -84,7 +87,24 @@ the sign-in side and the table of addresses):
    (`internal/tenancy`): the admission webhook, the tenant reconciler and the
    director, each with a message naming the mode. The install creates the
    tenant, after the handover
-   ([GETTING-STARTED.md](../../GETTING-STARTED.md#7-tenants)).
+   ([GETTING-STARTED.md](../../GETTING-STARTED.md#7-tenants)): its manifest
+   is committed at step 0 with the cluster's definition and refused by the
+   cluster until the platform admin has signed in once. The installer's last
+   step, `E-04-user-tenant`, then asks Argo CD to try it again, waits for the
+   tenant to be Ready and issues its administrator's activation link. A run
+   that ends before that sign-in is finished later with
+   `./install.sh --only E-04`. The step does nothing on a `multi` cluster.
+
+**A website on the main address** is the user tenant's alone, and only under
+`single`. It is published when all of this holds
+(`internal/addresses/main_address.go`): the profile's entry is a perimeter
+one that says `apex`; the tenant's approver published it and said `apex` too;
+the approval has not expired; the entry stays off the paths the platform
+keeps there (`/branding/`, `/sign-in`, `/.well-known/acme-challenge/`,
+`/.well-known/pki-validation/`); the tenant is Ready and still on the
+cluster's own domain; and no surface published earlier holds the address.
+Otherwise nothing is published and the component says why
+([routing.md §5](routing.md#5-redirects-and-url-control)).
 
 The reason for the second statement is the realm. A realm's administrators can
 see and change every account in it, and the kernel realm's accounts are the
@@ -98,7 +118,20 @@ or apex route of its own: the cluster's certificate (`<KERNEL_DOMAIN>` and
 answers on at that level -- `id`, `platform`, `www`, `argocd`, `headlamp`,
 `llm`, `mail`, `imap`, `mail-egress`, `corp` -- are refused to its components
 and apps (`HostReserved`). The names the platform keeps in every tenant are
-refused to apps there as everywhere ([routing.md §3.1](routing.md)).
+refused to apps there as everywhere.
+
+**Reserved address names** are one list in two tiers
+(`internal/hostnames/hostnames.go`; the tables are in
+[routing.md §3.1](routing.md)). The first is kept in every tenant on every
+cluster, whatever the tenant's domain: `desktop`, `admin` and `store`, each
+admitted to the platform's own component for it and to nothing else, and
+`console`, `platform`, `id`, `auth`, `login`, `signin`, `sign-in`, `sso`,
+`account` and `accounts`, which nothing may take. The second is the kernel's
+names listed above, refused only where a tenant's domain is the cluster's.
+A name is matched exactly, and so is anything below it (`x.admin`). The
+director refuses an install that would take one with `422` before anything
+is committed, and the operator holds a component that would
+(`HostReserved`).
 
 Its mail domain is the cluster's too, which the kernel realm's people already
 have addresses in. The mail stack keys on the address, not on the realm:
@@ -179,8 +212,21 @@ A custom domain is not a field on the Tenant. It is a cluster-scoped
 (`clusters/<cluster>/tenants/<tenant>/domain.yaml`) by the director's
 `PUT /v1/clusters/{c}/tenants/{t}/domain` (`can_configure`). The operator copies
 the domain to the Tenant's `status.domain`, which `EffectiveDomain` reads, and
-reports `DomainBound`; a domain on or under the kernel domain is refused, as is
-one another tenant holds. The tenant's hosts, mail and logins move to it, and
+reports `DomainBound`; a name that is not a hostname and a domain on or
+under the kernel domain are refused, as is one another tenant holds. On the
+command line it is `kubectl gentian tenants domain <name> [<domain> |
+--remove]` ([commands.md](../commands.md)), which prints what moves and asks
+for the domain to be typed. Neither the director nor the command checks the
+domain's DNS or that a certificate can be issued for it.
+
+Nothing here asks the tenancy mode. Under `single` the user tenant is
+already on the cluster's own addresses, so no domain needs binding, and the
+cluster's own domain cannot be bound. Binding another domain to the tenant
+`user` is accepted like any other. That tenant then leaves the
+cluster's own addresses for `<label>.<domain>`, and a website it had on the
+main address is withdrawn (`OwnDomain`). The kernel's names stay refused to
+its apps, because it is back on the cluster's domain the day the binding is
+removed. The tenant's hosts, mail and logins move to it, and
 the concierge finds it through `concierge-lookup`: one file per bound domain,
 named by its SHA-256, so a domain is found by whoever already knows it and the
 cluster's list of customers is not published.
@@ -265,14 +311,19 @@ seeing another's data via SQL.
 
 When the mail extension is enabled:
 
-- DKIM keypairs are generated per tenant domain and stored in OpenBao
-  at `tenants/{name}/mail/dkim`. The shared Rspamd instance fetches
-  them at runtime.
+- A DKIM keypair is generated per tenant domain by the operator and kept as
+  a Secret in `system-mail`; Postfix mounts the keys and OpenDKIM signs with
+  them. There is no spam filter in the stack.
 - SPF and DMARC records are generated per domain and surfaced in the
   Tenant status for DNS configuration.
-- SMTP submission requires SASL authentication against per-tenant
-  credentials — no open relay.
-- IMAP authentication uses per-tenant credentials provisioned by the platform.
+- SMTP submission requires SASL authentication against one credential per
+  tenant, shared by that tenant's apps — no open relay.
+- IMAP authenticates each person, with a password per person derived by the
+  platform, or with the person's sign-in token for an app whose profile
+  declares `requires.services.mail.imap.tokenSignIn`.
+- Only a proxy in `system-mail-dmz` faces the internet; Postfix and Dovecot
+  are in `system-mail`, and each mail object is written in the namespace of
+  its reader.
 
 See [mail.md](mail.md) for the full mail extension model.
 

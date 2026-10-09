@@ -10,7 +10,7 @@ Three layers are easy to conflate:
 
 | Layer | Knob | What it controls |
 |---|---|---|
-| **Cluster** | `mail.serviceMode` on the Cluster claim (`external` \| `kernel`) | Whether the kernel runs its own Postfix and Dovecot, or relays everything to an external SMTP host |
+| **Cluster** | `mail.serviceMode` on the Cluster claim (`external` \| `system`) | Whether the cluster runs its own Postfix and Dovecot, or relays everything to an external SMTP host. A claim that says `kernel`, the value's former name, is refused |
 | **Per tenant** | `Tenant.spec.mail.mode` | What the operator provisions: the tenant's mail domain, its entries in the Postfix maps, and its Dovecot realm auth |
 | **Per app** | `AppProfile` `mail.smtp` / `mail.imap` | Whether the operator hands an app kernel or external mail endpoints |
 
@@ -85,9 +85,13 @@ Selected via `Tenant.spec.mail.mode`:
 | `transport-only` | Shared kernel MTA | External | App → external storage | Kernel handles SMTP relay only |
 | `disabled` | — | — | App → SMTP relay (outbound only) | Outbound notifications only |
 
-If `MAIL_SERVICE_MODE=external` at install time, kernel Dovecot/LMTP
-may be absent; tenants in `selfhosted` mode still get operator-managed
-secrets but full delivery requires switching install mode to `kernel`
+A tenant that names no mode gets `selfhosted` on a cluster whose
+`mail.serviceMode` is `system`, and `transport-only` on one that relays
+(`external`), which has no Dovecot to hold a mailbox.
+
+If `MAIL_SERVICE_MODE=external` at install time, Dovecot and LMTP are
+absent; tenants in `selfhosted` mode still get operator-managed
+secrets but full delivery requires switching install mode to `system`
 and re-running `./install.sh`, which converges.
 
 ## 3. Shared Infrastructure with Tenant-Scoped Configuration
@@ -150,23 +154,24 @@ When a Tenant with `mail.mode: selfhosted` is reconciled, the
 **operator** (not a finished Crossplane-only pipeline) performs:
 
 1. **DKIM keypair Secret**, an RSA-2048 key generated with a CSPRNG (not derived from
-   the master password) and stored as a Kubernetes Secret (`dkim-{name}`) in the
-   kernel namespace — see §10, which this used to disagree with.
-2. **Virtual domain ConfigMap entry** patched into Postfix's
-   `mail-postfix-virtual-domains` ConfigMap (registers the tenant's
-   mail domain).
+   the master password) and stored as a Kubernetes Secret (`dkim-{name}`) in
+   `system-mail` — see §10, which this used to disagree with.
+2. **Virtual domain entry** in the operator's own registry of tenant domains,
+   ConfigMap `mail-postfix-virtual-domains`, from which it writes the maps
+   Postfix mounts (`postfix-kernel-virtual-mailbox-maps`, §5a).
 3. **SASL credentials Secret** in the tenant namespace
    (`smtp-credentials-{name}`) — host `mail.<kernelDomain>:587`.
-4. **Dovecot domain config** patched into the shared
-   `mail-dovecot-domains` ConfigMap when Dovecot is deployed.
+4. **Dovecot domain entry** in `mail-dovecot-domains`, and the realm's token
+   settings in `dovecot-realm-auth`, when Dovecot is deployed.
 5. **Status update** on the Tenant CR with the DNS records the customer
    must publish:
    - DKIM TXT record (`gtn._domainkey.<domain>`)
    - SPF record (`v=spf1 mx ~all`)
    - DMARC record (`_dmarc.<domain>`)
 
-Reloader picks up the ConfigMap/Secret changes and rolls the
-Postfix/Dovecot pods.
+Postfix reads its maps again without a restart, except the list of signing
+domains (§10). Dovecot is restarted when its passwd-files or the set of
+realms change.
 
 **Future:** emit the same objects from a mail Composition step instead of the
 operator's own reconcile loop. `mail.serviceMode` — the cluster-level knob — is
@@ -203,6 +208,36 @@ and the passwd-files an earlier version wrote into `system-mail-dmz` and
 `internal/controller/mail_objects_test.go` holds every row of the table to the
 chart, Job or Composition that reads it.
 
+## 5b. The life of a mailbox
+
+A mailbox is a directory on Dovecot's one volume,
+`/var/mail/<domain>/<local-part>`, and exists from the first message
+delivered to it. Nothing else records it. What each act does with a tenant's
+mailboxes ([data-lifecycle.md](data-lifecycle.md) has the whole table); all of
+it is built, and not yet run on a cluster:
+
+- **A backup copies them, a restore puts them back.** Each runs as a Job beside
+  Dovecot in `system-mail`, with `doveadm` of the image the server runs, so a
+  mailbox is copied under the server's own locks with its folders, flags and
+  UIDs. A restore adds what the mailbox lacks; mail that arrived since stays.
+- **Retiring a tenant keeps them.** Its routing, logins and DNS records go.
+- **Deleting a tenant** (`deletionPolicy: Delete`) **destroys them,** by a Job
+  that runs once the tenant's routing is gone, so that nothing is delivered
+  into a mailbox being destroyed. The deletion waits for it and stops if it
+  fails.
+- **A mail domain the tenant shares is left alone.** The user tenant of a
+  single-tenancy cluster has its addresses on the cluster's own domain, with
+  the administrators' ([multi-tenancy.md](multi-tenancy.md) §3). Nothing in a
+  mailbox says whose it is, so those mailboxes are neither copied nor
+  destroyed, and each act says so.
+- **A removed person's mailbox stays.** Removing a person takes their mail
+  password out of Dovecot's passwd-file at the next reconcile, so nobody opens
+  the mailbox; the directory and the mail in it are deleted by nothing short
+  of the tenant's deletion. What removing a person should do with their mail
+  is not decided.
+- **A mail domain that changed leaves the old domain's mailboxes behind.**
+  Every act goes by the domain the tenant has now.
+
 ## 6. Per-App Mail Wiring
 
 For each app in the tenant that declares `mail.smtp` and/or
@@ -221,7 +256,7 @@ no app-specific mail logic in the platform.
 
 ## 7. Security
 
-- **DKIM private keys** live in a Kubernetes Secret in the kernel namespace,
+- **DKIM private keys** live in Kubernetes Secrets in `system-mail`,
   mounted into Postfix's own filesystem for OpenDKIM to sign with (§10). Nothing
   reads them over the network at runtime, and nothing but the operator writes
   them.
@@ -246,6 +281,18 @@ no app-specific mail logic in the platform.
   credentials and nobody else's — see `internal/controller/mail_apppassword.go`.
   Cross-tenant IMAP access is structurally impossible because each tenant's
   mailbox path and hash store are namespace-isolated.
+- **An app opens a mailbox with a person's sign-in token only if its profile
+  says so.** `requires.services.mail.imap.tokenSignIn: true`, which needs
+  `requires.services.identity.oidc` beside it, gives the app's own sign-in
+  client the optional scope `mailbox` in the tenant's realm. A token the app
+  obtained by asking for that scope names the mail server in its audience, and
+  Dovecot accepts it (XOAUTH2) for the mailbox of the person it was issued to
+  and no other. `mail.imap: {}` alone hands the app the server's address and
+  makes none of its tokens a mailbox key. It is served where the cluster runs
+  its own mail server and the tenant has mailboxes in a realm of its own; the
+  kernel realm, and so the platform tenant, has no such scope, and there the
+  declaration grants nothing. The four checks and who makes each are in
+  [security.md](security.md) §2.11.
 - **Rate limits and per-user quotas are not enforced.** Postfix runs with
   `smtpd_client_message_rate_limit = 0`, its default, which is no limit, and
   Dovecot loads no quota plugin. This section previously described both as
@@ -264,7 +311,7 @@ conflating them is how this section used to read:
 
 | Setting | Scope | Decides |
 |---|---|---|
-| `mail.serviceMode` (`kernel` \| `external`) | The cluster, from its Claim | What the kernel **deploys** |
+| `mail.serviceMode` (`system` \| `external`) | The cluster, from its Claim | What the cluster **deploys** |
 | `Tenant.spec.mail.mode` (§2) | One tenant | Where that tenant's mail **goes** |
 
 **What the cluster setting changes.** With `mail.serviceMode: external`, Dovecot
@@ -281,17 +328,17 @@ mailbox and no IMAP. Outbound and app notification mail still work.
 
 **What the tenant setting changes.** `Tenant.spec.mail.mode: external` does not
 deploy or skip anything. The tenant supplies its own SMTP credentials as a
-Secret in the kernel namespace, named by `spec.mail.smtpCredentialsSecret`
+Secret in `system-mail`, named by `spec.mail.smtpCredentialsSecret`
 (required for this mode — the operator refuses the tenant with `MissingConfig`
 otherwise), and the operator copies it into the tenant namespace. Apps consume
 it through the same `existingSecret` reference they would use in `selfhosted`
 mode, so an app never knows whose SMTP server is on the other end. That is the
 point of the contract in §6: apps declare that they send mail, and nothing else.
 
-The two settings are independent. A `kernel` cluster can host an `external`
+The two settings are independent. A `system` cluster can host an `external`
 tenant that relays through its own provider, and an `external` cluster still
 serves `selfhosted` tenants — they get operator-managed secrets and working
-submission, but no mailbox until the cluster switches to `kernel` and
+submission, but no mailbox until the cluster switches to `system` and
 `./install.sh` is re-run, which converges (§2).
 
 ## 9. Operational View
@@ -555,7 +602,7 @@ operator publishes the MX only once the Service reports an address.
 | **PTR** | the outbound IP | `<egress-host>` | Reverse DNS. Set at the cloud provider, not in DNS hosting. Many providers refuse mail from an IP with no PTR — Gmail rejects with `550-5.7.25 ... does not have a PTR record setup`. It must name the egress host, NOT `mail.<kernel-domain>`: that name resolves to the inbound load balancer, so using it makes the forward and reverse disagree and the check fails. |
 
 **Every signing key belongs to the operator.** It creates an RSA-2048 key per
-tenant as a `dkim-<tenant>` Secret in the kernel namespace, and one for the
+tenant as a `dkim-<tenant>` Secret in `system-mail`, and one for the
 kernel domain as `dkim-kernel`, each generated once and never rotated
 automatically — a rotated key stops matching the record already published for it.
 The public halves reach DNS from the same values that sign, so the two cannot
