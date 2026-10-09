@@ -215,7 +215,11 @@ first, so the current state is recoverable too.
   them has made (on PostgreSQL)
 - Files and objects your apps store
 - The contents of app volumes
+- The data of apps you uninstalled without purging them: it stays in every
+  backup until you purge it
 - Your member accounts, groups and their memberships
+- What your members set up on the desktop, and your workspace's notices
+- Access rights granted beyond the standard ones
 - Your workspace's configuration, so it can be rebuilt elsewhere
 
 **Not captured, on purpose:**
@@ -232,7 +236,10 @@ first, so the current state is recoverable too.
   repository, an outgoing mail relay, an API key. They are stored outside your
   apps' data and are not in the bundle; after a restore into a new workspace
   they have to be entered again.
-- **Mailboxes.** Mail is not part of a backup yet.
+- **Mailboxes, sometimes.** Where your platform runs its own mail server
+  and your workspace has a mail domain of its own, your mailboxes are in the
+  backup. Where your addresses are on the platform's own domain, or mail is
+  hosted elsewhere, they are not, and the backup's result says so.
 
 ---
 

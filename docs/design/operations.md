@@ -497,7 +497,8 @@ entry per app with the database engine and names, the bucket, the cache user
 and the model key, written before the Jobs that make them are handed over and
 never reduced by provisioning. A purge takes a kind off the record once it has
 destroyed it. The deletion of a tenant, a purge and the read of what
-uninstalled apps hold (`GET /apps/retained`) read it; the read answers
+uninstalled apps hold (`GET /apps/retained`) read it, and so does an export,
+which captures what an uninstalled app left (§9.4); the read answers
 `present` or `absent` for a bucket, a cache user and a MariaDB database from
 it without running anything, and `unknown` only when the record could not be
 read. A PostgreSQL database is also found through the CloudNativePG Database
@@ -583,10 +584,59 @@ recorded — and the app's `digest`, `databaseEngine` and `releases`; the
 tenant-wide captures are no longer listed among the apps. Fields were added
 and none renamed. A format 1 bundle still restores: the names are derived from
 the tenant the manifest records and the volume claims are the ones the apps
-have now, and the result says `nameDerivation: derived`. A manifest of a
-format newer than the platform reads is refused. A `postgresOwned` artefact is
+have now, and the result says `nameDerivation: derived`. **Format 3** adds
+what a format 2 bundle did not hold, and again renames nothing: `retained` on
+an app that was uninstalled with its data kept when the bundle was taken, and
+on each of its volumes the `claim` it was captured from (size, access modes,
+and the labels and annotations that say whose it is), from which the claim is
+made again where it is not; `mailboxes` (`kind: mailboxes`, `name` the mail
+domain, `path`); and `rights`, the entries of the rights store that follow
+from nothing else, as `granted` and `withdrawn` lists of `user`, `relation`,
+`object`, with the `cluster` they were read on. A format 2 bundle has none of
+them and restores as before. A manifest of a format newer than the platform
+reads is refused. A `postgresOwned` artefact is
 a tar.gz holding `INDEX`, the database names one per line, and
-`<line number from 0>.pgc`, each one's custom-format dump.
+`<line number from 0>.pgc`, each one's custom-format dump. A `mailboxes`
+artefact is a tar.gz holding `INDEX`, the mailboxes one per line by the part
+of the address before the @, and `<line number from 0>/`, each one's mail as a
+Maildir++ tree written by `doveadm backup`: every folder and message with its
+flags, UID and GUID.
+
+**Uninstalled apps.** An app that was uninstalled with its data kept is
+captured after the installed ones, by the same units, from the stores the
+cluster still holds for it: the ones on the record of what was provisioned,
+a PostgreSQL database the cluster keeps a record of, and the volume claims
+that are the app's. Nothing is paused. A restore puts the data back into the
+stores the tenant still holds for the app and installs nothing; where the
+tenant holds none of it, it was purged, and the app is named in
+`status.notRestored`. Only a restore with `spec.intoNewTenant`, which an
+import sets, makes the stores: the record first, then the database with its
+role and vault record (or the MariaDB setup Job), the bucket with its user,
+and each volume claim from what the bundle recorded, on the cluster's default
+storage class.
+
+**Mailboxes.** On a cluster that runs its own mail server
+(`mail.serviceMode: system`) a tenant's mailboxes are the directories below
+its mail domain's on the server's volume. They are copied by `doveadm
+backup`, in the mail server's own image, beside the volume and on the node
+the server holds it on: the server's own synchronisation takes the server's
+locks, where an archive of a Maildir that is being written to can miss a
+message that is moving between `new/` and `cur/`. A restore runs `doveadm
+sync` one way, from the bundle into the mailbox: what the bundle holds and the
+mailbox lacks is added, and nothing is removed. A mail domain that is the
+cluster's own (the user tenant of a single-tenancy cluster) is shared with
+the cluster's administrators; its mailboxes are neither copied nor destroyed,
+and `status.notIncluded` says so. On a cluster without a mail server there is
+no unit and nothing is said.
+
+**Rights.** The operator reads the tenant's entries in the rights store and
+writes into the manifest the ones its projection would not write, and the
+defaults the store no longer holds; no Job reads the store. A restore writes
+them after the realm is back and after the projection has attached the
+tenant. Into a tenant made new (`spec.intoNewTenant`, or a bundle of a tenant
+of another name or cluster) the granted ones are not written and are named in
+`status.rights.notBrought` and in the notes; the withdrawn ones are withdrawn,
+under the new tenant's names.
 
 **What no restore brings back** is the checklist in
 [data-lifecycle.md](data-lifecycle.md) §5, and is said on every result
@@ -596,9 +646,10 @@ a tar.gz holding `INDEX`, the database names one per line, and
   carried either, and an export of such an app says so.
 - **Declared state.** App grants are declared in git and come from there;
   integration bindings are derived from the installed apps and their
-  profiles; authorization tuples are projections. On the same cluster none of
-  the three is lost. A tenant imported into another cluster has its bindings
-  and tuples made again and its app grants to set again.
+  profiles; authorization tuples are projections, but for the ones a bundle
+  carries (above). On the same cluster none of the three is lost. A tenant
+  imported into another cluster has its bindings and tuples made again and
+  its app grants to set again.
 
 An uploaded bundle (the import bucket, `gentian-imports`) is removed when a
 restore of it has run to its end, restored or failed. A restore refused before
@@ -614,6 +665,8 @@ copied anywhere.
 | Step | Namespace | Reads there |
 | --- | --- | --- |
 | PostgreSQL dump and load, an app's and the desktop's | `system-postgresql` | `postgres-admin` |
+| The desktop's database of the tenant that adopts the kernel realm | `kernel-data` | `kernel-postgres-role-portal-shell`: the database's own role, not an administrator |
+| Mailbox copy and load | `system-mail` | the mail server's volume |
 | MariaDB dump and load | `system-mariadb` | `mariadb-admin` |
 | Realm export and import | the identity namespace (`kernel-authentication`) | `keycloak-admin` |
 | Bucket archive and load, the manifest, a bundle's removal | `system-s3` | `minio-admin`, and the bundle's own credential and key |

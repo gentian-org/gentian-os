@@ -325,10 +325,9 @@ sign-in client go, and everything it stored stays — its database, its object
 storage, its cache user, its files, its stored credentials, and the access
 group with everybody who is in it. The app is then *retained*: uninstalled,
 data retained. Installing it again in the same tenant finds all of it.
-A backup taken after the uninstall does not hold that data: only one taken
-while the app was installed does. The director's answer to an uninstall says
-so (`note`), and every later backup names the uninstalled apps it left out
-(`status.notIncluded`).
+A backup taken after the uninstall goes on holding that data, as an
+uninstalled app's; a backup asked for some apps only names the ones it left
+out (`status.notIncluded`).
 
 **Purging** destroys what uninstalling kept, and cannot be undone. It is
 refused while the app is still the tenant's. `--purge` therefore does both, in
@@ -846,7 +845,11 @@ format 2 (`schemaVersion: 2`) each app's `stores` has one entry per artefact
 with its `kind`, the `name` of what it was captured from and its `path` in the
 bundle, and the app carries its `digest`, `databaseEngine` and `releases`; a
 format 1 manifest names apps and kinds only and still restores
-([operations.md](design/operations.md) §9.4).
+([operations.md](design/operations.md) §9.4). Format 3 (`schemaVersion: 3`)
+adds `retained` on an app that was uninstalled with its data kept, the
+tenant's `mailboxes` where the cluster runs its own mail server, and
+`rights`: the entries of the rights store that follow from nothing else. A
+format 2 bundle still restores.
 
 #### When the bundle is on external storage
 
@@ -1018,7 +1021,10 @@ asked for again without uploading twice; an upload that is never restored
 stays until it is removed by hand (`mc rm --recursive --force
 gentian/gentian-imports/<prefix>/`). App grants are not in a bundle: they are
 declared in git, and a tenant imported into another cluster has them to set
-again.
+again. An import brings the data of apps that were uninstalled with their
+data kept, as uninstalled apps, when this cluster has their definitions. It
+grants no access right that was granted in the tenant the bundle was taken
+of: each is named in `notes`, to be granted again here.
 
 ## 13. Backup Policy
 

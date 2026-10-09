@@ -17,6 +17,9 @@
 - **Uninstalling an app keeps all of its data. Purging destroys it.** Retiring
   a tenant keeps its data. Deleting destroys it. Destroying is always a second,
   separate act.
+- A backup holds the data of installed apps, the data uninstalled apps left,
+  and what is the tenant's own: its people, its desktop, its mailboxes and
+  the access rights that follow from nothing else.
 - §7 lists what does not work, or is not decided, today. None of it has been
   run on a cluster since backup, restore and import were reworked: §7 says
   what only a cluster can confirm.
@@ -38,14 +41,26 @@
 The platform keeps **one list** of the kinds of things an app and a tenant
 own. That list is the **inventory**. Every act reads it, so that what a backup
 copies is what a purge destroys. The list is in the code
-([`internal/backup/teardown.go`](../../internal/backup/teardown.go)), and a
-test fails when a kind is added without saying what each act does with it.
+([`internal/backup/teardown.go`](../../internal/backup/teardown.go)): what an
+app owns (`AppKinds`) and what a tenant owns that is no app's
+(`TenantOwned`). Tests fail when a kind is added without saying what each act
+does with it, and when a kind of thing a bundle can hold is copied by a backup
+and not put back by a restore, or destroyed by a deletion that the list says
+keeps it.
 
 **Order of creation:** the records, stored credentials, the access group, the
 sign-in scope, databases, bucket, cache user, model key, sign-in client, the
 running app, and with it the files.
 **Order of removal:** the same list backwards. Nothing is destroyed while
 something made after it still needs it.
+
+An app that was **uninstalled with its data kept** is in the table twice: its
+data is "kept" by the uninstall, and a backup taken afterwards copies it as
+it copies an installed app's — the same databases, bucket and files, marked
+as an uninstalled app's. A restore puts it back into what the tenant still
+holds for the app and installs nothing; an import brings it into stores made
+for it, still uninstalled. Data that was purged is in no later backup, and a
+restore does not bring it back (§4).
 
 How to read the table: *made* = created empty. *copied* = written into the
 bundle. *put back* = the bundle's content replaces what is there. *kept* =
@@ -74,14 +89,15 @@ with it. *destroyed* = deleted with what it held. "—" = not touched.
 | The namespace | made | — | — | made new | — | — | kept | destroyed |
 | The realm: people, groups, roles | made | copied | groups, roles and clients put back; missing people added | made new, then filled | — | — | kept, switched off | destroyed |
 | People's passwords | set by each person | never copied | not put back | not brought | — | — | kept | destroyed |
-| The desktop's database | made | copied (not the platform tenant's, gap 3) | put back | made new, then filled | — | — | kept | destroyed |
+| The desktop's database | made | copied | put back | made new, then filled | — | — | kept | destroyed (the platform tenant's is emptied: the database itself is the cluster's) |
 | The tenant's own stored credentials (in the vault) | generated | never copied | — | generated new | — | — | kept | destroyed |
 | The tenant's link into the platform's sign-in | made | not copied | — | made new | — | — | kept | removed |
 | The team at the model gateway | made | not copied | — | made new | — | — | kept | removed |
 | Mail routing, mail logins, mail DNS records | made | not copied | — | made new | — | — | removed | removed |
-| Mailboxes | filled by use | not copied | — | not brought | — | — | kept | **not destroyed** (gap 2) |
+| Mailboxes (a cluster that runs its own mail server; a mail domain that is the tenant's alone) | filled by use | copied | put back on top of what is there | put back into the new tenant's mail domain | — | — | kept | destroyed, after the mail routing is gone |
 | Web addresses: routes, certificate, DNS records | made | not copied | — | made new | the app's route removed | — | removed | removed |
-| Access rights (the rights store) | derived from the tenant and its apps | not copied | — | derived again | the app's removed | — | the tenant's removed | the tenant's removed; who is its member stays (gap 2) |
+| Access rights that follow from the tenant, its apps and its people (the rights store) | derived | not copied | derived again | derived again | the app's removed | — | the apps' removed | the apps' removed; the tenant's own entries and who is its member stay (gap 1) |
+| Access rights that follow from nothing else: a right granted beyond the defaults, a default withdrawn | written in the store | copied | put back, after the rest is derived | what was withdrawn is withdrawn; what was granted is **not** brought, and named | kept | — | kept | **not removed** (gap 1) |
 | The backup bucket and the bundles in it | made by the first backup | bundles are written here | read | — | — | — | kept | destroyed, unless the tenant keeps its bundles |
 | The list of what was provisioned | written | not copied | — | written new | kept | shortened, kind by kind | kept | destroyed, last |
 
@@ -108,9 +124,16 @@ flowchart LR
 installing its apps made: first the running apps, then every store of every
 app the tenant *ever* had (also the uninstalled ones), then the realm, the
 namespace, the vault entries and last the records. It uses the same steps a
-purge of one app uses. Three things are left behind: mailboxes, the keys an
-app wrote into the shared cache, and membership entries in the rights store
-(gap 2).
+purge of one app uses. The tenant's mailboxes go once its mail routing is
+gone, so that nothing is delivered into a mailbox being destroyed, and the
+deletion waits for that step as it waits for a store's. Two things are left
+behind: the keys an app wrote into the shared cache, and the tenant's entries
+in the rights store other than its apps' (gap 1).
+
+Mailboxes on a domain the tenant shares with the cluster are not the
+tenant's alone: on a single-tenancy cluster the user tenant's addresses are
+on the cluster's own domain, with the administrators'. Those are neither
+copied nor destroyed, and a backup says so.
 
 A tenant is refused, created or imported, when its realm, its database prefix
 or its bucket prefix is already another tenant's. Two tenants with one of
@@ -119,7 +142,20 @@ these in common share the thing itself.
 **Back up and restore.** A restore puts back exactly what the bundle says it
 holds, app by app. An app is restored whole or not at all, and every app left
 out is named with the reason. Databases and buckets are *replaced*. Files are
-written *on top*: a file created after the backup stays. A restore changes no
+written *on top*: a file created after the backup stays. Mailboxes too: a
+message the bundle holds and the mailbox lacks is added, with its flags and
+in its folder, and mail that arrived since stays.
+
+An app the bundle holds as uninstalled is put back as that: into the
+databases, bucket and volumes the tenant still holds for it, with nothing
+installed and nothing paused. If the tenant holds none of it any more, it was
+purged since, and it is not restored; the result names it. If the app has
+been installed again, the data is the installed app's and is restored like
+any app's, which needs `skipVersionCheck`: no build is on record for data an
+uninstalled app left.
+
+The access rights a bundle holds are written last, after the people are back
+and the operator has derived the rest. A restore changes no
 stored credential and brings back no password. A database is replaced only
 when it is the app's own; one that belongs to another app or tenant is
 refused. A backup and a restore say what they did not do: the result of a
@@ -138,8 +174,18 @@ The new tenant takes its settings from the bundle and its *names* from its
 own name: its realm, its database prefix and its bucket prefix. So a bundle
 imported under another name beside the tenant it came from touches nothing of
 that tenant. What the bundle names after the old tenant comes back under the
-new one's names: databases an app made for itself, and the platform's groups
-with their members. The old tenant's sign-in clients are not imported.
+new one's names: databases an app made for itself, the platform's groups
+with their members, mailboxes (by the part of each address before the @, in
+the new tenant's mail domain) and entries of the rights store. The old
+tenant's sign-in clients are not imported.
+
+Two things are different from a restore, because the tenant is new. The data
+of apps the bundle holds as uninstalled comes with stores made for it — the
+database and its role, the bucket, the volume claims — and the apps stay
+uninstalled; an app whose definition this cluster does not have is left out
+and named. And no access right that was *granted* in the old tenant is
+granted in the new one: each is named in the result, for whoever may grant it
+here. A right the old tenant had *withdrawn* is withdrawn in the new one too.
 
 The import is recorded in git beside the new tenant until it has finished.
 A director that restarts goes on with it. It needs the bundle's key again
@@ -151,9 +197,9 @@ stays: databases, bucket, files, stored credentials, cache user, the access
 group with its members. The app is then **retained**: gone from the tenant's
 screen, data still there. Installing it again finds all of it. *Purging* is
 asked for separately, is refused while the app is still installed, and
-destroys everything that was retained. It cannot be undone. Retained data is
-in no backup taken after the uninstall (gap 1): back up before you uninstall.
-The uninstall says so, and so does every later backup, by name.
+destroys everything that was retained. It cannot be undone. Until then the
+retained data is in every backup of the tenant, as an uninstalled app's; a
+backup asked for some apps only names the ones it left out.
 
 **Retire and delete.** Every tenant starts with the policy *keep the data*.
 *Retiring* removes the tenant from git; its apps stop, its addresses and mail
@@ -183,13 +229,15 @@ After an **import**, also:
       generated cannot be read, unless that cluster was built from the first
       one's recovery kit.
 - [ ] Set again what each app may use (app grants) and each tenant catalogue.
-- [ ] Mailboxes and the cache did not come. Mail has to be moved separately.
+- [ ] The cache did not come. Mailboxes came only if both clusters run their
+      own mail server; the result says when they did not.
+- [ ] Grant again each access right the result names as not brought.
 - [ ] Under another name: check each app's own settings for the old tenant's
       names (addresses, database names it chose itself).
 - [ ] Point DNS at the new cluster.
 
-Never in a bundle: passwords, stored credentials, mailboxes, cache content,
-access rights, the running apps themselves, the apps' definitions.
+Never in a bundle: passwords, stored credentials, cache content, the access
+rights that are derived, the running apps themselves, the apps' definitions.
 
 ## 6. Where it can fail, and what you see
 
@@ -210,34 +258,46 @@ gone.
 Found by reading the code, not by running it on a cluster. Ordered by how
 much it matters.
 
-1. **Retained data of an uninstalled app is in no backup taken afterwards,**
-   yet deleting the tenant destroys it, and a restore skips an app that is
-   not installed. Not changed: the backup now names those apps in its result
-   and in the bundle, and the uninstall says it. Consequence: the only copy
-   of an uninstalled app's data is a backup taken while it was installed.
-2. **Three things no act removes and no backup holds:** mailboxes, the keys
-   an app wrote into the shared cache, and the entries in the rights store
-   that say who is a tenant's member. Consequence: they outlive a deleted
-   tenant. **Open decision:** whether deleting a tenant deletes its mailboxes.
-   No act deletes mail today.
-3. **The platform tenant's desktop database is in no backup.** It lives on
-   the kernel's own PostgreSQL, where no backup step has a credential. The
-   backup says so. Consequence: desktop layouts and preferences of the
-   cluster's administrators are not restorable from a bundle.
-4. **A restore creates every missing person enabled,** also one who was
-   disabled when the backup was taken. They have no password, but a sign-in
-   through another provider that the bundle recorded for them works.
-5. **An import carries the privileges and published addresses** the bundle's
+1. **Three things no act removes:** the keys an app wrote into the shared
+   cache, the entries in the rights store that say who is a tenant's member,
+   and the entries on the tenant itself — the derived ones and any right
+   granted beyond them. Consequence: they outlive a deleted tenant, and a
+   tenant created later under the same name finds the old rights on its name.
+2. **An import carries the privileges and published addresses** the bundle's
    tenant had approved (`spec.privileges`, `spec.exposures`) as approved.
-6. **An import that is interrupted before its restore starts needs the
+   Open, until an import has been drilled. Rights *in the rights store* are
+   not carried (§4); these are settings of the tenant's entry in git.
+3. **An import brings an uninstalled app's data only if the cluster has the
+   app's definition.** It fetches the definitions of the apps the tenant
+   lists, not of the ones it had uninstalled; such an app is named as not
+   restored.
+4. **A volume claim made for an uninstalled app's data is on the cluster's
+   default storage class,** whatever class it had where the bundle was taken.
+5. **A tenant's mail domain that changed leaves the old domain's mailboxes
+   behind.** Backup and deletion go by the domain the tenant has now.
+6. **A single person's mailbox stays when the person is removed.** Nothing
+   decides yet what removing a person does with their mail.
+7. **The desktop's rows name the tenant they were written in.** A bundle
+   imported under another name fills the new tenant's desktop database with
+   rows the desktop does not look for.
+8. **An import that is interrupted before its restore starts needs the
    bundle's key again.** The status says `awaiting-key`.
-7. **A tenant placed in a namespace of another name is not supported** by
+9. **A tenant placed in a namespace of another name is not supported** by
    backup and restore; both refuse it.
-8. **At a tenant's deletion the web addresses are removed after the stores,**
-   not before them.
+10. **At a tenant's deletion the web addresses are removed after the stores,**
+    not before them.
+
+Accepted, not a gap: **a restore creates every missing person enabled,** also
+one who was disabled when the backup was taken. They have no password; a
+sign-in through another provider that the bundle recorded for them works.
+
+Closed: the data of uninstalled apps, the platform tenant's desktop database
+and mailboxes are in a backup; mailboxes are destroyed with the tenant; the
+rights that follow from nothing else are in a backup.
 
 What only a cluster can confirm: that each step's pod starts in its namespace
-and reaches the object store through the network policies; that the realm
+and reaches the object store through the network policies, the mailbox steps
+beside the mail server's volume among them; that the realm
 steps work against the running sign-in service; and that restoring clients
 into a realm leaves each app's sign-in working.
 
@@ -249,7 +309,9 @@ Further technical limits (bundle format, MariaDB naming, cache keys) are in
 - The inventory and the order, in code:
   [`internal/backup/teardown.go`](../../internal/backup/teardown.go)
   (`AppKinds`, `TenantOwned`); the names of things:
-  [`inventory.go`](../../internal/backup/inventory.go).
+  [`inventory.go`](../../internal/backup/inventory.go); what uninstalled apps
+  hold: [`retained.go`](../../internal/backup/retained.go); mailboxes:
+  [`mailboxes.go`](../../internal/backup/mailboxes.go).
 - The bundle format: [`api/bundle/bundle.go`](../../api/bundle/bundle.go), and
   [operations.md](operations.md) §9.4.
 - Reference detail per kind, how retained data is found, the restore rules:
