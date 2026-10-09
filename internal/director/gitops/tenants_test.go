@@ -655,9 +655,10 @@ func TestThePlatformTenantsManifestRefusesAppsAndAddons(t *testing.T) {
 // The install writes one tenant itself: the user tenant of a single-tenancy
 // cluster (scripts/lib/bootstrap.sh, scaffold_user_tenant), committed with
 // the cluster's definition before there is a director to ask. What it writes
-// is the manifest CreateTenant writes for a tenant whose administrators may
-// approve public addresses -- the one switch the install turns on for this
-// tenant -- and nothing more: in particular no annotation that would admit
+// is the manifest CreateTenant writes for the tenant of that name on such a
+// cluster when nothing is said of its switches: its administrators may
+// approve public addresses -- the one switch that is on for this tenant, by
+// the install and by the director alike -- and nothing more: in particular no annotation that would admit
 // the tenant ahead of the handover, and no catalogues of its own. Two templates
 // in two languages would drift apart silently, so the shell's output is
 // produced here and compared with the director's as data.
@@ -692,11 +693,10 @@ func TestTheInstallsUserTenantIsTheManifestTheDirectorWrites(t *testing.T) {
 	}
 
 	// The director's.
-	remote := dt.Remote(t, "demo")
+	remote := dt.Remote(t)
+	dt.Commit(t, remote, map[string]string{dt.ClaimPath: singleTenancyClaim})
 	g := gitops.NewGitOps(dt.Clone(t, remote), remote, dt.Cluster, director)
-	if _, err := g.CreateTenant(context.Background(), gitops.NewTenant{
-		Name: "user", DisplayName: "User", Perimeter: &gitops.NewTenantPerimeter{AdminsApprove: true},
-	}, tenantMeta()); err != nil {
+	if _, err := g.CreateTenant(context.Background(), gitops.NewTenant{Name: "user", DisplayName: "User"}, tenantMeta()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -851,5 +851,71 @@ func TestATenantWhoseNamesAreAnothersIsRefused(t *testing.T) {
 	dt.Commit(t, remote, map[string]string{dt.TenantPath("broken"): "spec: [this is: not a tenant\n"})
 	if _, err := g.CreateTenant(ctx, gitops.NewTenant{Name: "umbrella"}, tenantMeta()); err == nil || !strings.Contains(err.Error(), "broken") {
 		t.Fatalf("a tenant was created beside a manifest whose names cannot be read: %v", err)
+	}
+}
+
+// singleTenancyClaim is the fixture's Cluster claim for a single-tenancy
+// cluster.
+const singleTenancyClaim = "apiVersion: gentianos.io/v1alpha1\nkind: Cluster\nmetadata:\n  name: " + dt.Cluster +
+	"\nspec:\n  kernelDomain: " + dt.KernelDomain + "\n  tenancyMode: single\n"
+
+// The user tenant of a single-tenancy cluster starts with its administrators
+// approving its public addresses when the request does not say; a request
+// that says off is kept off. Nowhere else does a tenant start with it: not a
+// tenant of that name on a multi-tenancy cluster, and not any other tenant.
+// Adding catalogues is not touched by any of it.
+func TestTheUserTenantOfASingleTenancyClusterStartsWithItsAdministratorsApproving(t *testing.T) {
+	ctx := context.Background()
+	off, on := false, true
+	for name, c := range map[string]struct {
+		claim  string
+		tenant string
+		stated *bool
+		want   bool
+	}{
+		"single, user, nothing said": {singleTenancyClaim, "user", nil, true},
+		"single, user, said off":     {singleTenancyClaim, "user", &off, false},
+		"single, user, said on":      {singleTenancyClaim, "user", &on, true},
+		"multi, user, nothing said":  {"", "user", nil, false},
+		"multi, user, said on":       {"", "user", &on, true},
+		"multi, another tenant":      {"", "acme", nil, false},
+	} {
+		remote := dt.Remote(t)
+		if c.claim != "" {
+			dt.Commit(t, remote, map[string]string{dt.ClaimPath: c.claim})
+		}
+		g := gitops.NewGitOps(dt.Clone(t, remote), remote, dt.Cluster, director)
+		req := gitops.NewTenant{Name: c.tenant}
+		if c.stated != nil {
+			req.Perimeter = &gitops.NewTenantPerimeter{AdminsApprove: c.stated}
+		}
+		if got, err := g.AdminsApproveAtCreation(ctx, req); err != nil || got != c.want {
+			t.Errorf("%s: the answer is %v (%v), want %v", name, got, err, c.want)
+		}
+		if _, err := g.CreateTenant(ctx, req, tenantMeta()); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		manifest := dt.RemoteFile(t, remote, dt.TenantPath(c.tenant)) + "\n"
+		if got := strings.Contains(manifest, "\n  perimeter:\n    adminsApprove: true\n"); got != c.want {
+			t.Errorf("%s: administrators approve = %v, want %v\n%s", name, got, c.want, manifest)
+		}
+		if !c.want && strings.Contains(manifest, "perimeter") {
+			t.Errorf("%s: a switch that is off is written:\n%s", name, manifest)
+		}
+		if strings.Contains(manifest, "catalogue:") {
+			t.Errorf("%s: adding catalogues was touched:\n%s", name, manifest)
+		}
+	}
+	// A request for the user tenant with an empty perimeter says nothing.
+	remote := dt.Remote(t)
+	dt.Commit(t, remote, map[string]string{dt.ClaimPath: singleTenancyClaim})
+	g := gitops.NewGitOps(dt.Clone(t, remote), remote, dt.Cluster, director)
+	if got, err := g.AdminsApproveAtCreation(ctx, gitops.NewTenant{Name: "user", Perimeter: &gitops.NewTenantPerimeter{}}); err != nil || !got {
+		t.Fatalf("an empty perimeter: %v (%v), want on", got, err)
+	}
+	// And the one other tenant such a cluster has, the platform tenant, is
+	// not created by this route at all: every other name is refused.
+	if _, err := g.CreateTenant(ctx, gitops.NewTenant{Name: "platform"}, tenantMeta()); !errors.Is(err, gitops.ErrSingleTenancy) {
+		t.Fatalf("a second tenant on a single-tenancy cluster: %v", err)
 	}
 }

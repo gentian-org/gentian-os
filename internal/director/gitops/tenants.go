@@ -339,15 +339,42 @@ type NewTenant struct {
 	// with, named as the manifest names them: whether its own
 	// administrators may approve public addresses
 	// (perimeter.adminsApprove) and add catalogues (catalogue.delegated).
-	// Left out, both are off. The route that creates a tenant is the
-	// cluster administrator's, as the routes that change them are.
+	// Left out, both are off -- but for the one user tenant of a
+	// single-tenancy cluster, whose administrators approve its public
+	// addresses unless the request says they do not (AdminsApproveAtCreation).
+	// The route that creates a tenant is the cluster administrator's, as the
+	// routes that change them are.
 	Perimeter *NewTenantPerimeter `json:"perimeter,omitempty"`
 	Catalogue *NewTenantCatalogue `json:"catalogue,omitempty"`
 }
 
 // NewTenantPerimeter is spec.perimeter of a tenant being created.
 type NewTenantPerimeter struct {
-	AdminsApprove bool `json:"adminsApprove"`
+	// AdminsApprove is nil when the request does not say: an explicit false
+	// is a decision, and is kept as one.
+	AdminsApprove *bool `json:"adminsApprove,omitempty"`
+}
+
+// AdminsApproveAtCreation says whether a tenant being created starts with
+// its own administrators approving its public addresses.
+//
+// What the request states is what is written, on or off. Where it states
+// nothing the switch is off, with one exception: the user tenant of a
+// single-tenancy cluster. That cluster has one organisation on it and the
+// person who administers the tenant is the one who answers for what it puts
+// on the internet, so the install writes that tenant with the switch on --
+// and a tenant of that name created here is the same tenant, and starts the
+// same way. The platform tenant and every tenant of a multi-tenancy cluster
+// start with it off.
+func (g *GitOps) AdminsApproveAtCreation(ctx context.Context, req NewTenant) (bool, error) {
+	if req.Perimeter != nil && req.Perimeter.AdminsApprove != nil {
+		return *req.Perimeter.AdminsApprove, nil
+	}
+	settings, err := g.ClusterSettingValues(ctx)
+	if err != nil && !errors.Is(err, ErrNoClusterClaim) {
+		return false, err
+	}
+	return tenancy.SoleUserTenant(settings["tenancyMode"], req.Name), nil
 }
 
 // NewTenantCatalogue is the switch in spec.catalogue of a tenant being
@@ -370,6 +397,10 @@ func (g *GitOps) CreateTenant(ctx context.Context, req NewTenant, meta Meta) (Re
 		display = req.Name
 	}
 	requireMFA := req.RequireMFA == nil || *req.RequireMFA
+	adminsApprove, err := g.AdminsApproveAtCreation(ctx, req)
+	if err != nil {
+		return Result{}, err
+	}
 	return g.createTenant(ctx, req.Name, func() ([]byte, error) {
 		text := tenantManifest(req.Name, display, requireMFA)
 		var err error
@@ -378,7 +409,7 @@ func (g *GitOps) CreateTenant(ctx context.Context, req NewTenant, meta Meta) (Re
 				return nil, err
 			}
 		}
-		if req.Perimeter != nil && req.Perimeter.AdminsApprove {
+		if adminsApprove {
 			if text, err = setTenantPerimeter(text, true); err != nil {
 				return nil, err
 			}

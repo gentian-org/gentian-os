@@ -18,7 +18,9 @@
 #   kubectl gentian tenants list
 #   kubectl gentian tenants show <name>
 #   kubectl gentian tenants create <name> [--display-name <text>] [--no-mfa]
-#                                  [--admins-approve-public-addresses] [--admins-add-catalogues]
+#                                  [--admins-approve-public-addresses[=true|false]] [--admins-add-catalogues]
+#                                  (unstated, approving is off -- and on for the user tenant
+#                                  of a single-tenancy cluster)
 #   kubectl gentian tenants set <name> [--admins-approve-public-addresses=true|false]
 #                                      [--admins-add-catalogues=true|false]
 #   kubectl gentian tenants activate-admin <name> [--recovery-email <address>]
@@ -440,27 +442,37 @@ cmd_tenants_show() {
 }
 
 cmd_tenants_create() {
-    local name="" display="" mfa="true" approve="false" catalogues="false"
+    local name="" display="" mfa="true" approve="" catalogues="false" answer
+    local usage_text="usage: kubectl gentian tenants create <name> [--display-name <text>] [--no-mfa] [--admins-approve-public-addresses[=true|false]] [--admins-add-catalogues]"
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --display-name) display="${2:?}"; shift 2 ;;
             --no-mfa) mfa="false"; shift ;;
-            --admins-approve-public-addresses) approve="true"; shift ;;
+            --admins-approve-public-addresses|--admins-approve-public-addresses=true) approve="true"; shift ;;
+            --admins-approve-public-addresses=false) approve="false"; shift ;;
+            --admins-approve-public-addresses=*) die "--admins-approve-public-addresses is given alone, or as =true or =false" ;;
             --admins-add-catalogues) catalogues="true"; shift ;;
             -*) die "unknown option $1" ;;
             *) name="$1"; shift ;;
         esac
     done
-    [[ -n "${name}" ]] || die "usage: kubectl gentian tenants create <name> [--display-name <text>] [--no-mfa] [--admins-approve-public-addresses] [--admins-add-catalogues]"
+    [[ -n "${name}" ]] || die "${usage_text}"
     _discover
-    # A switch is named in the request only when it is turned on: left out,
-    # the director writes neither, which is how every tenant starts.
-    _call POST "/v1/clusters/${_CLUSTER}/tenants" \
-        "$(jq -n --arg n "${name}" --arg d "${display}" --argjson m "${mfa}" --argjson a "${approve}" --argjson c "${catalogues}" \
+    # A switch is named in the request only when it is stated here. Left out,
+    # the director decides: neither is on, which is how every tenant starts --
+    # but for the user tenant of a single-tenancy cluster, whose administrators
+    # approve its public addresses unless =false says they do not.
+    answer="$(_call POST "/v1/clusters/${_CLUSTER}/tenants" \
+        "$(jq -n --arg n "${name}" --arg d "${display}" --argjson m "${mfa}" --arg a "${approve}" --argjson c "${catalogues}" \
             '{name:$n, displayName:$d, requireMFA:$m}
-             + (if $a then {perimeter:{adminsApprove:true}} else {} end)
-             + (if $c then {catalogue:{delegated:true}} else {} end)')" >/dev/null
+             + (if $a != "" then {perimeter:{adminsApprove:($a == "true")}} else {} end)
+             + (if $c then {catalogue:{delegated:true}} else {} end)')")" || exit 1
     echo "Tenant ${name} committed; the platform is provisioning it."
+    # What the director wrote, where it says; what was asked for otherwise.
+    case "$(printf '%s' "${answer}" | jq -r '.adminsApprove | if . == null then "" else tostring end' 2>/dev/null)" in
+        true) approve="true" ;;
+        false) approve="false" ;;
+    esac
     if [[ "${approve}" == "true" ]]; then
         echo "Its administrators may approve its public addresses."
     else

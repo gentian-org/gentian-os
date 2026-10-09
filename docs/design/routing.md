@@ -845,7 +845,7 @@ tenant and starts empty; the cluster's administrator, in a tenant its cluster
 operates (`operated_by`); and the tenant's own administrators only where the
 tenant's manifest says so (`Tenant.spec.perimeter.adminsApprove`: off by
 default and switched on by the cluster's administrator, and on from the
-start for the user tenant the install creates on a single-tenancy cluster;
+start for the user tenant of a single-tenancy cluster;
 [security.md §2.14](security.md)). The director commits it to the tenant's registry in git with its owner, its
 publish date and its review date; the operator then gives it a proxy in the
 tenant's DMZ, a listener for exactly its host and a route (§2.1).

@@ -220,3 +220,45 @@ func boolWord(v any) string {
 	}
 	return "false"
 }
+
+// On a single-tenancy cluster the route creates the user tenant with its
+// administrators approving its public addresses when the request does not
+// say, as the install does; a request that says off is kept off; and the
+// answer states which. Adding catalogues stays as the request states it.
+func TestTheRouteCreatesTheUserTenantOfASingleTenancyClusterWithItsAdministratorsApproving(t *testing.T) {
+	tenants := "/v1/clusters/" + dt.Cluster + "/tenants"
+	for name, c := range map[string]struct {
+		body string
+		want bool
+	}{
+		"nothing said":       {`{"name":"user"}`, true},
+		"an empty perimeter": {`{"name":"user","perimeter":{}}`, true},
+		"said off":           {`{"name":"user","perimeter":{"adminsApprove":false}}`, false},
+		"said on":            {`{"name":"user","perimeter":{"adminsApprove":true}}`, true},
+	} {
+		h := startSeeded(t, nil, func(remote string) {
+			dt.Commit(t, remote, map[string]string{dt.ClaimPath: claimWith() + "  tenancyMode: single\n"})
+		})
+		code, out := h.do(t, "POST", tenants, h.token(t, "gentian", "alice"), c.body)
+		if code != http.StatusAccepted || out["adminsApprove"] != c.want || out["commit"] == nil {
+			t.Fatalf("%s: %d %v, want 202 stating %v", name, code, out, c.want)
+		}
+		manifest := dt.RemoteFile(t, h.remote, dt.TenantPath("user")) + "\n"
+		if got := strings.Contains(manifest, "\n  perimeter:\n    adminsApprove: true\n"); got != c.want {
+			t.Errorf("%s: administrators approve = %v, want %v\n%s", name, got, c.want, manifest)
+		}
+		if strings.Contains(manifest, "catalogue:") {
+			t.Errorf("%s: adding catalogues was turned on:\n%s", name, manifest)
+		}
+	}
+	// On a cluster of many tenants a tenant of that name starts as every
+	// other does, and the answer says so.
+	h := start(t)
+	code, out := h.do(t, "POST", tenants, h.token(t, "gentian", "alice"), `{"name":"user"}`)
+	if code != http.StatusAccepted || out["adminsApprove"] != false {
+		t.Fatalf("multi: %d %v", code, out)
+	}
+	if manifest := dt.RemoteFile(t, h.remote, dt.TenantPath("user")); strings.Contains(manifest, "perimeter") {
+		t.Fatalf("multi: the switch is written:\n%s", manifest)
+	}
+}

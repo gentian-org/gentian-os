@@ -62,6 +62,7 @@ type Repository interface {
 	SetClusterSettings(ctx context.Context, values map[string]string, meta gitops.Meta) (gitops.Result, error)
 	TenantDetails(ctx context.Context) ([]gitops.Tenant, error)
 	CreateTenant(ctx context.Context, req gitops.NewTenant, meta gitops.Meta) (gitops.Result, error)
+	AdminsApproveAtCreation(ctx context.Context, req gitops.NewTenant) (bool, error)
 	RetireTenant(ctx context.Context, tenant string, meta gitops.Meta) (gitops.Result, error)
 	RequestTenantPurge(ctx context.Context, tenant string, now time.Time, opts gitops.PurgeOptions, meta gitops.Meta) (gitops.Result, error)
 	DeclareTenant(ctx context.Context, imported gitops.ImportedTenant, meta gitops.Meta) (gitops.Result, error)
@@ -1447,7 +1448,7 @@ func (s *Server) createTenant(w http.ResponseWriter, r *http.Request, c call) {
 	var body gitops.NewTenant
 	if err := decode(r, &body); err != nil {
 		s.fail(w, r, http.StatusBadRequest, `body must be {"name": "<name>", "displayName": "<name>"}, optionally with `+
-			`"requireMFA": false, "perimeter": {"adminsApprove": true}, "catalogue": {"delegated": true}`)
+			`"requireMFA": false, "perimeter": {"adminsApprove": true|false}, "catalogue": {"delegated": true}`)
 		return
 	}
 	if !gitops.ValidName(body.Name) {
@@ -1455,6 +1456,17 @@ func (s *Server) createTenant(w http.ResponseWriter, r *http.Request, c call) {
 			"a tenant name is a DNS label: lower-case letters, digits and hyphens, starting and ending with a letter or digit")
 		return
 	}
+	// Whether its administrators approve its public addresses is the
+	// request's to say. Unsaid it is off, except for the user tenant of a
+	// single-tenancy cluster (gitops.AdminsApproveAtCreation). Settled here
+	// and written as settled, so that the answer states what the manifest
+	// holds.
+	adminsApprove, err := s.cfg.Repo.AdminsApproveAtCreation(r.Context(), body)
+	if err != nil {
+		s.repoError(w, r, err)
+		return
+	}
+	body.Perimeter = &gitops.NewTenantPerimeter{AdminsApprove: &adminsApprove}
 	res, err := s.cfg.Repo.CreateTenant(r.Context(), body, c.meta)
 	if errors.Is(err, gitops.ErrTenantExists) {
 		s.fail(w, r, http.StatusConflict, "a tenant of that name already exists")
@@ -1464,7 +1476,17 @@ func (s *Server) createTenant(w http.ResponseWriter, r *http.Request, c call) {
 		s.fail(w, r, http.StatusConflict, err.Error())
 		return
 	}
-	s.written(w, r, res, err)
+	if err != nil {
+		s.repoError(w, r, err)
+		return
+	}
+	answer := map[string]any{"status": res.Status, "adminsApprove": adminsApprove}
+	if !res.Changed {
+		s.json(w, http.StatusOK, answer)
+		return
+	}
+	answer["commit"] = res.Commit
+	s.json(w, http.StatusAccepted, answer)
 }
 
 // clusterBranding answers the cluster's brand; an empty one when it sets

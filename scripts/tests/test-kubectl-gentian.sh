@@ -304,6 +304,24 @@ is "create with both switches states both, as the manifest names them" "$(writes
     'POST/v1/clusters/c1/tenants{"name":"globex","displayName":"","requireMFA":true,"perimeter":{"adminsApprove":true},"catalogue":{"delegated":true}}'
 has "... and says so" "${OUT}" "Its administrators may approve its public addresses."
 
+# The user tenant of a single-tenancy cluster: the director turns approving on
+# where the request does not say, and the command reports what it wrote.
+fresh; reply POST /v1/clusters/c1/tenants 202 '{"status":"created","commit":"0123456789abcdef","adminsApprove":true}'
+gentian tenants create user
+is "create for the user tenant states no switch either" "$(writes | tr -d ' \n')" 'POST/v1/clusters/c1/tenants{"name":"user","displayName":"","requireMFA":true}'
+has "... and says what the director wrote, not what was typed" "${OUT}" "Its administrators may approve its public addresses."
+
+fresh; reply POST /v1/clusters/c1/tenants 202 '{"status":"created","commit":"0123456789abcdef","adminsApprove":false}'
+gentian tenants create user --admins-approve-public-addresses=false
+is "create states an explicit off" "$(writes | tr -d ' \n')" \
+    'POST/v1/clusters/c1/tenants{"name":"user","displayName":"","requireMFA":true,"perimeter":{"adminsApprove":false}}'
+has "... and says who approves then" "${OUT}" "not by its own administrators"
+
+fresh
+gentian tenants create user --admins-approve-public-addresses=maybe
+refused "create refuses a value that is neither true nor false"
+is "... and asks the director nothing" "$(cat "${CALLS}")" ""
+
 fresh; reply POST /v1/clusters/c1/tenants 202 '{"status":"created","commit":"0123456789abcdef"}'
 gentian tenants create globex --admins-add-catalogues
 is "create with one switch states that one" "$(writes | tr -d ' \n')" \

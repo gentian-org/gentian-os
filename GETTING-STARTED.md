@@ -472,7 +472,8 @@ The user admin may approve what the user tenant puts on the internet: the
 install creates this one tenant with that switched on, and the platform admin
 can switch it off (`kubectl gentian tenants set user
 --admins-approve-public-addresses=false`). A user tenant that was there before
-is left as it is.
+is left as it is; one created anew with `kubectl gentian tenants create user`
+starts with it on as well.
 If the tenant is not Ready within the wait, the install says what it is
 waiting for and does not fail: `kubectl get tenant user` shows its state, and
 `./install.sh --only E-04` — or `kubectl gentian tenants activate-admin user`,
@@ -862,9 +863,9 @@ differs is listed here, in the order you meet it.
    group is made with the tenant and starts empty; the platform admin adds
    whoever approves, in the admin console. The
    tenant's own admin does not approve, and cannot add anybody to that
-   group, unless the platform admin switched it on for the tenant. The
-   install switches it on for the user tenant of a single-tenancy cluster,
-   and for no other:
+   group, unless the platform admin switched it on for the tenant. It is
+   on from the start for the user tenant of a single-tenancy cluster, and
+   for no other:
 
    ```bash
    kubectl gentian tenants set <tenant> --admins-approve-public-addresses=true

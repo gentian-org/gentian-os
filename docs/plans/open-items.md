@@ -207,8 +207,10 @@ Each is true of the code today.
    administrator approves, and a tenant's admins approve only where the
    switch is on. **Decided 2026-10-09**, the one choice that was left: the
    install writes the user tenant of a single-tenancy cluster with the switch
-   on, so the user admin approves there. Every other tenant starts with it
-   off, and a user tenant that exists is not rewritten.
+   on, so the user admin approves there, and the director's create route
+   does the same for that tenant when the request does not state the switch.
+   Every other tenant starts with it off, and a user tenant that exists is
+   not rewritten.
 3. **Sessions and offline tokens when a person's groups change** (AD-12).
    **Decided 2026-10-09**: AD-12 states both as an aim, not as something the
    platform does. Neither is built (defect 17). The operator's hold on

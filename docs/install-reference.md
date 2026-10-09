@@ -482,8 +482,9 @@ kubectl gentian tenants show user
 ```
 
 A user tenant that an earlier install wrote keeps its manifest as it is, with
-the switch off, and so does one created later with `kubectl gentian tenants
-create user`, unless `--admins-approve-public-addresses` is given.
+the switch off. One created later with `kubectl gentian tenants create user`
+starts as the install's does, with the switch on, unless
+`--admins-approve-public-addresses=false` is given.
 
 The platform tenant's admin console is two labels under the cluster's domain,
 so it has a wildcard certificate of its own, `*.platform.<kernel-domain>`,

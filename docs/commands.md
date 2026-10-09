@@ -79,7 +79,9 @@ kubectl get tenant demo -w
 
 Two things about a tenant are the cluster's administrator's alone to decide,
 and both are off unless switched on -- but for the first on the user tenant
-the install creates on a single-tenancy cluster, which starts with it on:
+of a single-tenancy cluster, which starts with it on, created by the install
+or by `tenants create user`, unless `--admins-approve-public-addresses=false`
+says otherwise:
 whether the tenant's own administrators
 may approve what it publishes to the internet, and whether they may add
 catalogues to install from. They are stated when the tenant is created or
