@@ -20,6 +20,11 @@ command about a person, `tenants activate-admin`, asks the registrar, which
 checks the same way and acts at Keycloak. It reaches the director and the
 registrar of the current kubectl context, so it needs no configuration.
 
+People are invited, changed and removed in the Admin Console, *Members*;
+there is no command for it. Removing a person who has a mailbox on the
+cluster's own mail server asks there whether the mailbox is archived or
+deleted ([mail.md §5c](design/mail.md)).
+
 ```bash
 gtnctl tenants list    # same as kubectl gentian tenants list
 ```

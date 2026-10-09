@@ -629,6 +629,16 @@ the cluster's administrators; its mailboxes are neither copied nor destroyed,
 and `status.notIncluded` says so. On a cluster without a mail server there is
 no unit and nothing is said.
 
+The archived mailboxes of removed people ([mail.md §5c](mail.md)) are in the
+same artefact, under `archived/` with an `INDEX` of their own, copied the
+same way from `/var/mail/.archive/<domain>/`. The manifest names them
+(`archivedMailboxes`: archive, address, when, by whom, size). A restore
+synchronises each into `/var/mail/.archive/<target domain>/<archive>` and
+writes a `MailboxRemoval` for it that says it was restored, so that it is
+listed and can be deleted; the operator runs no Job for such a record. A
+tenant's deletion removes `/var/mail/.archive/<domain>` with the domain's
+mailboxes, and then the tenant's records.
+
 **Rights.** The operator reads the tenant's entries in the rights store and
 writes into the manifest the ones its projection would not write, and the
 defaults the store no longer holds; no Job reads the store. A restore writes

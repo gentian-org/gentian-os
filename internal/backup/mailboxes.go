@@ -81,9 +81,11 @@ func MailboxDestroyJobName(tenantName string) string {
 // ValidMailDomain reports why a name cannot be the directory of a mail
 // domain, or nil. The Jobs below remove and write below MailRoot/<domain>:
 // a name that is empty, that names the root or its parent, or that has a
-// separator in it, would make that somewhere else.
+// separator in it, would make that somewhere else. No name begins with a
+// dot: MailRoot/.archive is where the mailboxes of removed people are kept
+// (mailbox_person.go), and is no domain's.
 func ValidMailDomain(domain string) error {
-	if domain == "" || domain == "." || domain == ".." || strings.ContainsAny(domain, "/\\\x00\n\r\t ") || strings.HasPrefix(domain, "-") {
+	if domain == "" || strings.HasPrefix(domain, ".") || strings.ContainsAny(domain, "/\\\x00\n\r\t ") || strings.HasPrefix(domain, "-") {
 		return fmt.Errorf("%q is not a name a mail domain's directory can have", domain)
 	}
 	return nil
@@ -161,24 +163,31 @@ func mailVolume(claim string) corev1.Volume {
 //
 // A domain that has no directory has no mailboxes: the archive is written
 // with an empty INDEX, the record that it was looked at.
+//
+// The mailboxes of removed people that were archived (mailbox_person.go) are
+// copied the same way, into archived/ of the same archive with an INDEX of
+// their own: they are in the bundle as what they are.
 func MailboxBackupJob(p JobParams, claim, domain string) *batchv1.Job {
-	script := doveadmPrelude + fmt.Sprintf(`BOXES=%[1]s/${DOMAIN}
-mkdir -p %[2]s/mail
-: > %[2]s/mail/INDEX
-n=0
-if [ -d "${BOXES}" ]; then
+	script := doveadmPrelude + fmt.Sprintf(`# copy_boxes DIRECTORY INTO WHAT: every mailbox below DIRECTORY, copied to
+# INTO/<number> and named, one per line, in INTO/INDEX. copied is how many.
+copy_boxes() {
+  _from="$1"; _into="$2"; _what="$3"
+  mkdir -p "${_into}"
+  : > "${_into}/INDEX"
+  copied=0
+  [ -d "${_from}" ] || return 0
   # A name is whatever an address was: listed one per line it must not hold
   # a line break, and a mailbox that cannot be listed is not left out.
-  find "${BOXES}" -mindepth 1 -maxdepth 1 -name '*[[:cntrl:]]*' > /tmp/unlistable
+  find "${_from}" -mindepth 1 -maxdepth 1 -name '*[[:cntrl:]]*' > /tmp/unlistable
   if [ -s /tmp/unlistable ]; then
-    echo "ERROR: a mailbox of ${DOMAIN} has a control character in its name and cannot be carried" >&2; exit 1
+    echo "ERROR: ${_what} of ${DOMAIN} has a control character in its name and cannot be carried" >&2; exit 1
   fi
-  find "${BOXES}" -mindepth 1 -maxdepth 1 -type d -printf '%%f\n' > /tmp/unsorted
+  find "${_from}" -mindepth 1 -maxdepth 1 -type d -printf '%%f\n' > /tmp/unsorted
   LC_ALL=C sort /tmp/unsorted > /tmp/boxes
   while IFS= read -r box; do
     [ -n "${box}" ] || continue
-    src="${BOXES}/${box}"
-    dst="%[2]s/mail/${n}"
+    src="${_from}/${box}"
+    dst="${_into}/${copied}"
     tries=0
     while : ; do
       rm -rf "${dst}"
@@ -188,15 +197,20 @@ if [ -d "${BOXES}" ]; then
       [ "${have}" != "${got}" ] || break
       tries=$((tries + 1))
       if [ "${tries}" -ge 3 ]; then
-        echo "ERROR: the copy of ${box}@${DOMAIN} holds ${got} message(s) and the mailbox ${have}" >&2; exit 1
+        echo "ERROR: the copy of ${_what} ${box} of ${DOMAIN} holds ${got} message(s) and the original ${have}" >&2; exit 1
       fi
     done
-    printf '%%s\n' "${box}" >> %[2]s/mail/INDEX
-    echo "copied ${box}@${DOMAIN}: ${got} message(s)"
-    n=$((n + 1))
+    printf '%%s\n' "${box}" >> "${_into}/INDEX"
+    echo "copied ${_what} ${box} of ${DOMAIN}: ${got} message(s)"
+    copied=$((copied + 1))
   done < /tmp/boxes
-fi
-echo "copied ${n} mailbox(es) of ${DOMAIN}"`, MailRoot, workDir)
+}
+copy_boxes "%[1]s/${DOMAIN}" "%[2]s/mail" "the mailbox"
+echo "copied ${copied} mailbox(es) of ${DOMAIN}"
+# The mailboxes of people who were removed and whose mail was archived: as
+# archives, beside the live ones and never among them.
+copy_boxes "%[1]s/%[3]s/${DOMAIN}" "%[2]s/mail/%[4]s" "the archived mailbox"
+echo "copied ${copied} archived mailbox(es) of ${DOMAIN}"`, MailRoot, workDir, MailArchiveDir, archivedInBundle)
 	copyBoxes := mailContainer("mailbox-backup", script, corev1.EnvVar{Name: "DOMAIN", Value: domain})
 	copyBoxes.VolumeMounts = append(copyBoxes.VolumeMounts, corev1.VolumeMount{Name: "work", MountPath: workDir})
 	// A separate container, as for every archive: one image packs them all.
@@ -246,29 +260,44 @@ chmod -R a+rwX %[1]s/mail
 echo "unpacked the archive of mailboxes"`, workDir)},
 		VolumeMounts: []corev1.VolumeMount{{Name: "work", MountPath: workDir}},
 	}
-	script := doveadmPrelude + fmt.Sprintf(`BOXES=%[1]s/${DOMAIN}
-mkdir -p "${BOXES}"
-n=0
-while IFS= read -r box; do
-  [ -n "${box}" ] || continue
-  case "${box}" in
-    .|..|*/*|*[[:cntrl:]]*) echo "ERROR: refused: the archive names a mailbox ${box}, which is not a name a mailbox can have" >&2; exit 1 ;;
-  esac
-  src="%[2]s/mail/${n}"
-  [ -d "${src}" ] || { echo "ERROR: the archive lists ${box} and holds no mail of it" >&2; exit 1; }
-  dst="${BOXES}/${box}"
-  # One way, from the bundle into the mailbox: nothing the mailbox holds is
-  # removed.
-  dv "${dst}" sync -1 -R "maildir:${src}"
-  want="$(count "${src}")"
-  got="$(count "${dst}")"
-  if [ "${got}" -lt "${want}" ]; then
-    echo "ERROR: ${box}@${DOMAIN} holds ${got} message(s) after the restore and the bundle ${want}" >&2; exit 1
-  fi
-  echo "restored ${box}@${DOMAIN}: ${want} message(s) of the bundle, ${got} in the mailbox"
-  n=$((n + 1))
-done < %[2]s/mail/INDEX
-echo "restored ${n} mailbox(es) into ${DOMAIN}"`, MailRoot, workDir)
+	script := doveadmPrelude + fmt.Sprintf(`# put_back FROM INTO WHAT: every mailbox FROM/INDEX names, synchronised into
+# the directory of its name below INTO. restored is how many.
+put_back() {
+  _from="$1"; _into="$2"; _what="$3"
+  restored=0
+  mkdir -p "${_into}"
+  while IFS= read -r box; do
+    [ -n "${box}" ] || continue
+    case "${box}" in
+      .|..|*/*|*[[:cntrl:]]*) echo "ERROR: refused: the archive names ${_what} ${box}, which is not a name a mailbox can have" >&2; exit 1 ;;
+    esac
+    src="${_from}/${restored}"
+    [ -d "${src}" ] || { echo "ERROR: the archive lists ${_what} ${box} and holds no mail of it" >&2; exit 1; }
+    dst="${_into}/${box}"
+    # One way, from the bundle into the mailbox: nothing the mailbox holds is
+    # removed.
+    dv "${dst}" sync -1 -R "maildir:${src}"
+    want="$(count "${src}")"
+    got="$(count "${dst}")"
+    if [ "${got}" -lt "${want}" ]; then
+      echo "ERROR: ${_what} ${box} of ${DOMAIN} holds ${got} message(s) after the restore and the bundle ${want}" >&2; exit 1
+    fi
+    echo "restored ${_what} ${box} of ${DOMAIN}: ${want} message(s) of the bundle, ${got} in the mailbox"
+    restored=$((restored + 1))
+  done < "${_from}/INDEX"
+}
+put_back "%[2]s/mail" "%[1]s/${DOMAIN}" "the mailbox"
+echo "restored ${restored} mailbox(es) into ${DOMAIN}"
+# What the bundle holds as archived comes back as archived: below the
+# archive, where no address opens it, and never into a live mailbox. A bundle
+# taken before mailboxes were archived holds none.
+if [ -f "%[2]s/mail/%[4]s/INDEX" ]; then
+  for link in "%[1]s/%[3]s" "%[1]s/%[3]s/${DOMAIN}"; do
+    if [ -L "${link}" ]; then echo "ERROR: refused: ${link} is a link" >&2; exit 1; fi
+  done
+  put_back "%[2]s/mail/%[4]s" "%[1]s/%[3]s/${DOMAIN}" "the archived mailbox"
+  echo "restored ${restored} archived mailbox(es) of ${DOMAIN}"
+fi`, MailRoot, workDir, MailArchiveDir, archivedInBundle)
 	restore := mailContainer("mailbox-restore", script, corev1.EnvVar{Name: "DOMAIN", Value: domain})
 	restore.VolumeMounts = append(restore.VolumeMounts, corev1.VolumeMount{Name: "work", MountPath: workDir})
 	return restoreJob(p, []corev1.Container{
@@ -277,8 +306,9 @@ echo "restored ${n} mailbox(es) into ${DOMAIN}"`, MailRoot, workDir)
 	}, restore, []corev1.Volume{mailVolume(claim)})
 }
 
-// mailboxDestroyScript removes every mailbox of one mail domain, and the
-// domain's directory.
+// mailboxDestroyScript removes every mailbox of one mail domain, the
+// domain's directory, and the archived mailboxes of the domain's removed
+// people.
 //
 // It ends in success only when the directory is verifiably not there, by
 // the rules the stores' destroy scripts go by: no command's failure is
@@ -288,7 +318,7 @@ func mailboxDestroyScript() string {
 	return fmt.Sprintf(`set -eu
 ROOT=%[1]s
 case "${DOMAIN}" in
-  ""|.|..|*/*) echo "ERROR: refused: ${DOMAIN} is not a mail domain's directory" >&2; exit 1 ;;
+  ""|.*|*/*) echo "ERROR: refused: ${DOMAIN} is not a mail domain's directory" >&2; exit 1 ;;
 esac
 ls -A "${ROOT}" >/dev/null
 if [ -e "${ROOT}/${DOMAIN}" ]; then
@@ -302,7 +332,21 @@ if printf '%%s\n' "${listing}" | grep -qxF -- "${DOMAIN}"; then
   echo "ERROR: the mailboxes of ${DOMAIN} are still there" >&2; exit 1
 fi
 echo "the mailboxes of ${DOMAIN} are gone"
-`, MailRoot)
+# The archived mailboxes of the domain's removed people go with them.
+ARCHIVE="${ROOT}/%[2]s"
+if [ -L "${ARCHIVE}" ]; then echo "ERROR: refused: ${ARCHIVE} is a link" >&2; exit 1; fi
+if [ -e "${ARCHIVE}/${DOMAIN}" ]; then
+  rm -rf -- "${ARCHIVE:?}/${DOMAIN:?}"
+  echo "the archived mailboxes of ${DOMAIN} are removed"
+fi
+if [ -e "${ARCHIVE}" ]; then
+  listing="$(ls -A "${ARCHIVE}")"
+  if printf '%%s\n' "${listing}" | grep -qxF -- "${DOMAIN}"; then
+    echo "ERROR: the archived mailboxes of ${DOMAIN} are still there" >&2; exit 1
+  fi
+fi
+echo "the archived mailboxes of ${DOMAIN} are gone"
+`, MailRoot, MailArchiveDir)
 }
 
 // MailboxDestroyJob destroys every mailbox of one mail domain: the Job a

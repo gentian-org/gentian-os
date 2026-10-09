@@ -58,6 +58,12 @@ type Person struct {
 	// Pending reports somebody who has been invited and has not finished:
 	// the address is unverified or a required action is outstanding.
 	Pending bool `json:"pending"`
+	// Mailbox is the address this person has a mailbox under on the cluster's
+	// own mail server, empty when they have none there. Filled by the
+	// registrar from what the cluster says about the tenant, not read from
+	// the realm: it is what tells a screen that removing this person comes
+	// with a question about their mail.
+	Mailbox string `json:"mailbox,omitempty"`
 	// Groups are the group paths this person holds, without the leading '/'.
 	// Filled only by the call that asks for them; listing a realm does not
 	// read every person's groups.

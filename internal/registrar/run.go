@@ -41,6 +41,12 @@ func envOr(name, def string) string {
 //
 // The returned closer releases the record's database connection.
 func NewFromEnv(ctx context.Context, reader client.Reader, graph authz.Checker, log *slog.Logger) (*Server, func(), error) {
+	return NewFromEnvWithMailboxes(ctx, reader, nil, graph, log)
+}
+
+// NewFromEnvWithMailboxes is NewFromEnv for a registrar that can write down
+// what is to become of a removed person's mailbox: mailboxes is where.
+func NewFromEnvWithMailboxes(ctx context.Context, reader client.Reader, mailboxes Mailboxes, graph authz.Checker, log *slog.Logger) (*Server, func(), error) {
 	if graph == nil {
 		return nil, nil, fmt.Errorf("the registrar needs the authorization store (OPENFGA_API_URL): it decides who may manage people")
 	}
@@ -113,6 +119,7 @@ func NewFromEnv(ctx context.Context, reader client.Reader, graph authz.Checker, 
 		Tenants:           &ClusterTenants{Client: reader, KernelDomain: os.Getenv("KERNEL_DOMAIN")},
 		Identity:          idClient,
 		Record:            authorityRecord,
+		Mailboxes:         mailboxes,
 		Log:               log,
 		Cluster:           cluster,
 		InviteClientID:    os.Getenv("REGISTRAR_INVITE_CLIENT_ID"),

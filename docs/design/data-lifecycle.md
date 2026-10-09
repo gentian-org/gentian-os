@@ -95,6 +95,7 @@ with it. *destroyed* = deleted with what it held. "—" = not touched.
 | The team at the model gateway | made | not copied | — | made new | — | — | kept | removed |
 | Mail routing, mail logins, mail DNS records | made | not copied | — | made new | — | — | removed | removed |
 | Mailboxes (a cluster that runs its own mail server; a mail domain that is the tenant's alone) | filled by use | copied | put back on top of what is there | put back into the new tenant's mail domain | — | — | kept | destroyed, after the mail routing is gone |
+| Archived mailboxes of removed people (the same clusters and domains) | made when a person is removed and whoever removed them chose *archive* | copied, as archived | put back as archived, never into a live mailbox | put back as archived into the new tenant's mail domain, and put on record there | — | — | kept | destroyed, with the mailboxes |
 | Web addresses: routes, certificate, DNS records | made | not copied | — | made new | the app's route removed | — | removed | removed |
 | Access rights that follow from the tenant, its apps and its people (the rights store) | derived | not copied | derived again | derived again | the app's removed | — | the apps' removed | the apps' removed; the tenant's own entries and who is its member stay (gap 1) |
 | Access rights that follow from nothing else: a right granted beyond the defaults, a default withdrawn | written in the store | copied | put back, after the rest is derived | what was withdrawn is withdrawn; what was granted is **not** brought, and named | kept | — | kept | **not removed** (gap 1) |
@@ -129,6 +130,14 @@ gone, so that nothing is delivered into a mailbox being destroyed, and the
 deletion waits for that step as it waits for a store's. Two things are left
 behind: the keys an app wrote into the shared cache, and the tenant's entries
 in the rights store other than its apps' (gap 1).
+
+**Removing a person** is not one of the eight acts, and it is the one moment
+a single mailbox is decided about. Whoever removes the person chooses:
+*archive* moves the mailbox out of the live mail tree into
+`/var/mail/.archive/<domain>/`, where no address opens it; *delete* destroys
+it. An archived mailbox is then the tenant's like its mailboxes: in every
+backup, put back as archived, destroyed with the tenant, and deletable
+before that from the Admin Console. [mail.md §5c](mail.md) has the detail.
 
 Mailboxes on a domain the tenant shares with the cluster are not the
 tenant's alone: on a single-tenancy cluster the user tenant's addresses are
@@ -290,8 +299,10 @@ much it matters.
    default storage class,** whatever class it had where the bundle was taken.
 5. **A tenant's mail domain that changed leaves the old domain's mailboxes
    behind.** Backup and deletion go by the domain the tenant has now.
-6. **A single person's mailbox stays when the person is removed.** Nothing
-   decides yet what removing a person does with their mail.
+6. **Mail to a removed person's address is still accepted** where the
+   recipient policy is `catchall`, the default. It makes a new mailbox
+   directory, which somebody given the address later finds. The archived or
+   deleted mailbox is not affected.
 7. **The desktop's rows name the tenant they were written in.** A bundle
    imported under another name fills the new tenant's desktop database with
    rows the desktop does not look for.
@@ -308,7 +319,8 @@ sign-in through another provider that the bundle recorded for them works.
 
 Closed: the data of uninstalled apps, the platform tenant's desktop database
 and mailboxes are in a backup; mailboxes are destroyed with the tenant; the
-rights that follow from nothing else are in a backup.
+rights that follow from nothing else are in a backup; a removed person's
+mailbox is archived or deleted, as whoever removed them chose.
 
 What only a cluster can confirm: that each step's pod starts in its namespace
 and reaches the object store through the network policies, the mailbox steps
@@ -326,7 +338,8 @@ Further technical limits (bundle format, MariaDB naming, cache keys) are in
   (`AppKinds`, `TenantOwned`); the names of things:
   [`inventory.go`](../../internal/backup/inventory.go); what uninstalled apps
   hold: [`retained.go`](../../internal/backup/retained.go); mailboxes:
-  [`mailboxes.go`](../../internal/backup/mailboxes.go).
+  [`mailboxes.go`](../../internal/backup/mailboxes.go); one removed person's
+  mailbox: [`mailbox_person.go`](../../internal/backup/mailbox_person.go).
 - The bundle format: [`api/bundle/bundle.go`](../../api/bundle/bundle.go), and
   [operations.md](operations.md) §9.4.
 - Reference detail per kind, how retained data is found, the restore rules:

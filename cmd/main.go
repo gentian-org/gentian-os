@@ -441,6 +441,18 @@ func main() {
 		os.Exit(1)
 	}
 
+	// What becomes of a removed person's mailbox: the registrar writes down
+	// what whoever removed the person chose, and this carries it out beside
+	// the mail server's volume, which the registrar cannot reach.
+	if err := (&controller.MailboxRemovalReconciler{
+		Definitions: held,
+		Client:      mgr.GetClient(),
+		Tenant:      tenantReconciler,
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "MailboxRemoval")
+		os.Exit(1)
+	}
+
 	if err := (&controller.TenantRestoreReconciler{
 		Definitions: held,
 		Client:      mgr.GetClient(),

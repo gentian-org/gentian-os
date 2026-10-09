@@ -230,13 +230,105 @@ it is built, and not yet run on a cluster:
   the administrators' ([multi-tenancy.md](multi-tenancy.md) §3). Nothing in a
   mailbox says whose it is, so those mailboxes are neither copied nor
   destroyed, and each act says so.
-- **A removed person's mailbox stays.** Removing a person takes their mail
-  password out of Dovecot's passwd-file at the next reconcile, so nobody opens
-  the mailbox; the directory and the mail in it are deleted by nothing short
-  of the tenant's deletion. What removing a person should do with their mail
-  is not decided.
+- **Removing a person asks what becomes of their mailbox.** Whoever removes
+  the person says, at that moment: *archive* it, or *delete* it. There is no
+  default. §5c says what each does. Switching a person off asks nothing and
+  leaves the mailbox theirs.
 - **A mail domain that changed leaves the old domain's mailboxes behind.**
   Every act goes by the domain the tenant has now.
+
+## 5c. A removed person's mailbox
+
+Built, and proven in local containers with the mail server's image; not yet
+run on a cluster.
+
+**Who is asked, and when.** Only where the person has a mailbox here: the
+cluster runs its own mail server (`mail.serviceMode: system`), the tenant's
+mail is on it (`spec.mail.mode: selfhosted`, the default there), and the
+person's address is in the tenant's mail domain. The operator reports that
+domain on the tenant (`status.mailboxDomain`); the registrar reports the
+address on each person (`mailbox`). Elsewhere nothing is asked.
+
+- Admin Console, *Members*: *Remove member* opens a dialog with two choices,
+  neither selected, and the button stays off until one is. Deleting is
+  confirmed a second time.
+- Registrar: `POST /v1/tenants/{t}/actions/remove-person` takes
+  `"mailbox": "archive"` or `"delete"`. A request without it, for a person
+  who has a mailbox, is refused (400) and changes nothing.
+- There is no command for removing a person in `kubectl gentian`.
+
+**Archive.** The mailbox directory is moved, by one rename on the mail
+volume, from `/var/mail/<domain>/<name>` to
+`/var/mail/.archive/<domain>/<name>-<UTC time>`. Every folder, message and
+flag is as the server left it.
+
+- Nothing opens it there. No address maps to a directory below `.archive`,
+  and no mail domain's name begins with a dot.
+- Nobody signs in at the address: the person is gone from the realm, and
+  their mail password is taken out of Dovecot's file and out of the tenant's
+  own copy at once, not at the tenant's next reconcile.
+- The same address given to somebody new starts with **no** directory, so
+  with an empty mailbox. Before this was built the new person found the old
+  person's mail.
+- It is in the tenant's backups, as an archived mailbox; a restore and an
+  import put it back as one, below the archive of the tenant's mail domain,
+  and put it on record there.
+- It is listed in the Admin Console, *Members* → *Mailboxes of removed
+  people* (`GET /v1/tenants/{t}/removed-mailboxes`): address, date, who
+  chose, size.
+- It is deleted on purpose from that list
+  (`POST /v1/tenants/{t}/actions/delete-archived-mailbox`), and with the
+  tenant when the tenant is deleted with its data.
+
+**Delete.** The mailbox directory is removed, and the Job reports success
+only once the volume's own listing no longer shows it. A backup taken
+earlier still holds the mail.
+
+**Who does it.** The registrar holds no right in `system-mail` and mounts
+nothing of the mail volume. It writes the decision down as a
+`MailboxRemoval` object, the one kind it may write in the cluster, *before*
+it removes the person; if the removal fails it takes the object back. The
+operator carries the decision out with a Job in `system-mail` (the mail
+server's image, its user, its node), and reports on the object: pending,
+archived, deleted, no mailbox, or failed with the reason. A failed Job is
+run again, later each time.
+
+**What the operator checks, whatever the object says.**
+
+- The address is in the tenant's mail domain and its first half is a plain
+  name; the Job's script checks the names again and follows no link.
+- Nobody of any realm whose people have addresses in that domain holds the
+  address, switched off or not. A mailbox that has a person is never
+  touched. On a single-tenancy cluster that is two realms for one domain.
+- No mail password of the address is left with Dovecot, and two minutes
+  have passed since, so that Dovecot has read the change.
+- Of two decisions about one address only the later is carried out.
+
+A refusal changes nothing and is final for that object.
+
+**A shared mail domain.** On a single-tenancy cluster the user tenant's
+addresses are on the cluster's own domain. One person's mailbox is one
+directory there and is archived or deleted like any other. The domain's
+archive, like its mailboxes, is not in the tenant's backup and is not
+destroyed with the tenant.
+
+**Limits.**
+
+- With the recipient policy `catchall` (the default) mail to a removed
+  person's address is still accepted and makes a new directory, as mail to
+  any address nobody owns does. Somebody given the address later finds that
+  mail, not the archived person's. `strict` refuses it.
+- An IMAP session that was open when the person was removed is not ended.
+- The platform has no shared mailboxes and no aliases other than `abuse@`
+  and `postmaster@`, which forward and have no mailbox.
+- The record of a mailbox that is gone is removed after 30 days. The record
+  of an archived mailbox stays as long as the archive.
+
+**Putting an archived mailbox back by hand.** Not offered. On the node, in a
+pod of the mail server's image with the volume mounted, as user 1000:
+`doveadm -o mail_location=maildir:/var/mail/<domain>/<name> sync -1 -R
+maildir:/var/mail/.archive/<domain>/<archive>` adds the archived mail to the
+live mailbox of that address and removes nothing.
 
 ## 6. Per-App Mail Wiring
 

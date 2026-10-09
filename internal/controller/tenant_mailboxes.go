@@ -98,6 +98,19 @@ func (r *TenantReconciler) mailboxesOf(ctx context.Context, tenant *gentianov1al
 	if err := backup.ValidMailDomain(domain); err != nil {
 		return nil, "", fmt.Errorf("the mail domain of tenant %s: %w", tenant.Name, err)
 	}
+	boxes, err := r.mailVolume(ctx)
+	if err != nil || boxes == nil {
+		return nil, "", err
+	}
+	boxes.Domain = domain
+	return boxes, "", nil
+}
+
+// mailVolume answers where the mail server keeps mailboxes, whoever's they
+// are: its volume and the node that holds it. nil: the server was never
+// deployed, and no mailbox was written. An error: the server is there and
+// its volume is not, which no act may read as "no mail".
+func (r *TenantReconciler) mailVolume(ctx context.Context) (*tenantMailboxes, error) {
 	claim := mailVolumeClaim()
 	reader := client.Reader(r.Client)
 	if r.APIReader != nil {
@@ -105,7 +118,7 @@ func (r *TenantReconciler) mailboxesOf(ctx context.Context, tenant *gentianov1al
 	}
 	if err := reader.Get(ctx, types.NamespacedName{Name: claim, Namespace: mailNamespace}, &corev1.PersistentVolumeClaim{}); err != nil {
 		if !errors.IsNotFound(err) {
-			return nil, "", fmt.Errorf("look for the mail server's volume %s/%s: %w", mailNamespace, claim, err)
+			return nil, fmt.Errorf("look for the mail server's volume %s/%s: %w", mailNamespace, claim, err)
 		}
 		// No volume. Where the mail server is not there either, the cluster
 		// is to run one and none was ever deployed: no mailbox was written.
@@ -114,13 +127,62 @@ func (r *TenantReconciler) mailboxesOf(ctx context.Context, tenant *gentianov1al
 		server := mailServerName()
 		if err := reader.Get(ctx, types.NamespacedName{Name: server, Namespace: mailNamespace}, &appsv1.Deployment{}); err != nil {
 			if errors.IsNotFound(err) {
-				return nil, "", nil
+				return nil, nil
 			}
-			return nil, "", fmt.Errorf("look for the mail server %s/%s: %w", mailNamespace, server, err)
+			return nil, fmt.Errorf("look for the mail server %s/%s: %w", mailNamespace, server, err)
 		}
-		return nil, "", fmt.Errorf("this cluster runs its own mail server (%s/%s), and the volume its mailboxes are on (%s) is not there", mailNamespace, server, claim)
+		return nil, fmt.Errorf("this cluster runs its own mail server (%s/%s), and the volume its mailboxes are on (%s) is not there", mailNamespace, server, claim)
 	}
-	return &tenantMailboxes{Domain: domain, Claim: claim, Node: nodeHoldingClaim(ctx, r.Client, mailNamespace, claim)}, "", nil
+	return &tenantMailboxes{Claim: claim, Node: nodeHoldingClaim(ctx, r.Client, mailNamespace, claim)}, nil
+}
+
+// mailboxDomainOf is the domain a tenant's people have mailboxes under on
+// the cluster's own mail server, "" when the tenant has none there: the
+// cluster runs no mail server, or the tenant's mail is not hosted on it.
+//
+// Unlike mailboxesOf it does not ask whether the domain is the tenant's
+// alone. One person's mailbox is one directory, named by the part of the
+// address before the @, and is that person's on a shared domain too: what is
+// decided for it when the person is removed is carried out there as well.
+func (r *TenantReconciler) mailboxDomainOf(ctx context.Context, tenant *gentianov1alpha1.Tenant) string {
+	if !r.dovecotDeployed(ctx) {
+		return ""
+	}
+	if present, err := r.mailFunctionPresent(ctx); err != nil || !present {
+		return ""
+	}
+	mode := r.defaultTenantMailMode(ctx)
+	if tenant.Spec.Mail != nil && tenant.Spec.Mail.Mode != "" {
+		mode = tenant.Spec.Mail.Mode
+	}
+	if mode != gentianov1alpha1.MailModeSelfhosted {
+		return ""
+	}
+	domain := mailDomain(tenant, r.KernelDomain, r.TenancyMode)
+	if backup.ValidMailDomain(domain) != nil {
+		return ""
+	}
+	return domain
+}
+
+// forgetMailboxRemovals deletes the records of what became of the mailboxes
+// of the tenant's removed people, once the mailboxes and their archive are
+// destroyed: a record of an archive that is not there would offer it for
+// deletion for ever.
+func (r *TenantReconciler) forgetMailboxRemovals(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
+	records := &gentianov1alpha1.MailboxRemovalList{}
+	if err := r.List(ctx, records); err != nil {
+		return fmt.Errorf("list the records of removed people's mailboxes: %w", err)
+	}
+	for i := range records.Items {
+		if records.Items[i].Spec.Tenant != tenant.Name {
+			continue
+		}
+		if err := r.Delete(ctx, &records.Items[i]); client.IgnoreNotFound(err) != nil {
+			return fmt.Errorf("delete the record %s of a removed person's mailbox: %w", records.Items[i].Name, err)
+		}
+	}
+	return nil
 }
 
 // deleteMailboxes destroys the tenant's mailboxes, with deletionPolicy
@@ -142,11 +204,15 @@ func (r *TenantReconciler) deleteMailboxes(ctx context.Context, tenant *gentiano
 		}
 		return nil
 	}
-	return r.ensureDeleteJobs(ctx, mailNamespace, tenant, []string{""},
+	if err := r.ensureDeleteJobs(ctx, mailNamespace, tenant, []string{""},
 		func(tenantName, _ string) string { return backup.MailboxDestroyJobName(tenantName) },
 		func(t *gentianov1alpha1.Tenant, _ string) *batchv1.Job {
 			return backup.MailboxDestroyJob(mailNamespace, t.Name, boxes.Claim, boxes.Node, boxes.Domain, backup.DestroyInTheBackground)
-		})
+		}); err != nil {
+		return err
+	}
+	// The Job removed the domain's archive with its mailboxes.
+	return r.forgetMailboxRemovals(ctx, tenant)
 }
 
 // deleteKernelDesktop empties the desktop's database of a tenant that keeps

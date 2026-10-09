@@ -833,7 +833,11 @@ func TestTheOperatorMayDeleteTheResidueKindsAndWritesNoComposition(t *testing.T)
 	sort.Strings(deletable)
 	want := []string{
 		"appgrants", "apps", "backuppolicies", "componentprofiles", "components", "credentialrequirements",
-		"customizations", "integrationbindings", "oidcpackcatalogs", "platformsecuritypolicies", "tenantexports",
+		// mailboxremovals: the record of what became of a removed person's
+		// mailbox. The operator removes one when the mailbox it is about is
+		// gone and the record has been readable for a while, and with a
+		// tenant that is deleted with its data.
+		"customizations", "integrationbindings", "mailboxremovals", "oidcpackcatalogs", "platformsecuritypolicies", "tenantexports",
 		"tenantexportschedules", "tenantrestores", "tenants", "xtenants",
 	}
 	if !reflect.DeepEqual(deletable, want) {

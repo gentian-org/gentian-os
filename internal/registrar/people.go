@@ -175,6 +175,12 @@ func (s *Server) listPeople(w http.ResponseWriter, r *http.Request, _ call) {
 		s.identityError(w, r, err)
 		return
 	}
+	// Who of them has a mailbox on the cluster's own mail server.
+	if tenant, err := s.cfg.Tenants.Tenant(r.Context(), r.PathValue("t")); err == nil {
+		for i := range people {
+			people[i].Mailbox = mailboxOf(tenant, people[i])
+		}
+	}
 	s.json(w, http.StatusOK, map[string]any{"tenant": r.PathValue("t"), "people": people})
 }
 
@@ -240,6 +246,9 @@ func (s *Server) getPerson(w http.ResponseWriter, r *http.Request, _ call) {
 	if err != nil {
 		s.identityError(w, r, err)
 		return
+	}
+	if tenant, err := s.cfg.Tenants.Tenant(r.Context(), r.PathValue("t")); err == nil {
+		person.Mailbox = mailboxOf(tenant, person)
 	}
 	s.json(w, http.StatusOK, person)
 }
@@ -428,13 +437,24 @@ func (s *Server) updatePerson(w http.ResponseWriter, r *http.Request, c call) {
 }
 
 // removePerson deletes somebody from the tenant's realm.
+//
+// Where the person has a mailbox on the cluster's own mail server, the
+// request has to say what becomes of it: "mailbox" is "archive" or "delete".
+// There is no default, and a request without the answer is refused with
+// nothing changed -- neither keeping a person's mail nor destroying it is
+// something to do because nobody said. Where the person has no mailbox
+// there, nothing is asked and the field is not read.
+//
+// Switching a person off (update-person, enabled: false) is not this: it
+// asks nothing and their mailbox stays theirs.
 func (s *Server) removePerson(w http.ResponseWriter, r *http.Request, c call) {
 	realm, ok := s.realmFor(w, r)
 	if !ok {
 		return
 	}
 	var body struct {
-		Person string `json:"person"`
+		Person  string `json:"person"`
+		Mailbox string `json:"mailbox"`
 	}
 	if !s.decode(w, r, &body) {
 		return
@@ -446,12 +466,72 @@ func (s *Server) removePerson(w http.ResponseWriter, r *http.Request, c call) {
 		s.fail(w, r, http.StatusBadRequest, "you cannot remove yourself")
 		return
 	}
-	if err := s.cfg.Identity.RemovePerson(identityContext(r), realm, body.Person); err != nil {
+	tenant, ok := s.tenantFor(w, r)
+	if !ok {
+		return
+	}
+	ctx := identityContext(r)
+
+	// The mailbox, if there is one, and the answer about it.
+	mailbox, decision := "", ""
+	if tenant.MailboxDomain != "" {
+		person, err := s.cfg.Identity.Person(ctx, realm, body.Person)
+		if err != nil {
+			s.identityError(w, r, err)
+			return
+		}
+		mailbox = mailboxOf(tenant, person)
+	}
+	if mailbox != "" {
+		if body.Mailbox != MailboxArchive && body.Mailbox != MailboxDelete {
+			s.fail(w, r, http.StatusBadRequest, "this person has a mailbox, "+mailbox+
+				": say what becomes of it. \"mailbox\" is \"archive\" (the mail is kept, and nobody receives or signs in at the address) "+
+				"or \"delete\" (the mail is destroyed, which cannot be undone). Nothing was changed.")
+			return
+		}
+		if s.cfg.Mailboxes == nil {
+			s.fail(w, r, http.StatusServiceUnavailable,
+				"this person has a mailbox, and this registrar cannot write down what is to become of it. Nothing was changed.")
+			return
+		}
+		id, err := s.cfg.Mailboxes.Decide(r.Context(), MailboxDecision{
+			Tenant: tenant.Name, Address: mailbox, Choice: body.Mailbox,
+			Subject: c.subject, Name: c.name, RequestID: reqID(r.Context()),
+		})
+		if err != nil {
+			s.cfg.Log.ErrorContext(r.Context(), "the decision about a mailbox could not be written down; nobody was removed",
+				"request_id", reqID(r.Context()), "tenant", tenant.Name, "error", err.Error())
+			s.fail(w, r, http.StatusServiceUnavailable,
+				"what is to become of the mailbox could not be written down, so the person was not removed. Nothing was changed.")
+			return
+		}
+		decision = id
+	}
+
+	if err := s.cfg.Identity.RemovePerson(ctx, realm, body.Person); err != nil {
+		if decision != "" {
+			// The person is still there: the answer is taken back. Not the
+			// request's context, which may be the reason the removal failed.
+			undo, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 5*time.Second)
+			if werr := s.cfg.Mailboxes.Withdraw(undo, decision); werr != nil {
+				// Left behind, it is acted on by nobody while the person
+				// exists, and refused by the operator after that.
+				s.cfg.Log.ErrorContext(r.Context(), "a decision about a mailbox could not be taken back after the removal failed",
+					"request_id", reqID(r.Context()), "tenant", tenant.Name, "record", decision, "error", werr.Error())
+			}
+			cancel()
+		}
 		s.identityError(w, r, err)
 		return
 	}
 	s.recordIdentityAction(r, c, "remove-person", realm, body.Person)
-	s.json(w, http.StatusOK, map[string]any{"person": body.Person, "removed": true})
+	out := map[string]any{"person": body.Person, "removed": true}
+	if decision != "" {
+		// Who chose what for whose mail: the same record, under its own verb.
+		s.recordIdentityAction(r, c, "mailbox-"+body.Mailbox, realm, mailbox)
+		out["mailbox"] = map[string]any{"address": mailbox, "choice": body.Mailbox, "id": decision, "state": "pending"}
+	}
+	s.json(w, http.StatusOK, out)
 }
 
 // requireTOTP makes somebody enrol an authenticator, and mails them the link

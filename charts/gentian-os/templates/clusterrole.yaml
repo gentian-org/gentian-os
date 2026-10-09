@@ -105,6 +105,7 @@ rules:
     - credentialrequirements.gentianos.io
     - customizations.gentianos.io
     - integrationbindings.gentianos.io
+    - mailboxremovals.gentianos.io
     - oidcpackcatalogs.gentianos.io
     - platformsecuritypolicies.gentianos.io
     - repositories.gentianos.io
@@ -316,6 +317,7 @@ rules:
     - components/status
     - customizations/status
     - integrationbindings/status
+    - mailboxremovals/status
     - platformsecuritypolicies/status
     - resourceplans/status
     - tenantexports/status
@@ -359,6 +361,16 @@ rules:
     - watch
     - update
     - patch
+    - delete
+  - apiGroups:
+    - gentianos.io
+    resources:
+    - mailboxremovals
+    verbs:
+    - get
+    - list
+    - watch
+    - create
     - delete
   - apiGroups:
     - helm.crossplane.io

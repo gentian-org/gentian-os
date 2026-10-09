@@ -16,7 +16,9 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"time"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/version"
 
 	"github.com/gentian-org/gentian-os/api/bundle"
@@ -88,6 +90,9 @@ type restorePlan struct {
 	sourceTenant string
 	// rights is what is done with the bundle's entries of the rights store.
 	rights *gentianov1alpha1.RestoreRights
+	// archivedMailboxes are the archived mailboxes the bundle holds, as
+	// they are put on record where the mailboxes are put back.
+	archivedMailboxes []gentianov1alpha1.RestoredArchive
 	// notes are said on the result: what of the tenant's own the bundle
 	// holds and this restore does not put back, and why.
 	notes []string
@@ -264,6 +269,7 @@ func planRestore(
 			plan.tenantWide = append(plan.tenantWide, gentianov1alpha1.BundleArtefact{
 				Kind: kind, Name: m.Mailboxes.Name, Path: m.Mailboxes.Path, Target: target.mailDomain,
 			})
+			plan.archivedMailboxes = archivedMailboxesPlan(m.ArchivedMailboxes, target.mailDomain)
 		case bundle.ArtefactIdentity:
 			if m.Identity == nil || m.Identity.Path == "" {
 				continue
@@ -617,4 +623,35 @@ func restoreLimits(derivation string) []string {
 			"and the volume claims restored are the ones the apps have now. Databases an app created besides its own are not in a format 1 bundle.")
 	}
 	return notes
+}
+
+// archivedMailboxesPlan is the archived mailboxes of a bundle as they are
+// put on record in the tenant restored into: under the name each has in the
+// archive, in that tenant's mail domain. A manifest comes from a bundle, and
+// a bundle from anywhere: an entry whose name is not an archived mailbox's,
+// or whose address has no part before the @ that is a mailbox's, is left
+// out -- the mail, if the archive holds any under that name, is refused by
+// the Job that puts it back.
+func archivedMailboxesPlan(held []bundle.ArchivedMailbox, domain string) []gentianov1alpha1.RestoredArchive {
+	var out []gentianov1alpha1.RestoredArchive
+	for _, a := range held {
+		name, _, ok := cutAddress(a.Address)
+		name = strings.ToLower(name)
+		if !ok || backup.ValidArchiveName(a.Archive) != nil || backup.ValidMailboxName(name) != nil || !strings.HasPrefix(a.Archive, name+"-") {
+			continue
+		}
+		entry := gentianov1alpha1.RestoredArchive{
+			Archive: a.Archive, Domain: domain, Address: name + "@" + domain,
+			By: a.By, SizeBytes: a.SizeBytes, Messages: a.Messages,
+		}
+		if at, err := time.Parse(time.RFC3339, a.ArchivedAt); err == nil {
+			when := metav1.NewTime(at)
+			entry.ArchivedAt = &when
+		}
+		if len(entry.By) > 256 {
+			entry.By = entry.By[:256]
+		}
+		out = append(out, entry)
+	}
+	return out
 }

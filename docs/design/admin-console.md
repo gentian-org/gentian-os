@@ -218,6 +218,29 @@ One web app embedded in the Gentian shell (builtin desktop apps). Menu items sho
 
 Store `inviteEmail` as Keycloak user attribute `gentian.inviteEmail`.
 
+### 4.3a Removing a member
+
+*Members* → open the member → *Remove member*. The account is deleted.
+
+Where the member has a mailbox on the cluster's own mail server, a dialog
+asks what becomes of it, with nothing selected:
+
+- **Archive the mailbox.** The mail is kept, out of the live mailboxes.
+  Nobody receives or signs in at the address; a new person given the address
+  starts empty.
+- **Delete the mailbox.** The mail is destroyed. It cannot be undone, and is
+  confirmed a second time.
+
+The button stays off until one is chosen. Switching a member off (*May sign
+in*) asks nothing and keeps the mailbox.
+
+*Mailboxes of removed people*, on the same screen, lists what was decided
+for each and what became of it: being archived or deleted, archived (with
+who chose, when, and its size), deleted, or failed with the reason. An
+archived mailbox is deleted from that list, after a confirmation. Who may do
+all of this: whoever may manage the tenant's people (`can_manage_users`).
+[mail.md §5c](mail.md) says what happens on the mail server.
+
 ### 4.4 MFA (v1)
 
 Use **Keycloak built-in TOTP** (`CONFIGURE_TOTP` required action) — no custom crypto.

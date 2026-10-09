@@ -375,6 +375,52 @@ spec:
                       type: array
                   type: object
                 type: array
+              archivedMailboxes:
+                description: |-
+                  ArchivedMailboxes are the archived mailboxes the bundle holds: the
+                  mailboxes of people who had been removed from the bundle's tenant with
+                  their mail kept. They are put back as archived ones, and each is put
+                  on record (MailboxRemoval) so that it is listed and can be deleted.
+                items:
+                  description: |-
+                    RestoredArchive is one archived mailbox a restore puts back, or a record
+                    states was put back.
+                  properties:
+                    address:
+                      description: |-
+                        Address is the address the removed person received at, in the domain
+                        of the tenant restored into.
+                      maxLength: 320
+                      type: string
+                    archive:
+                      description: Archive is the archived mailbox's name in the domain's
+                        archive.
+                      maxLength: 128
+                      type: string
+                    archivedAt:
+                      description: |-
+                        ArchivedAt is when it was archived, where the bundle was taken; By who
+                        chose that, as they were shown there.
+                      format: date-time
+                      type: string
+                    by:
+                      maxLength: 256
+                      type: string
+                    domain:
+                      description: Domain is the mail domain whose archive it is in.
+                      maxLength: 253
+                      type: string
+                    messages:
+                      format: int64
+                      type: integer
+                    sizeBytes:
+                      format: int64
+                      type: integer
+                  required:
+                  - archive
+                  type: object
+                type: array
+                x-kubernetes-list-type: atomic
               bundle:
                 description: Bundle is the bundle actually used, resolved from exportRef
                   or spec.

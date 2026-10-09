@@ -144,6 +144,34 @@ type RestoreRights struct {
 	WaitingSince *metav1.Time `json:"waitingSince,omitempty"`
 }
 
+// RestoredArchive is one archived mailbox a restore puts back, or a record
+// states was put back.
+type RestoredArchive struct {
+	// Archive is the archived mailbox's name in the domain's archive.
+	// +kubebuilder:validation:MaxLength=128
+	Archive string `json:"archive"`
+	// Domain is the mail domain whose archive it is in.
+	// +optional
+	// +kubebuilder:validation:MaxLength=253
+	Domain string `json:"domain,omitempty"`
+	// Address is the address the removed person received at, in the domain
+	// of the tenant restored into.
+	// +optional
+	// +kubebuilder:validation:MaxLength=320
+	Address string `json:"address,omitempty"`
+	// ArchivedAt is when it was archived, where the bundle was taken; By who
+	// chose that, as they were shown there.
+	// +optional
+	ArchivedAt *metav1.Time `json:"archivedAt,omitempty"`
+	// +optional
+	// +kubebuilder:validation:MaxLength=256
+	By string `json:"by,omitempty"`
+	// +optional
+	SizeBytes int64 `json:"sizeBytes,omitempty"`
+	// +optional
+	Messages int64 `json:"messages,omitempty"`
+}
+
 // TenantRestoreStatus reports progress and what was decided during preflight.
 type TenantRestoreStatus struct {
 	// Phase reuses the export vocabulary: Pending, Running, Ready, Failed.
@@ -215,6 +243,14 @@ type TenantRestoreStatus struct {
 	// ones it does not bring. Decided before anything is changed.
 	// +optional
 	Rights *RestoreRights `json:"rights,omitempty"`
+
+	// ArchivedMailboxes are the archived mailboxes the bundle holds: the
+	// mailboxes of people who had been removed from the bundle's tenant with
+	// their mail kept. They are put back as archived ones, and each is put
+	// on record (MailboxRemoval) so that it is listed and can be deleted.
+	// +optional
+	// +listType=atomic
+	ArchivedMailboxes []RestoredArchive `json:"archivedMailboxes,omitempty"`
 
 	// ImportRemoved records that the uploaded bundle this restore read was
 	// removed from the import bucket, which happens once the restore has run

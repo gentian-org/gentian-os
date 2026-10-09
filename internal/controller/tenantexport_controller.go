@@ -966,7 +966,11 @@ func (r *TenantExportReconciler) complete(
 		return ctrl.Result{}, err
 	}
 
-	unit, err := r.manifestUnit(export, tenant, encryption, rights)
+	archived, err := r.archivedMailboxes(ctx, export, tenant)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	unit, err := r.manifestUnitWith(export, tenant, encryption, rights, archived)
 	if err != nil {
 		return r.fail(ctx, export, "ManifestFailed", err.Error())
 	}
@@ -1063,6 +1067,47 @@ func (r *TenantExportReconciler) notIncluded(
 	return out, nil
 }
 
+// archivedMailboxes names the archived mailboxes the export's mailboxes
+// archive holds: the tenant's records of mailboxes archived in the domain
+// that was captured. Empty when no mailboxes were captured.
+func (r *TenantExportReconciler) archivedMailboxes(ctx context.Context, export *gentianov1alpha1.TenantExport, tenant *gentianov1alpha1.Tenant) ([]bundle.ArchivedMailbox, error) {
+	domain := ""
+	for _, app := range export.Status.Apps {
+		if app.Name != backupTenantComponent {
+			continue
+		}
+		for _, a := range app.Artefacts {
+			if a.Kind == bundle.ArtefactMailboxes {
+				domain = a.Name
+			}
+		}
+	}
+	if domain == "" {
+		return nil, nil
+	}
+	records := &gentianov1alpha1.MailboxRemovalList{}
+	if err := r.List(ctx, records); err != nil {
+		return nil, fmt.Errorf("list the records of archived mailboxes: %w", err)
+	}
+	var out []bundle.ArchivedMailbox
+	for i := range records.Items {
+		record := &records.Items[i]
+		if record.Spec.Tenant != tenant.Name || record.Status.Phase != gentianov1alpha1.MailboxRemovalArchived || record.Status.Domain != domain {
+			continue
+		}
+		entry := bundle.ArchivedMailbox{
+			Archive: record.Status.Archive, Address: record.Spec.Address, By: record.Spec.RequestedBy.Name,
+			SizeBytes: record.Status.SizeBytes, Messages: record.Status.Messages,
+		}
+		if record.Status.ArchivedAt != nil {
+			entry.ArchivedAt = record.Status.ArchivedAt.UTC().Format(time.RFC3339)
+		}
+		out = append(out, entry)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Archive < out[j].Archive })
+	return out, nil
+}
+
 // manifestUnit is the Job that writes the manifest, beside the object store.
 func (r *TenantExportReconciler) manifestUnit(
 	export *gentianov1alpha1.TenantExport,
@@ -1070,12 +1115,25 @@ func (r *TenantExportReconciler) manifestUnit(
 	encryption backup.Encryption,
 	rights *bundle.ManifestRights,
 ) (captureUnit, error) {
+	return r.manifestUnitWith(export, tenant, encryption, rights, nil)
+}
+
+// manifestUnitWith is manifestUnit with the archived mailboxes the bundle
+// holds named in the manifest.
+func (r *TenantExportReconciler) manifestUnitWith(
+	export *gentianov1alpha1.TenantExport,
+	tenant *gentianov1alpha1.Tenant,
+	encryption backup.Encryption,
+	rights *bundle.ManifestRights,
+	archived []bundle.ArchivedMailbox,
+) (captureUnit, error) {
 	params := r.jobParams(tenant, backupTenantComponent, export, encryption)
 	params.Name = exportJobName(tenant.Name, export.Name, backupTenantComponent, "manifest")
 
 	info := backup.NewBundleInfo(tenant.Name, export.Name, timeOrNow(export.Status.StartedAt), encryption)
 	manifest := r.buildManifest(export, tenant)
 	manifest.Rights = rights
+	manifest.ArchivedMailboxes = archived
 	job, err := backup.ManifestJob(params, manifest, info)
 	if err != nil {
 		return captureUnit{}, err

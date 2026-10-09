@@ -582,3 +582,21 @@ func TestMailObjects_TheAddressIsReadFromTheEdgeService(t *testing.T) {
 		t.Errorf("without the edge's Service the operator still publishes %q and %q", smtp, imap)
 	}
 }
+
+// Where a tenant's people have mailboxes is said on the tenant, for whoever
+// removes one of them: the registrar reads it there, and asks about a
+// mailbox only where it is set.
+func TestTheTenantSaysWhereItsMailboxesAre(t *testing.T) {
+	t.Parallel()
+	r, _, tenant := mailPinCluster(t)
+	_ = r.EnsureMailForTest(context.Background(), tenant)
+	if got, want := tenant.Status.MailboxDomain, pinTenant+".example.test"; got != want {
+		t.Errorf("status.mailboxDomain = %q, want %q", got, want)
+	}
+	// A tenant that only sends through the cluster has none.
+	tenant.Spec.Mail.Mode = gentianov1alpha1.MailModeTransportOnly
+	_ = r.EnsureMailForTest(context.Background(), tenant)
+	if got := tenant.Status.MailboxDomain; got != "" {
+		t.Errorf("a tenant with no mailboxes on the cluster says %q", got)
+	}
+}

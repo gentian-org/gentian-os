@@ -16,6 +16,14 @@
   mounted, handed over by the operator, which holds the administrative
   credential that creates them.
 
+  One kind it may write: MailboxRemoval, the record of what whoever removed a
+  person decided about that person's mailbox -- archive it, or delete it. The
+  registrar writes the decision down and the operator carries it out; the
+  registrar has no right in the mail server's namespace and mounts nothing of
+  its volume. It may take a record back (delete) when the removal it was
+  written for failed, and change one (update) to ask for an archived mailbox
+  to be deleted.
+
   Who may ask it for anything is the authorization store's answer, asked with
   the caller's own verified token on every request.
 
@@ -48,6 +56,9 @@ rules:
   - apiGroups: ["gentianos.io"]
     resources: ["tenants", "clusters"]
     verbs: ["get", "list", "watch"]
+  - apiGroups: ["gentianos.io"]
+    resources: ["mailboxremovals"]
+    verbs: ["get", "list", "watch", "create", "update", "delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

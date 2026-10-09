@@ -12,6 +12,8 @@ package controller
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"regexp"
@@ -628,6 +630,13 @@ func (r *TenantRestoreReconciler) restoreTenantWide(
 	if !allDone {
 		return false, nil
 	}
+	// The archived mailboxes are back below the archive; each is put on
+	// record, so that it is listed and can be deleted where it is now.
+	if err := r.recordArchivedMailboxes(ctx, tenant, restore); err != nil {
+		entry.LastFailure = err.Error()
+		entry.Attempts++
+		return false, nil
+	}
 	// The rights last: after the realm, whose groups they name, and after
 	// the operator's projection has attached the tenant -- which writes the
 	// defaults a bundle may say were withdrawn.
@@ -655,6 +664,57 @@ func (r *TenantRestoreReconciler) restoreTenantWide(
 	entry.Phase = gentianov1alpha1.TenantExportPhaseReady
 	entry.Message = ""
 	return true, nil
+}
+
+// recordArchivedMailboxes writes a MailboxRemoval for each archived mailbox
+// the restore put back, unless the tenant has one for that archive already.
+// The record says it was restored: the operator moves and removes nothing
+// for it, and only reports what it states.
+func (r *TenantRestoreReconciler) recordArchivedMailboxes(ctx context.Context, tenant *gentianov1alpha1.Tenant, restore *gentianov1alpha1.TenantRestore) error {
+	if len(restore.Status.ArchivedMailboxes) == 0 {
+		return nil
+	}
+	existing := &gentianov1alpha1.MailboxRemovalList{}
+	if err := r.List(ctx, existing); err != nil {
+		return fmt.Errorf("list the records of archived mailboxes: %w", err)
+	}
+	known := map[string]bool{}
+	for i := range existing.Items {
+		record := &existing.Items[i]
+		if record.Spec.Tenant != tenant.Name {
+			continue
+		}
+		// A record of an archive that was deleted since does not stand for
+		// the one this restore has just put back.
+		switch {
+		case record.Status.Phase == gentianov1alpha1.MailboxRemovalArchived:
+			known[record.Status.Domain+"/"+record.Status.Archive] = true
+		case record.Spec.Restored != nil && record.Status.Phase == "":
+			known[record.Spec.Restored.Domain+"/"+record.Spec.Restored.Archive] = true
+		}
+	}
+	for i := range restore.Status.ArchivedMailboxes {
+		archive := restore.Status.ArchivedMailboxes[i]
+		if known[archive.Domain+"/"+archive.Archive] {
+			continue
+		}
+		sum := sha256.Sum256([]byte(archive.Domain + "/" + archive.Archive + "/" + restore.Namespace + "/" + restore.Name))
+		record := &gentianov1alpha1.MailboxRemoval{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   tenant.Name + "-" + hex.EncodeToString(sum[:])[:10],
+				Labels: map[string]string{tenantLabel: tenant.Name},
+			},
+			Spec: gentianov1alpha1.MailboxRemovalSpec{
+				Tenant: tenant.Name, Address: archive.Address, Mailbox: gentianov1alpha1.MailboxChoiceArchive,
+				RequestedBy: gentianov1alpha1.MailboxRequester{Subject: "restore:" + restore.Name, Name: archive.By},
+				Restored:    &archive,
+			},
+		}
+		if err := r.Create(ctx, record); err != nil && !apierrors.IsAlreadyExists(err) {
+			return fmt.Errorf("put the archived mailbox %s on record: %w", archive.Archive, err)
+		}
+	}
+	return nil
 }
 
 // ensureRestoreJob creates a unit's Job if absent and reports whether it has
@@ -971,6 +1031,7 @@ func recordPlan(restore *gentianov1alpha1.TenantRestore, plan *restorePlan) {
 	restore.Status.Notes = append(restore.Status.Notes, plan.notes...)
 	// The rights: what is granted, what is withdrawn, and each entry the
 	// bundle holds that is not brought, with the reason.
+	restore.Status.ArchivedMailboxes = plan.archivedMailboxes
 	restore.Status.Rights = plan.rights
 	if plan.rights != nil {
 		for _, left := range plan.rights.NotBrought {

@@ -816,6 +816,14 @@ type TenantStatus struct {
 	// +optional
 	Mail *TenantMailStatus `json:"mail,omitempty"`
 
+	// MailboxDomain is the domain this tenant's people have mailboxes under
+	// on the cluster's own mail server. Empty when the tenant has none: the
+	// cluster runs no mail server of its own, or the tenant's mail is not
+	// hosted on it. It is what tells whoever removes a person that there is
+	// a mailbox to decide about.
+	// +optional
+	MailboxDomain string `json:"mailboxDomain,omitempty"`
+
 	// ResourcePlan is the plan whose selection was last recorded in the
 	// tenant's usage history: the value of the resource-plan annotation at
 	// the time the plan event was written. It differing from the annotation

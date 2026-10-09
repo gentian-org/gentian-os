@@ -115,6 +115,9 @@ been seen working on a cluster. Until it has, it is not done.
 - A restore into a new tenant (`TenantRestore.spec.intoNewTenant`), and an
   import that gives the tenant its own names.
 - A tenant's deletion removing its mailboxes, and failing loudly.
+- A removed person's mailbox archived or deleted, as whoever removes the
+  person chooses at that moment; archived mailboxes in backups, listed, and
+  deletable. Proven in local containers, not on a cluster.
 
 ### Installer and director
 
@@ -162,7 +165,7 @@ Each is true of the code today.
 | 7 | **No kernel namespace restricts outgoing connections** | [security.md §2.13](../design/security.md) |
 | 8 | **An import carries the source's approvals.** The new tenant's manifest is written from the bundle, so the privileges granted and the entries approved in the exported tenant — public addresses, with their kind, and kept `Authorization` headers — arrive approved, and nobody on the importing cluster approved them | [data-lifecycle.md](../design/data-lifecycle.md) |
 | 9 | **A deleted tenant leaves entries behind**: its rights and memberships in the rights store, which a later tenant of the same name would inherit, and its keys in the shared cache. Not now: on the roadmap, item 1.38 | [data-lifecycle.md](../design/data-lifecycle.md), [roadmap.md](../roadmap.md) |
-| 10 | **A removed person's mailbox stays** until the tenant is deleted | [mail.md](../design/mail.md) |
+| 10 | **Mail to a removed person's address is still accepted** where the recipient policy is `catchall` (the default), and an IMAP session open at the removal is not ended. The mailbox itself is archived or deleted as chosen | [mail.md §5c](../design/mail.md) |
 | 11 | **The Operations Console's default Component is not pinned.** The installer now places its profile only at a stated digest, with its bundle and origin; the operator compares a profile with its bundle at rollout only for a Component pinned to a digest, and the one it creates for a `defaultForTenants` profile carries none. The digest the installer uses comes from the catalogue's own unsigned index unless the person installing pins one | AD-14, [security.md §2.10](../design/security.md) |
 | 12 | **The model gateway's console switch has not run on a cluster.** The console is off unless the claim says `llm.console.enabled: true`, so the defect as it stood -- no way to serve models without the console -- is closed in the code. Not yet seen: that an upgraded cluster loses the route and the edge's rule at the gateway, and that the console works behind the edge when switched on (its own sign-in and its `Authorization` header are held by tests of the rendered policy only) | part 1, AD-9; [llms.md](../design/llms.md) |
 | 13 | **A cluster installed before 2026-10-09 keeps every Crossplane resource type** — about 380 CRDs. A fresh install creates the 25 the platform uses (`crossplane/providers/activation.yaml`, held by `make lint-provider-activation`); Crossplane never deactivates a type, so nothing narrows an existing cluster. The narrowed list has not run on a cluster yet (part 2) | [install-reference.md §4](../install-reference.md) |

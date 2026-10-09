@@ -952,6 +952,14 @@ spec:
                       the mail domain.
                     type: string
                 type: object
+              mailboxDomain:
+                description: |-
+                  MailboxDomain is the domain this tenant's people have mailboxes under
+                  on the cluster's own mail server. Empty when the tenant has none: the
+                  cluster runs no mail server of its own, or the tenant's mail is not
+                  hosted on it. It is what tells whoever removes a person that there is
+                  a mailbox to decide about.
+                type: string
               namespace:
                 description: Namespace is the resolved tenant namespace name.
                 type: string

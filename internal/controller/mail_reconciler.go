@@ -348,6 +348,7 @@ func (r *TenantReconciler) ensureMail(ctx context.Context, tenant *gentianov1alp
 	if present, err := r.mailFunctionPresent(ctx); err != nil {
 		return ctrl.Result{}, err
 	} else if !present {
+		tenant.Status.MailboxDomain = ""
 		r.setCondition(tenant, conditionMailReady, metav1.ConditionTrue,
 			"NoMailFunction", "This cluster composes no mail function; nothing to register")
 		return ctrl.Result{}, nil
@@ -356,6 +357,9 @@ func (r *TenantReconciler) ensureMail(ctx context.Context, tenant *gentianov1alp
 	if tenant.Spec.Mail != nil && tenant.Spec.Mail.Mode != "" {
 		mode = tenant.Spec.Mail.Mode
 	}
+	// Whether this tenant's people have mailboxes here, for whoever removes
+	// one of them and has to say what becomes of the mailbox.
+	tenant.Status.MailboxDomain = r.mailboxDomainOf(ctx, tenant)
 
 	// An opt-in this cluster cannot honour is refused, not attempted.
 	//

@@ -127,6 +127,14 @@ func startWithIdentity(t *testing.T, ident registrar.Identity) *harness {
 
 func startWith(t *testing.T, ident registrar.Identity, decides authz.Checker) *harness {
 	t.Helper()
+	return startWithTenants(t, ident, decides,
+		fakeTenants{"demo": ownRealm("demo"), "solo": ownRealm("solo"), "other": ownRealm("other")}, newFakeMailboxes())
+}
+
+// startWithTenants is the registrar over the tenants and the record of
+// removed mailboxes given.
+func startWithTenants(t *testing.T, ident registrar.Identity, decides authz.Checker, tenants fakeTenants, mailboxes registrar.Mailboxes) *harness {
+	t.Helper()
 	is := dt.NewIssuer(t, "gentian", "tenant-demo", "tenant-solo")
 	v, err := authn.NewVerifier(authn.Config{IssuerBase: is.URL, Audience: audience})
 	if err != nil {
@@ -138,9 +146,10 @@ func startWith(t *testing.T, ident registrar.Identity, decides authz.Checker) *h
 	decisions := &asked{Checker: decides}
 	srv, err := registrar.New(registrar.Config{
 		Authn: v, Authz: decisions, Cluster: dt.Cluster,
-		Tenants:  fakeTenants{"demo": ownRealm("demo"), "solo": ownRealm("solo"), "other": ownRealm("other")},
-		Identity: ident,
-		Log:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Tenants:   tenants,
+		Identity:  ident,
+		Mailboxes: mailboxes,
+		Log:       slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -203,6 +212,8 @@ func routes() []route {
 		{"POST", "/v1/tenants/demo/actions/create-group", `{"name":"sales"}`, "can_manage_users", tenant},
 		{"POST", "/v1/tenants/demo/actions/delete-group", `{"group":"gentian:tenant:demo:sales"}`, "can_manage_users", tenant},
 		{"POST", "/v1/tenants/demo/actions/rename-group", `{"group":"gentian:tenant:demo:sales","name":"field"}`, "can_manage_users", tenant},
+		{"GET", "/v1/tenants/demo/removed-mailboxes", "", "can_manage_users", tenant},
+		{"POST", "/v1/tenants/demo/actions/delete-archived-mailbox", `{"mailbox":"demo-arch1"}`, "can_manage_users", tenant},
 		{"POST", c + "/tenants/demo/actions/activate-admin", "", "can_configure", cluster},
 		{"GET", c + "/people/count", "", "can_audit", cluster},
 	}

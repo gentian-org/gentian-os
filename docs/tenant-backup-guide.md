@@ -240,6 +240,8 @@ first, so the current state is recoverable too.
   and your workspace has a mail domain of its own, your mailboxes are in the
   backup. Where your addresses are on the platform's own domain, or mail is
   hosted elsewhere, they are not, and the backup's result says so.
+  The archived mailboxes of people you removed are in it too, and come back
+  as archived ones.
 
 ---
 

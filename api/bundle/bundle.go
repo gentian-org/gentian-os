@@ -165,6 +165,15 @@ type Manifest struct {
 	// were captured from. Since version 3.
 	Mailboxes *ManifestStore `json:"mailboxes,omitempty"`
 
+	// ArchivedMailboxes names the archived mailboxes the mailboxes' archive
+	// holds beside the live ones: the mailboxes of people who were removed
+	// from the tenant with their mail kept. The mail itself is in the
+	// archive (under archived/); this is who each was, for the record a
+	// restore writes so that the archive is listed, and can be deleted,
+	// where it is put back. Optional within version 3: a bundle taken
+	// before mailboxes were archived has none.
+	ArchivedMailboxes []ArchivedMailbox `json:"archivedMailboxes,omitempty"`
+
 	// Rights records the entries of the rights store that are the tenant's
 	// and follow from nothing else. Present, though it may list nothing,
 	// whenever the store was read. Since version 3.
@@ -177,6 +186,21 @@ type Manifest struct {
 	// person. Empty when the export found nothing of the kind. A reader
 	// repeats them; nothing is decided by them.
 	NotIncluded []string `json:"notIncluded,omitempty"`
+}
+
+// ArchivedMailbox is one archived mailbox a bundle holds.
+type ArchivedMailbox struct {
+	// Archive is the archived mailbox's name in its domain's archive, and
+	// in the archived/INDEX of the mailboxes' archive.
+	Archive string `json:"archive"`
+	// Address is the address the removed person received at.
+	Address string `json:"address"`
+	// ArchivedAt is when it was archived, RFC3339; By who removed the
+	// person and chose to archive, as they were shown.
+	ArchivedAt string `json:"archivedAt,omitempty"`
+	By         string `json:"by,omitempty"`
+	SizeBytes  int64  `json:"sizeBytes,omitempty"`
+	Messages   int64  `json:"messages,omitempty"`
 }
 
 // ManifestApp is one app's entry in the bundle index.

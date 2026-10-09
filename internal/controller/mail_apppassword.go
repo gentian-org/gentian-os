@@ -404,6 +404,13 @@ func (r *TenantReconciler) syncMailAppPasswords(ctx context.Context, tenant *gen
 	if err := r.upsertSecret(ctx, mailAppPasswordTenantSec, tenantNamespaceName(tenant), plain); err != nil {
 		return err
 	}
+	// And nobody else's: upsertSecret merges, so the password of a person who
+	// was removed or switched off stayed in the tenant's copy for as long as
+	// the tenant existed -- and it is derived from the address, so it is also
+	// the password the next person given that address would be handed.
+	if err := r.keepOnlySecretKeys(ctx, mailAppPasswordTenantSec, tenantNamespaceName(tenant), plain); err != nil {
+		return err
+	}
 	// The hashes, in Dovecot's namespace, for Dovecot — one pair of files per
 	// tenant, NOT one pair shared by all of them.
 	//
@@ -604,6 +611,95 @@ func (r *TenantReconciler) deleteSecretKeys(ctx context.Context, name, ns string
 		return nil
 	}
 	return r.Update(ctx, sec)
+}
+
+// keepOnlySecretKeys removes every key of a Secret that is not in keep.
+func (r *TenantReconciler) keepOnlySecretKeys(ctx context.Context, name, ns string, keep map[string][]byte) error {
+	sec := &corev1.Secret{}
+	if err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: ns}, sec); err != nil {
+		if errors.IsNotFound(err) {
+			return nil
+		}
+		return err
+	}
+	var stale []string
+	for k := range sec.Data {
+		if _, ok := keep[k]; !ok {
+			stale = append(stale, k)
+		}
+	}
+	if len(stale) == 0 {
+		return nil
+	}
+	return r.deleteSecretKeys(ctx, name, ns, stale...)
+}
+
+// mailSignInListed reports whether any passwd-file the mail server verifies
+// against still holds a line for an address: whether somebody could still
+// sign in to that mailbox, or send as it, with a mail password.
+func (r *TenantReconciler) mailSignInListed(ctx context.Context, address string) (bool, error) {
+	sec := &corev1.Secret{}
+	if err := r.Get(ctx, types.NamespacedName{Name: dovecotAppPasswordsSecret, Namespace: dovecotNamespace}, sec); err != nil {
+		if errors.IsNotFound(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	for key, file := range sec.Data {
+		if !strings.HasSuffix(key, ".users") {
+			continue
+		}
+		for _, line := range strings.Split(string(file), "\n") {
+			if who, _, ok := strings.Cut(strings.TrimSpace(line), ":"); ok && strings.EqualFold(who, address) {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
+// keycloakRealmHolders lists every address a realm's people hold, as a login
+// or as their address, whether or not they may sign in at the moment: a
+// person who was switched off is still a person, and their mailbox is theirs.
+func (r *TenantReconciler) keycloakRealmHolders(ctx context.Context, realm string) (map[string]bool, error) {
+	base, token, err := r.keycloakAdminBase(ctx)
+	if err != nil {
+		return nil, err
+	}
+	held := map[string]bool{}
+	for first := 0; ; first += 100 {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+			fmt.Sprintf("%s/admin/realms/%s/users?first=%d&max=100", base, url.PathEscape(realm), first), nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+		page, err := keycloakAdminHTTP.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		if page.StatusCode != http.StatusOK {
+			_ = page.Body.Close()
+			return nil, fmt.Errorf("listing the people of realm %s: the identity provider answered %d", realm, page.StatusCode)
+		}
+		var users []keycloakRealmUser
+		err = json.NewDecoder(page.Body).Decode(&users)
+		_ = page.Body.Close()
+		if err != nil {
+			return nil, err
+		}
+		for _, u := range users {
+			for _, a := range []string{u.Username, u.Email} {
+				if strings.Contains(a, "@") {
+					held[strings.ToLower(a)] = true
+				}
+			}
+		}
+		if len(users) < 100 {
+			break
+		}
+	}
+	return held, nil
 }
 
 func (r *TenantReconciler) upsertSecret(ctx context.Context, name, ns string, data map[string][]byte) error {

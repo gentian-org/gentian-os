@@ -127,6 +127,14 @@ func TestTheMailboxJobs(t *testing.T) {
 			t.Errorf("the backup lacks %q", want)
 		}
 	}
+	// The archived mailboxes of removed people are in the bundle, as archived
+	// ones, and come back as that: below the archive and into no live mailbox.
+	if !strings.Contains(copyScript, `copy_boxes "`+MailRoot+`/`+MailArchiveDir+`/${DOMAIN}" "`+workDir+`/mail/`+archivedInBundle+`"`) {
+		t.Error("the backup does not copy the archived mailboxes of the domain")
+	}
+	if back := containerByName(restoreJob, "mailbox-restore").Args[0]; !strings.Contains(back, `put_back "`+workDir+`/mail/`+archivedInBundle+`" "`+MailRoot+`/`+MailArchiveDir+`/${DOMAIN}"`) {
+		t.Error("the restore does not put the archived mailboxes back below the archive")
+	}
 	if strings.Contains(copyScript, "tar ") {
 		t.Error("the backup archives the live mailboxes instead of synchronising them")
 	}
@@ -156,7 +164,9 @@ func TestTheMailboxJobs(t *testing.T) {
 		t.Error("a destroy Job that cannot do its work must fail, not retry for ever")
 	}
 	gone := mailboxDestroyScript()
-	for _, want := range []string{`rm -rf -- "${ROOT:?}/${DOMAIN:?}"`, "are still there", `""|.|..|*/*) echo "ERROR: refused`} {
+	for _, want := range []string{`rm -rf -- "${ROOT:?}/${DOMAIN:?}"`, "are still there", `""|.*|*/*) echo "ERROR: refused`,
+		// The archived mailboxes of the domain's removed people go with it.
+		`rm -rf -- "${ARCHIVE:?}/${DOMAIN:?}"`, "the archived mailboxes of ${DOMAIN} are still there"} {
 		if !strings.Contains(gone, want) {
 			t.Errorf("the destroy script lacks %q", want)
 		}
@@ -166,7 +176,7 @@ func TestTheMailboxJobs(t *testing.T) {
 // A mail domain's name becomes a directory's: one that would be another
 // directory is refused before a Job is built.
 func TestAMailDomainIsADirectoryName(t *testing.T) {
-	for _, bad := range []string{"", ".", "..", "a/b", "../x", "a b", "-rf", "a\nb"} {
+	for _, bad := range []string{"", ".", "..", "a/b", "../x", "a b", "-rf", "a\nb", MailArchiveDir, ".hidden.example"} {
 		if ValidMailDomain(bad) == nil {
 			t.Errorf("%q is taken for a mail domain", bad)
 		}

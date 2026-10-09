@@ -75,7 +75,11 @@ func run(log *slog.Logger) error {
 		return err
 	}
 	ctx := ctrl.SetupSignalHandler()
-	srv, closeRecord, err := registrar.NewFromEnv(ctx, mgr.GetClient(), graph, log)
+	// The one kind the registrar writes in the cluster: what whoever removed
+	// a person decided about that person's mailbox, for the operator to
+	// carry out.
+	mailboxes := &registrar.ClusterMailboxes{Client: mgr.GetClient()}
+	srv, closeRecord, err := registrar.NewFromEnvWithMailboxes(ctx, mgr.GetClient(), mailboxes, graph, log)
 	if err != nil {
 		return err
 	}

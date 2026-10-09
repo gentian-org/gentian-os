@@ -99,7 +99,12 @@ type Config struct {
 	// keeps the log line and nothing else, which is a worse record rather
 	// than a registrar that does not start.
 	Record *record.Store
-	Log    *slog.Logger
+	// Mailboxes is where what was decided about a removed person's mailbox
+	// is written down for the operator, and read back. Optional: without it
+	// a person who has a mailbox cannot be removed through here, because
+	// the decision the removal requires could not be kept.
+	Mailboxes Mailboxes
+	Log       *slog.Logger
 	// Cluster is the id of the one cluster this registrar serves: the object
 	// cluster verbs are checked against, and the only {c} the routes accept.
 	Cluster string
@@ -197,6 +202,9 @@ func reqID(ctx context.Context) string {
 type call struct {
 	// subject is the caller's Keycloak subject.
 	subject string
+	// name is how the caller is shown: their address, or their name. Never
+	// used for a decision.
+	name string
 	// decision is the relation and object that permitted the call, in the
 	// form the director's commit trailer uses: "can_manage_users tenant:demo".
 	decision string
@@ -206,6 +214,9 @@ type call struct {
 type object func(r *http.Request) (string, error)
 
 var errInvalidName = errors.New("invalid name")
+
+// recordName is what the name of a record in the cluster looks like.
+var recordName = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]{0,251}[a-z0-9])?$`)
 
 // dnsLabel is what a tenant name must be, as everywhere else on the platform.
 var dnsLabel = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$`)
@@ -259,7 +270,11 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request, pattern, rela
 		s.fail(w, r, http.StatusForbidden, "forbidden")
 		return call{}, false
 	}
-	return call{subject: user[len("user:"):], decision: relation + " " + target}, true
+	name := ident.Email
+	if name == "" {
+		name = ident.Name
+	}
+	return call{subject: user[len("user:"):], name: name, decision: relation + " " + target}, true
 }
 
 // guarded registers a route with the relation it requires. There is no other
@@ -357,6 +372,13 @@ func (s *Server) routes() {
 	s.action("POST /v1/tenants/{t}/actions/create-group", "can_manage_users", tenantObject, s.createGroup)
 	s.action("POST /v1/tenants/{t}/actions/delete-group", "can_manage_users", tenantObject, s.deleteGroup)
 	s.action("POST /v1/tenants/{t}/actions/rename-group", "can_manage_users", tenantObject, s.renameGroup)
+
+	// What became of the mailboxes of the people removed from the tenant,
+	// and the deletion of one that was archived. The relation that guards
+	// removing a person guards these: whoever may decide about a person's
+	// mail at their removal may see what was decided and delete the archive.
+	s.guarded("GET /v1/tenants/{t}/removed-mailboxes", "can_manage_users", tenantObject, s.listRemovedMailboxes)
+	s.action("POST /v1/tenants/{t}/actions/delete-archived-mailbox", "can_manage_users", tenantObject, s.deleteArchivedMailbox)
 
 	// Handing a tenant's administrator account to its holder: whoever may
 	// bring tenants on (can_configure on the cluster) issues the link.

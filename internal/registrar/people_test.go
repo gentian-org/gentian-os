@@ -42,6 +42,11 @@ type fakeIdentity struct {
 	lastGroup string
 	// removed is every person removed.
 	removed []string
+	// people overrides who Person answers, by id; removeErr fails removals.
+	people    map[string]identity.Person
+	removeErr error
+	// log is where a test that cares about order has its steps written.
+	log *[]string
 }
 
 func newFakeIdentity(realms ...string) *fakeIdentity {
@@ -89,6 +94,9 @@ func (f *fakeIdentity) People(ctx context.Context, r identity.Realm, _ string, _
 
 func (f *fakeIdentity) Person(ctx context.Context, r identity.Realm, id string) (identity.Person, error) {
 	f.note(ctx, r)
+	if p, ok := f.people[id]; ok {
+		return p, nil
+	}
 	if id != "u1" {
 		return identity.Person{}, identity.ErrNotFound
 	}
@@ -415,8 +423,14 @@ func (f *fakeIdentity) UpdatePerson(ctx context.Context, r identity.Realm, id st
 
 func (f *fakeIdentity) RemovePerson(ctx context.Context, r identity.Realm, id string) error {
 	f.note(ctx, r)
+	if f.removeErr != nil {
+		return f.removeErr
+	}
 	f.mu.Lock()
 	f.removed = append(f.removed, id)
+	if f.log != nil {
+		*f.log = append(*f.log, "removed "+id)
+	}
 	f.mu.Unlock()
 	return nil
 }
