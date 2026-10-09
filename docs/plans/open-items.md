@@ -245,6 +245,32 @@ Each is true of the code today.
     the tenant administrators'.
 12. **Open WebUI ending a session at a sign-out.** **Decided 2026-10-09**:
     not built now; on the roadmap, item 2.27.
+13. **Three credentials that stay derived under `secretMode: random`.** The
+    mode now reaches what the operator makes for an app, and the installer
+    keeps what it made. Three are still computed from the master password in
+    both modes. An app's own secrets (`spec.appSecrets`): its data is
+    readable only with them and no bundle carries a credential, so a random
+    one needs a decision on whether a bundle may. The key Keycloak's event
+    listener signs with, and the kernel realm's own mail login on a cluster
+    that runs its own mail server: each needs a place in OpenBao that nobody
+    has chosen. Until then `random` does not mean "nothing follows from the
+    master password" ([security.md §6.3](../design/security.md)).
+14. **Whether a change of `secretMode` on an installed cluster is refused.**
+    Today it converts nothing and existing credentials stay, with one
+    exception: back from `random` to `derived`, the installer writes derived
+    keys over `gentian-os/kernel/llm`. Refusing needs a record of the mode
+    the cluster was installed with, which nothing keeps.
+15. **How the master password's presence is known without ESO reading it.**
+    `eso-read` cannot deny `gentian-os/kernel/internal/master-password` (and
+    with it the salt) the way it denies the backup key, while the probe
+    `credreq-master-password` reads that path: denied, the probe fails, and
+    the custodian and `make check-credentials` report the master password as
+    missing. It needs a requirement that has no probe, and something else the
+    installer's catalogue step, the custodian and the check take as the
+    answer.
+16. **Whether the platform snapshots OpenBao.** Under `secretMode: random`
+    OpenBao holds the only copy of what was drawn at random, no bundle and no
+    recovery kit carries it, and nothing takes a snapshot.
 
 ## 5. Known and deliberately not now
 

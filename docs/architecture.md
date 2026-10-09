@@ -435,10 +435,12 @@ support, `provider-helm` injects values via `valuesFrom`. Either way,
 
 Three properties:
 
-1. **Kernel service secrets are derived by default.** With the Cluster
-   claim's `secretMode: derived` they are computed from the master password
-   with HKDF-SHA256 (`internal/kernel/secrets`), so the same password
-   reproduces them; `random` makes them independent of it.
+1. **Generated secrets are derived by default.** With the Cluster claim's
+   `secretMode: derived` the kernel's and each app's are computed from the
+   master password (HKDF-SHA256 in `internal/kernel/secrets` for an app's),
+   so the same password and salt reproduce them; `random` makes them
+   independent of it and leaves OpenBao holding the only copy. An app's own
+   secrets are derived in both modes.
 2. **No person's password is derived.** An administrator account has no
    password until its holder sets one through a single-use activation link.
 3. **Seeding is write-once.** The operator writes a credential where the path

@@ -562,10 +562,26 @@ the audit device. It has no endpoint that returns a value.
 
 It depends on the cluster's `secretMode`, a field on the `Cluster` claim:
 
-| `secretMode` | Kernel credentials are | Reproducible on a rebuild? |
+| `secretMode` | Generated credentials are | Reproducible on a rebuild? |
 |---|---|---|
-| `derived` (default) | `HMAC-SHA256` of the master password **and** a per-cluster salt | Yes — with **both** |
-| `random` | Generated once by `openssl rand`, then stored | **No.** The master password only guards the paths |
+| `derived` (default) | Computed from the master password **and** a per-cluster salt | Yes — with **both** |
+| `random` | Drawn at random once, then stored in OpenBao | **No.** The master password leads to none of them |
+
+This covers the kernel's credentials, which the installer makes, and each
+app's, which the operator makes when the app is installed. Three are computed
+from the master password under `random` as well: an app's own secrets
+(`spec.appSecrets`), which its restored data is readable only with; the key
+Keycloak's event listener signs with; and the kernel realm's own mail login
+on a cluster that runs its own mail server
+([security.md §6.3](design/security.md)). The installer reads
+the claim; the operator reads the same field from the `gentian-cluster-config`
+ConfigMap the `Cluster` Composition writes.
+
+Choose the mode at the first install. Changing it on a running cluster
+converts nothing: every credential that exists stays as it is, and only
+credentials made afterwards follow the new mode. Do not change a `random`
+cluster back to `derived`: the next installer run writes derived keys for the
+model gateway over the ones its database was created with.
 
 The salt is generated at first install and stored in OpenBao beside the password.
 
@@ -577,6 +593,12 @@ The salt is generated at first install and stored in OpenBao beside the password
 > recovery kit* in [GETTING-STARTED.md](../GETTING-STARTED.md).
 
 Under `random` there is nothing to reproduce; recovery means restoring OpenBao.
+The platform does not snapshot OpenBao, and neither a tenant's backup nor the
+recovery kit holds a generated credential, so that snapshot is yours to take.
+A tenant's backup, restore and import are the same in both modes. What
+differs is the loss of OpenBao's storage on a cluster that keeps running:
+`derived` writes the same values again, `random` writes new ones that the
+running databases, buckets and sign-in clients were not created with.
 
 ### Where the backup key lives
 

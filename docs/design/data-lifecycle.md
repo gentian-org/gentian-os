@@ -249,7 +249,10 @@ After an **import**, also:
       fresh, generated credentials and none of the old ones.
 - [ ] On another cluster: data an app encrypted with a secret the platform
       generated cannot be read, unless that cluster was built from the first
-      one's recovery kit.
+      one's recovery kit and the tenant has the same name. That holds with
+      `secretMode: random` too: an app's own secrets are computed from the
+      master password in both modes, because no bundle carries them
+      ([security.md §6.3](security.md)).
 - [ ] Set again what each app may use (app grants) and each tenant catalogue.
 - [ ] The cache did not come. Mailboxes came only if both clusters run their
       own mail server; the result says when they did not.

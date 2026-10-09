@@ -1132,6 +1132,10 @@ gentian-os/
 
 The path helpers are in `internal/kernel/secrets/paths.go`.
 
+One path is outside this tree: `identity/portal-admin`, directly under the
+mount, where the installer keeps three client secrets on a cluster with
+`secretMode: random` (§6.3). No policy but an administrator's reaches it.
+
 Who may read what:
 
 - **A policy per tenant**, `<tenant>-tenant-policy` (`tenant-default.yaml`),
@@ -1139,7 +1143,10 @@ Who may read what:
 - **ESO** reads through one `ClusterSecretStore`, `openbao`, whose policy
   `eso-read` (`cluster-default.yaml`) covers every tenant's `apps/`,
   `repositories/`, `contracts/` and `backup/` and all of `gentian-os/kernel/*`,
-  the master password included. Only the backup identities are denied to it.
+  the master password and the salt included. Only the backup identities are
+  denied to it. The master password's path is not denied in the same way,
+  because one `ExternalSecret` reads it: the probe that reports whether it was
+  supplied (§6.1).
   What keeps a secret to its namespace is therefore which `ExternalSecret` the
   Compositions write, not the store.
 - Per-`(tenant, app)` policies, so that no app can read a sibling app's paths,
@@ -1188,12 +1195,52 @@ What this does not give:
 ## 6. Secret Generation Mode
 
 `secretMode` on the `Cluster` claim, in the deployments repository, selects how
-the **kernel's** credentials are generated. It is read at the first install.
+the platform makes a credential that nothing has stored yet: the kernel's
+credentials and each app's. Three are computed from the master password in
+both modes (§6.3).
 
-| Mode | Claim value | Kernel credentials are |
+| Mode | Claim value | A generated credential is |
 | --- | --- | --- |
-| **Deterministic** (default) | `secretMode: derived` | HMAC-SHA256 of the master password and a per-cluster salt. A rebuild with both yields the same values. |
-| **Random** | `secretMode: random` | `openssl rand -hex 32`, generated once and stored. Recovery means restoring OpenBao. |
+| **Deterministic** (default) | `secretMode: derived` | Computed from the master password and a per-cluster salt. A rebuild with both yields the same values. |
+| **Random** | `secretMode: random` | Drawn at random, once, and stored in OpenBao. Nothing reproduces it: the stored copy is the only one. |
+
+Two readers act on it. The installer reads the claim (`SECRET_MODE`) when it
+makes the kernel's credentials. The operator reads it from the
+`gentian-cluster-config` ConfigMap, which the `Cluster` Composition writes
+from the claim, each time it makes a credential for an app
+(`ClusterSecretMode` in `internal/controller/cluster_config.go`).
+
+**The mode is chosen at the first install. Changing it later converts
+nothing.** A credential that exists stays as it is, in both directions; only
+a credential made afterwards follows the new mode. A cluster switched to
+`random` therefore still holds derived credentials, and one switched to
+`derived` still holds random ones that no rebuild reproduces. One path is an
+exception and makes a switch back to `derived` harmful: the installer
+rewrites `gentian-os/kernel/llm` on every run, and under `derived` it writes
+the derived keys over whatever was there, while the model gateway's database
+still has the old password.
+
+**Under `random`, OpenBao holds the only copy, and nothing backs OpenBao
+up.** A tenant's bundle holds no stored credential in either mode
+([data-lifecycle.md §5](data-lifecycle.md)), the recovery kit holds the
+master password and not what was drawn at random, and the platform takes no
+snapshot of OpenBao. What follows:
+
+- *A tenant's backup, restore and import work as under `derived`.* A restore
+  changes no stored credential and an import makes new ones, in both modes.
+  The one kind of credential an app's restored data depends on, the app's own
+  secrets, is derived in both modes for that reason (§6.3).
+- *A cluster rebuilt from the recovery kit* gets new kernel credentials and
+  new credentials for every app, where `derived` arrives at the old ones.
+  The rebuild makes every database, bucket and client anew with them, so
+  nothing is locked out.
+- *OpenBao's storage lost on a cluster that keeps running* is the case
+  `random` does not survive. Under `derived` the installer and the operator
+  write the same values again. Under `random` they write new ones, which the
+  running databases, buckets and sign-in clients were not created with, and
+  every service and app is locked out of its own store until each credential
+  is set by hand. A cluster that runs `random` has to snapshot OpenBao itself
+  and keep the unseal material from the recovery kit with the snapshot.
 
 No person's password is derived or generated. The platform administrator and
 each tenant's administrator set their own through a single-use activation link
@@ -1244,30 +1291,45 @@ password. An app uninstalled and installed again gets the same credentials.
 What still reaches the master password, and should not:
 
 - ESO's policy reads all of `gentian-os/kernel/*` (§5), so the store ESO uses
-  can read this path too.
+  can read this path too. One `ExternalSecret` does read it:
+  `credreq-master-password`, the probe that tells the custodian and
+  `make check-credentials` whether the master password has been supplied. It
+  creates no Secret, but ESO fetches the value to answer. The path cannot be
+  denied to ESO, as the backup key's is, until that one credential's presence
+  is established some other way. The salt is a field of the same path, so it
+  is readable wherever the master password is.
 - The catalogue's Element profile brings a Composition of its own whose
   database Job reads the master password and derives in shell.
 
 Narrowing both, and moving the master password to a KMS or HSM, are target.
 
+The Secret `gentian-os-master-password` in `kernel-provisioning` is not made
+by ESO: the installer writes it directly (step `B-07-crossplane-secrets`).
+
 ### 6.2 Random mode (`random`)
 
-Each kernel credential is generated independently:
+Each credential is generated independently, by the installer with
 
 ```bash
 openssl rand -hex 32
 ```
 
+and by the operator from `crypto/rand`. The master password is still stored
+in OpenBao in this mode, and the operator still reads it at start, but no
+credential is computed from it.
+
 Properties:
 
-1. **Independent rotation** — one kernel credential can be changed without
+1. **Independent of the master password** — whoever learns the master
+   password and the salt learns none of the credentials made at random. The
+   three that stay derived (§6.3) are the exception.
+2. **Independent of each other** — one credential can be changed without
    affecting another.
-2. **Requires backup** — if OpenBao is lost and no backup exists, the
-   credentials cannot be recovered.
-
-The mode does not reach per-app credentials. The master password is stored in
-OpenBao in this mode as well, and the operator derives every app's credentials
-from it exactly as under `derived` (§6.3).
+3. **Made once** — the first value stored at a path stays the path's value
+   (§7). The operator hands on a random value only after reading it back from
+   the path; where the read fails it reports an error and tries again, because
+   a value it could not read back may not be the stored one.
+4. **Requires a backup of OpenBao** — see the note at the top of this section.
 
 ### 6.3 Scope of each mode
 
@@ -1276,9 +1338,41 @@ from it exactly as under `derived` (§6.3).
   person supplies (a DNS token, a mail relay's password, a registry login) are
   stored as given, by the installer or, once the cluster runs, by the custodian.
 - **Per-app credentials** — created by the operator when a tenant installs an
-  app, in `gentian-os/tenants/<tenant>/apps/<app>/*`, and **derived from the
-  master password in both modes**: the operator does not read `secretMode`. It
-  generates random values only when it finds no master password at start.
+  app, in `gentian-os/tenants/<tenant>/apps/<app>/*`, and likewise derived or
+  random as the mode says: the database password, the bucket's key pair, the
+  cache password, the sign-in client's secret, the model gateway key and the
+  password of a contract between two apps.
+- **Where the operator cannot learn the mode** — the ConfigMap unreadable, or
+  holding a value that is neither mode — it makes no credential and the
+  reconcile is tried again. A ConfigMap that is not there yet, or that was
+  written before it carried the mode, reads as `derived`, which is what every
+  cluster did before the operator read the mode. Under `derived`, the
+  operator generates random values only when it finds no master password at
+  start.
+
+Still derived under `random`, because making each random needs a decision
+that has not been taken:
+
+- **An app's own secrets** (`spec.appSecrets`, stored at
+  `…/apps/<app>/internal/<name>`). An app encrypts and signs its data with
+  them, and a bundle carries no stored credential. An app purged and installed
+  again, a tenant deleted and imported again under its name, and a cluster
+  rebuilt from the recovery kit all read the data a bundle brings back only
+  because the secret comes out the same. A random one would have to travel in
+  the bundle, and a bundle deliberately holds none
+  ([data-lifecycle.md §5](data-lifecycle.md)).
+- **The key the Keycloak event listener signs with.** The installer computes
+  the key pair from the master password on every run and writes the two
+  halves to two Kubernetes Secrets; neither half is in OpenBao.
+- **The kernel realm's own mail login**, on a cluster that runs its own mail
+  server. It is asked for twice in one run and held only in Kubernetes
+  Secrets.
+
+And in neither mode in OpenBao's `gentian-os/` tree: under `random` the
+installer keeps the client secrets of Argo CD, Headlamp and the model
+gateway's console at `identity/portal-admin`, directly under the KV mount,
+and reads them back from there or from the Kubernetes Secret each is mounted
+from before it draws a new one.
 
 ## 7. Write-Once Protection
 
@@ -1298,7 +1392,10 @@ Nothing the platform generates overwrites a credential that is already there.
   only the missing ones.
 - **Kernel paths the installer seeds** are written only where the path does not
   exist (`kv_put_once`). Credentials a person supplies are written as given on
-  each run.
+  each run. `gentian-os/kernel/llm` is written on every run, because it also
+  carries addresses that follow the settings; under `random` the keys it
+  already holds are read first and written back unchanged, and the run stops
+  if the path cannot be read.
 - **Per-app paths** are written by the operator with OpenBao's check-and-set
   (`cas=0`, `PutOnce`), which refuses a second write.
 

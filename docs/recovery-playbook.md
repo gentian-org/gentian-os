@@ -171,9 +171,10 @@ which is a wrapper over:
 
 ```bash
 # 1. Load the kit and install. With `secretMode: derived` (the default) the
-#    kernel's service credentials reproduce their original values from the
-#    master password and salt the kit carries. With `secretMode: random` they
-#    are generated anew.
+#    kernel's service credentials and each app's reproduce their original
+#    values from the master password and salt the kit carries. With
+#    `secretMode: random` they are generated anew: the kit does not hold
+#    them. An app's own secrets are derived in both modes.
 ./install.sh --recover /path/to/gentian-recovery-kit-<cluster>.age
 ```
 

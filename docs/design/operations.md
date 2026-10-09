@@ -63,10 +63,12 @@ For full-cluster DR ([recovery-playbook.md](../recovery-playbook.md) §1):
    bring the kernel back from git.
 3. Each tenant is imported from its newest bundle (§3).
 
-With `secretMode: derived` (the default) the kernel's service credentials are
-derived from the master password and salt, so they come back with their
-original values; with `secretMode: random` they are generated anew
-(`scripts/lib/bootstrap.sh`). People's and administrators' passwords are never
+With `secretMode: derived` (the default) the kernel's service credentials and
+each app's are derived from the master password and salt, so they come back
+with their original values; with `secretMode: random` they are generated anew
+(`scripts/lib/bootstrap.sh`, `internal/kernel/secrets`), all but an app's own
+secrets, which are derived in both modes so that the data a bundle brings
+back stays readable ([security.md §6](security.md)). People's and administrators' passwords are never
 derived: a realm export carries none, and every member resets theirs after a
 restore.
 
