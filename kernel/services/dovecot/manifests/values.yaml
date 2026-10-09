@@ -45,31 +45,34 @@ mailStorageSize: 5Gi
 tls:
   secretName: wildcard-tls
 
-# Whether IMAPS (993) is published to the internet.
+# The listener the mail edge connects to.
 #
-# This is what makes the mailboxes reachable by a mail client at all. Until now
-# retrieval existed only on paper: the Service was ClusterIP, the gateway speaks
-# HTTP only, and the per-realm oauth2 passdb had never authenticated a client.
-# Mail arrived and nothing could read it.
+# Nothing of Dovecot is published to the internet from this namespace. The
+# load balancer that takes IMAPS on 993 is in front of the proxy in the mail
+# DMZ (kernel/services/mail-edge), which opens each connection again to the
+# port below, with a PROXY-protocol header in front that says who the client
+# is. TLS is not ended at the proxy: it passes through, and this listener is
+# implicit TLS exactly like 993 -- the certificate and its key stay here.
 #
-# 993 only — implicit TLS, which RFC 8314 prefers over STARTTLS on 143 because
-# there is no cleartext phase for an attacker to strip. 143 stays for in-cluster
-# clients and refuses plaintext authentication (disable_plaintext_auth).
+# A port of its own, beside 993, because a listener that takes a PROXY header
+# believes it. 993 and 143 stay as they were for the pods of the cluster, with
+# no header; this one admits the mail DMZ alone (templates/networkpolicy.yaml)
+# and refuses a connection that does not start with the header.
 #
-# It provisions a load balancer, which costs money on most providers. Set
-# enabled: false on a cluster whose users only read mail through in-cluster apps.
-imapIngress:
-  enabled: true
-  # Pin the address once a DNS record names it, so a rebuild does not hand out a
-  # different one and silently break every configured mail client.
-  loadBalancerIP: ""
-  annotations:
-    # Same reason as the MX Service in the Postfix chart: externalTrafficPolicy
-    # Local means only the node running the Pod can serve, so without a health
-    # monitor the load balancer round-robins across all of them and most
-    # connections are dropped.
-    loadbalancer.openstack.org/enable-health-monitor: "true"
-    loadbalancer.openstack.org/keep-floatingip: "true"
+# Not rendered without a certificate (tls.secretName), like 993.
+edge:
+  # The mail DMZ, by name. Supplied by the ApplicationSet from the layout.
+  namespace: system-mail-dmz
+  ports:
+    imaps: 10993
+  # Whom Dovecot takes a PROXY header from (haproxy_trusted_networks). It
+  # needs addresses, and the proxy's are pod addresses that this chart cannot
+  # know: every private range, so that it holds on any cluster. That is wider
+  # than "the proxy", and it is not the control. The control is the policy,
+  # which admits the proxy's pods alone to the one port that reads the header,
+  # and the Service, which is ClusterIP. Narrow it to the cluster's pod range
+  # where that is known.
+  trustedNetworks: "10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 100.64.0.0/10 fc00::/7"
 
 # Who may open a connection to Dovecot's pods (templates/networkpolicy.yaml).
 # On by default; needs a CNI that enforces NetworkPolicy, and has no effect on

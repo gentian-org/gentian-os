@@ -78,17 +78,17 @@ check_server() {
 }
 
 echo ""
-echo "The kernel's own PostgreSQL and the mail servers"
+echo "The kernel's own PostgreSQL, the mail servers and the proxy in the mail DMZ"
 echo ""
-for server in kernel-postgres dovecot postfix; do
+for server in kernel-postgres dovecot postfix mail-edge; do
     check_server "${server}: selects the server's pods and no other; every port they serve is listed or recorded as closed" \
         shape "${server}"
     check_server "${server}: every client of the table is admitted, everything it says to refuse is refused" \
         clients "${server}"
 done
-check_server "namespaces, labels, hosts, ports and sync waves are what the policies assume; the installer's check runs where it is admitted" wiring
+check_server "namespaces, labels, hosts, ports and sync waves are what the policies assume; the proxy and the mail servers name each other's ports and pods; the installer's check runs where it is admitted" wiring
 check_server "storeNetworkPolicies=false: kernel-postgres admits everything, the mail servers carry no policy; on, each carries one" off
-check_server "a cluster that relays mail has no mail policy; without a certificate or an MX no rule is left for the port" modes
+check_server "a cluster that relays mail has no mail policy; without a certificate, or with a listener of the edge off, no rule is left for the port" modes
 
 # The model gateway's namespace is no store and is held to the same: one
 # policy per pod set that serves there, the clients from the same table.

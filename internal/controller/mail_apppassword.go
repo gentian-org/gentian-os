@@ -42,7 +42,7 @@ import (
 //
 // Two artefacts per tenant, deliberately on opposite sides of the boundary:
 //
-//	the hashes, in the kernel namespace, for Dovecot to verify against;
+//	the hashes, in Dovecot's namespace, for Dovecot to verify against;
 //	the plaintexts, in the TENANT namespace, for that tenant's mail client.
 //
 // A tenant therefore holds its own users' credentials and nobody else's, which
@@ -126,8 +126,14 @@ var keycloakAdminHTTP = &http.Client{Timeout: 30 * time.Second}
 //
 // Extracted so the two realm readers below share one way of authenticating
 // rather than two that can drift.
+//
+// The admin Secret is read beside Keycloak, where its ExternalSecret writes it
+// and where the identity Jobs mount it. It was read from the edge namespace,
+// which holds no such Secret, so every caller failed before asking Keycloak
+// anything: no user was listed, no mail password was minted, and no realm was
+// given a submission credential.
 func (r *TenantReconciler) keycloakAdminBase(ctx context.Context) (base, token string, err error) {
-	ns := defaultServicesNamespace()
+	ns := identityNamespace
 	if base, err = r.secretValue(ctx, keycloakAdminSecret, ns, "url"); err != nil {
 		return "", "", err
 	}
@@ -290,8 +296,13 @@ func (r *TenantReconciler) keycloakRealmAddresses(ctx context.Context, realm str
 // Never rotated automatically: rotating it changes every password the tenant's
 // clients already hold, which logs everyone out of their mail at once with no
 // signal as to why.
+//
+// Kept in the mail namespace, beside the hashes derived from it. Only the
+// operator reads it, so no mount decides where it goes; what decides it is
+// that every mail password of the tenant follows from this value, and the
+// edge namespace -- where it was -- is the one that faces the internet.
 func (r *TenantReconciler) tenantMailSeed(ctx context.Context, tenant string) ([]byte, error) {
-	ns := defaultServicesNamespace()
+	ns := mailSeedNamespace
 	name := mailAppPasswordSeedName + "-" + tenant
 	sec := &corev1.Secret{}
 	err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: ns}, sec)
@@ -301,6 +312,13 @@ func (r *TenantReconciler) tenantMailSeed(ctx context.Context, tenant string) ([
 		}
 	} else if !errors.IsNotFound(err) {
 		return nil, err
+	}
+	// A seed written where it used to be is taken over rather than replaced:
+	// a new one would change every password already handed to this tenant.
+	if moved, adoptErr := r.adoptMisplacedMailSeed(ctx, name); adoptErr != nil {
+		return nil, adoptErr
+	} else if len(moved) > 0 {
+		return moved, nil
 	}
 	seed := make([]byte, 32)
 	if _, err := rand.Read(seed); err != nil {
@@ -343,7 +361,7 @@ func (r *TenantReconciler) syncMailAppPasswords(ctx context.Context, tenant *gen
 	{
 		sec := &corev1.Secret{}
 		if err := r.Get(ctx, types.NamespacedName{
-			Name: "dovecot-app-passwords", Namespace: defaultServicesNamespace(),
+			Name: dovecotAppPasswordsSecret, Namespace: dovecotNamespace,
 		}, sec); err == nil {
 			for _, l := range strings.Split(string(sec.Data[mailAppPasswordFile(mailAppPasswordApp, name)+".users"]), "\n") {
 				if addr, _, ok := strings.Cut(strings.TrimSpace(l), ":"); ok {
@@ -386,7 +404,7 @@ func (r *TenantReconciler) syncMailAppPasswords(ctx context.Context, tenant *gen
 	if err := r.upsertSecret(ctx, mailAppPasswordTenantSec, tenantNamespaceName(tenant), plain); err != nil {
 		return err
 	}
-	// The hashes, in the kernel namespace, for Dovecot — one pair of files per
+	// The hashes, in Dovecot's namespace, for Dovecot — one pair of files per
 	// tenant, NOT one pair shared by all of them.
 	//
 	// The shared key this replaces held only the lines of whichever tenant
@@ -397,7 +415,7 @@ func (r *TenantReconciler) syncMailAppPasswords(ctx context.Context, tenant *gen
 	// nothing logged beyond an auth failure. Dovecot includes the directory by
 	// glob and the passdbs chain with result_failure = continue, so a file per
 	// tenant needs no configuration change and cannot overwrite another's.
-	if err := r.upsertSecret(ctx, "dovecot-app-passwords", defaultServicesNamespace(), map[string][]byte{
+	if err := r.upsertSecret(ctx, dovecotAppPasswordsSecret, dovecotNamespace, map[string][]byte{
 		mailAppPasswordFile(mailAppPasswordApp, name) + ".users": []byte(lines.String()),
 		mailAppPasswordFile(mailAppPasswordApp, name) + ".conf":  passdbInclude(mailAppPasswordFile(mailAppPasswordApp, name)),
 	}); err != nil {
@@ -419,7 +437,7 @@ func (r *TenantReconciler) syncMailAppPasswords(ctx context.Context, tenant *gen
 		return err
 	}
 	if migrated {
-		if err := r.deleteSecretKeys(ctx, "dovecot-app-passwords", defaultServicesNamespace(),
+		if err := r.deleteSecretKeys(ctx, dovecotAppPasswordsSecret, dovecotNamespace,
 			mailAppPasswordApp+".users", mailAppPasswordApp+".conf"); err != nil {
 			return err
 		}
@@ -432,7 +450,7 @@ func (r *TenantReconciler) syncMailAppPasswords(ctx context.Context, tenant *gen
 func (r *TenantReconciler) allTenantsHaveOwnPasswdFile(ctx context.Context) (bool, error) {
 	sec := &corev1.Secret{}
 	if err := r.Get(ctx, types.NamespacedName{
-		Name: "dovecot-app-passwords", Namespace: defaultServicesNamespace(),
+		Name: dovecotAppPasswordsSecret, Namespace: dovecotNamespace,
 	}, sec); err != nil {
 		if errors.IsNotFound(err) {
 			return false, nil
@@ -488,8 +506,10 @@ func passdbInclude(file string) []byte {
 //
 // Both halves again, and for the same reason as the app passwords: the hash
 // where Dovecot verifies it, the plaintext where the consumer reads it. The
-// consumer here is the SMTP configuration Job, which runs in the kernel
-// namespace, so the plaintext goes there rather than into the tenant's.
+// consumers here are the SMTP configuration Job and the realm the tenant's
+// Composition declares, both of which read beside Keycloak, so the plaintext
+// goes there rather than into the tenant's namespace. It was written to the
+// edge namespace instead: the Job found no Secret and sent unauthenticated.
 func (r *TenantReconciler) syncMailSubmissionCredential(ctx context.Context, tenant *gentianov1alpha1.Tenant, domain string, seed []byte) error {
 	addr := mailSubmissionLocalPart + "@" + domain
 	pw := deriveMailPassword(seed, mailSubmissionApp, addr)
@@ -499,7 +519,7 @@ func (r *TenantReconciler) syncMailSubmissionCredential(ctx context.Context, ten
 	if err := r.registerSubmissionIdentity(ctx, mailSubmissionApp, tenant.Name, addr, pw); err != nil {
 		return err
 	}
-	return r.upsertSecret(ctx, mailSubmissionSecretPrefix+tenant.Name, defaultServicesNamespace(), map[string][]byte{
+	return r.upsertSecret(ctx, mailSubmissionSecretPrefix+tenant.Name, mailSubmissionNamespace, map[string][]byte{
 		"smtp_user":     []byte(addr),
 		"smtp_password": []byte(pw),
 	})

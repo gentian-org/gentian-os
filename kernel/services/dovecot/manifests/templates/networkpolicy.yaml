@@ -1,25 +1,31 @@
 {{- /*
   Who may open a connection to Dovecot.
 
-  Dovecot serves four ports, and they are of two kinds. Until this policy
-  every one of them took a connection from any pod of any namespace that has
-  no egress policy of its own.
+  Dovecot serves five ports, and no connection from outside the cluster
+  reaches any of them directly: its Services are ClusterIP, and the load
+  balancer for IMAPS is in front of the proxy in the mail DMZ.
 
-  Open to any source, as they were -- a rule with ports and no `from`:
+  From the mail DMZ's proxy, and from nothing else:
 
-    imaps (993)   published to the internet on its own load balancer
-                  (imapIngress), and what an app that declared `mail.imap` is
-                  handed, by its public name (mail_reconciler.go). A
-                  connection through a load balancer does not arrive from a
-                  pod, and whether one from inside the cluster still carries
-                  its pod's address depends on the proxy mode of the cluster;
-                  so no source can be named. Rendered only when Dovecot
-                  serves it (tls.secretName).
-    imap (143)    the same service without the load balancer. The operator
-                  hands it to nobody, and which pods of the cluster use it by
-                  the Service's name cannot be read from this repository; it
-                  asks for the same credential as 993 and refuses it outside
-                  TLS. Left as it was.
+    imaps-edge (10993)  IMAPS, which the proxy took on 993: mail clients
+                        outside, and the apps that declared `mail.imap`,
+                        which are handed the public name
+                        (mail_reconciler.go). The listener reads a
+                        PROXY-protocol header and believes the client
+                        address in it, so who may reach it is exactly who
+                        may say what a client's address is: the pods of the
+                        proxy, by the namespace's name and the pods' labels.
+                        Rendered only when Dovecot serves TLS
+                        (tls.secretName).
+
+  From the pods of a tenant, with no PROXY header:
+
+    imaps (993)   the same service for a pod that uses Dovecot by its
+    imap (143)    Service's name. The operator hands that name to nobody, and
+                  which pods use it cannot be read from this repository; the
+                  two ports are kept for them as they were, narrowed from
+                  "any source" to the namespaces apps run in. Both ask for
+                  the same credential and 143 refuses it outside TLS.
 
   Restricted to their callers:
 
@@ -32,11 +38,11 @@
                   Postfix puts in front of it.
 
   Postfix's pods are named by the labels the upstream chart gives them --
-  the ones the MX Service of the Postfix chart selects on.
+  the ones the edge Service of the Postfix chart selects on.
 
   The installer's check of this Deployment (verify_dovecot_installation)
   opens 143 and 24 from a short-lived pod. It runs that pod in this namespace
-  and labels it gentianos.io/purpose=verify, and is admitted to 24 as such.
+  and labels it gentianos.io/purpose=verify, and is admitted to both as such.
 
   The kubelet's probes open 24 from the pod's own node, which is not subject
   to a NetworkPolicy. Dovecot's own calls -- a token to Keycloak -- are
@@ -65,7 +71,24 @@ spec:
   policyTypes:
     - Ingress
   ingress:
-    - ports:
+    {{- if .Values.tls.secretName }}
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.edge.namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: mail-edge
+              app.kubernetes.io/instance: mail-edge-{{ .Values.env }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.edge.ports.imaps }}
+    {{- end }}
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              gentianos.io/tier: tenant
+      ports:
         {{- if .Values.tls.secretName }}
         - protocol: TCP
           port: {{ $np.ports.imaps }}
@@ -89,4 +112,6 @@ spec:
       ports:
         - protocol: TCP
           port: {{ $np.ports.lmtp }}
+        - protocol: TCP
+          port: {{ $np.ports.imap }}
 {{- end }}

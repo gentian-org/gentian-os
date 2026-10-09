@@ -5,11 +5,12 @@
 # domain to LMTP on 24, and it is written to the maildir on the PersistentVolume
 # below as /var/mail/<domain>/<local-part>.
 #
-# Retrieval works too, now that the decision this chart used to defer has been
-# made: IMAPS on 993 is published on its own load balancer (imapIngress), with
-# the cluster's publicly-trusted wildcard certificate, and clients authenticate
-# with the per-user app passwords the operator mints. A mail client reaches it at
-# imap.<kernelDomain>.
+# Retrieval works too: IMAPS is published at imap.<kernelDomain> on 993 by the
+# proxy in the mail DMZ (kernel/services/mail-edge), which passes the
+# connection to the edge listener below. TLS ends here, with the cluster's
+# publicly-trusted wildcard certificate, and clients authenticate with the
+# per-user app passwords the operator mints. Nothing in this namespace has a
+# load balancer.
 #
 # Plaintext IMAP on 143 remains for in-cluster clients and refuses to
 # authenticate outside TLS (disable_plaintext_auth), so the only way to present a
@@ -326,7 +327,30 @@ data:
         port = 0
         {{- end }}
       }
+      {{- if .Values.tls.secretName }}
+      # What the proxy in the mail DMZ connects to: IMAPS as on 993, behind a
+      # PROXY-protocol header that carries the client's address.
+      #
+      # haproxy = yes makes the header mandatory on this listener and on this
+      # one only. Dovecot then logs, and counts failed logins against, the
+      # address of the mail client rather than the proxy's -- which is the
+      # only way to tell a locked-out user from a password spray. A
+      # connection without the header is closed before TLS begins.
+      inet_listener imaps-edge {
+        port = {{ .Values.edge.ports.imaps }}
+        ssl = yes
+        haproxy = yes
+      }
+      {{- end }}
     }
+    {{- if .Values.tls.secretName }}
+
+    # Whom a PROXY header is taken from. Dovecot refuses one from an address
+    # outside this list, so it has to cover the proxy's pods; see
+    # edge.trustedNetworks in values.yaml for why it is every private range
+    # and what the control actually is.
+    haproxy_trusted_networks = {{ .Values.edge.trustedNetworks }}
+    {{- end }}
 
     # doveadm is not exposed over the network, so it needs no password. The
     # doveadm_password in dovecot-sensitive-values stays unconsumed until
@@ -520,6 +544,10 @@ spec:
             - name: imaps
               containerPort: 993
             {{- end }}
+            {{- if .Values.tls.secretName }}
+            - name: imaps-edge
+              containerPort: {{ .Values.edge.ports.imaps }}
+            {{- end }}
             - name: lmtp
               containerPort: 24
             - name: sasl
@@ -580,44 +608,33 @@ spec:
       port: 993
       targetPort: imaps
     {{- end }}
-{{- if and .Values.tls.secretName .Values.imapIngress.enabled }}
+{{- if .Values.tls.secretName }}
 ---
-# The public IMAPS endpoint.
+# The Service the mail edge reaches Dovecot by.
 #
-# Separate from the ClusterIP Service above rather than a second port on it,
-# because a LoadBalancer Service publishes EVERY port it declares: adding 993 to
-# that one would have put LMTP on 24 and the SASL socket on 12345 on the
-# internet as well. LMTP accepts mail for any hosted domain without
-# authenticating — it is the delivery path, and Postfix is supposed to be the
-# only thing that can reach it.
+# ClusterIP, and separate from the Service above, so that the name the proxy
+# is given carries the one port it may use and nothing else. The load balancer
+# that used to select these pods directly (dovecot-<env>-imaps) is gone; the
+# one that replaces it selects the proxy in the mail DMZ.
 apiVersion: v1
 kind: Service
 metadata:
-  name: dovecot-{{ .Values.env }}-imaps
+  name: dovecot-{{ .Values.env }}-edge
   namespace: {{ .Values.servicesNamespace }}
   annotations:
     argocd.argoproj.io/sync-wave: "9"
-    {{- with .Values.imapIngress.annotations }}
-    {{- toYaml . | nindent 4 }}
-    {{- end }}
   labels:
     app.kubernetes.io/name: dovecot
     app.kubernetes.io/instance: dovecot-{{ .Values.env }}
     gentianos.io/component: kernel-mail
 spec:
-  type: LoadBalancer
-  # Preserves the client address, which is what Dovecot logs on a failed login
-  # and therefore the only way to tell a locked-out user from a password spray.
-  externalTrafficPolicy: Local
-  {{- with .Values.imapIngress.loadBalancerIP }}
-  loadBalancerIP: {{ . | quote }}
-  {{- end }}
+  type: ClusterIP
   selector:
     app.kubernetes.io/name: dovecot
     app.kubernetes.io/instance: dovecot-{{ .Values.env }}
   ports:
-    - name: imaps
-      port: 993
-      targetPort: imaps
+    - name: imaps-edge
+      port: {{ .Values.edge.ports.imaps }}
+      targetPort: imaps-edge
       protocol: TCP
 {{- end }}

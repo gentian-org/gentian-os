@@ -644,10 +644,11 @@ denied:
 
 # ── Servers that are not shared stores ───────────────────────────────────
 #
-# The kernel's own PostgreSQL (kernel-postgres, in kernel-data) and the two
-# mail servers (Dovecot and Postfix, in system-mail when mail.serviceMode is
-# `system`). Each carries a NetworkPolicy of its own chart, and these are
-# their clients, held the same two ways:
+# The kernel's own PostgreSQL (kernel-postgres, in kernel-data), the two mail
+# servers (Dovecot and Postfix, in system-mail when mail.serviceMode is
+# `system`) and the proxy in front of them (mail-edge, in system-mail-dmz).
+# Each carries a NetworkPolicy of its own chart, and these are their clients,
+# held the same two ways:
 #
 #   scripts/tests/server_network_policies.py   (make test-store-network-policies)
 #   internal/controller/server_clients_test.go
@@ -661,7 +662,9 @@ denied:
 #
 # `external: true` marks a connection that does not arrive from a pod -- from
 # the internet through a load balancer. No selector can name it; it is
-# admitted only by a rule with ports and no `from`.
+# admitted only by a rule with ports and no `from`, and only the proxy in the
+# mail DMZ has such a rule. This table is the mail flows in one place: who
+# reaches the proxy, what the proxy reaches, and who else reaches each server.
 servers:
   clients:
     # ── kernel-postgres (kernel-data) ───────────────────────────────────
@@ -744,7 +747,7 @@ servers:
       evidence: proven
       proof: >-
         kernel/services/postfix/manifests/templates/configmap.yaml virtual_transport;
-        the labels are the ones service-smtp.yaml selects Postfix's pods by
+        the labels are the ones service-edge.yaml selects Postfix's pods by
     - server: dovecot
       client: Postfix, asking whether a submission credential is good
       namespace: system-mail
@@ -753,6 +756,16 @@ servers:
       built: none
       evidence: proven
       proof: kernel/services/postfix/manifests/templates/configmap.yaml smtpd_sasl_path
+    - server: dovecot
+      client: the proxy of the mail DMZ, passing on an IMAPS connection it took on 993 with the client's address in a PROXY header
+      namespace: system-mail-dmz
+      podLabels: {app.kubernetes.io/name: mail-edge, app.kubernetes.io/instance: mail-edge-dev}
+      port: 10993
+      built: none
+      evidence: proven
+      proof: >-
+        kernel/services/mail-edge/manifests/templates/configmap.yaml (backend imaps),
+        kernel/services/dovecot/manifests/templates/deployment.yaml inet_listener imaps-edge and Service dovecot-<env>-edge
     - server: dovecot
       client: the installer's check of the Deployment, on the delivery port
       namespace: system-mail
@@ -770,7 +783,7 @@ servers:
       evidence: proven
       proof: scripts/lib/verify-kernel-services.sh verify_dovecot_installation
     - server: dovecot
-      client: a pod of the cluster that reads mail by the Service's name, which the chart keeps this port for
+      client: a pod of a tenant that reads mail by the Service's name, which the chart keeps this port for
       namespace: *tenant
       podLabels: {gentianos.io/app: wiki}
       port: 143
@@ -780,53 +793,99 @@ servers:
         kernel/services/dovecot/manifests/templates/deployment.yaml ("143 remains for in-cluster clients");
         the operator hands this port to nobody, and no such client is named in this repository
     - server: dovecot
-      client: a mail client outside the cluster, through the IMAPS load balancer
-      external: true
-      port: 993
-      built: none
-      evidence: proven
-      proof: kernel/services/dovecot/manifests/templates/deployment.yaml Service dovecot-<env>-imaps
-    - server: dovecot
-      client: a tenant's app that declared mail.imap, dialling imap.<kernelDomain>
+      client: a tenant's app that declared mail.imap and uses Dovecot by the Service's name on the TLS port
       namespace: *tenant
       podLabels: {gentianos.io/app: wiki}
       port: 993
       built: tenant-app-mail-imap
       evidence: inferred
       proof: >-
-        internal/controller/mail_reconciler.go (SeedIMAP: imap.<kernelDomain>, 993), internal/kernel/netpolicy/kernel.go;
-        whether the connection still carries the pod's address when it arrives is the cluster's proxy mode, not this repository's
+        internal/kernel/netpolicy/kernel.go (the app's egress opens the mail namespace);
+        the operator hands the public name (SeedIMAP: imap.<kernelDomain>), which arrives at the mail edge instead,
+        and no client that uses the Service's name is named in this repository
 
     # ── Postfix (system-mail) ───────────────────────────────────────────
     - server: postfix
-      client: a mail server on the internet, delivering to the MX
-      external: true
-      port: 25
+      client: the proxy of the mail DMZ, passing on mail it took on 25 with the sender's address in a PROXY header
+      namespace: system-mail-dmz
+      podLabels: {app.kubernetes.io/name: mail-edge, app.kubernetes.io/instance: mail-edge-dev}
+      port: 10025
       built: none
       evidence: proven
-      proof: kernel/services/postfix/manifests/templates/service-smtp.yaml
+      proof: >-
+        kernel/services/mail-edge/manifests/templates/configmap.yaml (backend smtp),
+        kernel/services/postfix/manifests/templates/configmap.yaml postfix-<env>-edge-listeners and service-edge.yaml
     - server: postfix
-      client: a mail client outside the cluster, submitting through the same load balancer
-      external: true
-      port: 587
+      client: the proxy of the mail DMZ, passing on a submission it took on 587
+      namespace: system-mail-dmz
+      podLabels: {app.kubernetes.io/name: mail-edge, app.kubernetes.io/instance: mail-edge-dev}
+      port: 10587
       built: none
       evidence: proven
-      proof: kernel/services/postfix/manifests/templates/service-smtp.yaml submissionIngress
+      proof: >-
+        kernel/services/mail-edge/manifests/templates/configmap.yaml (backend submission),
+        kernel/services/postfix/manifests/templates/configmap.yaml postfix-<env>-edge-listeners and service-edge.yaml
     - server: postfix
-      client: a tenant's app that declared mail.smtp, dialling mail.<kernelDomain>
+      client: a tenant's app that declared mail.smtp and uses Postfix by the Service's name
       namespace: *tenant
       podLabels: {gentianos.io/app: wiki}
       port: 587
       built: tenant-app-mail-smtp
       evidence: inferred
       proof: >-
+        internal/controller/mail_reconciler.go mailSharedPostfixHost (the Service's name when the cluster has no domain,
+        or MAIL_SMTP_HOST) and mailSharedPostfixPort, internal/kernel/netpolicy/kernel.go;
+        with a domain the app is handed the public name, which arrives at the mail edge instead
+
+    # ── The mail edge (system-mail-dmz) ─────────────────────────────────
+    # The proxy's own ports: the load balancer's 25, 587 and 993 reach the
+    # pod on 2525, 2587 and 2993.
+    - server: mail-edge
+      client: a mail server on the internet, delivering to the MX
+      external: true
+      port: 2525
+      built: none
+      evidence: proven
+      proof: kernel/services/mail-edge/manifests/templates/service.yaml (port 25)
+    - server: mail-edge
+      client: a mail client outside the cluster, submitting
+      external: true
+      port: 2587
+      built: none
+      evidence: proven
+      proof: kernel/services/mail-edge/manifests/templates/service.yaml (port 587)
+    - server: mail-edge
+      client: a mail client outside the cluster, reading mail
+      external: true
+      port: 2993
+      built: none
+      evidence: proven
+      proof: kernel/services/mail-edge/manifests/templates/service.yaml (port 993)
+    - server: mail-edge
+      client: a tenant's app that declared mail.smtp, dialling mail.<kernelDomain>
+      namespace: *tenant
+      podLabels: {gentianos.io/app: wiki}
+      port: 2587
+      built: tenant-app-mail-edge-smtp
+      evidence: inferred
+      proof: >-
         internal/controller/mail_reconciler.go mailSharedPostfixHost and mailSharedPostfixPort, internal/kernel/netpolicy/kernel.go;
         whether the connection still carries the pod's address when it arrives is the cluster's proxy mode, not this repository's
-    - server: postfix
-      client: Keycloak, sending a realm's mail
+    - server: mail-edge
+      client: a tenant's app that declared mail.imap, dialling imap.<kernelDomain>
+      namespace: *tenant
+      podLabels: {gentianos.io/app: wiki}
+      port: 2993
+      built: tenant-app-mail-edge-imap
+      evidence: inferred
+      proof: >-
+        internal/controller/mail_reconciler.go (SeedIMAP: imap.<kernelDomain>, 993), internal/kernel/netpolicy/kernel.go;
+        the source it arrives from is, as for submission, the cluster's proxy mode
+    - server: mail-edge
+      client: Keycloak, sending a realm's mail to mail.<kernelDomain>
       namespace: kernel-authentication
       podLabels: {app.kubernetes.io/name: keycloakx, app.kubernetes.io/instance: gentian-idp-keycloak}
-      port: 587
+      port: 2587
       built: none
       evidence: inferred
       proof: >-
@@ -942,10 +1001,28 @@ servers:
       podLabels: {gentianos.io/app: wiki}
       port: 12345
     - server: dovecot
+      client: a tenant's app on the port that believes a PROXY header, where it could give itself any address
+      namespace: *tenant
+      podLabels: {gentianos.io/app: wiki}
+      port: 10993
+    - server: dovecot
+      client: a mail client outside the cluster, were a load balancer pointed at Dovecot again
+      external: true
+      port: 993
+    - server: dovecot
+      client: a connection from outside the cluster on the port that believes a PROXY header
+      external: true
+      port: 10993
+    - server: dovecot
       client: Keycloak on the delivery port
       namespace: kernel-authentication
       podLabels: {app.kubernetes.io/name: keycloakx}
       port: 24
+    - server: dovecot
+      client: Keycloak on the IMAP port, which no realm uses
+      namespace: kernel-authentication
+      podLabels: {app.kubernetes.io/name: keycloakx}
+      port: 143
     - server: dovecot
       client: the operator, which writes Dovecot's files and never connects to it
       namespace: kernel-control
@@ -956,6 +1033,11 @@ servers:
       namespace: system-mail
       podLabels: {}
       port: 24
+    - server: dovecot
+      client: a pod beside Dovecot on the port that believes a PROXY header
+      namespace: system-mail
+      podLabels: {}
+      port: 10993
     - server: dovecot
       client: the installer's check on the authentication service
       namespace: system-mail
@@ -972,10 +1054,35 @@ servers:
       podLabels: {app.kubernetes.io/name: mail, app.kubernetes.io/instance: postfix-dev}
       port: 24
     - server: dovecot
-      client: the public side of mail, were it moved to its own namespace without this rule
+      client: a pod labelled as the proxy in a tenant's namespace
+      namespace: *tenant
+      podLabels: {app.kubernetes.io/name: mail-edge, app.kubernetes.io/instance: mail-edge-dev}
+      port: 10993
+    - server: dovecot
+      client: a pod of the mail DMZ that is not the proxy
       namespace: system-mail-dmz
-      podLabels: {app.kubernetes.io/name: mail, app.kubernetes.io/instance: postfix-dev}
+      podLabels: {}
+      port: 10993
+    - server: dovecot
+      client: the proxy on the authentication service, where it could try passwords without Postfix's limits
+      namespace: system-mail-dmz
+      podLabels: {app.kubernetes.io/name: mail-edge, app.kubernetes.io/instance: mail-edge-dev}
       port: 12345
+    - server: dovecot
+      client: the proxy on the delivery port, which takes mail with no credential
+      namespace: system-mail-dmz
+      podLabels: {app.kubernetes.io/name: mail-edge, app.kubernetes.io/instance: mail-edge-dev}
+      port: 24
+    - server: dovecot
+      client: the proxy on the ports of the cluster's own pods, where its address would be taken for a pod's
+      namespace: system-mail-dmz
+      podLabels: {app.kubernetes.io/name: mail-edge, app.kubernetes.io/instance: mail-edge-dev}
+      port: 993
+    - server: dovecot
+      client: the proxy on plain IMAP
+      namespace: system-mail-dmz
+      podLabels: {app.kubernetes.io/name: mail-edge, app.kubernetes.io/instance: mail-edge-dev}
+      port: 143
 
     - server: postfix
       client: a tenant's app on a port Postfix does not publish
@@ -983,12 +1090,88 @@ servers:
       podLabels: {gentianos.io/app: wiki}
       port: 8891
     - server: postfix
+      client: a tenant's app on the inbound port that believes a PROXY header, where it could give itself any address
+      namespace: *tenant
+      podLabels: {gentianos.io/app: wiki}
+      port: 10025
+    - server: postfix
+      client: a tenant's app on the submission port that believes a PROXY header
+      namespace: *tenant
+      podLabels: {gentianos.io/app: wiki}
+      port: 10587
+    - server: postfix
+      client: a tenant's app on 25, which nothing inside the cluster is handed
+      namespace: *tenant
+      podLabels: {gentianos.io/app: wiki}
+      port: 25
+    - server: postfix
+      client: a mail server on the internet, were a load balancer pointed at Postfix again
+      external: true
+      port: 25
+    - server: postfix
+      client: a mail client outside the cluster, were a load balancer pointed at Postfix again
+      external: true
+      port: 587
+    - server: postfix
+      client: a connection from outside the cluster on the port that believes a PROXY header
+      external: true
+      port: 10025
+    - server: postfix
+      client: the proxy on the submission port of the cluster's own pods, where its address is inside the range Postfix trusts
+      namespace: system-mail-dmz
+      podLabels: {app.kubernetes.io/name: mail-edge, app.kubernetes.io/instance: mail-edge-dev}
+      port: 587
+    - server: postfix
+      client: the proxy on 25, the same way
+      namespace: system-mail-dmz
+      podLabels: {app.kubernetes.io/name: mail-edge, app.kubernetes.io/instance: mail-edge-dev}
+      port: 25
+    - server: postfix
+      client: a pod of the mail DMZ that is not the proxy
+      namespace: system-mail-dmz
+      podLabels: {}
+      port: 10025
+    - server: postfix
+      client: a pod labelled as the proxy in a tenant's namespace
+      namespace: *tenant
+      podLabels: {app.kubernetes.io/name: mail-edge, app.kubernetes.io/instance: mail-edge-dev}
+      port: 10587
+    - server: postfix
+      client: Dovecot on a port that believes a PROXY header
+      namespace: system-mail
+      podLabels: {app.kubernetes.io/name: dovecot, app.kubernetes.io/instance: dovecot-dev}
+      port: 10025
+    - server: postfix
       client: Dovecot on a port Postfix does not serve
       namespace: system-mail
       podLabels: {app.kubernetes.io/name: dovecot, app.kubernetes.io/instance: dovecot-dev}
       port: 465
     - server: postfix
+      client: Keycloak by the Service's name, which no realm is given
+      namespace: kernel-authentication
+      podLabels: {app.kubernetes.io/name: keycloakx, app.kubernetes.io/instance: gentian-idp-keycloak}
+      port: 587
+    - server: postfix
       client: a pod of a namespace outside the layout on a port Postfix does not publish
       namespace: {name: default, labels: {}}
       podLabels: {}
       port: 8891
+    - server: postfix
+      client: a pod of a namespace outside the layout on the submission port
+      namespace: {name: default, labels: {}}
+      podLabels: {}
+      port: 587
+
+    - server: mail-edge
+      client: a connection from outside the cluster on the proxy's health port
+      external: true
+      port: 8404
+    - server: mail-edge
+      client: a tenant's app on the proxy's health port
+      namespace: *tenant
+      podLabels: {gentianos.io/app: wiki}
+      port: 8404
+    - server: mail-edge
+      client: a connection from outside the cluster on a port the proxy does not listen on
+      external: true
+      port: 143

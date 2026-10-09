@@ -6,13 +6,12 @@
 # cannot live inside one. A cluster that relays through a provider runs neither
 # and composes neither namespace.
 #
-# Both land in system-mail. namespace-cleanup.md §2.2 wants Postfix's public
-# surface in system-mail-dmz and only the mailbox store and the DKIM keys in
-# system-mail; that split is a real change to both charts — Postfix would have
-# to reach the signer across a namespace boundary, with the network policy to
-# match — and is recorded as outstanding rather than half-done here. The
-# namespace exists and carries tier system-dmz, and the operator already writes
-# the mail DNS records into it.
+# Postfix and Dovecot land in system-mail and have no load balancer. What the
+# internet reaches is the proxy in system-mail-dmz (kernel/services/mail-edge):
+# it takes 25, 587 and 993, holds no mail, no user and no key, and passes each
+# connection to the server it belongs to with the client's address in a
+# PROXY-protocol header. The operator writes the mail DNS records into the DMZ
+# as well, from the address of the proxy's load balancer.
 #
 # Sync wave 9, beside identity: Dovecot verifies a Keycloak realm's submission
 # credential, so it has nothing to check before Keycloak is up, and Postfix asks
@@ -35,10 +34,20 @@ spec:
       - list:
           elements:
           - env: dev
+      # Each chart with the namespace it is synced into, as the function the
+      # layout resolves. The operator writes every object a mail server mounts
+      # into the namespace named here for its chart, and a test holds the two
+      # together (internal/controller/mail_objects_test.go).
       - list:
           elements:
           - app: dovecot
+            namespace: sys.mail.placeholder
           - app: postfix
+            namespace: sys.mail.placeholder
+          # The proxy that faces the internet, in the DMZ: the only chart of
+          # the three with a load balancer.
+          - app: mail-edge
+            namespace: sys.mail-dmz.placeholder
   template:
     metadata:
       name: '{{.app}}-{{.env}}'
@@ -61,6 +70,15 @@ spec:
             # The operator addresses it by function (layout.System("mail")),
             # so this is that name.
             - name: servicesNamespace
+              value: '{{.namespace}}'
+            # The two namespaces by name, for the rules between them: the
+            # servers admit the proxy of the DMZ on their PROXY-protocol
+            # ports, and the proxy may reach those ports of the servers and
+            # nothing else. Every chart is passed both and reads the one it
+            # needs.
+            - name: edge.namespace
+              value: 'sys.mail-dmz.placeholder'
+            - name: mailNamespace
               value: 'sys.mail.placeholder'
             - name: kernelDomain
               value: 'kernel.domain.placeholder'
@@ -83,7 +101,7 @@ spec:
               value: 'store.networkpolicies.placeholder'
       destination:
         server: https://kubernetes.default.svc
-        namespace: 'sys.mail.placeholder'
+        namespace: '{{.namespace}}'
       syncPolicy:
         automated:
           prune: true

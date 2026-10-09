@@ -90,7 +90,7 @@ func (r *TenantReconciler) syncTenantMailDNS(ctx context.Context, tenant *gentia
 	if domain == "" || tenant.Status.Mail == nil {
 		return nil
 	}
-	ns := mailDMZNamespace
+	ns := mailEdgeNamespace
 
 	if !r.dovecotDeployed(ctx) {
 		return r.deleteTenantMailDNS(ctx, tenant, ns)
@@ -216,7 +216,7 @@ func (r *TenantReconciler) syncKernelMailDNS(ctx context.Context, dkimPublicKey 
 	if r.KernelDomain == "" {
 		return nil
 	}
-	ns := mailDMZNamespace
+	ns := mailEdgeNamespace
 
 	// The two records are independent. This used to return early without a DKIM
 	// key, which would now also withhold the address the MX points at -- and the
@@ -275,9 +275,9 @@ func (r *TenantReconciler) syncKernelMailDNS(ctx context.Context, dkimPublicKey 
 	// Where a mail client fetches mail, published for the same reason as the MX
 	// and taken from the same place — the Service the cloud assigned.
 	//
-	// It is a distinct name from mail.<domain> because it is a distinct load
-	// balancer in front of a distinct workload: Dovecot serves IMAPS, Postfix
-	// serves the MX, and a single name could only ever point at one of them.
+	// A distinct name from mail.<domain>, though both now resolve to the one
+	// load balancer in front of the mail edge: mail clients are configured with
+	// it, and a name of its own lets retrieval move without touching the MX.
 	//
 	// The name also has to be one the certificate covers, since a mail client
 	// verifies it — which is why clients are told to use imap.<domain> rather
@@ -340,22 +340,51 @@ func (r *TenantReconciler) syncKernelMailDNS(ctx context.Context, dkimPublicKey 
 }
 
 // kernelMailAddress is the address inbound mail arrives on: the external
-// address of the Postfix SMTP Service.
+// address of the mail edge's Service, when that Service publishes port 25.
 //
 // Empty whenever there is no answer to give — no such Service, not a
-// LoadBalancer, or an address not yet assigned — so the caller publishes no
-// record rather than a wrong one.
+// LoadBalancer, no SMTP listener, or an address not yet assigned — so the
+// caller publishes no record rather than a wrong one.
 //
 // A hostname is returned as-is for the caller to reject: an MX target must be
 // an address record, so a LoadBalancer that publishes a hostname needs a CNAME
 // this function must not silently pretend is an A.
 func (r *TenantReconciler) kernelMailAddress(ctx context.Context) string {
+	return r.mailEdgeAddress(ctx, mailEdgeSMTPPort)
+}
+
+// The ports of the mail edge's Service that a DNS name stands for: the MX
+// name for 25, the IMAP name for 993. kernel/services/mail-edge renders them.
+const (
+	mailEdgeSMTPPort  int32 = 25
+	mailEdgeIMAPSPort int32 = 993
+)
+
+// mailEdgeServiceName is the one Service of the cluster's mail that has a
+// load balancer: the one in front of the proxy in the mail DMZ.
+//
+// Postfix and Dovecot each had a load balancer of their own, in the mail
+// namespace, and this file looked for both in the DMZ -- where neither was,
+// so mail.<kernelDomain> and imap.<kernelDomain> were never published and the
+// MX of every tenant named a host with no address.
+func mailEdgeServiceName() string {
+	return envOrDefault("MAIL_EDGE_SERVICE", "mail-edge-"+envOrDefault("GENTIAN_STAGE", envOrDefault("ENV", "dev")))
+}
+
+// mailEdgeAddress is the load balancer's address, if the edge's Service
+// publishes the port asked for.
+func (r *TenantReconciler) mailEdgeAddress(ctx context.Context, port int32) string {
 	svc := &corev1.Service{}
-	name := types.NamespacedName{
-		Name:      envOrDefault("MAIL_SMTP_SERVICE", "postfix-"+envOrDefault("GENTIAN_STAGE", envOrDefault("ENV", "dev"))+"-smtp"),
-		Namespace: mailDMZNamespace,
+	if err := r.Get(ctx, types.NamespacedName{Name: mailEdgeServiceName(), Namespace: mailEdgeNamespace}, svc); err != nil {
+		return ""
 	}
-	if err := r.Get(ctx, name, svc); err != nil {
+	published := false
+	for _, p := range svc.Spec.Ports {
+		if p.Port == port {
+			published = true
+		}
+	}
+	if !published {
 		return ""
 	}
 	for _, ing := range svc.Status.LoadBalancer.Ingress {
@@ -385,28 +414,16 @@ func (r *TenantReconciler) kernelDomainOwnedByTenant(ctx context.Context) (bool,
 	return false, nil
 }
 
-// kernelIMAPAddress is the address mail clients fetch from: the external address
-// of the Dovecot IMAPS Service.
+// kernelIMAPAddress is the address mail clients fetch from: the same Service's,
+// when it publishes port 993.
 //
-// Empty when IMAPS is not published — imapIngress disabled, or the address not
-// assigned yet — and the caller then publishes no record, which is the honest
-// answer. A name that resolves to nothing tells a mail client to keep retrying;
-// a name that resolves to the wrong host tells it to send credentials there.
+// Empty when IMAPS is not published — the edge's IMAPS listener is off, or the
+// address not assigned yet — and the caller then publishes no record, which is
+// the honest answer. A name that resolves to nothing tells a mail client to
+// keep retrying; a name that resolves to the wrong host tells it to send
+// credentials there.
 func (r *TenantReconciler) kernelIMAPAddress(ctx context.Context) string {
-	svc := &corev1.Service{}
-	name := types.NamespacedName{
-		Name:      envOrDefault("MAIL_IMAP_SERVICE", "dovecot-"+envOrDefault("GENTIAN_STAGE", envOrDefault("ENV", "dev"))+"-imaps"),
-		Namespace: mailDMZNamespace,
-	}
-	if err := r.Get(ctx, name, svc); err != nil {
-		return ""
-	}
-	for _, ing := range svc.Status.LoadBalancer.Ingress {
-		if ing.IP != "" {
-			return ing.IP
-		}
-	}
-	return ""
+	return r.mailEdgeAddress(ctx, mailEdgeIMAPSPort)
 }
 
 // mailEgressAddress is the address outbound mail leaves from: the ExternalIP the

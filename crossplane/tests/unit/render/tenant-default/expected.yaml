@@ -783,7 +783,7 @@ spec:
       - passwordSecretRef:
           key: smtp_password
           name: mail-submission-render-fixture
-          namespace: kernel-edge
+          namespace: kernel-authentication
         username: noreply@render-fixture.platform.example.test
       from: noreply@platform.example.test
       fromDisplayName: Acme Cloud

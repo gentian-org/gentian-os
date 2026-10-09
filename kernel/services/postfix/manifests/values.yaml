@@ -46,49 +46,38 @@ kernelDomain: ""
 relayHost: ""
 relayPort: "587"
 
-# The public MX endpoint on port 25.
+# The listeners the mail edge connects to.
 #
-# Enabled by default: a cluster running kernel mail that cannot receive is only
-# half a mail system, and 25 is the only port the internet delivers to. It
-# provisions a cloud load balancer, which costs money on most providers — set
-# enabled: false on clusters that use kernel mail for outbound notifications
-# only and publish no MX record.
+# Nothing of Postfix is published to the internet from this namespace. The
+# load balancer that takes inbound mail on 25 and submission on 587 is in
+# front of the proxy in the mail DMZ (kernel/services/mail-edge), and the
+# proxy opens each connection again to one of the two ports below, with a
+# PROXY-protocol header in front that says who the client is.
 #
-# Publishing an MX record before this exists is what makes mail "disappear":
-# senders resolve the record, fail to connect, and retry for days before
-# bouncing.
-# Whether submission (587) is published alongside the MX on the same load
-# balancer, so that mail clients outside the cluster can send.
+# They are ports of their own, beside 25 and 587, because the two kinds of
+# client must not share a listener:
 #
-# It shares the MX's Service and therefore its address — no second load balancer
-# and no second bill. It is safe to publish only because submission now requires
-# a credential AND requires TLS before offering to take one
-# (smtpd_tls_auth_only), so what reaches the internet is an authenticated
-# endpoint rather than the open relay this stack started with.
+#   - a listener that takes a PROXY header believes it. Postfix has no list of
+#     who may send one, so a pod of the cluster that reached such a port could
+#     claim any client address it liked. These two therefore admit the mail
+#     DMZ alone (templates/networkpolicy.yaml), and REFUSE a connection that
+#     does not start with the header;
+#   - 587 stays as it was for the pods of the cluster that use it by the
+#     Service's name, with no header: the address Postfix sees there is the
+#     address the connection came from.
 #
-# Turn it off on a cluster whose users only ever send through in-cluster apps.
-submissionIngress:
-  enabled: true
-
-smtpIngress:
-  enabled: true
-  # Pin the address when the MX record already names one, so a rebuild does not
-  # hand out a different IP and silently break inbound mail.
-  loadBalancerIP: ""
-  annotations:
-    # Without a health monitor Octavia treats every node as a valid member and
-    # round-robins across all of them — but externalTrafficPolicy: Local means
-    # only the node running Postfix can serve, so most connections are dropped
-    # and port 25 looks firewalled rather than unbalanced.
-    #
-    # With it, Octavia probes healthCheckNodePort and pools only the node that
-    # actually has the Pod. The kernel gateway Service carries the same
-    # annotation, which is why it works and this did not.
-    loadbalancer.openstack.org/enable-health-monitor: "true"
-    # Keep the floating IP across a Service rebuild. An MX record names an
-    # address, and a new one silently breaks inbound mail — senders retry for
-    # days, then bounce.
-    loadbalancer.openstack.org/keep-floatingip: "true"
+# The restrictions of main.cf apply to all of them alike. What the two below
+# add is the client's real address, so that those restrictions, the limits
+# per client and the log are about the sender and not about the proxy.
+edge:
+  # The mail DMZ, by name. Supplied by the ApplicationSet from the layout.
+  namespace: system-mail-dmz
+  ports:
+    # Inbound mail from the internet: the proxy's listener on 25.
+    smtp: 10025
+    # Submission from a mail client or an app that dials the public name: the
+    # proxy's listener on 587.
+    submission: 10587
 
 # The hostname mail LEAVES from, when this cluster sends from an address it owns.
 #
@@ -200,9 +189,10 @@ dkimKeyStorageSize: 128Mi
 # `enabled`, from the same switch as the shared stores' policies.
 networkPolicy:
   enabled: true
-  # The MX port of master.cf, which service-smtp.yaml publishes, and the
-  # submission port the upstream chart's Service is given (service.port in
-  # templates/configmap.yaml).
+  # The two ports of the image's master.cf. 587 is the one the upstream
+  # chart's Service is given (service.port in templates/configmap.yaml) and
+  # the one pods of the cluster use; 25 is listened on and reached by nothing,
+  # now that mail from outside arrives on edge.ports.smtp.
   ports:
     smtp: 25
     submission: 587

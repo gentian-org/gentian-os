@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 # =============================================================================
 # scripts/tests/server_network_policies.py — the NetworkPolicies on the
-# servers that are not shared stores: the kernel's own PostgreSQL and the two
-# mail servers. Run by test-store-network-policies.sh beside the stores'.
+# servers that are not shared stores: the kernel's own PostgreSQL, the two
+# mail servers and the proxy in front of them. Run by
+# test-store-network-policies.sh beside the stores'.
 #
 # Rendered with helm and no cluster, from what a cluster would run: the
 # bootstrap chart's kernel-postgres Application and the mail ApplicationSet
@@ -16,12 +17,16 @@
 #   server_network_policies.py off                the switch
 #   server_network_policies.py modes              what a mail mode leaves out
 #
-# <server> is kernel-postgres, dovecot or postfix.
+# <server> is kernel-postgres, dovecot, postfix or mail-edge.
 #
-# Unlike a store, a mail server has ports that face the internet, and those
-# are admitted by a rule with ports and no `from`. Such a rule is refused
-# here unless every port of it is recorded in OPEN with the reason; so a rule
-# that loses its `from` by mistake still fails.
+# Mail has ports that face the internet, and those are admitted by a rule
+# with ports and no `from`. Such a rule is refused here unless every port of
+# it is recorded in OPEN with the reason; so a rule that loses its `from` by
+# mistake still fails. Only the proxy in the mail DMZ has any: Postfix and
+# Dovecot have none, and a port of theirs that turned up open would fail.
+#
+# The proxy's policy is also the one that restricts egress, and `shape` holds
+# it to exactly the PROXY-protocol ports of the two servers and DNS.
 # =============================================================================
 import re
 import sys
@@ -35,25 +40,31 @@ from store_network_policies import (
     namespace_of, policies_of,
 )
 
-SERVERS = ("kernel-postgres", "dovecot", "postfix")
+SERVERS = ("kernel-postgres", "dovecot", "postfix", "mail-edge")
+MAIL = ("dovecot", "postfix", "mail-edge")
+# What restricts egress as well as ingress, and is held to its egress rules.
+EGRESS = ("mail-edge",)
 
 # Ports a server's pods serve that its policy lists nowhere, and why.
 CLOSED = {
     "kernel-postgres": {9187: "metrics: nothing the platform runs scrapes it"},
+    "postfix": {25: "the image listens on it; mail from outside arrives on the edge port, and nothing inside the cluster is handed 25"},
+    "mail-edge": {8404: "the proxy's health endpoint: the kubelet asks from the pod's own node, and nothing else has business with it"},
 }
 
 # Ports admitted from any source, and why no source can be named. A port is
 # here or behind a `from`; a rule may not be open by accident.
 OPEN = {
-    "dovecot": {
-        993: "published to the internet on the IMAPS load balancer, and dialled by apps under its public name",
-        143: "the same service without the load balancer; its in-cluster clients cannot be read from this repository",
-    },
-    "postfix": {
-        25: "inbound mail from the internet, through the MX load balancer",
-        587: "submission: published on the MX load balancer, and dialled by apps and Keycloak under its public name",
+    "mail-edge": {
+        2525: "inbound mail from the internet: port 25 of the load balancer",
+        2587: "submission: port 587 of the load balancer, dialled by mail clients and, under the public name, by apps and Keycloak",
+        2993: "IMAPS: port 993 of the load balancer, dialled by mail clients and, under the public name, by apps",
     },
 }
+
+# The image's own master.cf listens on 25 and 587 (boky/postfix, pinned with
+# the chart below); the chart declares only the second.
+POSTFIX_IMAGE_SMTP_PORT = 25
 
 # Postfix's pods are built by an upstream chart that is not vendored here, so
 # they cannot be rendered. What this file leans on instead is what the
@@ -123,12 +134,17 @@ def mail_applications(mode, *extra):
         if "env" in items[0]:
             stage = items[0]["env"]
         else:
-            apps = [i["app"] for i in items]
+            # Each chart with the namespace it is synced into.
+            apps = {i["app"]: i["namespace"] for i in items}
     template = spec["template"]["spec"]
+
+    def fill(text, name):
+        return text.replace("{{.env}}", stage).replace("{{.app}}", name).replace("{{.namespace}}", apps[name])
+
     for name in apps:
-        params = {p["name"]: p["value"].replace("{{.env}}", stage) for p in template["source"]["helm"]["parameters"]}
+        params = {p["name"]: fill(p["value"], name) for p in template["source"]["helm"]["parameters"]}
         out[name] = {
-            "path": template["source"]["path"].replace("{{.app}}", name), "namespace": template["destination"]["namespace"],
+            "path": fill(template["source"]["path"], name), "namespace": fill(template["destination"]["namespace"], name),
             "params": params, "prune": template["syncPolicy"]["automated"]["prune"], "stage": stage,
         }
     return out
@@ -183,14 +199,30 @@ def postfix_pod(docs):
             values = yaml.safe_load(d["data"]["values.yaml"])
     if not values:
         raise Failure("the Postfix chart renders no postfix-base-values")
-    ports = {"submission": values["service"]["port"]}
+    ports = {"submission": values["service"]["port"], "smtp": POSTFIX_IMAGE_SMTP_PORT}
     for s in (d for d in docs if d.get("kind") == "Service"):
+        if s["spec"].get("type", "ClusterIP") != "ClusterIP":
+            raise Failure(f"Service {s['metadata']['name']} is {s['spec']['type']}: nothing outside the cluster is to reach Postfix")
         if s["spec"]["selector"] != labels:
             raise Failure(f"Service {s['metadata']['name']} selects {s['spec']['selector']}, the Release's pods carry {labels}")
         for p in s["spec"]["ports"]:
             if p["targetPort"] != p["port"]:
                 raise Failure(f"Service {s['metadata']['name']} port {p['port']} reaches the pod on {p['targetPort']}")
             ports[p["name"]] = p["port"]
+    # The listeners the edge Service names are the ones the start script adds
+    # to master.cf, each of them reading a PROXY header.
+    script = [d for d in docs if d.get("kind") == "ConfigMap" and d["metadata"]["name"] == f"{release}-edge-listeners"]
+    if len(script) != 1:
+        raise Failure("the Postfix chart renders no edge-listeners script")
+    added = {int(n) for n in re.findall(r"^\s*edge_listener (\d+) \S+$", script[0]["data"]["edge-listeners.sh"], re.M)}
+    edge = {port for name, port in ports.items() if name.endswith("-edge")}
+    if added != edge or not edge:
+        raise Failure(f"the start script adds the listeners {sorted(added)}, the edge Service names {sorted(edge)}")
+    if "smtpd_upstream_proxy_protocol=haproxy" not in script[0]["data"]["edge-listeners.sh"]:
+        raise Failure("the edge listeners no longer require a PROXY header: the proxy's address is inside the range Postfix trusts")
+    mounts = values.get("extraVolumeMounts") or []
+    if not any(m.get("mountPath", "").startswith("/docker-init.d/") and m.get("name") == "edge-listeners" for m in mounts):
+        raise Failure("the edge-listeners script is not mounted where the image runs start scripts from")
     return {"name": release, "labels": labels, "ports": ports}
 
 
@@ -211,13 +243,16 @@ def engine(server, apps, *extra):
 
 
 def mail_engine(server, apps, *extra):
-    other = "postfix" if server == "dovecot" else "dovecot"
     dovecot = pods_of(render(apps["dovecot"], *(extra if server == "dovecot" else ())))
     postfix = postfix_pod(render(apps["postfix"], *(extra if server == "postfix" else ())))
+    edge = pods_of(render(apps["mail-edge"], *(extra if server == "mail-edge" else ())))
     if len(dovecot) != 1:
         raise Failure("the Dovecot chart does not render exactly one workload")
-    both = {"dovecot": dovecot[0], "postfix": postfix}
-    return {"servers": [both[server]], "others": [both[other], {"name": "the installer's check", "labels": {"gentianos.io/purpose": "verify"}}]}
+    if len(edge) != 1:
+        raise Failure("the mail-edge chart does not render exactly one workload")
+    all_ = {"dovecot": dovecot[0], "postfix": postfix, "mail-edge": edge[0]}
+    others = [pod for name, pod in all_.items() if name != server]
+    return {"servers": [all_[server]], "others": others + [{"name": "the installer's check", "labels": {"gentianos.io/purpose": "verify"}}]}
 
 
 def rules(policy, server):
@@ -290,7 +325,11 @@ def check_shape(server, apps=None, *extra):
     eng = engine(server, apps, *extra)
     if policy["metadata"].get("namespace") != apps[server]["namespace"]:
         raise Failure(f"the policy is in {policy['metadata'].get('namespace')}, the server in {apps[server]['namespace']}")
-    if policy["spec"].get("policyTypes") != ["Ingress"]:
+    if server in EGRESS:
+        if policy["spec"].get("policyTypes") != ["Ingress", "Egress"]:
+            raise Failure("the policy must restrict ingress and egress")
+        check_edge_egress(policy, apps, *extra)
+    elif policy["spec"].get("policyTypes") != ["Ingress"] or "egress" in policy["spec"]:
         raise Failure("the policy must restrict ingress and say nothing about egress")
     if policy["metadata"]["annotations"].get("argocd.argoproj.io/sync-wave") != "-1":
         raise Failure("the policy must be synced before the server (sync wave -1)")
@@ -324,6 +363,123 @@ def check_shape(server, apps=None, *extra):
     unknown = name_peers - set(layout())
     if unknown:
         raise Failure(f"the policy names namespaces {sorted(unknown)} that kernel/namespaces.yaml does not have")
+
+
+def edge_backends(apps, *extra):
+    """Where the proxy sends each listener's connections, from its own
+    configuration: {listener: (host, port)}, with every server line held to
+    the PROXY protocol."""
+    docs = render(apps["mail-edge"], *extra)
+    conf = [d for d in docs if d.get("kind") == "ConfigMap" and "haproxy.cfg" in (d.get("data") or {})]
+    if len(conf) != 1:
+        raise Failure("the mail-edge chart does not render exactly one haproxy.cfg")
+    text = conf[0]["data"]["haproxy.cfg"]
+    out, binds, current = {}, {}, None
+    for line in text.splitlines():
+        words = line.split()
+        if not words or words[0].startswith("#"):
+            continue
+        if words[0] in ("frontend", "backend", "global", "defaults", "resolvers"):
+            current = (words[0], words[1] if len(words) > 1 else "")
+            continue
+        if current and current[0] == "frontend" and words[0] == "bind":
+            binds[current[1]] = int(words[1].rsplit(":", 1)[1])
+        if current and current[0] == "backend" and words[0] == "server":
+            if "send-proxy-v2" not in words[3:]:
+                raise Failure(f"backend {current[1]} does not send a PROXY header: the server would see the proxy's address, "
+                              "which is inside the range Postfix trusts")
+            if "check" in words[3:]:
+                raise Failure(f"backend {current[1]} health-checks its server: HAProxy's check of a PROXY-protocol port "
+                              "makes Postfix's smtpd exit and its master throttle the listener (templates/configmap.yaml)")
+            host, port = words[2].rsplit(":", 1)
+            out[current[1]] = (host, int(port))
+    if "tls" in text.lower().replace("starttls", "") or " ssl" in text or ".pem" in text or " crt " in text:
+        raise Failure("the proxy's configuration mentions TLS: it passes TLS through and holds no certificate")
+    return out, binds, text
+
+
+def edge_listeners(apps, *extra):
+    """The proxy's listeners as its Service, its pod and its configuration
+    state them, held together: {name: (public port, pod port)}."""
+    docs = render(apps["mail-edge"], *extra)
+    backends, binds, text = edge_backends(apps, *extra)
+    pod = pods_of(docs)[0]
+    services = [d for d in docs if d.get("kind") == "Service"]
+    if len(services) != 1 or services[0]["spec"]["type"] != "LoadBalancer" or services[0]["spec"].get("externalTrafficPolicy") != "Local":
+        raise Failure("the mail-edge chart does not render exactly one LoadBalancer Service with externalTrafficPolicy: Local")
+    out = {}
+    for p in services[0]["spec"]["ports"]:
+        if p["targetPort"] not in pod["ports"]:
+            raise Failure(f"the edge's Service sends {p['port']} to {p['targetPort']}, which the pod does not declare")
+        out[p["name"]] = (p["port"], pod["ports"][p["targetPort"]])
+    health = binds.pop("health", None)
+    if health != pod["ports"].get("health"):
+        raise Failure("the proxy's health endpoint is not the port the pod declares for it")
+    if binds != {name: listen for name, (_, listen) in out.items()} or set(backends) != set(out):
+        raise Failure(f"the proxy binds {binds} and has backends {sorted(backends)}; its Service publishes {out}")
+    if set(pod["ports"]) - {"health"} != set(out):
+        raise Failure(f"the pod declares {sorted(pod['ports'])}; the Service publishes {sorted(out)}")
+    for name in out:
+        if f"frontend {name}\n" not in text or "track-sc0 src" not in text.split(f"frontend {name}\n", 1)[1].split("backend ", 1)[0]:
+            raise Failure(f"listener {name} counts nothing per client address")
+    return out, backends
+
+
+def edge_targets(apps, *extra):
+    """The (namespace, pod labels, port) the proxy's configuration sends
+    connections to, each resolved through the Service it names to the pods
+    that Service selects."""
+    _, backends = edge_listeners(apps, *extra)
+    services = {}
+    for server in ("postfix", "dovecot"):
+        for d in render(apps[server]):
+            if d.get("kind") == "Service":
+                host = f"{d['metadata']['name']}.{d['metadata'].get('namespace') or apps[server]['namespace']}.svc.cluster.local"
+                services[host] = (apps[server]["namespace"], d)
+    out = set()
+    for listener, (host, port) in backends.items():
+        if host not in services:
+            raise Failure(f"listener {listener} sends to {host}, which is no Service of the Postfix or Dovecot chart")
+        namespace, svc = services[host]
+        if svc["spec"].get("type", "ClusterIP") != "ClusterIP":
+            raise Failure(f"{host} is {svc['spec']['type']}: nothing outside the cluster is to reach a mail server")
+        named = [p for p in svc["spec"]["ports"] if p["port"] == port]
+        if len(named) != 1 or not named[0]["name"].endswith("-edge"):
+            raise Failure(f"listener {listener} sends to {host}:{port}, which is not a PROXY-protocol port of that Service")
+        out.add((namespace, tuple(sorted(svc["spec"]["selector"].items())), port))
+    return out
+
+
+def check_edge_egress(policy, apps, *extra):
+    """The proxy may open a connection to the PROXY-protocol ports its own
+    configuration names, and to DNS: nothing more and nothing less."""
+    wanted = edge_targets(apps, *extra)
+    got, dns = set(), None
+    for rule in policy["spec"].get("egress") or []:
+        ports = rule.get("ports") or []
+        if not ports:
+            raise Failure("an egress rule with no ports opens every port")
+        if "to" not in rule:
+            if dns is not None or {(p.get("protocol"), p.get("port")) for p in ports} != {("UDP", 53), ("TCP", 53)}:
+                raise Failure(f"an egress rule names no destination and is not DNS alone: {ports}")
+            dns = rule
+            continue
+        if not rule["to"]:
+            raise Failure("an egress rule has an empty `to`, which is everywhere")
+        for peer in rule["to"]:
+            if set(peer) != {"namespaceSelector", "podSelector"}:
+                raise Failure(f"an egress peer names {sorted(peer)}; a mail server is a namespace AND its pods")
+            namespace = match_labels(peer["namespaceSelector"], "an egress peer's namespace")
+            if set(namespace) != {NAME_LABEL}:
+                raise Failure(f"an egress peer selects its namespace by {namespace}, not by name")
+            for p in ports:
+                if p.get("protocol") != "TCP" or not isinstance(p.get("port"), int):
+                    raise Failure("every egress port must be a number, named with its protocol")
+                got.add((namespace[NAME_LABEL], tuple(sorted(match_labels(peer["podSelector"], "an egress peer's pods").items())), p["port"]))
+    if dns is None:
+        raise Failure("the proxy may not resolve the names of the servers it sends to")
+    if got != wanted:
+        raise Failure(f"the proxy may reach {sorted(got)}; its configuration sends to {sorted(wanted)}")
 
 
 def check_clients(server):
@@ -475,10 +631,19 @@ def wiring_kernel_postgres(apps, wanted, fn):
 
 
 def wiring_mail(apps, wanted, fn):
-    for server in ("dovecot", "postfix"):
+    if set(MAIL) - set(apps):
+        raise Failure(f"the mail ApplicationSet deploys {sorted(apps)}, not {sorted(MAIL)}")
+    for server in MAIL:
         app = apps[server]
-        if fn(app["namespace"]) != "mail" or app["params"].get("servicesNamespace") != app["namespace"]:
+        function = "mail-dmz" if server == "mail-edge" else "mail"
+        if fn(app["namespace"]) != function or app["params"].get("servicesNamespace") != app["namespace"]:
             raise Failure(f"{server} is deployed into {app['namespace']} with servicesNamespace={app['params'].get('servicesNamespace')!r}")
+        # Each chart is told where the other side of its rules is, by the
+        # namespace the ApplicationSet really syncs that side into.
+        if app["params"].get("edge.namespace") != apps["mail-edge"]["namespace"]:
+            raise Failure(f"{server} is told the mail edge is in {app['params'].get('edge.namespace')!r}")
+        if app["params"].get("mailNamespace") != apps["postfix"]["namespace"] or apps["postfix"]["namespace"] != apps["dovecot"]["namespace"]:
+            raise Failure(f"{server} is told the mail servers are in {app['params'].get('mailNamespace')!r}")
         if app["params"].get("networkPolicy.enabled") != "true":
             raise Failure(f"{server}: the ApplicationSet passes networkPolicy.enabled={app['params'].get('networkPolicy.enabled')!r} by default")
         by_hand = policies_of(helm("server", app["path"], "--set", f"servicesNamespace={app['namespace']}", "--set", f"env={app['stage']}"))
@@ -486,8 +651,9 @@ def wiring_mail(apps, wanted, fn):
             raise Failure(f"{server}: the chart's own defaults render a different policy from the one the ApplicationSet's parameters do")
         for c in wanted[server]:
             if not c.get("external") and isinstance(c["namespace"], str) and c["podLabels"].get("app.kubernetes.io/name") in ("mail", "dovecot") \
-                    and c["namespace"] != app["namespace"]:
+                    and c["namespace"] != apps["postfix"]["namespace"]:
                 raise Failure(f"{c['client']}: the table puts a mail server's pod in {c['namespace']}")
+    wiring_mail_edge(apps, wanted)
     # Postfix reaches Dovecot where the policy admits it: by the Service of
     # the same namespace, on the two ports the rule names.
     postfix_docs = render(apps["postfix"])
@@ -521,6 +687,69 @@ def wiring_mail(apps, wanted, fn):
         raise Failure("verify_dovecot_installation no longer runs its probe, labelled gentianos.io/purpose=verify, in the namespace it checks")
 
 
+def wiring_mail_edge(apps, wanted):
+    """The proxy and the two servers agree about each other: the proxy sends
+    to Services that exist, on ports that read a PROXY header; each server
+    admits exactly the proxy's pods there; and nothing of the three but the
+    proxy has a load balancer."""
+    listeners, backends = edge_listeners(apps)
+    edge_pod = pods_of(render(apps["mail-edge"]))[0]
+    edge_ns = apps["mail-edge"]["namespace"]
+    targets = edge_targets(apps)
+    for server in ("dovecot", "postfix"):
+        docs = render(apps[server])
+        if any(d.get("kind") == "Service" and d["spec"].get("type", "ClusterIP") != "ClusterIP" for d in docs):
+            raise Failure(f"the {server} chart renders a Service that is not ClusterIP")
+        policy = the_policy(server, apps)
+        mine = {port for ns, _, port in targets if any(
+            matches(dict(sel), pod["labels"]) for _, sel, p in targets if p == port for pod in engine(server, apps)["servers"])}
+        admitted_ports = set()
+        for ports, peers in rules(policy, server):
+            for peer in peers or []:
+                if match_labels(peer.get("namespaceSelector", {}), "a peer's namespace").get(NAME_LABEL) != edge_ns:
+                    continue
+                if not matches(match_labels(peer.get("podSelector", {}), "a peer's pods"), edge_pod["labels"]) or "podSelector" not in peer:
+                    raise Failure(f"{server} admits the mail DMZ without naming the proxy's pods, labelled {edge_pod['labels']}")
+                admitted_ports |= ports
+        if admitted_ports != mine or not mine:
+            raise Failure(f"{server} admits the proxy on {sorted(admitted_ports)}; the proxy sends to it on {sorted(mine)}")
+        for c in wanted[server]:
+            if c["podLabels"].get("app.kubernetes.io/name") == "mail-edge" and (c["namespace"] != edge_ns or c["podLabels"] != edge_pod["labels"]):
+                raise Failure(f"{c['client']}: the table says {c['namespace']} {c['podLabels']}, the proxy is in {edge_ns} with {edge_pod['labels']}")
+    # Dovecot's edge listener reads a PROXY header and serves TLS itself.
+    conf = [d for d in render(apps["dovecot"]) if d.get("kind") == "ConfigMap" and "dovecot.conf" in (d.get("data") or {})][0]["data"]["dovecot.conf"]
+    block = re.search(r"inet_listener imaps-edge \{(.*?)\}", conf, re.S)
+    if not block or "haproxy = yes" not in block.group(1) or "ssl = yes" not in block.group(1) \
+            or f"port = {backends['imaps'][1]}" not in block.group(1):
+        raise Failure("Dovecot's imaps-edge listener is not the TLS, PROXY-protocol port the proxy sends IMAPS to")
+    if len(re.findall(r"^\s*haproxy = yes\s*$", conf, re.M)) != 1 or "haproxy_trusted_networks" not in conf:
+        raise Failure("exactly one Dovecot listener may read a PROXY header, and haproxy_trusted_networks has to be set for it")
+    # The public ports are the three the operator's DNS names stand for.
+    if {name: public for name, (public, _) in listeners.items()} != {"smtp": 25, "submission": 587, "imaps": 993}:
+        raise Failure(f"the mail edge publishes {listeners}")
+    dns = (ROOT / "internal/controller/mail_dnsendpoint.go").read_text()
+    if "mailEdgeSMTPPort  int32 = 25" not in dns or "mailEdgeIMAPSPort int32 = 993" not in dns or '"mail-edge-"+' not in dns:
+        raise Failure("the operator no longer reads the mail addresses from the Service mail-edge-<stage>, ports 25 and 993")
+    service = [d for d in render(apps["mail-edge"]) if d.get("kind") == "Service"][0]
+    if service["metadata"]["name"] != f"mail-edge-{apps['mail-edge']['stage']}":
+        raise Failure(f"the edge's Service is called {service['metadata']['name']}")
+    # The pod as the DMZ requires it: no token, an ordinary user, nothing writable.
+    deployment = [d for d in render(apps["mail-edge"]) if d.get("kind") == "Deployment"][0]["spec"]["template"]["spec"]
+    container = deployment["containers"][0]
+    sc = container.get("securityContext") or {}
+    if deployment.get("automountServiceAccountToken") is not False or not deployment["securityContext"].get("runAsNonRoot") \
+            or sc.get("readOnlyRootFilesystem") is not True or sc.get("allowPrivilegeEscalation") is not False \
+            or (sc.get("capabilities") or {}).get("drop") != ["ALL"]:
+        raise Failure("the proxy's pod must carry no service-account token, run as an ordinary user without privilege "
+                      "escalation or capabilities, and have a read-only root filesystem")
+    if any("secret" in v or "persistentVolumeClaim" in v for v in deployment.get("volumes") or []):
+        raise Failure("the proxy mounts a Secret or a volume claim: the DMZ holds no key and no data")
+    if not re.fullmatch(r"haproxy:[0-9][^@]*@sha256:[0-9a-f]{64}", container["image"]):
+        raise Failure(f"the proxy's image is {container['image']}, not pinned by tag and digest")
+    if any(v.get("valueFrom") for v in container.get("env") or []) or container.get("envFrom"):
+        raise Failure("the proxy takes a value from a Secret or a ConfigMap by reference")
+
+
 def check_off():
     # The bootstrap chart hands the switch to the kernel-postgres Application...
     for passed, want in ((None, "true"), ("true", "true"), ("false", "false")):
@@ -545,7 +774,7 @@ def off_mail():
     # The mail charts are pruned, and render none.
     for extra in (["--set-string", "storeNetworkPolicies=false"], ["--set", "storeNetworkPolicies=false"]):
         apps = deployed(*extra)
-        for server in ("dovecot", "postfix"):
+        for server in MAIL:
             if apps[server]["params"].get("networkPolicy.enabled") != "false":
                 raise Failure(f"{server}: switched off with {extra[0]}, the ApplicationSet still passes "
                               f"networkPolicy.enabled={apps[server]['params'].get('networkPolicy.enabled')!r}")
@@ -554,7 +783,7 @@ def off_mail():
             if policies_of(render(apps[server])):
                 raise Failure(f"{server}: a NetworkPolicy is rendered with the switch off")
     apps = deployed()
-    for server in ("dovecot", "postfix"):
+    for server in MAIL:
         the_policy(server, apps)
 
 
@@ -570,16 +799,40 @@ def modes_mail(apps):
     for mode in ("external", "none"):
         if mail_applications(mode):
             raise Failure(f"mail.serviceMode={mode}: the mail ApplicationSet is still rendered")
-    # Dovecot without a certificate serves no IMAPS, and the policy lists none.
+    # Dovecot without a certificate serves no IMAPS, on either port, and the
+    # policy lists neither.
     check_shape("dovecot", apps, "--set", "tls.secretName=")
-    if 993 in set().union(*(p for p, _ in rules(the_policy("dovecot", apps, "--set", "tls.secretName="), "dovecot"))):
-        raise Failure("Dovecot without a certificate still lists 993")
-    # Postfix without the MX load balancer has nothing that reaches 25.
-    check_shape("postfix", apps, "--set", "smtpIngress.enabled=false")
-    if 25 in set().union(*(p for p, _ in rules(the_policy("postfix", apps, "--set", "smtpIngress.enabled=false"), "postfix"))):
-        raise Failure("Postfix without the MX load balancer still lists 25")
-    # Submission stays, published or not: apps and Keycloak use it either way.
-    check_shape("postfix", apps, "--set", "submissionIngress.enabled=false")
+    listed = set().union(*(p for p, _ in rules(the_policy("dovecot", apps, "--set", "tls.secretName="), "dovecot")))
+    if listed & {993, 10993}:
+        raise Failure(f"Dovecot without a certificate still lists {sorted(listed & {993, 10993})}")
+    # A listener of the edge that is switched off is gone from the load
+    # balancer, from the proxy and from both directions of its policy.
+    for name, pod_port, backend_port in (("smtp", 2525, 10025), ("submission", 2587, 10587), ("imaps", 2993, 10993)):
+        off = ("--set", f"listeners.{name}.enabled=false")
+        check_shape("mail-edge", apps, *off)
+        policy = the_policy("mail-edge", apps, *off)
+        if pod_port in set().union(*(p for p, _ in rules(policy, "mail-edge"))):
+            raise Failure(f"the edge without its {name} listener still admits {pod_port}")
+        if any(p.get("port") == backend_port for rule in policy["spec"]["egress"] for p in rule["ports"]):
+            raise Failure(f"the edge without its {name} listener may still reach {backend_port}")
+        if name in edge_listeners(apps, *off)[0]:
+            raise Failure(f"the edge without its {name} listener still publishes it")
+    # With none, there is no proxy, no load balancer and no policy.
+    none = [a for n in ("smtp", "submission", "imaps") for a in ("--set", f"listeners.{n}.enabled=false")]
+    left = [d["kind"] for d in render(apps["mail-edge"], *none)]
+    if left:
+        raise Failure(f"the edge with every listener off still renders {left}")
+    # Behind a load balancer that names the client itself, the proxy takes a
+    # PROXY header from that load balancer and from nobody else.
+    text = edge_backends(apps, "--set", "loadBalancer.proxyProtocol.enabled=true", "--set", "loadBalancer.proxyProtocol.from={192.0.2.7/32}")[2]
+    if text.count("tcp-request connection expect-proxy layer4 if { src 192.0.2.7/32 }") != 3 or "accept-proxy" in text:
+        raise Failure("with proxyProtocol.from set, each listener must expect a PROXY header from those addresses and from no other")
+    text = edge_backends(apps, "--set", "loadBalancer.proxyProtocol.enabled=true")[2]
+    if text.count(" accept-proxy") != 3:
+        raise Failure("with proxyProtocol.enabled and no `from`, each listener must require a PROXY header")
+    text = edge_backends(apps)[2]
+    if "accept-proxy" in text or "expect-proxy" in text:
+        raise Failure("by default the proxy must take a PROXY header from nobody: any client could then name its own address")
 
 
 def main():

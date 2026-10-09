@@ -21,12 +21,12 @@
 {{- $mysqlHost := $ks.mysqlHost | default (printf "gentian-mariadb-%s.%s.svc.cluster.local" $stage $infraNS) -}}
 {{- $redisHost := $ks.redisHost | default (printf "redis-%s-master.%s.svc.cluster.local" $stage $infraNS) -}}
 {{- $s3Endpoint := $ks.s3Endpoint | default (printf "http://minio-%s.%s.svc.cluster.local:9000" $stage $infraNS) -}}
-{{- /* The kernel mail stack runs in servicesNamespace (platform-kernel), not
-       gentian-<stage>. mailSharedPostfixHost() in the mail reconciler reads
-       MAIL_SMTP_HOST — this value — BEFORE falling back to servicesNamespace, so a
-       gentian-<stage> default here silently overrides the correct location and
-       every tenant app is handed an SMTP host that does not resolve. */ -}}
-{{- $smtpHost := $ks.smtpHost | default (printf "postfix-%s.%s.svc.cluster.local" $stage .Values.servicesNamespace) -}}
+{{- /* Postfix runs in the mail namespace of the system tier (system-mail,
+       kernel/namespaces.yaml), where the mail ApplicationSet deploys it. This
+       default named servicesNamespace, which is the edge: a host that resolves
+       to nothing. The operator's own fallback, mailSharedPostfixHost() in the
+       mail reconciler, names the same Service as this line. */ -}}
+{{- $smtpHost := $ks.smtpHost | default (printf "postfix-%s.%s.svc.cluster.local" $stage (.Values.mailNamespace | default "system-mail")) -}}
 {{- if or .Values.kernelDomain .Values.tenancyMode $ks.s3Endpoint $ks.mysqlHost $ks.redisHost $ks.smtpHost $keycloakInternal }}
 {{- /*
   Pod env configMapKeyRef only resolves same-namespace — a plain Kubernetes

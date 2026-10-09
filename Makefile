@@ -235,6 +235,14 @@ test-kernel-network-policies:
 gen-kernel-network-policies:
 	@go run ./internal/kernel/kernelnet/gen kernel/security/network-policies/kernel-network-policies.yaml
 
+## The mail edge in front of the real Postfix and Dovecot, in local
+## containers: the client's address through the proxy, TLS ending at the
+## servers, the PROXY-protocol ports refusing anything without a header, the
+## limits. Needs docker, helm and the network, so it is its own target and
+## not part of verify.
+test-mail-edge-lab:
+	@bash scripts/tests/test-mail-edge-lab.sh
+
 test-wildcard-cache:
 	@bash scripts/tests/test-wildcard-cache.sh
 

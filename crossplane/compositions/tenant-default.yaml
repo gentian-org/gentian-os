@@ -1600,11 +1600,15 @@ spec:
                            tenant by syncMailSubmissionCredential and verified by
                            Dovecot, which is the SASL server the kernel Postfix asks.
                            Same Secret and key the Job reads, so the two writers
-                           cannot present different credentials. */}}
+                           cannot present different credentials -- and in the
+                           same namespace, beside Keycloak, where the operator
+                           writes it. It was read from the edge namespace, which
+                           the Job never was in, and a credential has no place
+                           in the namespace that faces the internet. */}}
                       - username: {{ printf "noreply@%s" $domain | quote }}
                         passwordSecretRef:
                           name: {{ printf "mail-submission-%s" $tenant | quote }}
-                          namespace: {{ $edgeNs }}
+                          namespace: {{ $identityNs }}
                           key: smtp_password
                 {{- end }}
               providerConfigRef:

@@ -422,7 +422,7 @@ func TestMail_PostfixInboundMapsFollowTenant(t *testing.T) {
 
 	maps := &corev1.ConfigMap{}
 	mapsKey := types.NamespacedName{
-		Name: "postfix-kernel-virtual-mailbox-maps", Namespace: "system-mail-dmz",
+		Name: "postfix-kernel-virtual-mailbox-maps", Namespace: "system-mail",
 	}
 	waitFor(t, jobAppearTimeout, func() bool {
 		if err := testClient.Get(context.Background(), mapsKey, maps); err != nil {

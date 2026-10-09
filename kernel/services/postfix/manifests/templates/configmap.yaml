@@ -338,14 +338,15 @@ data:
     # copy would be reverted onto the operator's content by Argo CD self-heal on
     # every sync.
     #
-    # optional: true because the ConfigMap only exists once the cluster has run
-    # the mail step. A required mount that is absent holds the Pod in
-    # ContainerCreating indefinitely:
-    #   FailedMount (x901 over 30h): configmap
-    #   "postfix-kernel-virtual-mailbox-maps" not found
-    # Optional means Postfix starts with the maps empty — accepting mail for no
-    # tenant domain, which is the truth at that point — and kubelet populates
-    # the mount when the ConfigMap appears.
+    # Required, like the DKIM tables below. It was optional, so that Postfix
+    # could start before the operator had written it -- and that is what hid
+    # the operator writing it into another namespace: Postfix ran with no map
+    # at all, refused every tenant domain, and nothing was waiting for
+    # anything. A Pod held in ContainerCreating with
+    #   FailedMount: configmap "postfix-kernel-virtual-mailbox-maps" not found
+    # names the missing object and the namespace it is missing from. The
+    # operator writes it when it starts and on every tenant reconcile, into
+    # this namespace (internal/controller/mail_objects.go).
     #
     # Mounted as a directory, without subPath: a subPath mount is copied once at
     # Pod start and never tracks later ConfigMap updates, so every new tenant
@@ -443,6 +444,11 @@ data:
             mountPath: /tenant-keys
             readOnly: true
     extraVolumes:
+      # The two listeners the mail edge connects to, added to master.cf when
+      # the container starts -- see postfix-{{ .Values.env }}-edge-listeners below.
+      - name: edge-listeners
+        configMap:
+          name: postfix-{{ .Values.env }}-edge-listeners
       {{- if .Values.kernelDomain }}
       - name: internal-headers
         configMap:
@@ -465,7 +471,6 @@ data:
       - name: kernel-maps
         configMap:
           name: postfix-kernel-virtual-mailbox-maps
-          optional: true
       # Per-tenant DKIM: the two OpenDKIM tables plus the private keys they
       # name, written by the operator from the tenant registry.
       #
@@ -477,6 +482,13 @@ data:
           secretName: postfix-dkim-tenants
           defaultMode: 0400
     extraVolumeMounts:
+      # /docker-init.d is where the image looks for scripts to run after it
+      # has written its own configuration and before it starts Postfix. One
+      # file, by subPath, beside the upstream chart's own _enable_tls.sh.
+      - name: edge-listeners
+        mountPath: /docker-init.d/gentian-edge-listeners.sh
+        subPath: edge-listeners.sh
+        readOnly: true
       {{- if .Values.kernelDomain }}
       - name: internal-headers
         mountPath: /etc/postfix/gentian
@@ -535,6 +547,64 @@ data:
       requests:
         cpu: 50m
         memory: 64Mi
+---
+# The listeners the mail edge connects to.
+#
+# The image's master.cf has two smtpd listeners, 25 and 587, and neither the
+# image nor the upstream chart has a setting that adds a third. What the image
+# does have is /docker-init.d: scripts it runs once its own configuration is
+# written and before Postfix starts. This one adds a listener per port of
+# .Values.edge.ports with `postconf -M`, the supported way to edit master.cf.
+#
+# Each is an ordinary smtpd -- the same main.cf, so the same restrictions,
+# TLS, SASL and limits as 25 and 587 -- with one difference:
+#
+#   smtpd_upstream_proxy_protocol = haproxy
+#
+# Postfix then reads a PROXY-protocol header (version 1 or 2) before anything
+# else and takes the client's address from it. That is what keeps the address
+# of the sender through the proxy in the mail DMZ: without it every connection
+# would come from the proxy's pod, which is inside the range Postfix trusts
+# (mynetworks), and the whole internet would be let through as the cluster's
+# own. With it, a connection that does NOT begin with the header gets no
+# greeting: Postfix answers "421 4.3.0 Server local error" -- at once if
+# something else was sent, after smtpd_upstream_proxy_timeout (5s) if nothing
+# was -- and closes, so the port cannot be used as an ordinary one.
+#
+# Nothing in Postfix says WHO may send the header; that is the NetworkPolicy's
+# part, which admits the mail DMZ alone on these ports.
+#
+# syslog_name tells the three paths apart in the log: postfix/edge-smtp and
+# postfix/edge-submission came through the edge, postfix/smtpd and
+# postfix/submission/smtpd from inside the cluster.
+#
+# Proven outside a cluster, against this image and HAProxy: mail on 25 with
+# STARTTLS and authenticated submission on 587 through the proxy are logged
+# with the client's address, and a connection to either port without the
+# header gets no greeting (make test-mail-edge-lab; docs/design/mail.md §9b).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postfix-{{ .Values.env }}-edge-listeners
+  namespace: {{ .Values.servicesNamespace }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+data:
+  edge-listeners.sh: |
+    #!/usr/bin/env bash
+    # Run by the image's start script (execute_post_init_scripts). A failure
+    # stops the container: Postfix without these listeners is Postfix the
+    # internet cannot reach, and that must not look like a healthy start.
+    set -euo pipefail
+    edge_listener() {
+      local port="$1" name="$2"
+      postconf -M "${port}/inet=${port} inet n - n - - smtpd"
+      postconf -P "${port}/inet/smtpd_upstream_proxy_protocol=haproxy"
+      postconf -P "${port}/inet/syslog_name=postfix/${name}"
+    }
+    edge_listener {{ .Values.edge.ports.smtp }} edge-smtp
+    edge_listener {{ .Values.edge.ports.submission }} edge-submission
+    echo "mail edge listeners: {{ .Values.edge.ports.smtp }} (smtp), {{ .Values.edge.ports.submission }} (submission), PROXY protocol required"
 {{- if .Values.kernelDomain }}
 ---
 # Header rewrites that keep in-cluster hostnames out of mail leaving the cluster.

@@ -1,0 +1,7 @@
+apiVersion: v2
+name: mail-edge
+description: |
+  The mail edge: the proxy in the mail DMZ, in front of Postfix and Dovecot.
+  The ApplicationSet passes env; adding a stage needs no new files.
+type: application
+version: 0.1.0

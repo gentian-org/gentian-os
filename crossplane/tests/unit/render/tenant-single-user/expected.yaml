@@ -747,7 +747,7 @@ spec:
       - passwordSecretRef:
           key: smtp_password
           name: mail-submission-user
-          namespace: kernel-edge
+          namespace: kernel-authentication
         username: noreply@platform.example.test
       from: noreply@platform.example.test
       fromDisplayName: Acme Cloud

@@ -1,0 +1,143 @@
+# env is supplied by the ApplicationSet (helm.parameters). The default
+# only matters for `helm template` run by hand.
+env: dev
+
+# The mail DMZ: the namespace this chart is synced into. The ApplicationSet
+# passes it under the name it passes every mail chart its own namespace by.
+servicesNamespace: system-mail-dmz
+
+# Where Postfix and Dovecot run. The proxy connects to their Services there
+# and to nothing else.
+mailNamespace: system-mail
+
+# HAProxy, the community edition's long-term-support branch, on the official
+# image. Pinned by tag AND by the digest of its manifest list, so that the tag
+# cannot move and every architecture stays pullable
+# (scripts/lint/lint-image-digests.sh).
+image:
+  repository: haproxy
+  tag: "3.0.29-alpine@sha256:56b887da77428b7a6621e59e480cdbd330cc805c22d3cedb66ceea76ffdea2c6"
+  pullPolicy: IfNotPresent
+
+# Two, on different nodes where there are two: the load balancer only sends to
+# a node that runs a proxy (externalTrafficPolicy: Local), so one replica is
+# one node, and draining it would take mail off the internet.
+#
+# The per-address limits below are counted by each replica on its own. With
+# two replicas an address may reach twice the figure in the worst case; the
+# limits Postfix applies behind them are counted once.
+replicas: 2
+
+# What the edge listens on, and where each listener sends a connection.
+#
+# These three and no other. A listener is a port on the load balancer, a
+# frontend in the proxy and a rule in the policy at once; switching one off
+# removes all three.
+#
+#   port         the port on the internet
+#   listen       the port the proxy binds inside its pod. Above 1024, because
+#                the proxy runs as an ordinary user with no capability.
+#   backend      which server takes the connection
+#   backendPort  that server's PROXY-protocol listener. It is NOT the port
+#                clients inside the cluster use: that one takes no PROXY
+#                header, this one refuses a connection without it.
+#   timeout      how long a silent connection is kept. SMTP allows a server
+#                five minutes between commands (RFC 5321 4.5.3.2); an IMAP
+#                client may idle for twenty-nine (RFC 2177).
+listeners:
+  smtp:
+    enabled: true
+    port: 25
+    listen: 2525
+    backend: postfix
+    backendPort: 10025
+    timeout: 6m
+    # Per client address. Postfix applies its own behind these, to the same
+    # address (the PROXY header carries it): 30 new connections a minute and
+    # 50 at a time. The proxy's are set looser than the first and tighter than
+    # the second, so a sender Postfix would slow down is slowed down by
+    # Postfix, with an SMTP answer, and the proxy only stops what would
+    # otherwise occupy Postfix's processes.
+    connectionsPerAddress: 20
+    connectionsPerMinutePerAddress: 60
+    maxConnections: 500
+  submission:
+    enabled: true
+    port: 587
+    listen: 2587
+    backend: postfix
+    backendPort: 10587
+    timeout: 6m
+    connectionsPerAddress: 20
+    connectionsPerMinutePerAddress: 60
+    maxConnections: 500
+  imaps:
+    enabled: true
+    port: 993
+    listen: 2993
+    backend: dovecot
+    backendPort: 10993
+    timeout: 35m
+    # A mail client holds several connections open, and an office is one
+    # address: looser than SMTP's on purpose.
+    connectionsPerAddress: 100
+    connectionsPerMinutePerAddress: 120
+    maxConnections: 2000
+
+# The load balancer in front of the proxy: one Service, one address, for
+# every listener above. mail.<kernelDomain> and imap.<kernelDomain> both point
+# at it; the operator reads the address from this Service and publishes the
+# records (internal/controller/mail_dnsendpoint.go).
+loadBalancer:
+  # Pin the address when the MX record already names one, so a rebuild does
+  # not hand out a different one and silently break inbound mail.
+  ip: ""
+  annotations:
+    # externalTrafficPolicy: Local means only a node running a proxy can
+    # serve. Without a health monitor Octavia treats every node as a member
+    # and most connections are dropped, which looks like a firewall.
+    loadbalancer.openstack.org/enable-health-monitor: "true"
+    # Keep the floating IP across a rebuild of the Service. An MX record names
+    # an address, and a new one breaks inbound mail for as long as senders
+    # keep retrying the old.
+    loadbalancer.openstack.org/keep-floatingip: "true"
+  # For a load balancer that is itself a proxy.
+  #
+  # externalTrafficPolicy: Local keeps the client's address only where the
+  # load balancer forwards packets (MetalLB, a cloud's pass-through load
+  # balancer). One that terminates the connection and opens its own -- an
+  # Octavia amphora, most "TCP proxy" load balancers -- arrives from its own
+  # address, and every sender on the internet then looks like one host: the
+  # per-address limits, Postfix's client checks and both servers' logs are
+  # about the load balancer. Such a load balancer can say who the client was
+  # with the PROXY protocol, and this is where the proxy is told to expect it.
+  #
+  # enabled: the proxy requires a PROXY header (v1 or v2) on a connection
+  # from the addresses in `from`, and takes none from anywhere else.
+  # `from` empty means every connection must carry one -- correct only where
+  # nothing reaches the proxy except through the load balancer, which on most
+  # clusters is not true of a pod dialling the public name.
+  #
+  # The load balancer has to be switched to match, by its own annotation:
+  #   loadbalancer.openstack.org/proxy-protocol: "true"        (Octavia)
+  # A header the proxy does not expect is read as mail and refused; one it
+  # expects and does not get closes the connection. Either way mail stops,
+  # loudly, rather than arriving with the wrong address.
+  proxyProtocol:
+    enabled: false
+    from: []
+
+# Who may connect to the proxy and what the proxy may connect to
+# (templates/networkpolicy.yaml). On by default; needs a CNI that enforces
+# NetworkPolicy. The mail ApplicationSet passes `enabled`, from the same
+# switch as the mail servers' policies.
+networkPolicy:
+  enabled: true
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 256Mi
+  requests:
+    cpu: 20m
+    memory: 48Mi

@@ -1,0 +1,114 @@
+{{- $enabled := splitList "," (include "mail-edge.enabled" .) | compact }}
+{{- if $enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mail-edge-{{ .Values.env }}
+  namespace: {{ .Values.servicesNamespace }}
+  labels:
+    {{- include "mail-edge.selector" . | nindent 4 }}
+    gentianos.io/component: mail-edge
+  annotations:
+    argocd.argoproj.io/sync-wave: "9"
+spec:
+  replicas: {{ .Values.replicas }}
+  selector:
+    matchLabels:
+      {{- include "mail-edge.selector" . | nindent 6 }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      # The new pod first. With one replica the default would take the only
+      # proxy away before its successor is ready.
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        {{- include "mail-edge.selector" . | nindent 8 }}
+      annotations:
+        # HAProxy reads its configuration once. A changed ConfigMap changes
+        # this, and the pods are replaced one at a time.
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+    spec:
+      # Nothing here speaks to the API server, so the pod carries no token to
+      # speak to it with.
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 99
+        runAsGroup: 99
+        seccompProfile:
+          type: RuntimeDefault
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    {{- include "mail-edge.selector" . | nindent 20 }}
+      # Long enough for a message in flight to finish; HAProxy stops accepting
+      # at once and closes when its connections have.
+      terminationGracePeriodSeconds: 60
+      volumes:
+        - name: config
+          configMap:
+            name: mail-edge-{{ .Values.env }}-config
+      containers:
+        - name: haproxy
+          image: {{ printf "%s:%s" .Values.image.repository .Values.image.tag | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          # The binary, not the image's entrypoint script: -db keeps it in the
+          # foreground and the configuration is the mounted file and no other.
+          command: ["haproxy"]
+          args: ["-db", "-f", "/etc/mail-edge/haproxy.cfg"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          ports:
+            {{- range $name := $enabled }}
+            - name: {{ $name }}
+              containerPort: {{ (index $.Values.listeners $name).listen }}
+              protocol: TCP
+            {{- end }}
+            - name: health
+              containerPort: 8404
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          volumeMounts:
+            - name: config
+              mountPath: /etc/mail-edge
+              readOnly: true
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: mail-edge-{{ .Values.env }}
+  namespace: {{ .Values.servicesNamespace }}
+  labels:
+    {{- include "mail-edge.selector" . | nindent 4 }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "9"
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      {{- include "mail-edge.selector" . | nindent 6 }}
+{{- end }}

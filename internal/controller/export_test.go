@@ -14,6 +14,7 @@ import (
 	"context"
 	"testing"
 
+	batchv1 "k8s.io/api/batch/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -100,3 +101,48 @@ func ServicesNamespaceForTest() string { return servicesNamespace }
 
 // RegistrarRealmSecretNamespaceForTest is where the registrar's realm credentials are written.
 func RegistrarRealmSecretNamespaceForTest() string { return registrarRealmSecretNamespace() }
+
+// SyncMailAppPasswordsForTest exposes the writer of a tenant's mail
+// passwords: the hashes, the tenant's own copy, the seed and the realm's
+// submission credential. Where each of them lands is what is asserted.
+func (r *TenantReconciler) SyncMailAppPasswordsForTest(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
+	return r.syncMailAppPasswords(ctx, tenant)
+}
+
+// SyncKernelRealmSubmissionIdentityForTest exposes the registration of the
+// kernel realm's submission credential, which is read from one namespace and
+// written to another.
+func (r *TenantReconciler) SyncKernelRealmSubmissionIdentityForTest(ctx context.Context) error {
+	return r.syncKernelRealmSubmissionIdentity(ctx)
+}
+
+// RetireMisplacedMailObjectsForTest exposes the removal of the mail objects an
+// earlier version wrote where nothing read them.
+func (r *TenantReconciler) RetireMisplacedMailObjectsForTest(ctx context.Context) error {
+	return r.retireMisplacedMailObjects(ctx)
+}
+
+// TenantSMTPJobForTest is the Job that configures a tenant realm's mail, for
+// the namespace it runs in and the Secrets it reads there.
+func TenantSMTPJobForTest(tenant string) *batchv1.Job {
+	return makeTenantSMTPJob(tenant, tenant, "mail.example.test", "Example")
+}
+
+// KernelMailAddressesForTest are the addresses the operator publishes for
+// mail.<kernelDomain> and imap.<kernelDomain>, read from the Services in
+// front of the mail edge.
+func (r *TenantReconciler) KernelMailAddressesForTest(ctx context.Context) (smtp, imap string) {
+	return r.kernelMailAddress(ctx), r.kernelIMAPAddress(ctx)
+}
+
+// HoldUntilPostfixAcceptsDomainForTest exposes the check between a tenant's
+// provisioning and its mail reporting ready.
+func (r *TenantReconciler) HoldUntilPostfixAcceptsDomainForTest(ctx context.Context, tenant *gentianov1alpha1.Tenant) (bool, error) {
+	return r.holdUntilPostfixAcceptsDomain(ctx, tenant)
+}
+
+// SyncPostfixDKIMTablesForTest exposes the writer of the signing tables
+// Postfix mounts.
+func (r *TenantReconciler) SyncPostfixDKIMTablesForTest(ctx context.Context) error {
+	return r.syncPostfixDKIMTables(ctx)
+}

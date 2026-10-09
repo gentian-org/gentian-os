@@ -43,7 +43,7 @@ type serverClient struct {
 
 // The kernel's own PostgreSQL and the mail servers admit a connection by
 // where it comes from (templates/networkpolicy.yaml in kernel/data/
-// kernel-postgres and in the Dovecot and Postfix charts). Their clients are
+// kernel-postgres and in the Dovecot, Postfix and mail-edge charts). Their clients are
 // written down beside the stores', and the policies are tested against that
 // file. This holds the file to the operator's code, for the clients the
 // operator's code decides: the desktop of the tenant that adopts the kernel
@@ -83,7 +83,7 @@ func TestTheKernelDatabaseAndMailClientsAreWhereTheirNetworkPoliciesExpectThem(t
 	desktop := func(tenant *gentianov1alpha1.Tenant) *gentianov1alpha1.Component {
 		return &gentianov1alpha1.Component{ObjectMeta: metav1.ObjectMeta{Name: "desktop", Namespace: tenant.NamespaceName()}}
 	}
-	mailApp := func(port int32) func(*testing.T) builtClient {
+	mailApp := func(namespace string, port int32) func(*testing.T) builtClient {
 		return func(t *testing.T) builtClient {
 			profile := &gentianov1alpha1.ComponentProfile{Spec: gentianov1alpha1.ComponentProfileSpec{
 				Requires: &gentianov1alpha1.RequirementSpec{Services: &gentianov1alpha1.ServiceRequirements{
@@ -92,7 +92,7 @@ func TestTheKernelDatabaseAndMailClientsAreWhereTheirNetworkPoliciesExpectThem(t
 					}}},
 			}}
 			np := netpolicy.KernelAccessNetworkPolicy(acme.Name, acme.NamespaceName(), "wiki", profile, netpolicy.Config{})
-			return egressClient(t, np, mailNamespace, port)
+			return egressClient(t, np, namespace, port)
 		}
 	}
 
@@ -105,8 +105,13 @@ func TestTheKernelDatabaseAndMailClientsAreWhereTheirNetworkPoliciesExpectThem(t
 			np := buildComponentNetworkPolicy(desktop(platform), r.componentEgressNamespaces(desktopProfile, platform), nil)
 			return egressClient(t, np, layout.Namespace(layout.Data), provisioner.PostgresPort)
 		},
-		"tenant-app-mail-smtp": mailApp(int32(submission)),
-		"tenant-app-mail-imap": mailApp(993),
+		// By the Service's name, straight to the server...
+		"tenant-app-mail-smtp": mailApp(mailNamespace, int32(submission)),
+		"tenant-app-mail-imap": mailApp(mailNamespace, 993),
+		// ...and by the public name, which is the proxy in the mail DMZ. The
+		// ports are the proxy's own, behind the load balancer's 587 and 993.
+		"tenant-app-mail-edge-smtp": mailApp(mailEdgeNamespace, 2587),
+		"tenant-app-mail-edge-imap": mailApp(mailEdgeNamespace, 2993),
 	}
 
 	// Where each server is, by the layout the operator itself uses.
@@ -114,6 +119,7 @@ func TestTheKernelDatabaseAndMailClientsAreWhereTheirNetworkPoliciesExpectThem(t
 		"kernel-postgres": layout.Namespace(layout.Data),
 		"dovecot":         mailNamespace,
 		"postfix":         mailNamespace,
+		"mail-edge":       mailEdgeNamespace,
 	}
 
 	seen := map[string]bool{}
@@ -185,7 +191,7 @@ func TestTheKernelDatabaseAndMailClientsAreWhereTheirNetworkPoliciesExpectThem(t
 			if c.Port != provisioner.PostgresPort {
 				t.Errorf("%s: the file says port %d, PostgreSQL answers on %d", c.Client, c.Port, provisioner.PostgresPort)
 			}
-		case c.Server == "postfix" && !c.External:
+		case c.Server == "postfix" && c.PodLabels["gentianos.io/app"] != "":
 			if c.Port != int32(submission) {
 				t.Errorf("%s: the file says port %d, apps are handed %d", c.Client, c.Port, submission)
 			}
