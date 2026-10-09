@@ -19,11 +19,6 @@ llmEnabled: "false"
 relayHost: ""
 egressHost: ""
 storageClass: ""
-# Whether this cluster has GPUs (spec.llm.gpuAcceleration) and whether the
-# claim lists external providers. The first decides whether the mock backend
-# runs; the second whether the chart reads a vault path for provider keys.
-llmGpuAcceleration: "false"
-llmExternalProviders: "false"
 # Whether the model gateway's console is served at llm.<kernelDomain>
 # (spec.llm.console.enabled). Off unless the claim says "true": anything else
 # renders the gateway's NetworkPolicy without a rule for the edge.

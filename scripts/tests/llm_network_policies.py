@@ -75,11 +75,20 @@ def application(*extra):
         stage = item.get("env", stage)
         app = item.get("app", app)
     template = spec["template"]["spec"]
-    params = {p["name"]: p["value"].replace("{{.env}}", stage) for p in template["source"]["helm"]["parameters"]}
+    # Two sources: the chart, and the deployments repository the Cluster claim
+    # is handed to the chart from, as a values file.
+    charts = [s for s in template["sources"] if "path" in s]
+    refs = [s for s in template["sources"] if "ref" in s]
+    if len(charts) != 1 or len(refs) != 1 or len(template["sources"]) != 2:
+        raise Failure("the gentian-llm ApplicationSet no longer has one chart source and one reference source")
+    chart = charts[0]
+    params = {p["name"]: p["value"].replace("{{.env}}", stage) for p in chart["helm"]["parameters"]}
     return {
-        "path": template["source"]["path"].replace("{{.app}}", app),
+        "path": chart["path"].replace("{{.app}}", app),
         "namespace": template["destination"]["namespace"],
         "params": params,
+        "valueFiles": chart["helm"].get("valueFiles") or [],
+        "reference": refs[0],
     }
 
 
@@ -283,8 +292,8 @@ def check_off():
         if left:
             raise Failure("NetworkPolicies are rendered with the switch off")
     # A cluster with GPUs runs no mock model server, and no policy for one.
-    app = application("--set-string", "llmGpuAcceleration=true")
-    docs = render(app)
+    # Whether it has GPUs is the claim's to say, which the chart is handed.
+    docs = render(application(), "--set", "spec.llm.gpuAcceleration=true")
     if WORKLOAD["mock"] in pods(docs):
         raise Failure("the mock model server is rendered on a cluster with GPUs")
     if set(by_name(docs)) != set(POLICY.values()) - {POLICY["mock"]}:

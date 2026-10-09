@@ -10,10 +10,17 @@
 # than any commit. dev/ and prod/ were byte-identical copies of the same three
 # files, kept in step by hand.
 #
-# NOT covered here: the vLLM GPU release. Its input is spec.llm.instances on the
-# Cluster claim, and Argo CD cannot project a claim into Helm values — that one
-# belongs in the Cluster Composition, which reads claims by design. Until then
-# it stays in D-05.
+# Two sources. The chart is this repository's; the second is the cluster's
+# deployments repository, and the Cluster claim in it is handed to the chart as
+# a values file. That is how the claim's spec.llm reaches the chart: which
+# models the gateway offers (instances and providers), whether a provider's
+# token is fetched, whether the mock model server runs. A commit to the claim
+# is a sync of this Application.
+#
+# NOT covered here: the vLLM instances themselves. The gateway offers a model
+# for each entry of spec.llm.instances and nothing starts the server behind
+# it; kernel/services/llm/chart holds the workload and no Application
+# delivers it.
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
@@ -40,23 +47,17 @@ spec:
         argocd.argoproj.io/sync-wave: "9"
     spec:
       project: gentian
-      source:
-        repoURL: https://github.com/gentian-org/gentian-os
+      sources:
+      - repoURL: https://github.com/gentian-org/gentian-os
         targetRevision: develop
         path: kernel/services/{{.app}}/manifests
         helm:
+          # The Cluster claim: .Values.spec.llm in the chart.
+          valueFiles:
+            - $claim/clusters/deployments.cluster.placeholder/kernel/claims/cluster.yaml
           parameters:
             - name: env
               value: '{{.env}}'
-            # The mock backend serves a cluster with no GPUs. Rewritten from
-            # spec.llm.gpuAcceleration, so turning GPUs on removes it on the
-            # next sync instead of leaving it running.
-            - name: mockBackend
-              value: 'llm.mock.backend.placeholder'
-            # Whether spec.llm.providers lists anything, so the chart knows
-            # whether an OpenBao path for provider API keys exists to read.
-            - name: externalProviders
-              value: 'llm.external.providers.placeholder'
             # Whether the gateway's console is served (spec.llm.console.enabled,
             # off by default): whether the gateway's NetworkPolicy admits the
             # edge.
@@ -80,6 +81,9 @@ spec:
               value: 'ns.data.placeholder'
             - name: networkPolicy.namespaces.edge
               value: 'ns.edge.placeholder'
+      - repoURL: deployments.repo.placeholder
+        targetRevision: deployments.revision.placeholder
+        ref: claim
       destination:
         server: https://kubernetes.default.svc
         namespace: 'sys.llm.placeholder'

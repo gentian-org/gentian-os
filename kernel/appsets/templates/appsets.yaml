@@ -50,8 +50,6 @@
      | replace "storage.class.placeholder" ($.Values.storageClass | default "")
      | replace "mail.relay.placeholder" ($.Values.relayHost | default "")
      | replace "mail.egress.placeholder" ($.Values.egressHost | default "")
-     | replace "llm.mock.backend.placeholder" (ternary "false" "true" (eq (toString ($.Values.llmGpuAcceleration | default "false")) "true"))
-     | replace "llm.external.providers.placeholder" (toString ($.Values.llmExternalProviders | default "false"))
      | replace "llm.console.placeholder" (ternary "true" "false" (eq (toString ($.Values.llmConsoleEnabled | default "false")) "true"))
      | replace "store.networkpolicies.placeholder" $storeNetworkPolicies }}
 {{- range $fn, $name := $ns }}{{ $text = replace (printf "ns.%s.placeholder" $fn) $name $text }}{{ end }}

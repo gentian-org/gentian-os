@@ -1,0 +1,36 @@
+# A cluster with GPUs whose claim declares the models it serves: one instance
+# of its own and two external providers, one of them with a chat and an
+# embedding model.
+#
+# Read twice: here, as a claim the schema accepts, and by
+# scripts/tests/llm_models.py, which hands this file to the model gateway's
+# chart the way Argo CD does and holds the gateway's model list to it.
+apiVersion: gentianos.io/v1alpha1
+kind: Cluster
+metadata:
+  name: test-llm-models
+  namespace: default
+spec:
+  kernelDomain: example.org
+  llm:
+    enabled: true
+    gpuAcceleration: true
+    instances:
+      - name: qwen
+        modelId: Qwen/Qwen2.5-7B-Instruct
+    providers:
+      - name: infomaniak
+        displayName: Infomaniak AI Services
+        apiBase: https://api.infomaniak.com/2/ai/12345/openai/v1/
+        apiKeyProperty: infomaniak_api_key
+        models:
+          - name: gemma-4-31b
+            model: google/gemma-4-31B-it
+            maxTokens: 8192
+          - name: bge-m3
+            model: BAAI/bge-m3
+            mode: embedding
+      - name: staged
+        apiBase: https://models.example.org/v1
+        apiKeyProperty: staged_api_key
+        models: []

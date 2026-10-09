@@ -1,3 +1,11 @@
+{{- /*
+What the providers' tokens are right now, as one line: the names and contents
+of the files of the mounted Secret, hashed. Taken when the gateway's container
+starts and again by its probe, which compares the two.
+*/ -}}
+{{- define "llm.providerKeysSum" -}}
+( cd /etc/llm-providers 2>/dev/null && for f in *; do [ -f "$f" ] && echo "$f" && cat "$f"; done; true ) | sha256sum
+{{- end -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -18,6 +26,10 @@ spec:
     metadata:
       labels:
         app: litellm-proxy
+      annotations:
+        # The models are read once, at start: a claim that changes them has
+        # to replace the pods.
+        checksum/config: {{ include "llm.gatewayConfig" . | sha256sum }}
     spec:
       # The kernel's admission baseline (gentian-baseline): a seccomp profile
       # and no privilege escalation, or Kyverno refuses the Pods and the
@@ -41,6 +53,19 @@ spec:
             path: tls.crt
       - name: ca-trust
         emptyDir: {}
+      # The models (gateway-config.yaml).
+      - name: config
+        configMap:
+          name: litellm-config
+      # The tokens of the claim's providers, one file per property.
+      #
+      # optional: the Secret exists once a provider's token has been
+      # supplied, and not on a cluster whose claim names no provider. The
+      # gateway starts without it.
+      - name: provider-keys
+        secret:
+          secretName: llm-provider-credentials
+          optional: true
       initContainers:
       # Why this exists: the SSO callback failed with
       # "[SSL: CERTIFICATE_VERIFY_FAILED] unable to get local issuer
@@ -97,9 +122,63 @@ spec:
         image: {{ .Values.gateway.image }}
         securityContext:
           allowPrivilegeEscalation: false
+        # A provider's token reaches the gateway as an environment variable,
+        # which is the one place its configuration file can name a key from
+        # (api_key: os.environ/LLM_PROVIDER_KEY_<property>). The variables are
+        # set here from the mounted Secret and not with envFrom, because of
+        # what follows from a mount: the kubelet brings a Secret that is
+        # created or changed later into the running pod, where the probe below
+        # can see it. A property that is not a variable's name is passed over.
+        #
+        # Then the image's own entrypoint, with the configuration file.
+        command:
+        - /bin/sh
+        - -ec
+        - |
+          for f in /etc/llm-providers/*; do
+            [ -f "$f" ] || continue
+            name="$(basename "$f")"
+            case "$name" in *[!a-z0-9_]*) continue ;; esac
+            export "LLM_PROVIDER_KEY_${name}=$(cat "$f")"
+          done
+          {{ include "llm.providerKeysSum" . }} >/tmp/provider-keys.sum
+          exec docker/prod_entrypoint.sh --config /etc/litellm/config.yaml --port 4000
+        # Restarts the container when the providers' tokens are no longer the
+        # ones it started with -- the first was supplied, one was rotated or
+        # removed. A process keeps the environment it was started with, so
+        # nothing short of a restart makes the gateway use a new token, and
+        # nobody is there to do it: a token is entered in the administration
+        # console, minutes or days after the claim named its provider. The
+        # event the kubelet records says why.
+        #
+        # It says nothing about the gateway's health and is not meant to: two
+        # failures in a row and a long timeout, so that a slow exec on a busy
+        # node is not taken for a changed token.
+        # Both replicas see the change within the kubelet's sync period of
+        # each other and may restart together: the gateway is then away for
+        # as long as it takes to start.
+        livenessProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            - |
+              [ "$( {{ include "llm.providerKeysSum" . }} )" = "$(cat /tmp/provider-keys.sum)" ] && exit 0
+              echo "the providers' tokens changed; restarting to read them"
+              exit 1
+          initialDelaySeconds: 30
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 2
         volumeMounts:
         - name: ca-trust
           mountPath: /trust
+          readOnly: true
+        - name: config
+          mountPath: /etc/litellm
+          readOnly: true
+        - name: provider-keys
+          mountPath: /etc/llm-providers
           readOnly: true
         ports:
         - containerPort: 4000
@@ -115,8 +194,13 @@ spec:
             secretKeyRef:
               name: litellm-db-app
               key: uri
+        # The models are the configuration file's, which is the claim's. Off,
+        # the gateway loads none from its database and refuses to store one,
+        # so a model cannot be added at its console or through its API and
+        # outlive the claim. Keys, teams and spend are in the database either
+        # way.
         - name: STORE_MODEL_IN_DB
-          value: "True"
+          value: "False"
         # Without this, a failed `prisma migrate deploy` at startup is a
         # warning and the proxy serves anyway — with whatever fraction of
         # the schema made it in. Seen live: two replicas raced the

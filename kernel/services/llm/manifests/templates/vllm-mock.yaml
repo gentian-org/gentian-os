@@ -1,13 +1,14 @@
 {{- /*
-The mock inference backend, so LiteLLM has something to answer with on a
-cluster without GPUs.
+The mock inference backend of a cluster without GPUs (the claim's
+spec.llm.gpuAcceleration is not true). The gateway offers it as no model:
+its models are the claim's (gateway-config.yaml).
 
 Guarded rather than applied conditionally by a script: the installer used to
 kubectl-apply this file only when GPU_ACCELERATION was false, which meant
 turning GPUs ON left the mock running until somebody noticed. A value the
 release carries is removed by the next sync.
 */ -}}
-{{- if .Values.mockBackend }}
+{{- if ne (toString .Values.spec.llm.gpuAcceleration) "true" }}
 apiVersion: v1
 kind: ConfigMap
 metadata:

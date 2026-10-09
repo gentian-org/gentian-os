@@ -486,10 +486,18 @@ spec:
                     instances:
                       type: array
                       description: >
-                        The models this cluster serves. One Deployment, Service
-                        and PVC each, and removing an entry removes its workload
-                        — the cached weights survive, so re-adding the same name
-                        does not re-download tens of gigabytes.
+                        The models this cluster serves on its own GPUs, one
+                        vLLM instance each. The model gateway offers a model
+                        per entry, named after modelId in lower case with "/"
+                        as "-" (Qwen/Qwen2.5-7B-Instruct is
+                        qwen-qwen2.5-7b-instruct), and calls it at the Service
+                        vllm-<name>-inference, port 8000, in the gateway's
+                        namespace. Removing an entry removes the model from
+                        the gateway.
+
+                        The platform does not start the instance itself: the
+                        vLLM workload behind that Service has to be running
+                        for the model to answer.
 
                         Read only when gpuAcceleration is true. An empty list is
                         a CPU-only cluster, which is the default.
@@ -533,12 +541,13 @@ spec:
                       description: >
                         External, OpenAI-compatible inference providers this
                         cluster routes to, alongside (or instead of) the vLLM
-                        instances above. One LiteLLM model registration per
-                        entry in models, reconciled from this list — adding an
-                        entry registers it, removing one deregisters it, and
-                        nothing else may register a provider model. Editing
-                        LiteLLM's Admin Console instead produces an entry the
-                        next reconcile deletes.
+                        instances above. The model gateway offers one model
+                        per entry in models, named <provider>/<model name>, and
+                        takes its models from this claim alone: adding an entry
+                        adds the model, removing one removes it, and the
+                        gateway's console and API can add none. A change
+                        replaces the gateway's pods, which read the list when
+                        they start.
 
                         Independent of gpuAcceleration: a CPU-only cluster with
                         no instances is exactly the case these serve. The API
@@ -578,14 +587,16 @@ spec:
                               kernel credential holds this provider's API token
                               (e.g. infomaniak_api_key). The property must exist
                               in OpenBao at gentian-os/kernel/llm-providers
-                              before the models can answer; the reconcile says
-                              so rather than registering a model that 401s.
+                              before the models can answer: until it does they
+                              are listed and a call to one is answered with an
+                              authentication error. The gateway restarts by
+                              itself when the token is supplied or changed.
                             pattern: '^[a-z0-9_]+$'
                           models:
                             type: array
                             description: >
                               The provider's models to expose. An empty list
-                              registers nothing, which is how a provider is
+                              offers nothing, which is how a provider is
                               staged before its credential exists.
                             items:
                               type: object

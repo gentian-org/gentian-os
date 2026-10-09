@@ -1470,9 +1470,9 @@ _claim_cluster_fields() {
         else
             printf '    # gpuTimeSliceReplicas: 1   workloads sharing one physical GPU\n'
         fi
-        printf '    # The models this cluster serves. Removing an entry removes its\n'
-        printf '    # workload; the cached weights survive, so re-adding the same\n'
-        printf '    # name does not download tens of gigabytes again.\n'
+        printf '    # The models this cluster serves on its own GPUs. The gateway offers\n'
+        printf '    # one model per entry; the platform does not start the vLLM instance\n'
+        printf '    # behind it yet, so run one before listing it here.\n'
         printf '    instances: []\n'
         printf '    #  - name: qwen\n'
         printf '    #    modelId: Qwen/Qwen2.5-7B-Instruct\n'
@@ -1484,7 +1484,7 @@ _claim_cluster_fields() {
         printf '    # External OpenAI-compatible providers, routed through the same\n'
         printf '    # gateway. Independent of gpuAcceleration -- a cluster with no GPU\n'
         printf '    # and no instances serves these and nothing else. Adding an entry\n'
-        printf '    # registers its models; removing one deregisters them.\n'
+        printf '    # adds its models to the gateway; removing one removes them.\n'
         printf '    providers: []\n'
         printf '    #  - name: infomaniak\n'
         printf '    #    displayName: Infomaniak AI Services\n'

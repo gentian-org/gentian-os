@@ -172,7 +172,7 @@ spec:
       ports:
         - protocol: TCP
           port: {{ $np.ports.redis }}
-{{- if .Values.mockBackend }}
+{{- if ne (toString .Values.spec.llm.gpuAcceleration) "true" }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy

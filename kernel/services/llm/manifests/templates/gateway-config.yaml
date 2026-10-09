@@ -1,0 +1,64 @@
+{{- /*
+The models the gateway offers: its configuration file, written from the
+Cluster claim's spec.llm and from nothing else.
+
+  An instance (spec.llm.instances, read when gpuAcceleration is true) is
+  offered under its model id in lower case with "/" as "-"
+  (Qwen/Qwen2.5-7B-Instruct is qwen-qwen2.5-7b-instruct) and called at the
+  Service of the vLLM instance of that name in this namespace. vLLM asks for
+  no key; the gateway's client refuses to be built without one, so it is
+  given a word.
+
+  A provider's model (spec.llm.providers[].models) is offered as
+  <provider>/<name>: upstream ids collide across providers, and the list
+  should say who serves what. It is called as an OpenAI-compatible endpoint
+  whoever serves it.
+
+  A provider's token is not in this file. The entry names an environment
+  variable of the gateway's container, LLM_PROVIDER_KEY_<apiKeyProperty>,
+  which the container sets at its start from the Secret
+  llm-provider-credentials (llm-services.yaml). A model whose token has not
+  been supplied yet is listed and answers an authentication error until it
+  is.
+
+The gateway reads this file when it starts, and reads models from nowhere
+else (STORE_MODEL_IN_DB is off): a model removed from the claim is gone with
+the pods that knew it, and none can be added at the gateway's console or its
+API. The Deployment carries this file's checksum, so a change replaces the
+pods.
+*/ -}}
+{{- define "llm.gatewayConfig" -}}
+{{- $llm := .Values.spec.llm -}}
+{{- $models := list -}}
+{{- if eq (toString $llm.gpuAcceleration) "true" -}}
+{{- range $i := $llm.instances -}}
+{{- $params := dict
+      "model" (printf "openai/%s" $i.modelId)
+      "api_base" (printf "http://vllm-%s-inference.%s.svc.cluster.local:8000/v1" $i.name $.Values.servicesNamespace)
+      "api_key" "not-needed" -}}
+{{- $models = append $models (dict "model_name" ($i.modelId | lower | replace "/" "-") "litellm_params" $params) -}}
+{{- end -}}
+{{- end -}}
+{{- range $p := $llm.providers -}}
+{{- range $m := $p.models -}}
+{{- $params := dict
+      "model" (printf "openai/%s" $m.model)
+      "api_base" ($p.apiBase | trimSuffix "/")
+      "api_key" (printf "os.environ/LLM_PROVIDER_KEY_%s" $p.apiKeyProperty) -}}
+{{- $info := dict "mode" ($m.mode | default "chat") -}}
+{{- if $m.maxTokens }}{{ $_ := set $info "max_tokens" (int $m.maxTokens) }}{{ end -}}
+{{- $models = append $models (dict "model_name" (printf "%s/%s" $p.name $m.name) "litellm_params" $params "model_info" $info) -}}
+{{- end -}}
+{{- end -}}
+{{- toYaml (dict "model_list" $models) -}}
+{{- end -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: litellm-config
+  namespace: {{ .Values.servicesNamespace }}
+  labels:
+    gentianos.io/component: kernel-llm
+data:
+  config.yaml: |
+    {{- include "llm.gatewayConfig" . | nindent 4 }}

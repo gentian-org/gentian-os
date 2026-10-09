@@ -4,12 +4,35 @@
 # somewhere to go without restructuring.
 env: dev
 
-# The mock inference backend, for a cluster with no GPU.
+# The Cluster claim, as this cluster's deployments repository holds it.
 #
-# Deployed when GPU acceleration is off, so LiteLLM has something to answer
-# with. With GPUs the real vLLM instances come from the cluster's own claim —
-# see the note in the ApplicationSet.
-mockBackend: true
+# The gentian-llm ApplicationSet hands this chart the claim's own file
+# (clusters/<cluster>/kernel/claims/cluster.yaml) as a values file, so
+# .Values.spec.llm is what the claim says and nothing in between can rename or
+# drop a field. What is written here is what a claim that says nothing means;
+# the claim's schema (crossplane/xrds/cluster.yaml) describes each field.
+#
+# Three things are read from it:
+#
+#   gpuAcceleration  false runs the mock model server, so that the gateway's
+#                    namespace has a model server at all on a cluster without
+#                    GPUs. The mock is not a model the gateway offers.
+#   instances        with gpuAcceleration true, one model of the gateway each,
+#                    addressed at the Service a vLLM instance of that name has
+#                    in this namespace (vllm-<name>-inference, port 8000).
+#                    This chart does not start that instance.
+#   providers        one model of the gateway per entry of a provider's models,
+#                    named <provider>/<model name>, and the ExternalSecret for
+#                    the providers' tokens when the list is not empty.
+#
+# The models are the gateway's configuration file (templates/gateway-config.yaml):
+# a claim that changes them changes the file, and the gateway's pods are
+# replaced to read it.
+spec:
+  llm:
+    gpuAcceleration: false
+    instances: []
+    providers: []
 
 # The model gateway: LiteLLM, one build named twice -- by its release tag and
 # by the digest of what that tag held -- for the proxy and for the init
@@ -29,20 +52,12 @@ mockBackend: true
 #
 # To move it: pick a release from https://github.com/BerriAI/litellm/releases
 # (not a -dev or -rc one), read its notes for changes to the environment
-# variables templates/llm-services.yaml sets and to the /team, /key and /model
-# endpoints the operator and scripts/lib/llm-lib.sh call, and take the digest
-# the registry reports for the tag:
+# variables templates/llm-services.yaml sets, to the configuration file
+# templates/gateway-config.yaml writes and to the /team and /key endpoints the
+# operator calls, and take the digest the registry reports for the tag:
 #   docker buildx imagetools inspect ghcr.io/berriai/litellm:<tag>
 gateway:
   image: ghcr.io/berriai/litellm:v1.104.2@sha256:3d88bd757134a00e8c00237b85a021ab1f6d54abb9c1df750f411dbe7256a500
-
-# Whether this cluster's claim lists any spec.llm.providers.
-#
-# Only gates the ExternalSecret for their API keys. The model registrations
-# themselves are reconciled from the claim by scripts/lib/llm-lib.sh against
-# LiteLLM's API, because a model list is not something Argo CD can project from
-# a claim into Helm values — the same reason the vLLM release is not here.
-externalProviders: false
 
 # Whether the gateway's console is served at llm.<kernelDomain>, from the
 # Cluster claim's spec.llm.console.enabled. Off by default.

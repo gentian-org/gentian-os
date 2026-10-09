@@ -1166,17 +1166,6 @@ load_deployments_cluster_settings() {
             _LLM_CONSOLE_NOTED=1
             info "The model gateway's console (llm.<kernelDomain>) is off: no route, and the edge is not admitted to the gateway. spec.llm.console.enabled: true on the Cluster claim switches it on, for platform administrators."
         fi
-        # Whether this cluster routes to any external provider. A count, not a
-        # switch on the claim: the provider list is the declaration, and a second
-        # boolean beside it could disagree with it. What needs the boolean is the
-        # appset template, which substitutes literals and cannot project a list.
-        if [[ -z "${LLM_EXTERNAL_PROVIDERS:-}" ]]; then
-            if [[ "$(yq_get '.spec.llm.providers | length' "${claim_file}" 2>/dev/null || echo 0)" -gt 0 ]]; then
-                export LLM_EXTERNAL_PROVIDERS=true
-            else
-                export LLM_EXTERNAL_PROVIDERS=false
-            fi
-        fi
         # Where this cluster runs, and who hosts its zone. Two dimensions, kept
         # apart on purpose: a Hetzner cluster on a Cloudflare zone is ordinary,
         # and one field could not describe it. Both name an entry in
