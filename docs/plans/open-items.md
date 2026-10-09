@@ -143,7 +143,7 @@ Each is true of the code today.
 | 6 | **Identity headers are not signed.** An app and a sign-in sidecar believe them; network rules are what keeps another pod from sending its own | [operator-split-plan.md §6](operator-split-plan.md) |
 | 7 | **No kernel namespace restricts outgoing connections** | [security.md §2.13](../design/security.md) |
 | 8 | **An import carries the source's approvals.** The new tenant's manifest is written from the bundle, so the privileges granted and the entries approved in the exported tenant — public addresses, with their kind, and kept `Authorization` headers — arrive approved, and nobody on the importing cluster approved them | [data-lifecycle.md](../design/data-lifecycle.md) |
-| 9 | **A deleted tenant leaves entries behind**: its rights and memberships in the rights store, which a later tenant of the same name would inherit, and its keys in the shared cache | [data-lifecycle.md](../design/data-lifecycle.md) |
+| 9 | **A deleted tenant leaves entries behind**: its rights and memberships in the rights store, which a later tenant of the same name would inherit, and its keys in the shared cache. Not now: on the roadmap, item 1.38 | [data-lifecycle.md](../design/data-lifecycle.md), [roadmap.md](../roadmap.md) |
 | 10 | **A removed person's mailbox stays** until the tenant is deleted | [mail.md](../design/mail.md) |
 | 11 | **The Operations Console's profile arrives without a digest** | part 4 |
 | 12 | **The model gateway's console cannot be switched off** separately from the model gateway | part 1, AD-9 |
@@ -207,6 +207,13 @@ Each is true of the code today.
 - **The director reads the cluster's catalogue sources from the claim in
   git.** An edit made outside the director reaches it with the next commit it
   reads.
+- **A Cluster-claim setting for the mail proxy's load balancer** -- the PROXY
+  header from a load balancer that is itself a proxy, the addresses it may
+  come from, and the pinned mail address. They are values of the mail
+  proxy's chart only. On the roadmap, item 2.25
+  ([roadmap.md](../roadmap.md)).
+- **Removing a deleted tenant's rights, memberships and shared-cache keys at
+  deletion** (defect 9). On the roadmap, item 1.38.
 - **The check at start of the rights store's defaults** (AD-12): wanted, and
   it reports, it does not repair. A store that has diverged is a question,
   because rewriting it would erase the grants and revocations that are

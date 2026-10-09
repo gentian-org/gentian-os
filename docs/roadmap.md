@@ -652,6 +652,15 @@ does not exist yet that something cannot be the Composition.
   token as such: whoever holds the original can exchange it too. What it
   buys is that a service which is compromised or logs a token carelessly
   cannot replay it at its neighbours.
+
+  The same question has a second half, at the apps, and it is a gap today:
+  **a credential an app issued by itself outlives the person it was issued
+  to.** An app password, a personal access token or a sync client's token is
+  minted by the app, kept by the app and checked by the app. Removing the
+  person ends their sessions at the realm and their rights at the platform;
+  it does not reach those credentials, so a mail program, a sync client or a
+  script that holds one keeps working until the app itself forgets it. The
+  platform does not know these credentials exist and cannot revoke them.
 * **Proposed Solution**: Not decided. Investigate whether the narrower
   replay window is worth an exchange on every relayed call and a client
   credential in every backend, and whether the same mechanism should extend
@@ -663,11 +672,20 @@ does not exist yet that something cannot be the Composition.
   platform issues for such callers and can revoke, checked at the publishing
   proxy, would close that; it is also what `basic`, `signature`, `jwt` and
   `bearer` on a perimeter entry wait for, which the schema refuses until then.
+  For both gaps the direction is accepted:
+  credentials for an app's own clients are issued by the platform, not by the
+  app, and can be revoked there, so that removing a person stops every
+  credential of theirs at once. Whether that is a token exchanged per app, a
+  credential the platform mints and the app only verifies, or the app's own
+  credential registered with the platform so it can be withdrawn, is open.
 * **Backlog Items**:
   - `[ ]` Measure what an exchange per relayed call costs, and where a cached exchanged token would have to live.
   - `[ ]` Decide per service whether an audience of its own is wanted.
   - `[ ]` Decide whether user-facing apps take part or stay on their own clients.
   - `[ ]` Platform-issued, revocable credentials for callers of a public entry, so that removing a person ends their access there; and with them a caller check at the publishing proxy.
+  - `[ ]` List, per catalogue app, the credentials it issues by itself (app passwords, personal access tokens, client tokens) and what removing a person does to each today.
+  - `[ ]` Design platform-issued, revocable app credentials: who mints one, what the app verifies, and where a revocation is recorded so it holds at once.
+  - `[ ]` On removing a person, revoke every app credential of theirs, and prove with a test that a removed person's app password or token is refused at the next use.
 
 ### 1.35 A Credential per Client at the Authorization Store (**) — when available
 * **Target Domain**: Authorization
@@ -728,6 +746,27 @@ does not exist yet that something cannot be the Composition.
   - `[ ]` Move the identity provider, the desktop and the consoles to it, with redirects from the old addresses.
   - `[ ]` Prove with a test that a cookie set from the main address is not sent to any sign-in address.
   - `[ ]` Remove the acknowledgement for main-address websites once the above holds, and say so in the documents.
+
+### 1.38 A Deleted Tenant Takes Its Rights, Memberships and Cache Keys with It (**)
+* **Target Domain**: Authorization & Tenant Lifecycle
+* **Context**: Deleting a tenant removes its namespace, its realm and what
+  its apps were given. Three things stay: the entries in the rights store on
+  the tenant itself (the derived ones and any right granted beyond them), the
+  entries that say who is the tenant's member, and the keys its apps wrote
+  into the shared cache. The rights store and the cache address a tenant by
+  its name, so a tenant created later under the same name finds the old
+  rights on its name, and people who were members of the old tenant hold them
+  in the new one ([data-lifecycle.md](design/data-lifecycle.md), gap 1).
+* **Proposed Solution**: Deletion removes all three as a step of its own,
+  after the workloads are gone and before the name is free again, and the
+  tenant is not reported as deleted until the rights store and the cache
+  answer nothing for it. A tenant's name is not reusable while any of it is
+  left.
+* **Backlog Items**:
+  - `[ ]` Delete every rights-store entry whose object or subject is the tenant, its groups or its apps, when the tenant is deleted.
+  - `[ ]` Delete the tenant's keys from the shared cache; decide the key scheme that makes "the tenant's keys" a prefix and not a search.
+  - `[ ]` Hold the tenant's deletion open until both are empty, and say on its status what is left.
+  - `[ ]` Prove with a test that a tenant created under a deleted tenant's name starts with no member and no right of the old one.
 
 ## 2. Platform, Infrastructure & Lifecycle
 
@@ -1058,6 +1097,51 @@ does not exist yet that something cannot be the Composition.
   - `[ ]` A documented expansion procedure — patch the claim, confirm `FileSystemResizePending` clears — and a rehearsal on a scratch volume, since the capability is untested here.
   - `[ ]` Alert on volume utilisation. `postgres-1` is the one to watch: 10Gi shared by every tenant app, growing with tenant count rather than with any one tenant.
   - `[ ]` Reclaim `Released` PVs, and decide whether that is a sweep or a deliberate operator action. The Cinder volume outlives the PV either way, so deleting the PV is not the end of the bill.
+
+### 2.25 The Mail Proxy's Load Balancer Is Set on the Claim (*)
+* **Target Domain**: Platform Configuration & Mail
+* **Context**: The mail proxy in `system-mail-dmz` is what the cloud load
+  balancer for ports 25, 587 and 993 points at. Three things about that load
+  balancer differ per cluster and are chart values only today
+  (`kernel/services/mail-edge`): whether the load balancer is itself a proxy
+  and sends a PROXY header (`loadBalancer.proxyProtocol.enabled`), the
+  addresses the proxy accepts that header from (`loadBalancer.proxyProtocol.from`),
+  and the address the load balancer is pinned to (`loadBalancer.ip`). No field
+  of the Cluster claim sets them, so a cluster behind such a load balancer
+  either edits the chart or sees every mail client as the load balancer's
+  address ([mail.md](design/mail.md)).
+* **Proposed Solution**: Fields under `spec.mail` on the Cluster claim for the
+  three, passed to the mail proxy's chart the way the other mail settings
+  are. The PROXY header stays off unless the claim names the addresses it may
+  come from; switching it on without them is refused.
+* **Backlog Items**:
+  - `[ ]` Add the fields to the Cluster XRD and pass them to the mail proxy's chart; set the load balancer's own annotation from the same setting where the provider is known.
+  - `[ ]` Refuse a claim that switches the PROXY header on and names no source address.
+  - `[ ]` Extend `make test-mail-edge-lab` to a load balancer that sends the header, and to a header from an address that is not on the list.
+
+### 2.26 Element and Synapse Behind the Front Door (**)
+* **Target Domain**: Routing & App Catalogue
+* **Context**: Element runs in the browser and calls the chat server, Synapse,
+  on an address of its own, with its own token in the `Authorization` header;
+  Synapse is also the party that signs in at the realm, and keeps that
+  sign-in in cookies of its own while it does. Other Matrix clients and
+  federating servers bring no platform session at all, so the chat server's
+  address has to be a public entry. A public entry can now be approved to pass
+  its callers' own credential to the app (`authMode: app`), which carries
+  Element's token; it still passes no `Cookie` in and no `Set-Cookie` out, and
+  Synapse's sign-in at the realm does not complete without them. So the
+  profile cannot work as the front door is built, and it is set aside until
+  this is decided.
+* **Proposed Solution**: One of two, not decided. Either a public entry may
+  declare that the app's own cookies are passed on as well, with the approval
+  a public entry needs, and Synapse checks its callers itself; or Synapse is
+  served on Element's host under a path, so that one address and one session
+  cover both and only the paths other clients need are published.
+* **Backlog Items**:
+  - `[ ]` Decide between a public entry that passes the app's own cookies and Synapse on Element's host.
+  - `[ ]` Build the chosen arrangement and change the Element profile to it in the catalogue.
+  - `[ ]` Sign in through Element on a cluster, and reach the chat server with a second Matrix client.
+  - `[ ]` Decide federation separately: it needs a published port of its own.
 
 ## 3. User Management & Shell UI
 
