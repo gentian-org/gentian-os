@@ -180,15 +180,28 @@ gentian_ensure_signing_key() {
         return 1
     fi
     # The repository records a key for this role and this host does not have
-    # it. Generating one is still how a host that never held the key gets to
-    # sign, and what is published from here replaces the recorded id -- so it
-    # is said, rather than left to be found in the log afterwards.
+    # it. For the break-glass key that is a refusal: a key generated here
+    # would replace the recorded id, and every cluster and every person that
+    # trusts the recorded one would be looking at commits signed by a key
+    # they have never heard of. gentian_require_recorded_break_glass_key says
+    # so before anything is written; this is the same answer for any path
+    # that reaches a keygen without having passed it. The one way through is
+    # a rotation a person asked for and confirmed, for exactly this id.
+    #
+    # The director's key is handled as before -- said, and generated: the
+    # refusal is the break-glass key's.
     local recorded; recorded="$(gentian_signing_recorded_id "${role}")"
-    if [[ -n "${recorded}" ]]; then
+    if [[ -n "${recorded}" && "${role}" == "break-glass" ]]; then
+        if [[ "${_GENTIAN_BREAK_GLASS_ROTATION_OF:-}" != "${recorded}" ]]; then
+            error "The break-glass key ${recorded} this cluster records is not in this host's keyring;" >&2
+            error "  no key is generated in its place. ./install.sh says the ways forward." >&2
+            return 1
+        fi
+        warn "Rotating the break-glass key: ${recorded} is replaced by a key generated now." >&2
+    elif [[ -n "${recorded}" ]]; then
         warn "The deployments repository records the ${role} key ${recorded} for this cluster," >&2
         warn "  and this host's keyring ($(gentian_gpg_home)) does not hold it. A new key is" >&2
-        warn "  generated and will replace it in keys.env. To keep the recorded key instead," >&2
-        warn "  stop here and restore it from the recovery kit: ./install.sh --recover <kit>" >&2
+        warn "  generated and will replace it in keys.env." >&2
     fi
     _gpg --quick-generate-key "$(gentian_signing_uid "${role}")" ed25519 sign never \
         >/dev/null 2>&1 || {
@@ -201,6 +214,163 @@ gentian_ensure_signing_key() {
     # become part of it.
     info "Generated the ${role} signing key ${id}." >&2
     printf '%s' "${id}"
+}
+
+# The id a confirmed rotation replaces. Set by the confirmation and by nothing
+# else; empty here so that nothing inherited from the environment counts.
+_GENTIAN_BREAK_GLASS_ROTATION_OF=""
+
+# gentian_break_glass_key_lost — the recorded break-glass id, when the
+# repository records one and this host's keyring does not hold it. Silent, and
+# false, in every other case: nothing recorded yet (a first install), or the
+# recorded key present.
+#
+# It asks one question -- is the RECORDED id in the keyring -- and nothing
+# about what else the keyring holds. Another key beside it, under whatever
+# address, changes neither answer.
+gentian_break_glass_key_lost() {
+    local recorded
+    recorded="$(gentian_signing_recorded_id break-glass)"
+    [[ -n "${recorded}" ]] || return 1
+    [[ -z "$(_gpg_fingerprint "${recorded}")" ]] || return 1
+    printf '%s' "${recorded}"
+}
+
+# _signing_rotation_needs <old id> — what has to change for a new break-glass
+# key to be accepted, said before the key exists.
+_signing_rotation_needs() {
+    local old="$1" cluster="${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-<cluster>}"
+    warn "What a new break-glass key changes, and what has to follow it:"
+    warn "  1. clusters/${cluster}/kernel/signing/keys.env and break-glass.asc name the new"
+    warn "     key. This run writes and commits them, signed with the new key."
+    warn "  2. Argo CD on a running cluster trusts ${old} and not the new key, so it"
+    warn "     refuses the repository from that commit on, until two objects name the new id:"
+    warn "       AppProject gentian, spec.sourceIntegrity   (step B-01, from keys.env)"
+    warn "       ConfigMap argocd-gpg-keys-cm               (step B-10, from break-glass.asc)"
+    warn "     On a cluster that is already installed, B-01 reports itself satisfied and"
+    warn "     is skipped. Apply both once this run has committed:"
+    warn "       ./install.sh --only B-01,B-10 --force"
+    warn "  3. ${old} stays in argocd-gpg-keys-cm (B-10 only adds), and is no longer"
+    warn "     accepted once the AppProject stops listing it. A commit it signed that is"
+    warn "     still the head of the repository is covered by a new one from this run."
+    warn "  4. A recovery kit exported before now carries no key this cluster trusts."
+    warn "     Export a new one afterwards:  ./install.sh --export-recovery-kit"
+}
+
+# _signing_confirm_rotation <old id> — a person, at a terminal, typing the id
+# of the key they are giving up.
+#
+# There is no variable that answers for them and no flag that does: a new
+# break-glass key changes who may write to the deployments repository, and the
+# only safeguard that means anything for that is somebody reading the lines
+# above. So no terminal is a refusal, and GENTIAN_NONINTERACTIVE=1 is too.
+_signing_confirm_rotation() {
+    local old="$1" answer=""
+    if [[ "${GENTIAN_NONINTERACTIVE:-0}" == "1" || ! -t 0 ]]; then
+        error "--rotate-break-glass-key is confirmed by a person at a terminal, and there is none"
+        error "  (GENTIAN_NONINTERACTIVE=1, or standard input is not a terminal). Nothing can"
+        error "  answer for them. Nothing was changed."
+        return 1
+    fi
+    read -rp "  Type the id of the key being replaced (${old}) to confirm: " answer
+    if [[ "${answer}" != "${old}" ]]; then
+        error "The id did not match -- no key was generated and nothing was changed."
+        return 1
+    fi
+    return 0
+}
+
+# gentian_require_recorded_break_glass_key — the installer's refusal, before
+# it writes anything to the deployments checkout, the keyring or a cluster.
+#
+# keys.env says which break-glass key this cluster trusts. A host that does
+# not hold it used to generate another and publish that id instead (with a
+# warning): the cluster's definition was then signed by a key Argo CD had
+# never been told about, and the recorded key -- on another machine, or in the
+# recovery kit -- was quietly no longer this cluster's. Now the install stops
+# and says what is recorded, what is missing and what to do.
+#
+# A first install records nothing yet and passes; so does every host that
+# holds the recorded key, whatever else is in its keyring.
+#
+# The argument is "rotate" when --rotate-break-glass-key was given.
+gentian_require_recorded_break_glass_key() {
+    local rotate="${1:-}" lost recorded cluster="${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-<cluster>}"
+    # Whatever the environment or a config file said: only the confirmation
+    # below sets it.
+    _GENTIAN_BREAK_GLASS_ROTATION_OF=""
+    # Without gpg every key looks lost. That is another fault, and it is said
+    # as that one. (A read-only run does not start gpg on a host with no
+    # keyring, and reports what it finds.)
+    if ! gentian_read_only && [[ -n "$(gentian_signing_recorded_id break-glass)" ]] && ! command -v gpg >/dev/null 2>&1; then
+        error "gpg is required to sign deployment commits (AD-2) and is not installed."
+        error "  Debian/Ubuntu: apt-get install gnupg"
+        return 1
+    fi
+    lost="$(gentian_break_glass_key_lost || true)"
+
+    if [[ -z "${lost}" ]]; then
+        [[ "${rotate}" == "rotate" ]] || return 0
+        # Asked to replace a key that is not lost, or that was never recorded.
+        # Refused rather than ignored: a flag that silently does nothing reads
+        # as a rotation that happened.
+        recorded="$(gentian_signing_recorded_id break-glass)"
+        if [[ -n "${recorded}" ]]; then
+            error "--rotate-break-glass-key: the recorded key ${recorded} is in this host's keyring."
+            error "  The flag replaces a key that is lost, and this one is not. Nothing was changed."
+        else
+            error "--rotate-break-glass-key: clusters/${cluster}/kernel/signing/keys.env records no"
+            error "  break-glass key, so there is none to replace. A first install generates one"
+            error "  without this flag. Nothing was changed."
+        fi
+        return 1
+    fi
+
+    if [[ "${rotate}" == "rotate" ]]; then
+        echo ""
+        warn "clusters/${cluster}/kernel/signing/keys.env records the break-glass key ${lost},"
+        warn "  and this host's keyring ($(gentian_gpg_home)) does not hold it."
+        warn "  --rotate-break-glass-key generates a new one in its place."
+        echo ""
+        _signing_rotation_needs "${lost}"
+        echo ""
+        if gentian_read_only; then
+            gentian_would "ask for confirmation and then generate a new break-glass key in place of ${lost}"
+            return 0
+        fi
+        _signing_confirm_rotation "${lost}" || return 1
+        _GENTIAN_BREAK_GLASS_ROTATION_OF="${lost}"
+        return 0
+    fi
+
+    echo ""
+    error "This cluster's break-glass signing key is not on this machine."
+    error ""
+    error "  Recorded:  ${lost}"
+    error "             in clusters/${cluster}/kernel/signing/keys.env of ${GENTIAN_DEPLOYMENTS_PATH:-the deployments checkout}"
+    error "  Missing:   that key, in this host's keyring ($(gentian_gpg_home))"
+    error ""
+    error "  The installer signs what it writes to the deployments repository with that"
+    error "  key, and Argo CD accepts commits from it and from the director only. A key"
+    error "  generated here instead would replace the recorded id, so none is generated."
+    error "  Nothing was written: not to the checkout, not to the keyring, not to a cluster."
+    error ""
+    error "  Ways forward:"
+    error "    1. Restore the key from the recovery kit, which carries it unless it was"
+    error "       exported with GENTIAN_KIT_INCLUDE_BREAK_GLASS=0:"
+    error "         ./install.sh --recover <kit>"
+    error "    2. Run the installer on the machine that holds the key, or copy that"
+    error "       machine's keyring directory ($(gentian_gpg_home)) here."
+    error "    3. If the key is lost for good, replace it deliberately:"
+    error "         ./install.sh --rotate-break-glass-key"
+    error "       It asks for confirmation at a terminal and says what Argo CD's keyring"
+    error "       and the AppProject need afterwards."
+    if gentian_read_only; then
+        echo ""
+        gentian_would "stop here for that reason; this preview goes on"
+        return 0
+    fi
+    return 1
 }
 
 # gentian_export_public_key <role> — the armoured public half.

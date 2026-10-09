@@ -99,7 +99,7 @@ cluster. Under `--dry-run` and `--validate`:
 |---|---|---|
 | The cluster | applies, patches, deletes | only reads (`kubectl get`, `helm list`, `GET` requests to OpenBao) |
 | The deployments checkout | fast-forwards it, completes the cluster's definition, commits what is uncommitted, pushes | reads it as it is. It asks the remote where its branch is (`git ls-remote`) without fetching, and says so if the checkout is behind |
-| The signing keys | generates the break-glass key if this cluster has none | generates nothing, imports nothing, and does not start `gpg` on a host with no keyring |
+| The signing keys | generates the break-glass key if this cluster records none; refuses when it records one this host does not hold | generates nothing, imports nothing, and does not start `gpg` on a host with no keyring |
 | `~/.gentian` | writes `config`, the credential cache, the keyring | writes nothing |
 | `~/.local/bin` | fetches the OpenBao CLI when `bao` is missing, and unpacks it only if the archive matches the release's checksum list | fetches nothing; says it would |
 
@@ -117,8 +117,8 @@ repository records for the cluster
 (`clusters/<cluster-id>/kernel/signing/keys.env`), not by its name. Only a
 first install, which has no record yet, looks it up by name, and only once
 the kernel domain is known. A host whose keyring does not hold the recorded
-key is told so before a new key is generated in its place; restore the
-recorded one with `./install.sh --recover <kit>` instead.
+key is refused — see *The recorded signing key is not on this machine* in §9.
+A dry run says an install would stop, and goes on with its preview.
 
 This is held by a test that runs the installer in both modes with stand-ins
 for `git`, `gpg`, `kubectl`, `helm`, `curl` and `bao` that fail on anything
@@ -725,6 +725,35 @@ touches the deployments repository or the signing keys in `~/.gentian/gnupg`.
 ```bash
 ./install.sh --status
 ```
+
+**The recorded signing key is not on this machine.** The installer signs what
+it writes to the deployments repository with the cluster's break-glass key,
+and `clusters/<cluster-id>/kernel/signing/keys.env` records which key that is.
+When it records one and this host's keyring (`~/.gentian/gnupg`) does not hold
+it, the install stops before it writes anything — no file in the checkout, no
+key, no object in a cluster — and says what is recorded and what is missing.
+It used to generate another key and replace the recorded id. A first install,
+which records nothing yet, generates its key as before; other keys in the
+keyring change nothing either way. The ways forward:
+
+```bash
+./install.sh --recover <kit>             # the kit carries the key (unless exported with GENTIAN_KIT_INCLUDE_BREAK_GLASS=0)
+# or run the installer on the machine that holds the key, or copy its ~/.gentian/gnupg here
+./install.sh --rotate-break-glass-key    # only when the key is lost for good
+```
+
+`--rotate-break-glass-key` generates a new key in place of the recorded one.
+It asks a person to type the old key's id at a terminal; without a terminal,
+or with `GENTIAN_NONINTERACTIVE=1`, it is refused, and no variable confirms it
+on their behalf. It is also refused when the recorded key is present or when
+nothing is recorded. Before it asks, it prints what follows from a new key:
+the commit that names it is signed with it, and Argo CD on a running cluster
+refuses the repository from that commit on until the AppProject `gentian`
+(`spec.sourceIntegrity`, rendered by `B-01` from `keys.env`) and the ConfigMap
+`argocd-gpg-keys-cm` (filled by `B-10` from `break-glass.asc`) name the new
+id. On a cluster that is already installed `B-01` reports itself satisfied, so
+apply both with `./install.sh --only B-01,B-10 --force`; then export a new
+recovery kit, because the old one carries a key the cluster no longer trusts.
 
 **A resource is not becoming Ready.** Most of the cluster is reconciled by
 Crossplane and ArgoCD after the installer finishes:

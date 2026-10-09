@@ -22,7 +22,7 @@ CROSSPLANE_IMAGE ?= xpkg.crossplane.io/crossplane/crossplane:$(CROSSPLANE_CLI_VE
 KUBEBUILDER_ASSETS ?= /tmp/envtest-bins/k8s/1.32.0-linux-amd64
 export KUBEBUILDER_ASSETS
 
-.PHONY: verify all build generate manifests test lint docker-build clean install-plugin uninstall-plugin validate-steps gen-credentials gen-authz-model check-credentials lint-cluster-config-keys lint-rbac-coverage lint-marker-ascii test-bootstrap-token-classification test-cert-manager-dns01-args test-step0-sync test-user-tenant-scaffold test-catalogue-default test-kubectl-gentian test-bootstrap-switches test-operator-network-policy test-store-network-policies test-kernel-network-policies gen-kernel-network-policies test-wildcard-cache test-dns-credential-single-writer lint-composed-resource-names lint-sequencer-targets lint-eso-readable-paths lint-template-placeholders lint-portability lint-image-digests check-render-fixtures lint-resolvable lint-unreachable lint-bootstrap-apps lint-step-contracts lint-job-scripts lint-claim-defaults lint-live-identifiers lint-password-schemes test-policy test-policy-openbao test-policy-authz verify-authz-vocabulary test-director-contract run-director-dev lint-namespace-layout verify-claim-applied verify-argocd-config verify-image-updates gen-provider-rbac lint-provider-rbac lint-credential-validators lint-credential-catalogue test-openbao-cli-download verify-openbao-cli-release lint-image-pins test-argocd-repo-credentials test-signing-key-lookup test-dry-run-changes-nothing
+.PHONY: verify all build generate manifests test lint docker-build clean install-plugin uninstall-plugin validate-steps gen-credentials gen-authz-model check-credentials lint-cluster-config-keys lint-rbac-coverage lint-marker-ascii test-bootstrap-token-classification test-cert-manager-dns01-args test-step0-sync test-user-tenant-scaffold test-catalogue-default test-kubectl-gentian test-bootstrap-switches test-operator-network-policy test-store-network-policies test-kernel-network-policies gen-kernel-network-policies test-wildcard-cache test-dns-credential-single-writer lint-composed-resource-names lint-sequencer-targets lint-eso-readable-paths lint-template-placeholders lint-portability lint-image-digests check-render-fixtures lint-resolvable lint-unreachable lint-bootstrap-apps lint-step-contracts lint-job-scripts lint-claim-defaults lint-live-identifiers lint-password-schemes test-policy test-policy-openbao test-policy-authz verify-authz-vocabulary test-director-contract run-director-dev lint-namespace-layout verify-claim-applied verify-argocd-config verify-image-updates gen-provider-rbac lint-provider-rbac lint-provider-activation test-provider-activation refresh-provider-types test-default-profile-digest lint-credential-validators lint-credential-catalogue test-openbao-cli-download verify-openbao-cli-release lint-image-pins test-argocd-repo-credentials test-signing-key-lookup test-dry-run-changes-nothing
 
 all: generate build test
 
@@ -161,7 +161,7 @@ lint-yaml:
 ## The file list and flags must match CI exactly: -x follows sourced files, and no
 ## -S filter means info/style findings fail the build too. Hand-rolling a narrower
 ## invocation is how an SC2153 reached develop green-looking.
-lint-shell: validate-steps lint-step-contracts lint-resolvable lint-unreachable lint-bootstrap-apps lint-credential-fields lint-credential-validators lint-credential-catalogue lint-claim-defaults lint-live-identifiers lint-cluster-config-keys lint-template-placeholders lint-provider-rbac lint-password-schemes lint-rbac-coverage lint-composed-resource-names lint-sequencer-targets lint-eso-readable-paths lint-marker-ascii lint-scaffold-schemas lint-plan-defaults lint-legacy-profile-fields lint-step-order test-bootstrap-token-classification test-cert-manager-dns01-args test-step0-sync test-user-tenant-scaffold test-catalogue-default test-kubectl-gentian test-bootstrap-switches test-operator-network-policy test-store-network-policies test-kernel-network-policies test-wildcard-cache test-dns-credential-single-writer test-openbao-cli-download lint-image-pins test-argocd-repo-credentials test-signing-key-lookup test-dry-run-changes-nothing
+lint-shell: validate-steps lint-step-contracts lint-resolvable lint-unreachable lint-bootstrap-apps lint-credential-fields lint-credential-validators lint-credential-catalogue lint-claim-defaults lint-live-identifiers lint-cluster-config-keys lint-template-placeholders lint-provider-rbac lint-provider-activation lint-password-schemes lint-rbac-coverage lint-composed-resource-names lint-sequencer-targets lint-eso-readable-paths lint-marker-ascii lint-scaffold-schemas lint-plan-defaults lint-legacy-profile-fields lint-step-order test-bootstrap-token-classification test-cert-manager-dns01-args test-step0-sync test-user-tenant-scaffold test-catalogue-default test-kubectl-gentian test-bootstrap-switches test-operator-network-policy test-store-network-policies test-kernel-network-policies test-wildcard-cache test-dns-credential-single-writer test-openbao-cli-download lint-image-pins test-argocd-repo-credentials test-signing-key-lookup test-dry-run-changes-nothing test-provider-activation test-default-profile-digest
 	@git ls-files -z -- '*.sh' | xargs -0 shellcheck -x scripts/kubectl-gentian
 
 ## Round-trip the recovery kit: export one, load it back, prove every value
@@ -269,13 +269,13 @@ test-dry-run-changes-nothing:
 ## records, whether or not the kernel domain has been read; no second key is
 ## generated beside it; a stray key under the placeholder address is never
 ## the answer; and a head signed by one is covered by a commit signed with the
-## recorded key. A real gpg with a keyring in a temporary directory; skips
-## when gpg is absent.
+## recorded key. When keys.env records a key this keyring does not hold the
+## installer refuses, and --rotate-break-glass-key replaces it only after a
+## person confirmed at a terminal. A real gpg with a keyring in a temporary
+## directory; skips when gpg is absent.
 test-signing-key-lookup:
 	@bash scripts/tests/test-signing-key-lookup.sh
 
-## The OpenBao CLI archive's name for every host the installer supports, and
-## that an archive which does not match the release's checksum list installs
 ## The default profile step 0 places (the Operations Console) is written only
 ## when it hashes to the digest the catalogue's index lists, or to a pin given
 ## in GENTIAN_DEFAULT_PROFILES; a mismatch stops, an unreachable catalogue
@@ -285,6 +285,8 @@ test-signing-key-lookup:
 test-default-profile-digest:
 	@bash scripts/tests/test-default-profile-digest.sh
 
+## The OpenBao CLI archive's name for every host the installer supports, and
+## that an archive which does not match the release's checksum list installs
 ## nothing. curl and uname are stand-ins; no network.
 test-openbao-cli-download:
 	@bash scripts/tests/test-openbao-cli-download.sh
@@ -472,8 +474,6 @@ test-provider-activation:
 refresh-provider-types:
 	python3 scripts/gen/gen-provider-types.py
 
-## Assert every shell function is reached by something that runs. The other
-## half of lint-resolvable: that one catches a call with no definition, this
 ## Shell placeholders in Helm templates, which nothing expands
 lint-template-placeholders:
 	@python3 scripts/lint/lint-template-placeholders.py
@@ -485,6 +485,8 @@ lint-portability:
 
 ## Assert every bootstrap Application name resolves to a chart template.
 ## Reads only the repository — no cluster.
+## Assert every shell function is reached by something that runs. The other
+## half of lint-resolvable: that one catches a call with no definition, this
 ## one a definition with no call.
 lint-unreachable:
 	@python3 scripts/lint/lint-unreachable.py

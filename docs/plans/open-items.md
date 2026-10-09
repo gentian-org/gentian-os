@@ -123,6 +123,18 @@ been seen working on a cluster. Until it has, it is not done.
 - `--dry-run` and `--validate` changing nothing; the break-glass key found by
   its recorded id; the OpenBao command line fetched and checked.
 - The default catalogue chosen by the ref the platform is installed from.
+- Crossplane installed without its activate-everything policy, and only the
+  25 provider resource types in use activated (`A-04`, `B-05`). Not shown on a
+  cluster: that the two providers come up healthy with only those types, that
+  `B-05`'s wait for them ends, how a composed resource of a type that is not
+  activated shows on its composite, and `CROSSPLANE_ACTIVATE_ALL=true` as the
+  way back on a cluster that was installed without it.
+- The default profile placed only at the digest its catalogue's index lists or
+  a pin, written as the director writes it.
+- The installer refusing when the break-glass key `keys.env` records is not on
+  the machine, and `--rotate-break-glass-key` -- in particular that Argo CD
+  accepts the repository again once `B-01` and `B-10` have run with the new
+  id.
 - The director's clean stop and its write retry bounded by time.
 
 Carried over from before, and still not shown:

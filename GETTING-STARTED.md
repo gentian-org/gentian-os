@@ -204,9 +204,10 @@ them quietly gives you the earlier cluster instead of the one you mean:
    the certificate saves one of the five a week Let's Encrypt issues for a
    set of names. The installer looks the break-glass key up by the id the
    repository records for this cluster (`signing/keys.env`). On a machine
-   whose keyring does not hold that key it warns, generates a new one and
-   replaces the recorded id; to keep the recorded key, stop there and run
-   `./install.sh --recover <kit>` first.
+   whose keyring does not hold that key it **refuses to install**, before
+   writing anything: run `./install.sh --recover <kit>` there first, or
+   install from the machine that has the key
+   ([install-reference.md §9](docs/install-reference.md)).
 
 ---
 
@@ -993,11 +994,11 @@ composite waits on a kind the API server does not know, set
 that is the old behaviour, every type installed. The list, and how to add a
 type to it, are in [docs/install-reference.md §4](docs/install-reference.md).
 
-./install.sh --status             # which steps this cluster has already satisfied
 ### Running one step, or stopping early
 
 ```bash
 ./install.sh --explain            # what each step does, in order
+./install.sh --status             # which steps this cluster has already satisfied
 ./install.sh --only B-08          # a single step
 ./install.sh --from C-01          # resume from a step
 ./install.sh --until D-01         # stop after a step

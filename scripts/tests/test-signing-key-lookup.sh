@@ -22,6 +22,14 @@
 #   - a head commit signed by the stray key is covered by one signed with the
 #     recorded key (gentian_sign_unsigned_head), which is what repairs a
 #     repository the accident left that way.
+#   - when keys.env records a break-glass key this keyring does not hold, the
+#     installer refuses before it writes anything -- it says what is recorded,
+#     what is missing and the ways forward -- and no path generates a key in
+#     its place; a recorded key that IS held passes, whatever else the keyring
+#     holds; a first install, with nothing recorded, generates as before;
+#   - --rotate-break-glass-key replaces a lost key only after a person typed
+#     the old id at a terminal: no terminal, GENTIAN_NONINTERACTIVE=1 and a
+#     variable in the environment are all refusals.
 #
 # Skips when gpg is not installed. No cluster, no network.
 # =============================================================================
@@ -47,7 +55,9 @@ fi
 SB="$(mktemp -d "${TMPDIR:-/tmp}/gsk.XXXXXX")"
 GPGHOME="${SB}/g"
 # The agent gpg starts for this keyring is stopped before the directory goes.
-trap 'gpgconf --homedir "${GPGHOME}" --kill all >/dev/null 2>&1; rm -rf "${SB}"' EXIT
+# A second keyring, for the checks that generate a key.
+GPGHOME2="${SB}/h"
+trap 'gpgconf --homedir "${GPGHOME}" --kill all >/dev/null 2>&1; gpgconf --homedir "${GPGHOME2}" --kill all >/dev/null 2>&1; rm -rf "${SB}"' EXIT
 g() { git -c user.name=t -c user.email=t@t -c init.defaultBranch=main -c commit.gpgsign=false "$@" >/dev/null 2>&1; }
 raw_gpg() { gpg --homedir "${GPGHOME}" --batch --yes --quiet --pinentry-mode loopback --passphrase '' "$@"; }
 fpr_of() { raw_gpg --list-keys --with-colons "$1" 2>/dev/null | awk -F: '$1=="fpr" {print $10; exit}'; }
@@ -216,6 +226,164 @@ tip="$(git -C "${SB}/origin.git" rev-parse main)"
 run 'gentian_sign_unsigned_head "'"${KERNEL}"'" "'"${CLUSTER}"'"' KERNEL_DOMAIN="${DOMAIN}" >/dev/null
 is "a head that is signed by a listed key is left alone" "$(git -C "${SB}/origin.git" rev-parse main)" "${tip}"
 is "the keyring still holds the two keys it started with" "$(key_count)" "2"
+
+# --- the recorded key is not on this machine ----------------------------------
+# What the installer asks before it writes anything (install.sh, prepare_run).
+LOST="DEADBEEFDEADBEEF"
+checkout_state() { git -C "${CHECKOUT}" status --porcelain 2>/dev/null; git -C "${CHECKOUT}" rev-parse HEAD 2>/dev/null; }
+key_count2() { gpg --homedir "${GPGHOME2}" --batch --quiet --list-keys --with-colons 2>/dev/null | grep -c '^pub:' || true; }
+
+record_keys "${OWN: -16}"
+g -C "${CHECKOUT}" add -A; g -C "${CHECKOUT}" commit -m "the recorded key"
+before="$(key_count)"
+out="$(run 'gentian_require_recorded_break_glass_key ""; echo "rc=$?"' KERNEL_DOMAIN="${DOMAIN}")"
+if [[ "${out}" == "rc=0" && "$(key_count)" == "${before}" ]]; then
+    ok "the recorded key is in the keyring, a stray key under the placeholder address beside it: the install proceeds, silently"
+else
+    bad "the recorded key is in the keyring, a stray key under the placeholder address beside it: the install proceeds, silently" "${out}"
+fi
+is "and what signs is the recorded key, not the stray one" \
+    "$(run 'gentian_ensure_signing_key break-glass' KERNEL_DOMAIN="cluster.invalid")" "${OWN}"
+
+record_keys ""
+out="$(run 'gentian_require_recorded_break_glass_key ""; echo "rc=$?"' KERNEL_DOMAIN="${DOMAIN}")"
+is "nothing recorded yet (a first install): the install proceeds" "${out}" "rc=0"
+
+record_keys "${LOST}"
+g -C "${CHECKOUT}" add -A; g -C "${CHECKOUT}" commit -m "a key this host does not hold"
+before="$(key_count)"; state="$(checkout_state)"
+out="$(run 'gentian_require_recorded_break_glass_key ""; echo "rc=$?"' KERNEL_DOMAIN="${DOMAIN}")"
+if [[ "${out}" == *"rc=1"* && "$(key_count)" == "${before}" && "$(checkout_state)" == "${state}" ]]; then
+    ok "keys.env records a key this keyring does not hold: refused, no key generated, the checkout untouched"
+else
+    bad "keys.env records a key this keyring does not hold: refused, no key generated, the checkout untouched" "${out}"
+fi
+if [[ "${out}" == *"Recorded:  ${LOST}"* && "${out}" == *"clusters/${CLUSTER}/kernel/signing/keys.env"* \
+      && "${out}" == *"Missing:"* && "${out}" == *"${GPGHOME}"* ]]; then
+    ok "the refusal says what is recorded, where, and what is missing from which keyring"
+else
+    bad "the refusal says what is recorded, where, and what is missing from which keyring" "${out}"
+fi
+if [[ "${out}" == *"./install.sh --recover <kit>"* && "${out}" == *"./install.sh --rotate-break-glass-key"* ]]; then
+    ok "and the ways forward: --recover with the kit, or the deliberate rotation"
+else
+    bad "and the ways forward: --recover with the kit, or the deliberate rotation" "${out}"
+fi
+out="$(run 'gentian_ensure_signing_key break-glass; echo " rc=$?"' KERNEL_DOMAIN="other.example.test")"
+if [[ "${out}" == *"rc=1"* && "$(key_count)" == "${before}" ]]; then
+    ok "a path that reaches the keygen without that question is refused there too"
+else
+    bad "a path that reaches the keygen without that question is refused there too" "${out} (keys: ${before} -> $(key_count))"
+fi
+out="$(run 'gentian_ensure_signing_key break-glass; echo " rc=$?"' KERNEL_DOMAIN="other.example.test" _GENTIAN_BREAK_GLASS_ROTATION_OF="${LOST}")"
+if [[ "${out}" == *"rc=1"* && "$(key_count)" == "${before}" ]]; then
+    ok "a variable in the environment naming the lost key does not stand in for the confirmation"
+else
+    bad "a variable in the environment naming the lost key does not stand in for the confirmation" "${out}"
+fi
+out="$(run 'gentian_require_recorded_break_glass_key ""; echo "rc=$?"' KERNEL_DOMAIN="${DOMAIN}" GENTIAN_DRY_RUN=1)"
+if [[ "${out}" == *"rc=0"* && "${out}" == *"Recorded:  ${LOST}"* && "${out}" == *"Would stop here"* && "$(key_count)" == "${before}" ]]; then
+    ok "--dry-run says an install would stop, and why, and goes on with the preview"
+else
+    bad "--dry-run says an install would stop, and why, and goes on with the preview" "${out}"
+fi
+
+# Under the installer's own shell options, where a function that merely
+# answers "no" outside a condition would end the run without the message.
+record_keys "${OWN: -16}"
+# shellcheck disable=SC2016 # the inner script is for the child shell to expand
+out="$(env -i HOME="${SB}/home" PATH="${PATH}" SCRIPT_DIR="${REPO}" GENTIAN_GPG_HOME="${GPGHOME}" KERNEL_DOMAIN="${DOMAIN}" \
+    GENTIAN_DEPLOYMENTS_PATH="${CHECKOUT}" GENTIAN_DEPLOYMENTS_CLUSTER_ID="${CLUSTER}" \
+    bash -c 'source "${SCRIPT_DIR}/scripts/lib/load.sh" >/dev/null 2>&1; trap - ERR; set -euo pipefail
+             gentian_require_recorded_break_glass_key "" || exit 1; echo "the install goes on"' 2>&1 < /dev/null)"
+is "under set -euo pipefail, the recorded key present: the install goes on" "${out}" "the install goes on"
+record_keys "${LOST}"
+# shellcheck disable=SC2016 # the inner script is for the child shell to expand
+out="$(env -i HOME="${SB}/home" PATH="${PATH}" SCRIPT_DIR="${REPO}" GENTIAN_GPG_HOME="${GPGHOME}" KERNEL_DOMAIN="${DOMAIN}" \
+    GENTIAN_DEPLOYMENTS_PATH="${CHECKOUT}" GENTIAN_DEPLOYMENTS_CLUSTER_ID="${CLUSTER}" \
+    bash -c 'source "${SCRIPT_DIR}/scripts/lib/load.sh" >/dev/null 2>&1; trap - ERR; set -euo pipefail
+             gentian_require_recorded_break_glass_key "" || exit 1; echo "the install goes on"' 2>&1 < /dev/null; echo "rc=$?")"
+if [[ "${out}" == *"Recorded:  ${LOST}"* && "${out}" == *"rc=1"* && "${out}" != *"the install goes on"* ]]; then
+    ok "under set -euo pipefail, the recorded key missing: the whole message, then the install ends non-zero"
+else
+    bad "under set -euo pipefail, the recorded key missing: the whole message, then the install ends non-zero" "${out}"
+fi
+
+# --- the deliberate rotation ---------------------------------------------------
+ROTATE='gentian_require_recorded_break_glass_key rotate && gentian_ensure_signing_key break-glass; echo " rc=$?"'
+out="$(run "${ROTATE}" KERNEL_DOMAIN="other.example.test" < /dev/null)"
+if [[ "${out}" == *"rc=1"* && "${out}" == *"at a terminal"* && "$(key_count)" == "${before}" ]]; then
+    ok "--rotate-break-glass-key without a terminal: refused, nothing generated"
+else
+    bad "--rotate-break-glass-key without a terminal: refused, nothing generated" "${out}"
+fi
+if [[ "${out}" == *"AppProject gentian, spec.sourceIntegrity"* && "${out}" == *"argocd-gpg-keys-cm"* \
+      && "${out}" == *"--only B-01,B-10 --force"* && "${out}" == *"--export-recovery-kit"* ]]; then
+    ok "it says first what Argo CD's AppProject and keyring need, and that the recovery kit is stale"
+else
+    bad "it says first what Argo CD's AppProject and keyring need, and that the recovery kit is stale" "${out}"
+fi
+out="$(printf '%s\n' "${LOST}" | run "${ROTATE}" KERNEL_DOMAIN="other.example.test")"
+if [[ "${out}" == *"rc=1"* && "$(key_count)" == "${before}" ]]; then
+    ok "the id piped in is not a person typing it: refused"
+else
+    bad "the id piped in is not a person typing it: refused" "${out}"
+fi
+record_keys "${OWN: -16}"
+out="$(run "${ROTATE}" KERNEL_DOMAIN="${DOMAIN}" < /dev/null)"
+if [[ "${out}" == *"rc=1"* && "${out}" == *"is in this host's keyring"* && "$(key_count)" == "${before}" ]]; then
+    ok "asked to rotate a key that is not lost: refused rather than ignored"
+else
+    bad "asked to rotate a key that is not lost: refused rather than ignored" "${out}"
+fi
+record_keys ""
+out="$(run "${ROTATE}" KERNEL_DOMAIN="${DOMAIN}" < /dev/null)"
+if [[ "${out}" == *"rc=1"* && "${out}" == *"records no"* && "$(key_count)" == "${before}" ]]; then
+    ok "asked to rotate when nothing is recorded: refused, a first install needs no flag"
+else
+    bad "asked to rotate when nothing is recorded: refused, a first install needs no flag" "${out}"
+fi
+
+# With a terminal. util-linux's script(1) gives the child one and types what
+# it is handed; where there is no such script, these two are not run.
+record_keys "${LOST}"
+mkdir -p "${GPGHOME2}"; chmod 700 "${GPGHOME2}"
+if script -qec true /dev/null >/dev/null 2>&1; then
+    cat > "${SB}/rotate.sh" <<ROTATE_SH
+#!/usr/bin/env bash
+export HOME="${SB}/home" SCRIPT_DIR="${REPO}" GENTIAN_GPG_HOME="${GPGHOME2}"
+export GENTIAN_DEPLOYMENTS_PATH="${CHECKOUT}" GENTIAN_DEPLOYMENTS_CLUSTER_ID="${CLUSTER}" KERNEL_DOMAIN="${DOMAIN}"
+source "\${SCRIPT_DIR}/scripts/lib/load.sh" >/dev/null 2>&1; trap - ERR; set +e
+${ROTATE}
+ROTATE_SH
+    chmod 700 "${SB}/rotate.sh"
+    out="$(printf 'not-the-id\n' | script -qec "${SB}/rotate.sh" /dev/null 2>&1)"
+    if [[ "${out}" == *"rc=1"* && "${out}" == *"did not match"* && "$(key_count2)" == "0" ]]; then
+        ok "at a terminal, something other than the old id typed: refused, nothing generated"
+    else
+        bad "at a terminal, something other than the old id typed: refused, nothing generated" "${out}"
+    fi
+    out="$(printf '%s\n' "${LOST}" | script -qec "${SB}/rotate.sh" /dev/null 2>&1)"
+    if [[ "${out}" == *"rc=0"* && "$(key_count2)" == "1" ]]; then
+        ok "at a terminal, the old id typed: a new break-glass key is generated"
+    else
+        bad "at a terminal, the old id typed: a new break-glass key is generated" "${out}"
+    fi
+else
+    echo "  ${YELLOW}skipped${NC}: no script(1) to provide a terminal; the confirmed rotation is not exercised."
+fi
+
+# --- a first install still generates ------------------------------------------
+record_keys ""
+rm -rf "${GPGHOME2}"; mkdir -p "${GPGHOME2}"; chmod 700 "${GPGHOME2}"
+out="$(run 'gentian_require_recorded_break_glass_key "" && gentian_ensure_signing_key break-glass >/dev/null; echo "rc=$?"' \
+    KERNEL_DOMAIN="${DOMAIN}" GENTIAN_GPG_HOME="${GPGHOME2}")"
+if [[ "${out}" == *"rc=0"* && "$(key_count2)" == "1" ]]; then
+    ok "a first install -- no keys.env, an empty keyring -- generates its key as before"
+else
+    bad "a first install -- no keys.env, an empty keyring -- generates its key as before" "${out}"
+fi
+is "the first keyring still holds the two keys it started with" "$(key_count)" "2"
 
 echo ""
 if [[ ${fail} -eq 0 ]]; then

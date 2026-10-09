@@ -143,6 +143,9 @@ GENTIAN_PURGE=0
 GENTIAN_PURGE_CLUSTER_INFRA=0
 GENTIAN_KIT_PATH=""
 GENTIAN_RECOVER_FROM=""
+# Set by --rotate-break-glass-key and by nothing else: assigned here so that a
+# value in the environment is not a flag nobody typed.
+GENTIAN_ROTATE_BREAK_GLASS=""
 GENTIAN_TENANT_NAME="${GENTIAN_TENANT_NAME:-}"
 
 driver_usage() {
@@ -155,6 +158,14 @@ Recovery:
                                 to an encrypted kit; default gentian-recovery-kit.age
   --recover PATH                load a kit before installing, so derived
                                 credentials reproduce their original values
+  --rotate-break-glass-key      replace a break-glass signing key that is lost.
+                                The installer refuses to run when the key the
+                                deployments repository records for this cluster
+                                is not in this host's keyring; --recover puts it
+                                back. This is for when there is nothing to put
+                                back: it generates a new key, after a person has
+                                typed the old key's id at a terminal. Nothing
+                                confirms it on their behalf
 
 Looking before running:
   --explain             print what every step does, in order, and stop
@@ -276,6 +287,7 @@ parse_driver_args() {
             --recover)
                 shift; [[ $# -gt 0 ]] || { error "$0: --recover requires a kit path"; exit 1; }
                 GENTIAN_RECOVER_FROM="$1" ;;
+            --rotate-break-glass-key) GENTIAN_ROTATE_BREAK_GLASS="rotate" ;;
             --disable-api-extensions) export GENTIAN_DISABLE_API_EXTENSIONS="1" ;;
             --no-licence-report) export GENTIAN_NO_LICENCE_REPORT="1" ;;
             --no-cluster-infra)  INSTALL_CLUSTER_INFRA="0" ;;
@@ -310,6 +322,16 @@ parse_driver_args() {
           && "${GENTIAN_PURGE}" != "1" ]]; then
         error "--cluster-infra removes shared operators and their CRDs, which only --purge does."
         error "  Did you mean: ./install.sh --purge --cluster-infra"
+        exit 1
+    fi
+
+    # The same for --rotate-break-glass-key: it belongs to an install, which is
+    # the only run that asks whether the recorded key is here.
+    if [[ -n "${GENTIAN_ROTATE_BREAK_GLASS}" ]] && \
+       [[ "${GENTIAN_DIRECTION}" != "forward" || "${INSTALL_VERIFY_ONLY:-0}" == "1" || "${GENTIAN_EXPLAIN:-0}" == "1" ]]; then
+        error "--rotate-break-glass-key replaces a lost signing key during an install or an update."
+        error "  It does nothing with the command it was given beside; run it on its own:"
+        error "    ./install.sh --rotate-break-glass-key"
         exit 1
     fi
 
@@ -363,6 +385,16 @@ prepare_run() {
         gentian_sync_deployments_checkout || exit 1
     fi
     load_deployments_cluster_settings
+
+    # The key this cluster's definition is signed with has to be on this
+    # machine, if the repository records one. Asked here: the checkout is
+    # current and the cluster is known, and nothing has been written yet --
+    # no file in the checkout, no key, no object in a cluster. After
+    # --recover, which is what puts a missing key back.
+    if [[ "${GENTIAN_DIRECTION}" == "forward" ]]; then
+        gentian_require_recorded_break_glass_key "${GENTIAN_ROTATE_BREAK_GLASS}" || exit 1
+    fi
+
     try_load_creds_from_openbao
 
     [[ "${INSTALL_VALIDATE_ONLY:-0}" == "1" ]] && validate_config
