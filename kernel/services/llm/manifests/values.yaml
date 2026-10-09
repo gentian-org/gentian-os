@@ -11,6 +11,31 @@ env: dev
 # see the note in the ApplicationSet.
 mockBackend: true
 
+# The model gateway: LiteLLM, one build named twice -- by its release tag and
+# by the digest of what that tag held -- for the proxy and for the init
+# container that builds its trust bundle from the same image.
+#
+# It ran ghcr.io/berriai/litellm:latest. That is whatever upstream published
+# last, pulled again on every pod start: two clusters installed a week apart
+# ran different gateways, a restarted pod could come back as a different
+# release from the replica beside it, and each new release applied its own
+# database migrations to the gateway's database with nobody having chosen to
+# upgrade. This is the gateway every tenant's model traffic and budget goes
+# through, so the release is chosen here and moves when this line does.
+#
+# The digest is the multi-architecture index (amd64 and arm64), which
+# `make lint-image-digests` checks; `make lint-image-pins` refuses a tag
+# without a digest here and `latest` anywhere.
+#
+# To move it: pick a release from https://github.com/BerriAI/litellm/releases
+# (not a -dev or -rc one), read its notes for changes to the environment
+# variables templates/llm-services.yaml sets and to the /team, /key and /model
+# endpoints the operator and scripts/lib/llm-lib.sh call, and take the digest
+# the registry reports for the tag:
+#   docker buildx imagetools inspect ghcr.io/berriai/litellm:<tag>
+gateway:
+  image: ghcr.io/berriai/litellm:v1.104.2@sha256:3d88bd757134a00e8c00237b85a021ab1f6d54abb9c1df750f411dbe7256a500
+
 # Whether this cluster's claim lists any spec.llm.providers.
 #
 # Only gates the ExternalSecret for their API keys. The model registrations

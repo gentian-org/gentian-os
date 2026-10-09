@@ -29,17 +29,28 @@ RED=$'\033[0;31m'; GREEN=$'\033[0;32m'; YELLOW=$'\033[1;33m'; DIM=$'\033[2m'; NC
 
 fail=0; checked=0; skipped=0
 
-# _is_manifest_list <repo> <digest> — 0 list, 1 single, 2 unknown.
+# _is_manifest_list <registry> <repo> <digest> — 0 list, 1 single, 2 unknown.
+#
+# Docker Hub and ghcr.io, which both hand an anonymous pull token to anybody
+# who asks for one. Any other registry is unknown rather than guessed at.
 _is_manifest_list() {
-    local repo="$1" digest="$2" token body
-    token="$(curl -fsS --max-time 20 \
-        "https://auth.docker.io/token?service=registry.docker.io&scope=repository:${repo}:pull" \
+    local registry="$1" repo="$2" digest="$3" token body auth host
+    case "${registry}" in
+        docker.io)
+            auth="https://auth.docker.io/token?service=registry.docker.io&scope=repository:${repo}:pull"
+            host="https://registry-1.docker.io" ;;
+        ghcr.io)
+            auth="https://ghcr.io/token?scope=repository:${repo}:pull"
+            host="https://ghcr.io" ;;
+        *)  return 2 ;;
+    esac
+    token="$(curl -fsS --max-time 20 "${auth}" \
         2>/dev/null | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')" || return 2
     [[ -n "${token}" ]] || return 2
 
     body="$(curl -fsS --max-time 20 -H "Authorization: Bearer ${token}" \
         -H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json' \
-        "https://registry-1.docker.io/v2/${repo}/manifests/${digest}" 2>/dev/null)" || return 2
+        "${host}/v2/${repo}/manifests/${digest}" 2>/dev/null)" || return 2
 
     case "${body}" in
         *'"manifests"'*) return 0 ;;
@@ -52,20 +63,33 @@ echo ""
 echo "Image digest lint — pinned digests must cover every architecture"
 echo ""
 
-# Only Docker Hub is queried; other registries need their own auth flow and are
-# reported as unchecked rather than silently passed.
+# Docker Hub and ghcr.io are queried; other registries need their own auth
+# flow and are reported as unchecked rather than silently passed.
 while IFS= read -r line; do
     file="${line%%:*}"
     rest="${line#*:}"
     digest="sha256:${rest##*@sha256:}"
     digest="${digest%%\"*}"
+    digest="${digest%%[!0-9a-f:sh]*}"
 
-    repo="$(sed -n 's/.*repository:[[:space:]]*"\{0,1\}\([a-z0-9._/-]*\).*/\1/p' "${file}" | head -1)"
-    [[ -n "${repo}" ]] || repo="$(basename "$(dirname "${file}")")"
-    [[ "${repo}" == */* ]] || repo="library/${repo}"
+    # A whole reference on the line -- name:tag@sha256:... -- says which image
+    # it is. A digest written against a bare tag does not, and the repository
+    # is then the file's own `repository:` or the chart's directory.
+    registry="docker.io"
+    ref="$(grep -oE '[a-z0-9][a-z0-9._/-]*:[A-Za-z0-9._-]+@sha256:[0-9a-f]{64}' <<< "${rest}" | head -1 || true)"
+    if [[ -n "${ref}" ]]; then
+        repo="${ref%@*}"; repo="${repo%:*}"
+        if [[ "${repo}" == */* && "${repo%%/*}" == *.* ]]; then
+            registry="${repo%%/*}"; repo="${repo#*/}"
+        fi
+    else
+        repo="$(sed -n 's/.*repository:[[:space:]]*"\{0,1\}\([a-z0-9._/-]*\).*/\1/p' "${file}" | head -1)"
+        [[ -n "${repo}" ]] || repo="$(basename "$(dirname "${file}")")"
+    fi
+    [[ "${registry}" != "docker.io" || "${repo}" == */* ]] || repo="library/${repo}"
 
     checked=$((checked + 1))
-    if _is_manifest_list "${repo}" "${digest}"; then
+    if _is_manifest_list "${registry}" "${repo}" "${digest}"; then
         printf '  %s✓%s %-42s %s%s%s\n' "${GREEN}" "${NC}" "${repo}" "${DIM}" "${digest:0:19}… manifest list" "${NC}"
     else
         case $? in

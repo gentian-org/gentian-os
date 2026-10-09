@@ -64,7 +64,7 @@ spec:
       # holding only the cluster CA would make the proxy unable to verify the
       # external providers it routes to — api.infomaniak.com and the rest.
       - name: ca-trust
-        image: ghcr.io/berriai/litellm:latest
+        image: {{ .Values.gateway.image }}
         securityContext:
           allowPrivilegeEscalation: false
         command:
@@ -94,7 +94,7 @@ spec:
           mountPath: /trust
       containers:
       - name: litellm
-        image: ghcr.io/berriai/litellm:latest
+        image: {{ .Values.gateway.image }}
         securityContext:
           allowPrivilegeEscalation: false
         volumeMounts:
