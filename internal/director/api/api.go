@@ -1499,14 +1499,18 @@ func (s *Server) setTenantDomain(w http.ResponseWriter, r *http.Request, c call)
 	s.writeTenantDomain(w, r, c, body.Domain)
 }
 
-// clearTenantDomain puts the tenant back on <tenant>.<kernel>.
+// clearTenantDomain puts the tenant back on its default address. It is
+// refused to no tenant, under either tenancy mode.
 func (s *Server) clearTenantDomain(w http.ResponseWriter, r *http.Request, c call) {
 	s.writeTenantDomain(w, r, c, "")
 }
 
 func (s *Server) writeTenantDomain(w http.ResponseWriter, r *http.Request, c call, domain string) {
 	res, err := s.cfg.Repo.SetTenantDomain(r.Context(), r.PathValue("t"), domain, c.meta)
-	if errors.Is(err, gitops.ErrInvalidDomain) {
+	// The three refusals of a bind, each worded for a person: the domain
+	// itself, the platform tenant, and a single-tenancy cluster.
+	if errors.Is(err, gitops.ErrInvalidDomain) || errors.Is(err, gitops.ErrPlatformTenantDomain) ||
+		errors.Is(err, gitops.ErrSingleTenancy) {
 		s.fail(w, r, http.StatusUnprocessableEntity, err.Error())
 		return
 	}

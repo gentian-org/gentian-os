@@ -186,10 +186,14 @@ an approver the address before it is approved) both import.
 the director (`PUT`/`DELETE /v1/clusters/{c}/tenants/{t}/domain`,
 `can_configure` on the cluster). The director refuses a name that is not a
 hostname, a domain that is the cluster's or under it, and one another tenant
-holds (`422`). It does not ask the tenancy mode: the user tenant of a
-single-tenancy cluster can be bound like any other, and is then on that
-domain and no longer on the cluster's. Nobody checks the DNS record or the
-certificate.
+holds (`422`). Binding is for the user tenants of a multi-tenancy cluster:
+the director refuses a bind for any tenant when the tenancy mode is `single`
+(the user tenant would leave the cluster's own addresses and give up the
+main address), and for the platform tenant under either mode (`422`, with
+the reason; nothing is committed). Removing a binding is refused to nobody,
+so a tenant bound before this was asked can be put back. The operator still
+follows a `TenantDomain` that reaches the cluster another way. Nobody checks
+the DNS record or the certificate.
 
 TLS issuance is handled by cert-manager:
 

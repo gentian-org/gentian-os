@@ -122,6 +122,12 @@ name to remove -- which `--yes` skips in a script. The director refuses a
 name that is not a hostname, a domain on or under the cluster's own, and one
 another tenant is bound to; its refusal is printed as it worded it.
 
+Binding is for a cluster with many tenants. On a single-tenancy cluster the
+one tenant for users is on the cluster's own addresses, and the director
+refuses to bind any tenant there; it refuses the platform tenant on every
+cluster. Nothing is changed by a refused bind. `--remove` is never refused
+for either reason.
+
 Two things have to be true first, and neither the director nor the command
 checks them:
 

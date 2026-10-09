@@ -477,6 +477,51 @@ func TestACustomDomainIsOneCommitAndRefusedWhereItCannotBe(t *testing.T) {
 	}
 }
 
+// No domain is bound on a single-tenancy cluster, to its user tenant or any
+// other, and none to the platform tenant under either mode: each is refused
+// before git, whatever the domain. Unbinding is refused to neither.
+func TestADomainIsBoundToNoTenantOfASingleTenancyClusterAndNeverToThePlatformTenant(t *testing.T) {
+	remote := dt.Remote(t, "platform", "user", "acme")
+	dt.Commit(t, remote, map[string]string{
+		dt.TenantPath("platform"): "apiVersion: gentianos.io/v1alpha1\nkind: Tenant\nmetadata:\n  name: platform\n" +
+			"spec:\n  displayName: Platform\n  isolation:\n    mode: namespace\n    keycloakRealm: kernel\n",
+	})
+	g := gitops.NewGitOps(dt.Clone(t, remote), remote, dt.Cluster, director)
+	ctx := context.Background()
+
+	// Many tenants: only the platform tenant is refused.
+	if _, err := g.SetTenantDomain(ctx, "platform", "acme.example", tenantMeta()); !errors.Is(err, gitops.ErrPlatformTenantDomain) {
+		t.Fatalf("the platform tenant under multi: err = %v", err)
+	}
+	if res, err := g.SetTenantDomain(ctx, "acme", "acme.example", tenantMeta()); err != nil || !res.Changed {
+		t.Fatalf("a user tenant under multi: %+v, %v", res, err)
+	}
+
+	claim := dt.RemoteFile(t, remote, dt.ClaimPath)
+	dt.Commit(t, remote, map[string]string{dt.ClaimPath: strings.TrimRight(claim, "\n") + "\n  tenancyMode: single\n"})
+	g = gitops.NewGitOps(dt.Clone(t, remote), remote, dt.Cluster, director)
+	before := dt.Git(t, "", "--git-dir", remote, "rev-parse", "main")
+	for _, tenant := range []string{"user", "acme"} {
+		_, err := g.SetTenantDomain(ctx, tenant, "other.example", tenantMeta())
+		if !errors.Is(err, gitops.ErrSingleTenancy) || !strings.Contains(err.Error(), "Nothing was changed") {
+			t.Errorf("%s under single: err = %v", tenant, err)
+		}
+	}
+	if _, err := g.SetTenantDomain(ctx, "platform", "other.example", tenantMeta()); !errors.Is(err, gitops.ErrPlatformTenantDomain) {
+		t.Errorf("the platform tenant under single: err = %v", err)
+	}
+	if after := dt.Git(t, "", "--git-dir", remote, "rev-parse", "main"); after != before {
+		t.Fatal("a refused domain reached git")
+	}
+	// The tenant bound before the mode changed is put back.
+	if res, err := g.SetTenantDomain(ctx, "acme", "", tenantMeta()); err != nil || !res.Changed {
+		t.Fatalf("unbind under single: %+v, %v", res, err)
+	}
+	if res, err := g.SetTenantDomain(ctx, "platform", "", tenantMeta()); err != nil || res.Changed {
+		t.Fatalf("unbind of the platform tenant, which has none: %+v, %v", res, err)
+	}
+}
+
 // The brand is one commit of a Branding among the cluster's declarations,
 // read back as written; one the pages could not show is refused before git.
 func TestTheBrandIsCommittedAndABrokenOneIsRefused(t *testing.T) {

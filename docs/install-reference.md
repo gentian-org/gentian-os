@@ -349,11 +349,11 @@ matched exactly and with everything below a name (`x.admin`); the director
 refuses the install with the reason before anything is committed.
 
 The user tenant needs no domain bound: its domain is the cluster's.
-`kubectl gentian tenants domain user <domain>` is not refused on a
-single-tenancy cluster, though; the director applies the rules it applies to
-any tenant (a domain on or under the cluster's own is refused), and the
-tenant then moves off the cluster's addresses to that domain. It can then
-hold no website at the main address (`OwnDomain`).
+`kubectl gentian tenants domain user <domain>` is refused on a
+single-tenancy cluster (`422`, nothing is changed): bound to a domain of its
+own the tenant would leave the cluster's addresses and could hold no website
+at the main address. `tenants domain user --remove` is not refused, for a
+tenant that was bound before.
 
 A website at the cluster's main address (`https://<kernel-domain>/` and
 `www.`) exists only here. A profile declares the entry (`apex: true`), and

@@ -19,11 +19,58 @@ import (
 	"strings"
 
 	"sigs.k8s.io/yaml"
+
+	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
 // ErrInvalidDomain is a custom domain that cannot be one: not a hostname, on
 // the kernel domain, or already another tenant's.
 var ErrInvalidDomain = errors.New("invalid custom domain")
+
+// ErrPlatformTenantDomain is a domain asked for the platform tenant.
+//
+// That tenant's addresses are the cluster's own: its desktop is
+// platform.<kernel>, its components answer below that, and the kernel's
+// routes, the administrators' sign-in and the front page on the bare domain
+// are all written for those names. Bound to another domain it would be
+// declared somewhere none of them look. The message is what a person reads:
+// the API hands it on unchanged.
+var ErrPlatformTenantDomain = errors.New(
+	"this is the platform tenant: it is where the cluster's administrators sign in, at platform.<the cluster's domain>, " +
+		"and it stays on the cluster's own addresses. A domain is bound to a tenant for users. Nothing was changed")
+
+// errSingleTenancyDomain is a domain asked for a tenant of a single-tenancy
+// cluster, wrapped in ErrSingleTenancy.
+func errSingleTenancyDomain() error {
+	return fmt.Errorf("%w: its one tenant for users is on the cluster's own addresses, and bound to a domain of its own "+
+		"it would leave them and give up the cluster's main address. Binding a domain is for a cluster with many tenants "+
+		"(tenancyMode: multi). Nothing was changed", ErrSingleTenancy)
+}
+
+// refuseDomainBinding is why no domain may be bound to this tenant, or nil.
+//
+// Two tenants take none. The platform tenant, under either mode. And any
+// tenant of a single-tenancy cluster: the user tenant's domain there is the
+// cluster's, which is what puts its apps at <label>.<kernel> and lets it
+// hold the main address. Asked before the domain is looked at, since no
+// domain would do.
+func (g *GitOps) refuseDomainBinding(ctx context.Context, tenant string) error {
+	platform, err := g.IsPlatformTenant(ctx, tenant)
+	if err != nil {
+		return err
+	}
+	if platform {
+		return ErrPlatformTenantDomain
+	}
+	settings, err := g.ClusterSettingValues(ctx)
+	if err != nil && !errors.Is(err, ErrNoClusterClaim) {
+		return err
+	}
+	if gentianov1alpha1.NormalizeTenancyMode(settings["tenancyMode"]) == gentianov1alpha1.TenancyModeSingle {
+		return errSingleTenancyDomain()
+	}
+	return nil
+}
 
 var hostnamePattern = regexp.MustCompile(`^([a-z0-9]([-a-z0-9]*[a-z0-9])?\.)+[a-z]{2,}$`)
 
@@ -32,10 +79,13 @@ var hostnamePattern = regexp.MustCompile(`^([a-z0-9]([-a-z0-9]*[a-z0-9])?\.)+[a-
 // manifest and its kustomization entry. The operator moves the tenant's
 // hosts, mail and logins to the domain from there.
 //
-// Refused before anything is written: a name that is not a hostname, one on
-// the kernel domain -- the operator would refuse it, and the tenant is there
-// already -- and one another tenant holds, since two tenants on one domain
-// would claim the same hosts.
+// Refused before anything is written: a bind for the platform tenant
+// (ErrPlatformTenantDomain) or on a single-tenancy cluster
+// (ErrSingleTenancy); a name that is not a hostname, one on the kernel
+// domain -- the operator would refuse it, and the tenant is there already --
+// and one another tenant holds, since two tenants on one domain would claim
+// the same hosts. Unbinding is refused to nobody, so a tenant that was bound
+// where it should not have been can be put back.
 func (g *GitOps) SetTenantDomain(ctx context.Context, tenant, domain string, meta Meta) (Result, error) {
 	if !ValidName(tenant) {
 		return Result{}, fmt.Errorf("%w: tenant %q", ErrInvalidName, tenant)
@@ -44,6 +94,9 @@ func (g *GitOps) SetTenantDomain(ctx context.Context, tenant, domain string, met
 	if domain == "" {
 		return g.writeTenantFile(ctx, tenant, TenantDomainFile, "", listResource,
 			fmt.Sprintf("Tenant %s: no custom domain", tenant), meta)
+	}
+	if err := g.refuseDomainBinding(ctx, tenant); err != nil {
+		return Result{}, err
 	}
 	if len(domain) > 253 || !hostnamePattern.MatchString(domain) {
 		return Result{}, fmt.Errorf("%w: %q is not a hostname", ErrInvalidDomain, domain)

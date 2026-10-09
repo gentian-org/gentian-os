@@ -24,6 +24,7 @@
 #   kubectl gentian tenants delegate-catalogues <name> on|off
 #   kubectl gentian tenants domain <name>                      the domain of its own it is bound to
 #   kubectl gentian tenants domain <name> <domain> [--yes]     bind it: its addresses move to <label>.<domain>
+#                                                             (a cluster with many tenants only)
 #   kubectl gentian tenants domain <name> --remove [--yes]     back to its default address
 #
 #   kubectl gentian catalogues list [--tenant <tenant>]
@@ -1166,8 +1167,10 @@ cmd_tenants_domain() {
     echo "    ${domain} -- its DNS token covers that zone. The tenant gets one wildcard certificate, *.${domain};"
     echo "    until it is issued its addresses have none."
     echo
-    echo "The director refuses a name that is not a hostname, one on or under the cluster's own domain, and one"
-    echo "another tenant is bound to."
+    echo "This command is for a cluster with many tenants. On a single-tenancy cluster the one tenant for users"
+    echo "is on the cluster's own addresses and the director refuses to bind it, as it refuses the platform tenant"
+    echo "on any cluster. It also refuses a name that is not a hostname, one on or under the cluster's own"
+    echo "domain, and one another tenant is bound to."
     if [[ -z "${yes}" ]]; then
         read -r -p "Type ${domain} to confirm: " typed
         [[ "${typed}" == "${domain}" ]] || die "not confirmed; nothing was changed"

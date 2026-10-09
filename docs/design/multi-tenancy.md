@@ -219,14 +219,19 @@ command line it is `kubectl gentian tenants domain <name> [<domain> |
 for the domain to be typed. Neither the director nor the command checks the
 domain's DNS or that a certificate can be issued for it.
 
-Nothing here asks the tenancy mode. Under `single` the user tenant is
-already on the cluster's own addresses, so no domain needs binding, and the
-cluster's own domain cannot be bound. Binding another domain to the tenant
-`user` is accepted like any other. That tenant then leaves the
-cluster's own addresses for `<label>.<domain>`, and a website it had on the
-main address is withdrawn (`OwnDomain`). The kernel's names stay refused to
-its apps, because it is back on the cluster's domain the day the binding is
-removed. The tenant's hosts, mail and logins move to it, and
+A domain is bound to a user tenant of a multi-tenancy cluster and to no
+other. Under `single` the user tenant is already on the cluster's own
+addresses, and bound to another domain it would leave them and give up the
+main address, so the director refuses a bind for any tenant there (`422`:
+"this cluster's tenancy mode is single ... Nothing was changed"). It refuses
+one for the platform tenant under either mode, whose addresses are the
+cluster's own (`platform.<kernelDomain>` and below). `DELETE` is not
+refused, which is how a tenant bound earlier is put back. The operator does
+not ask the mode: a `TenantDomain` for the tenant `user` that is in the
+cluster anyway moves that tenant to `<label>.<domain>`, and a website it had
+on the main address is withdrawn (`OwnDomain`). The kernel's names stay
+refused to its apps, because it is back on the cluster's domain the day the
+binding is removed. The tenant's hosts, mail and logins move to it, and
 the concierge finds it through `concierge-lookup`: one file per bound domain,
 named by its SHA-256, so a domain is found by whoever already knows it and the
 cluster's list of customers is not published.

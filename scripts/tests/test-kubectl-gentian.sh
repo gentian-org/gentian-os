@@ -216,6 +216,14 @@ refused "a domain the director refuses ends the command non-zero"
 has "... with the director's own words" "${OUT}" "the director answered 422: invalid custom domain: t.k.example is on the kernel domain, where every tenant already is"
 
 fresh; reply GET /v1/clusters/c1/tenants 200 "${TENANTS}"
+SINGLE_REFUSAL="this cluster's tenancy mode is single: its one tenant for users is on the cluster's own addresses, and bound to a domain of its own it would leave them and give up the cluster's main address. Binding a domain is for a cluster with many tenants (tenancyMode: multi). Nothing was changed"
+reply PUT "${DOMAIN_ROUTE}" 422 "$(jq -n --arg e "${SINGLE_REFUSAL}" '{error: $e}')"
+gentian tenants domain globex globex.example --yes
+refused "a bind on a single-tenancy cluster ends the command non-zero"
+has "... with the director's refusal, word for word" "${OUT}" "the director answered 422: ${SINGLE_REFUSAL}"
+has "... after the command said whom it is for" "${OUT}" "This command is for a cluster with many tenants"
+
+fresh; reply GET /v1/clusters/c1/tenants 200 "${TENANTS}"
 reply PUT /v1/clusters/c1/tenants/acme/domain 202 '{"status":"updated","commit":"0123456789abcdef"}'
 gentian tenants domain acme acme.example --yes
 has "the domain a tenant already has changes nothing" "${OUT}" "already bound to acme.example"

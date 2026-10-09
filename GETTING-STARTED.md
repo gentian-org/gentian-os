@@ -562,8 +562,8 @@ always leads there.
 is refused, with a message that names the mode — in the console, by the CLI
 and by the cluster itself. The tenant needs no domain bound either: it is
 on the cluster's own domain already, so `tenants domain` is not part of this
-path. (The command is not refused there. Binding another domain moves the
-tenant off the cluster's addresses, and the main address is then not its
+path. (Binding a domain is refused there, with the reason: it would move the
+tenant off the cluster's addresses, and the main address would not be its
 own.) The user admin installs apps for the tenant `user` exactly as
 described below for any tenant: wherever an example says `--tenant acme`,
 it is `--tenant user`. A few host names are the platform's own there (`id`,
