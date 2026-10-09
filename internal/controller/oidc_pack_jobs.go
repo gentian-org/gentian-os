@@ -195,9 +195,9 @@ func (r *TenantReconciler) resolveSidecarOIDCAppConfig(ctx context.Context, tena
 	return cfg, nil
 }
 
-// getOIDCOwnerProfile returns the AppProfile that owns an OIDC config. Sidecar
+// getOIDCOwnerProfile returns the ComponentProfile that owns an OIDC config. Sidecar
 // configs (element-jitsi) live on the parent profile (element); there is no
-// standalone AppProfile for sidecars; sidecar OIDC configs live on the parent profile.
+// standalone ComponentProfile for sidecars; sidecar OIDC configs live on the parent profile.
 func (r *TenantReconciler) getOIDCOwnerProfile(ctx context.Context, cfg oidcAppConfig) (*gentianov1alpha1.ComponentProfile, error) {
 	ownerName := cfg.profileName
 	if cfg.parentProfile != "" {
@@ -229,7 +229,7 @@ func (r *TenantReconciler) resolveOIDCRedirectURIs(
 			return substituteTenantDomainInURIs(tenant, defaults, r.KernelDomain, r.TenancyMode), nil
 		}
 	}
-	// Sidecar OIDC redirect URIs must be declared on the AppProfile or in the pack spec.
+	// Sidecar OIDC redirect URIs must be declared on the ComponentProfile or in the pack spec.
 	return nil, fmt.Errorf("AppProfile %s: no OIDC redirect URIs in pack spec and no %s annotation",
 		profileName, gentianov1alpha1.AnnotationProfileOIDCDefaultRedirectURIs)
 }

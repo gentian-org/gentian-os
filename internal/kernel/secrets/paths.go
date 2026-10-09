@@ -38,7 +38,7 @@ func AppsPath(tenant string) string {
 }
 
 // InternalPath returns the canonical KV v2 logical path for a per-app internal
-// secret (an AppProfile.spec.appSecrets entry). The value is stored with a
+// secret (a ComponentProfile.spec.secrets.generated entry). The value is stored with a
 // single "value" key so the ExternalSecret can read it generically.
 func InternalPath(tenant, app, name string) string {
 	return fmt.Sprintf("gentian-os/tenants/%s/apps/%s/internal/%s", tenant, app, name)

@@ -61,7 +61,7 @@ var tenantFoundationConditions = []string{
 // or not True, or "" when all of them are True.
 //
 // The phase used to be decided by whether any stage asked to be requeued, which
-// is a different question. A Tenant reconciled before its AppProfiles resolve
+// is a different question. A Tenant reconciled before its ComponentProfiles resolve
 // runs the data-plane stage with nothing yet to do, asks for no requeue, and
 // finalizes — so it read Ready while carrying AppsReady=False and with all five
 // of the conditions above never set at all.

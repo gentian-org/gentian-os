@@ -33,7 +33,7 @@ import (
 // TenantValidator validates Tenant create/update requests.
 //
 // Checks performed:
-//  1. Every app in spec.apps references an AppProfile that exists.
+//  1. Every app in spec.apps references a ComponentProfile that exists.
 //  2. The number of apps does not exceed spec.quotas.maxApps (when set).
 //
 // +kubebuilder:webhook:path=/validate-gentianos-io-v1alpha1-tenant,mutating=false,failurePolicy=fail,sideEffects=None,groups=gentianos.io,resources=tenants,verbs=create;update,versions=v1alpha1,name=vtenant.gentianos.io,admissionReviewVersions=v1
@@ -124,7 +124,7 @@ func (v *TenantValidator) Handle(ctx context.Context, req admission.Request) adm
 // validateHandover refuses a new tenant while the write path is unproven.
 //
 // The message is long on purpose. A denial an operator cannot act on gets
-// worked around by disabling the webhook, which removes the AppProfile and
+// worked around by disabling the webhook, which removes the ComponentProfile and
 // tenancy checks with it.
 func (v *TenantValidator) validateHandover(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
 	if !v.GateOnHandover || v.HandoverNamespace == "" {
@@ -171,7 +171,7 @@ func (v *TenantValidator) Validate(ctx context.Context, tenant *gentianov1alpha1
 		}
 	}
 
-	// Check each referenced AppProfile exists.
+	// Check each referenced ComponentProfile exists.
 	seen := make(map[string]struct{}, len(tenant.Spec.Apps))
 	for _, app := range tenant.Spec.Apps {
 		if _, dup := seen[app.Profile]; dup {

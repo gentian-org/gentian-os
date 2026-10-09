@@ -18,7 +18,7 @@ SPDX-License-Identifier: Apache-2.0
 
 package v1alpha1
 
-// Catalogue label keys index AppProfile revisions by logical identity.
+// Catalogue label keys index ComponentProfile revisions by logical identity.
 // The App Store controller ensures these labels are present on every profile.
 const (
 	LabelProfileName             = "gentianos.io/profile-name"
@@ -38,7 +38,7 @@ const (
 	// GatewayAPIBackends is a JSON array of extra path→Service routes on the app host.
 	// Shape: [{"pathPrefix":"/api","serviceName":"my-api","port":8080}]
 	AnnotationProfileGatewayAPIBackends = "gentianos.io/gateway-api-backends"
-	// OIDCDefaultRedirectURIs is a JSON array used when spec.kernelRequirements.identity.oidc.redirectUris is empty.
+	// OIDCDefaultRedirectURIs is a JSON array used when spec.requires.services.identity.oidc.redirectUris is empty.
 	// Supports ${TENANT_DOMAIN} substitution.
 	AnnotationProfileOIDCDefaultRedirectURIs = "gentianos.io/oidc-default-redirect-uris"
 	// KernelEgressNamespaces is a comma-separated list of extra cluster namespaces the
@@ -154,7 +154,7 @@ const (
 	TrustTierExperimental TrustTier = "experimental"
 )
 
-// ProfileIdentity uniquely identifies an immutable AppProfile catalogue revision
+// ProfileIdentity uniquely identifies an immutable ComponentProfile catalogue revision
 // within the tuple (family, catalogueVersion, edition).
 type ProfileIdentity struct {
 	// Family is the stable logical application id (e.g. "demo-app").
@@ -175,10 +175,10 @@ type ProfileIdentity struct {
 	Edition Edition `json:"edition,omitempty"`
 }
 
-// ProfileReference resolves to exactly one AppProfile CR — either by metadata.name
+// ProfileReference resolves to exactly one ComponentProfile — either by metadata.name
 // (explicit pin) or by ProfileIdentity (dimensional selector).
 type ProfileReference struct {
-	// Name is the AppProfile metadata.name. When set, this is the exact profile CR to use.
+	// Name is the ComponentProfile metadata.name. When set, this is the exact profile CR to use.
 	// +optional
 	Name string `json:"name,omitempty"`
 

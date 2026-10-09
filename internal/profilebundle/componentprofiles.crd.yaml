@@ -297,7 +297,7 @@ spec:
                         type: string
                       of:
                         description: |-
-                          Of is the AppProfile name of the base this addon activates into. It must be
+                          Of is the ComponentProfile name of the base this addon activates into. It must be
                           in the same family. Replaces the gentianos.io/requires-profile annotation,
                           which pointed the same way but existed to auto-install a base when an addon
                           was installed standalone — the relationship the L3 cleanup inverts.

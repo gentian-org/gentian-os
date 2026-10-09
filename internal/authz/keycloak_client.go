@@ -637,7 +637,7 @@ func (c *KeycloakAdminClient) EnsureGroup(ctx context.Context, realm, groupName 
 			}
 			// Merge, because Keycloak's group update replaces the attribute map
 			// wholesale and this is not its only writer. The tenant identity Job
-			// writes the keys an AppProfile declares, the App Store writes the
+			// writes the keys a ComponentProfile declares, the App Store writes the
 			// default-grant marker, and an administrator sets others by hand in
 			// the console. Sending only our own keys deleted everyone else's on
 			// every pass.

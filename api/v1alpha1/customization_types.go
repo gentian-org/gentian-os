@@ -83,7 +83,7 @@ type CustomizationTarget struct {
 	// +optional
 	Family string `json:"family,omitempty"`
 
-	// Profile is the AppProfile name this customization targets.
+	// Profile is the ComponentProfile name this customization targets.
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
 	Profile string `json:"profile"`

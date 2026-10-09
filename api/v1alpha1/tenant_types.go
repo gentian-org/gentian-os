@@ -500,13 +500,13 @@ const (
 //
 // +kubebuilder:validation:XValidation:rule="has(self.profile) || has(self.profileRef)",message="either profile or profileRef is required"
 type TenantApp struct {
-	// Profile is the name of the AppProfile CR to install.
+	// Profile is the name of the ComponentProfile to install.
 	// When profileRef is set, the operator resolves it to a concrete profile name
 	// and may populate this field for observability.
 	// +optional
 	Profile string `json:"profile,omitempty"`
 
-	// ProfileRef selects an AppProfile by catalogue identity (family, version, edition,
+	// ProfileRef selects a ComponentProfile by catalogue identity (family, version, edition,
 	// offering tier). Takes precedence over profile when resolving installs.
 	// +optional
 	ProfileRef *ProfileReference `json:"profileRef,omitempty"`
@@ -528,13 +528,13 @@ type TenantApp struct {
 	Catalogue string `json:"catalogue,omitempty"`
 
 	// Config provides per-tenant overrides for this app installation.
-	// Values here are merged over the AppProfile's extraValues.
+	// Values here are merged over the profile's package.extraValues.
 	// +optional
 	// +kubebuilder:pruning:PreserveUnknownFields
 	Config *TenantAppConfig `json:"config,omitempty"`
 
 	// Addons lists the addon profiles activated inside this app for this tenant —
-	// customization-ladder rung L3. Each entry names an AppProfile carrying
+	// customization-ladder rung L3. Each entry names a ComponentProfile carrying
 	// gentianos.io/deployment-role: addon in the same family as this app.
 	//
 	// Addons are activation state *inside* the installed app, not separate
@@ -616,14 +616,14 @@ type TenantAppConfig struct {
 	// +kubebuilder:validation:Minimum=0
 	Replicas *int32 `json:"replicas,omitempty"`
 
-	// ExtraValues deep-merges Helm values over the AppProfile defaults.
+	// ExtraValues deep-merges Helm values over the profile's defaults.
 	// Must not contain secrets — use valueMapping for credentials.
 	// +optional
 	// +kubebuilder:pruning:PreserveUnknownFields
 	ExtraValues *runtime.RawExtension `json:"extraValues,omitempty"`
 
 	// DropIns supply tenant-authored files into drop-in directories the target
-	// AppProfile declares as tenantEditable. This is rung L1 at tenant scope —
+	// ComponentProfile declares as tenantEditable. This is rung L1 at tenant scope —
 	// the highest rung a tenant admin may reach unaided, and the only one where
 	// self-service makes sense: content, never code.
 	//
@@ -639,7 +639,7 @@ type TenantAppConfig struct {
 
 // TenantAppDropIn is tenant-authored content for one declared drop-in directory.
 type TenantAppDropIn struct {
-	// Name must match an AppProfile.spec.customization.dropIns[].name entry that
+	// Name must match a ComponentProfile.spec.customization.dropIns[].name entry that
 	// sets tenantEditable: true. Tenants cannot invent mount paths — that would be
 	// repackaging (L4) at tenant scope.
 	// +kubebuilder:validation:Required

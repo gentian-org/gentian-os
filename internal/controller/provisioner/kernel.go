@@ -107,28 +107,28 @@ func CacheEngineOf(profile *gentianov1alpha1.ComponentProfile) gentianov1alpha1.
 	return gentianov1alpha1.CacheEngineRedis
 }
 
-// MatchMariaDBProfile reports whether an AppProfile requires MariaDB provisioning.
+// MatchMariaDBProfile reports whether a ComponentProfile requires MariaDB provisioning.
 func MatchMariaDBProfile(profile *gentianov1alpha1.ComponentProfile) bool {
 	return profile.Services() != nil &&
 		profile.Services().Database != nil &&
 		profile.Services().Database.Engine == gentianov1alpha1.DatabaseEngineMariaDB
 }
 
-// MatchS3Profile reports whether an AppProfile requires S3 storage provisioning.
+// MatchS3Profile reports whether a ComponentProfile requires S3 storage provisioning.
 func MatchS3Profile(profile *gentianov1alpha1.ComponentProfile) bool {
 	return profile.Services() != nil &&
 		profile.Services().Storage != nil &&
 		profile.Services().Storage.S3 != nil
 }
 
-// MatchRedisProfile reports whether an AppProfile requires Redis cache provisioning.
+// MatchRedisProfile reports whether a ComponentProfile requires Redis cache provisioning.
 func MatchRedisProfile(profile *gentianov1alpha1.ComponentProfile) bool {
 	return profile.Services() != nil &&
 		profile.Services().Cache != nil &&
 		profile.Services().Cache.Engine == gentianov1alpha1.CacheEngineRedis
 }
 
-// MatchMemcachedProfile reports whether an AppProfile requires Memcached cache provisioning.
+// MatchMemcachedProfile reports whether a ComponentProfile requires Memcached cache provisioning.
 func MatchMemcachedProfile(profile *gentianov1alpha1.ComponentProfile) bool {
 	return profile.Services() != nil &&
 		profile.Services().Cache != nil &&

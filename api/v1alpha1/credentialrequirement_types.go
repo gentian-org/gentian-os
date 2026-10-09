@@ -29,7 +29,7 @@ import (
 //
 // It is deliberately a plain CRD rather than a Crossplane XRD. It composes
 // nothing: an XRD requires a Composition producing managed resources, and there
-// are none to produce. It sits beside AppProfile as catalogue.
+// are none to produce. It sits beside ComponentProfile as catalogue.
 //
 // There is no controller. Each requirement emits an ExternalSecret, and ESO's
 // sync status IS the satisfaction probe — path absent in OpenBao gives

@@ -16,7 +16,7 @@ metadata:
   name: function-extra-resources
 spec:
   # Fetches arbitrary cluster resources into the Composition pipeline context.
-  # Used by App Compositions to load the referenced AppProfile at render time.
+  # Used by App Compositions to load the referenced ComponentProfile at render time.
   package: xpkg.upbound.io/crossplane-contrib/function-extra-resources:v0.3.0
 ---
 apiVersion: pkg.crossplane.io/v1

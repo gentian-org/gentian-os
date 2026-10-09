@@ -14,14 +14,14 @@ SPDX-License-Identifier: MPL-2.0
 //
 // The package is deliberately app-neutral. It knows about rungs and scopes, never
 // about individual catalogue entries — per-app behaviour comes from the
-// AppProfile's declared customization surface. See docs/app-customization.md.
+// ComponentProfile's declared customization surface. See docs/app-customization.md.
 package customization
 
 import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
-// DefaultDropInMaxBytes caps tenant-supplied drop-in content when the AppProfile
+// DefaultDropInMaxBytes caps tenant-supplied drop-in content when the ComponentProfile
 // does not set an explicit limit. ConfigMaps are limited to ~1MiB in total, and
 // drop-ins are meant for fragments, not payloads.
 const DefaultDropInMaxBytes = 262144

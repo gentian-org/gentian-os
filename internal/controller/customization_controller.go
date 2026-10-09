@@ -68,7 +68,7 @@ type CustomizationReconciler struct {
 	Now func() time.Time
 }
 
-// SetupWithManager registers the Customization controller. AppProfile changes are
+// SetupWithManager registers the Customization controller. ComponentProfile changes are
 // mapped back to the records that target them, so bumping a chart version
 // immediately re-evaluates every customization riding on it.
 func (r *CustomizationReconciler) SetupWithManager(mgr ctrl.Manager) error {

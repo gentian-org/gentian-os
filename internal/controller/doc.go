@@ -11,6 +11,6 @@ SPDX-License-Identifier: MPL-2.0
 // Package controller contains the reconciliation controllers for the Gentian OS operator.
 //
 // Implemented: Tenant validating webhook (optional via Helm values).
-// Deferred: AppProfile validating webhook — tracked on roadmap; catalogue
+// Deferred: ComponentProfile validating webhook — tracked on roadmap; catalogue
 // integrity is enforced via CRD OpenAPI and gentian-apps CI today.
 package controller

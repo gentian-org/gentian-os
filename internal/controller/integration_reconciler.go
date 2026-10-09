@@ -125,7 +125,7 @@ func (r *TenantReconciler) deleteIntegrationBindings(ctx context.Context, tenant
 	return nil
 }
 
-// findProviderInTenant scans the tenant's app list for an app whose AppProfile
+// findProviderInTenant scans the tenant's app list for an app whose ComponentProfile
 // declares the given contract in its Provides list. Returns the provider app name
 // or an empty string if none is found. The consumer app is excluded from the search.
 func (r *TenantReconciler) findProviderInTenant(

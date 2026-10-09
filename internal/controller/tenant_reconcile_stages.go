@@ -31,7 +31,7 @@ import (
 //
 // 30s matches the platform gateway reconciler's retry on an unsatisfied
 // dependency. Blocked preconditions are usually resolved by something outside the
-// Tenant's watches — a cluster admin approving a waiver, an AppProfile being
+// Tenant's watches — a cluster admin approving a waiver, a ComponentProfile being
 // published, ESO syncing a Secret — so this is a poll, and the interval trades
 // how long a fixed cluster stays Degraded against reconcile churn per tenant.
 const tenantBlockedRequeueAfter = 30 * time.Second
@@ -153,7 +153,7 @@ func (r *TenantReconciler) runTenantReconcileStages(ctx context.Context, state *
 			// Requeue rather than stopping dead.
 			//
 			// Blocked means a stage found a precondition it cannot satisfy itself —
-			// a missing AppProfile, an unapproved waiver, a Secret that has not
+			// a missing ComponentProfile, an unapproved waiver, a Secret that has not
 			// synced. Returning an empty Result meant nothing was scheduled, so the
 			// Tenant only moved again if some watched object happened to fire an
 			// event. For a precondition owned by something the Tenant does not
@@ -499,7 +499,7 @@ func (r *TenantReconciler) reconcileTenantStageFinalize(ctx context.Context, sta
 	// the stages asked for. See tenantFoundationNotReady: requeues answer "did a
 	// stage want to run again", which is not the same question as "is this tenant
 	// ready", and the two disagreed for any tenant that finalized before its
-	// AppProfiles resolved.
+	// ComponentProfiles resolved.
 	notReady := tenantFoundationNotReady(tenant)
 
 	switch {

@@ -19,7 +19,7 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
-// loadAppProfileIndex lists cluster AppProfiles once per tenant reconcile.
+// loadAppProfileIndex lists cluster ComponentProfiles once per tenant reconcile.
 func loadAppProfileIndex(ctx context.Context, c client.Client) (map[string]*gentianov1alpha1.ComponentProfile, error) {
 	list := &gentianov1alpha1.ComponentProfileList{}
 	if err := c.List(ctx, list); err != nil {

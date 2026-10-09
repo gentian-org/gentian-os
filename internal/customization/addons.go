@@ -20,7 +20,7 @@ import (
 // ResolvedAddon is one addon a tenant selected, resolved to the identifier the
 // hosting app's own addon system uses.
 type ResolvedAddon struct {
-	// Profile is the AppProfile name the tenant selected (e.g. "odoo-crm-ce").
+	// Profile is the ComponentProfile name the tenant selected (e.g. "odoo-crm-ce").
 	Profile string
 	// ID is what the app calls it (e.g. the Odoo module "crm"). This is what the
 	// composition renders activation for.

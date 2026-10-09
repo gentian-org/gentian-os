@@ -54,7 +54,7 @@ spec:
               allowedMacWaivers:
                 description: |-
                   AllowedMacWaivers lists profile/policy/scope tuples the cluster permits.
-                  AppProfile requests outside this list are denied at deploy time.
+                  A profile's requests outside this list are denied at deploy time.
                 items:
                   description: AllowedMacWaiver is a cluster-admin approved MAC waiver
                     for a catalogue profile.
@@ -63,11 +63,11 @@ spec:
                       description: Policy is the Kyverno ClusterPolicy name.
                       type: string
                     profile:
-                      description: Profile is the AppProfile metadata.name that may
-                        use this waiver.
+                      description: Profile is the ComponentProfile metadata.name that
+                        may use this waiver.
                       type: string
                     scope:
-                      description: Scope matches MacWaiverRequest.scope on the AppProfile.
+                      description: Scope matches MacWaiverRequest.scope on the profile.
                       type: string
                   required:
                   - policy

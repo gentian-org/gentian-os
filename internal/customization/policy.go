@@ -111,7 +111,7 @@ func validateJustification(spec gentianov1alpha1.CustomizationSpec) []error {
 
 // ValidateAgainstSurface checks a record against the target app's declared
 // customization surface. Separated from ValidateRecord because it needs the
-// AppProfile, which is not always available to the caller.
+// ComponentProfile, which is not always available to the caller.
 func ValidateAgainstSurface(
 	record *gentianov1alpha1.Customization,
 	surface *gentianov1alpha1.CustomizationSurface,

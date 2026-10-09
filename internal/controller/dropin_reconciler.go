@@ -51,11 +51,11 @@ var dropInFileNamePattern = regexp.MustCompile(`^9[0-9]-[a-zA-Z0-9._-]+$`)
 //
 // This is rung L1 at tenant scope (see docs/app-customization.md §2.2.1): the
 // highest rung a tenant admin may reach unaided. A tenant may supply content —
-// a logo, a locale bundle, a config fragment — into a directory the AppProfile
+// a logo, a locale bundle, a config fragment — into a directory the ComponentProfile
 // has explicitly declared as tenantEditable. It may not introduce code, invent
 // mount paths, or shadow platform files.
 //
-// The mount itself is generated from AppProfile.spec.customization.dropIns by the
+// The mount itself is generated from ComponentProfile.spec.customization.dropIns by the
 // composition, so no per-app operator logic is involved: the operator only writes
 // validated content into a predictably named ConfigMap.
 func (r *TenantReconciler) ensureTenantDropIns(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ctrl.Result, error) {
@@ -94,7 +94,7 @@ type dropInConfigMapSpec struct {
 }
 
 // buildTenantDropIns validates every tenant drop-in against the declaration on the
-// target AppProfile and returns the ConfigMaps to write. Validation is total: any
+// target ComponentProfile and returns the ConfigMaps to write. Validation is total: any
 // invalid entry fails the whole build, so a tenant cannot half-apply a change.
 func (r *TenantReconciler) buildTenantDropIns(
 	ctx context.Context,

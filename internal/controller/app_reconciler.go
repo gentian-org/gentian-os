@@ -209,7 +209,7 @@ func (r *TenantReconciler) seedAppPrerequisites(ctx context.Context, tenant *gen
 	return nil
 }
 
-// seedAppSecrets writes each AppProfile.spec.appSecrets entry into OpenBao at
+// seedAppSecrets writes each ComponentProfile.spec.secrets.generated entry into OpenBao at
 // …/internal/{name} with key "value". No-op when Seeder is nil or the profile
 // declares no app-secrets. Repeated calls are idempotent.
 func (r *TenantReconciler) seedAppSecrets(ctx context.Context, tenant *gentianov1alpha1.Tenant, appName string, profile *gentianov1alpha1.ComponentProfile) error {

@@ -33,7 +33,7 @@ const (
 	storageRequeueAfter   = 2 * time.Second
 )
 
-// ensureStorage provisions per-app MinIO S3 buckets declared via AppProfile
+// ensureStorage provisions per-app MinIO S3 buckets declared via ComponentProfile
 // ServiceRequirements.Storage.S3.
 func (r *TenantReconciler) ensureStorage(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ctrl.Result, error) {
 	s3Apps, err := r.collectStorageApps(ctx, tenant, CollectForProvision)

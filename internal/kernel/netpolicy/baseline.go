@@ -86,7 +86,7 @@ func BaselineNetworkPolicy(tenantName, nsName string, cfg Config, kubeAPIEndpts 
 		// authentication function may reach tenant pods; nothing else kernel does.
 		namespaceIngress(layout.Namespace(layout.Authentication)),
 		// The operator itself provisions *into* running tenant apps over their
-		// own admin APIs — AppProfile.spec.provisioning.privilegedRole is the
+		// own admin APIs — ComponentProfile.spec.hooks.provisioning.privilegedRole is the
 		// first such case (see app_privilege_reconciler.go). It runs in
 		// OperatorNamespace, not KernelNamespace, so without this it cannot
 		// reach the very workloads it reconciles. This grants no new authority:

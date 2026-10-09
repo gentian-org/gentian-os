@@ -385,13 +385,13 @@ func (r *TenantReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		return []reconcile.Request{{NamespacedName: types.NamespacedName{Name: tenantName}}}
 	}
 
-	// mapAppProfileToTenants maps an AppProfile change to reconcile requests for
+	// mapAppProfileToTenants maps a ComponentProfile change to reconcile requests for
 	// every Tenant that references the profile in its spec.apps list.
 	//
 	// Resolution has to match catalogue.ResolveTenantAppProfile, which accepts
 	// EITHER spec.apps[].profile or spec.apps[].profileRef. Comparing only the
 	// literal profile name meant a Tenant selecting its app by catalogue identity
-	// got no event when its AppProfile was created or changed — so the profile it
+	// got no event when its ComponentProfile was created or changed — so the profile it
 	// was waiting for could appear and nothing would notice, leaving the Tenant
 	// Degraded until an unrelated event happened to wake it.
 	mapAppProfileToTenants := func(ctx context.Context, obj client.Object) []reconcile.Request {
@@ -647,7 +647,7 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	})
 }
 
-// validateTenantPrerequisites checks that all requested AppProfiles exist.
+// validateTenantPrerequisites checks that all requested ComponentProfiles exist.
 func (r *TenantReconciler) validateTenantPrerequisites(ctx context.Context, tenant *gentianov1alpha1.Tenant) ([]string, error) {
 	profileIndex, err := loadAppProfileIndex(ctx, r.Client)
 	if err != nil {

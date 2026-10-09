@@ -291,7 +291,7 @@ func timeOrEmpty(t *metav1.Time) string {
 	return t.UTC().Format(time.RFC3339)
 }
 
-// resolveProfile looks up the AppProfile backing an installed app, so every
+// resolveProfile looks up the ComponentProfile backing an installed app, so every
 // capture decision is driven by the catalogue rather than by the app's name.
 //
 // A missing profile is an error rather than a shrug: without it there is no

@@ -22,7 +22,7 @@ import (
 )
 
 // ValidateDropInContent parses tenant-supplied drop-in content against the format
-// the AppProfile declared for that directory.
+// the ComponentProfile declared for that directory.
 //
 // Parsing here rather than at pod start is the whole point: a malformed fragment
 // must fail the reconcile with a message naming the file, not crash the app on its

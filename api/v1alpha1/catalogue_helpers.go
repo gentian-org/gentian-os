@@ -102,7 +102,7 @@ func GatewayEscapedSlashesAction(annotations map[string]string) string {
 	return strings.TrimSpace(annotations[AnnotationIngressGatewayEscapedSlashesAction])
 }
 
-// ProfileKernelEgressNamespaces parses gentianos.io/kernel-egress-namespaces on an AppProfile.
+// ProfileKernelEgressNamespaces parses gentianos.io/kernel-egress-namespaces on a ComponentProfile.
 func ProfileKernelEgressNamespaces(p *ComponentProfile) []string {
 	if p == nil || len(p.Annotations) == 0 {
 		return nil

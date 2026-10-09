@@ -32,9 +32,9 @@
   Pod env configMapKeyRef only resolves same-namespace — a plain Kubernetes
   restriction, not something a namespace field on the ref can work around.
   Kernel SERVICES (keycloak-idp, etc.) that need KERNEL_DOMAIN/TENANCY_MODE
-  live in platform-kernel, not this release's own namespace (gentian-system),
-  so this ConfigMap is mirrored into both — same name, same data, so any
-  existing platform-kernel configMapKeyRef to "gentian-kernel-services"
+  live in other kernel namespaces, not this release's own (kernel-control),
+  so this ConfigMap is mirrored into each — same name, same data, so any
+  configMapKeyRef there to "gentian-kernel-services"
   just works without a separate reference convention to maintain.
 */ -}}
 {{- range $ns := list .Release.Namespace (.Values.servicesNamespace | default "kernel-edge") (.Values.layout.authentication | default "") | compact | uniq }}

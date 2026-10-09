@@ -1743,7 +1743,7 @@ spec:
                  profile and its attributes come from that profile's
                  gentianos.io/keycloak-group-attributes annotation — nine of the
                  catalogue's profiles carry one, and the Odoo ones drive module
-                 and role provisioning. This Composition cannot see an AppProfile;
+                 and role provisioning. This Composition cannot see a ComponentProfile;
                  app-default already fetches it. */}}
             {{- $groupNames := list (printf "gentian:tenant:%s:members" $tenant) (printf "gentian:tenant:%s:admins" $tenant) (printf "gentian:tenant:%s:app-admins" $tenant) (printf "gentian:tenant:%s:perimeter" $tenant) }}
             {{- range $g := $groupNames }}

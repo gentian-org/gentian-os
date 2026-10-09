@@ -46,7 +46,7 @@ const (
 )
 
 // ensureAppPrivileges maps gentian:tenant:<t>:app-admins members into each
-// installed app's declared privileged role (AppProfile.spec.provisioning).
+// installed app's declared privileged role (ComponentProfile.spec.hooks.provisioning).
 func (r *TenantReconciler) ensureAppPrivileges(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ctrl.Result, error) {
 	if len(tenant.Spec.Apps) == 0 {
 		r.setCondition(tenant, conditionAppPrivilegesReady, metav1.ConditionTrue,

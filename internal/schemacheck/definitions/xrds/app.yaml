@@ -29,14 +29,14 @@ spec:
                 profileRef:
                   type: object
                   description: >
-                    Reference to the AppProfile that describes the app to install.
-                    The AppProfile must be cluster-scoped and already exist.
+                    Reference to the ComponentProfile that describes the app to install.
+                    The ComponentProfile must already exist.
                   required:
                     - name
                   properties:
                     name:
                       type: string
-                      description: Name of the AppProfile (e.g. "demo-app").
+                      description: Name of the ComponentProfile (e.g. "demo-app").
                 tenantNamespace:
                   type: string
                   description: >
@@ -97,10 +97,10 @@ spec:
                   description: >
                     Effective tenant domain (custom, or derived from kernelDomain).
                     Used for template substitution of ${TENANT_DOMAIN} in
-                    AppProfile.spec.extraValues. Set by the operator.
+                    ComponentProfile.spec.package.extraValues. Set by the operator.
                 config:
                   type: object
-                  description: Per-tenant overrides applied on top of the AppProfile defaults.
+                  description: Per-tenant overrides applied on top of the profile's defaults.
                   properties:
                     replicas:
                       type: integer

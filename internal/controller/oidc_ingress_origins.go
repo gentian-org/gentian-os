@@ -23,7 +23,7 @@ import (
 )
 
 // collectOIDCIngressSubdomainsByTenant returns ingress hostname prefixes for every
-// installed AppProfile that declares OIDC, keyed by tenant name. Used to build
+// installed ComponentProfile that declares OIDC, keyed by tenant name. Used to build
 // the shared id.<kernel> frame-ancestors policy so portal-embedded apps can
 // complete OIDC without per-app manual allowlists.
 func collectOIDCIngressSubdomainsByTenant(

@@ -121,7 +121,7 @@ authzBridge:
     openbaoProperty: "preshared_key"
 
 # platformSecurityPolicy is the cluster singleton edited by platform administrators
-# (Admin Console → Platform security). AppProfile.spec.security.macWaivers requests
+# (Admin Console → Platform security). ComponentProfile.spec.requires.privileges.podSecurity requests
 # are intersected with this allowlist before MAC labels are applied to workloads.
 platformSecurityPolicy:
   create: true
@@ -344,12 +344,12 @@ usher:
       memory: 128Mi
 
 # kernelServices exposes cluster-wide infrastructure endpoints to Crossplane
-# compositions. Published as a `gentian-kernel-services` ConfigMap in gentian-system
+# compositions. Published as a `gentian-kernel-services` ConfigMap in kernel-control
 # and fetched by app-default.yaml via function-extra-resources.
-# No endpoint is substituted into AppProfile extraValues any more. ${S3_ENDPOINT},
+# No endpoint is substituted into a profile's extraValues any more. ${S3_ENDPOINT},
 # ${MYSQL_HOST}, ${REDIS_HOST}, ${SMTP_HOST} and ${TURN_*} were, and each handed
 # an app a hostname with nothing to authenticate with — an app declares
-# kernelRequirements and maps its own chart keys instead (P9 in
+# requires.services and maps its own chart keys instead (P9 in
 # docs/app-customization.md). The values below are still read by the operator
 # and by compositions; they are simply no longer expanded into app values.
 #   KEYCLOAK_INTERNAL_URL — In-cluster Keycloak base (no path), for apps whose

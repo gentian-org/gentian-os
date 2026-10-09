@@ -402,7 +402,7 @@ func (r *TenantReconciler) collectGentianGroupsJSON(ctx context.Context, tenant 
 	// changes — this only decides which roles ride on the app-admins group.
 	adminRoles := map[string]struct{}{}
 
-	// Helper to extract attributes from AppProfile name
+	// Helper to extract attributes from ComponentProfile name
 	resolveProfileAttrs := func(profileName string) (map[string][]string, error) {
 		profile := &gentianov1alpha1.ComponentProfile{}
 		err := r.Get(ctx, types.NamespacedName{Name: profileName}, profile)

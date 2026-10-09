@@ -41,7 +41,7 @@ type PlatformSecurityPolicy struct {
 // PlatformSecurityPolicySpec holds cluster-admin security configuration.
 type PlatformSecurityPolicySpec struct {
 	// AllowedMacWaivers lists profile/policy/scope tuples the cluster permits.
-	// AppProfile requests outside this list are denied at deploy time.
+	// A profile's requests outside this list are denied at deploy time.
 	// +optional
 	AllowedMacWaivers []AllowedMacWaiver `json:"allowedMacWaivers,omitempty"`
 }

@@ -481,7 +481,7 @@ type AppExportStatus struct {
 	ChartVersion string `json:"chartVersion,omitempty"`
 
 	// Stores lists the kinds captured for this app (postgres, mariadb, s3,
-	// volumes), derived from the profile's kernelRequirements.
+	// volumes), derived from the profile's requires.services.
 	// +optional
 	Stores []string `json:"stores,omitempty"`
 

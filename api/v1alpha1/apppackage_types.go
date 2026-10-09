@@ -39,7 +39,7 @@ import (
 
 // AppPackageSpec is the desired state of an AppPackage.
 type AppPackageSpec struct {
-	// Family is the app family this preset belongs to (matches AppProfile.spec.family).
+	// Family is the app family this preset belongs to (a ComponentProfile's gentianos.io/profile-family label).
 	// The App Store only offers the preset while installing an app of that family.
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
@@ -57,7 +57,7 @@ type AppPackageSpec struct {
 	// +kubebuilder:validation:MaxLength=512
 	Description string `json:"description,omitempty"`
 
-	// Addons lists the AppProfile names this preset pre-selects. Each must name an
+	// Addons lists the ComponentProfile names this preset pre-selects. Each must name an
 	// addon profile (gentianos.io/deployment-role: addon) in the same family.
 	//
 	// Entries are a starting point, not a constraint: the user may untick any of
@@ -69,7 +69,7 @@ type AppPackageSpec struct {
 	Addons []string `json:"addons"`
 
 	// Author is who supplies this preset — a company, an organisation, or an
-	// individual. Same meaning as AppProfile.spec.author.
+	// individual.
 	// +optional
 	// +kubebuilder:validation:MaxLength=128
 	Author string `json:"author,omitempty"`

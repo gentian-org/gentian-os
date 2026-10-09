@@ -152,9 +152,9 @@ type PrivilegedRoleSpec struct {
 	Name string `json:"name"`
 }
 
-// TileSpec configures a Gentian portal tile icon (52×52 SVG).
+// TileSpec configures a desktop tile icon (52×52 SVG).
 // Set icon (catalogue path) or logo (custom data URI). image is source-repo only
-// and must be inlined to logo before the AppProfile is applied to a cluster.
+// and must be inlined to logo before the profile is applied to a cluster.
 type TileSpec struct {
 	// Icon selects a pre-made tile from the Gentian catalogue (path 2).
 	// +optional
@@ -179,9 +179,8 @@ type TileSpec struct {
 // It was called KernelRequirements, which named a fulfiller that is not the
 // fulfiller. A database comes from a component of class "service"; mail may
 // be a relay outside the cluster; object storage may be a bucket at a cloud
-// provider. On AppProfile the JSON key is still kernelRequirements, because
-// every profile in the catalogue writes it; ComponentProfile spells it
-// requires.services.
+// provider. ComponentProfile spells it requires.services; an extension
+// (spec.extensions[]) still writes the key kernelRequirements.
 type ServiceRequirements struct {
 	// Identity specifies OIDC requirements.
 	// +optional
@@ -452,7 +451,7 @@ type SAMLClientSpec struct {
 
 // OIDCClientSpec describes an OIDC client to be registered in the tenant's
 // Keycloak realm by the Crossplane composition. Adding this block to an
-// AppProfile is all that is needed to get automatic client registration for
+// profile is all that is needed to get automatic client registration for
 // any new app — no manual Keycloak setup required per tenant.
 //
 // +kubebuilder:validation:XValidation:rule="!has(self.backchannelLogoutUrl) || self.backchannelLogoutUrl.size() == 0",message="backchannelLogoutUrl is withdrawn: declare backchannelLogout (exposure and path) instead. The platform builds the address from the entry's own Service inside the cluster; a profile no longer names one"
@@ -1222,13 +1221,13 @@ type AppSidecarSpec struct {
 }
 
 // BackupSpec tells the platform how this app must be captured and put back.
-// spec.kernelRequirements already declares *which* stores the app has; this
+// spec.requires.services already declares *which* stores the app has; this
 // declares how to pause it, what on its volumes is worth keeping, and what has
 // to run after a restore before the app is usable again — knowledge only the
 // app's author has.
 //
 // Every field is optional, and a profile that declares nothing gets the safe
-// default: scale the app to zero, dump every store in spec.kernelRequirements,
+// default: scale the app to zero, dump every store in spec.requires.services,
 // and archive every PersistentVolumeClaim its Helm release owns. That is
 // correct for most apps, so the section exists for the ones that deviate.
 //

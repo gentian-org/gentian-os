@@ -192,7 +192,7 @@ spec:
                     properties:
                       profile:
                         type: string
-                        description: Name of the AppProfile CR to install.
+                        description: Name of the ComponentProfile to install.
                       variant:
                         type: string
                         description: >
@@ -209,7 +209,7 @@ spec:
                         description: |
                           Addon identifiers to activate inside this app, already
                           resolved by the operator from the tenant's selected addon
-                          AppProfiles to whatever the hosting app's own addon system
+                          ComponentProfiles to whatever the hosting app's own addon system
                           calls them (an Odoo module name, a Nextcloud app id).
 
                           Resolving in the operator keeps compositions free of

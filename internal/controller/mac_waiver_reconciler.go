@@ -123,7 +123,7 @@ func (r *TenantReconciler) ensureMacWaiverNamespaceLabels(
 	return notInEffect, nil
 }
 
-// ensureMacWaivers intersects AppProfile requests with PlatformSecurityPolicy allowlist
+// ensureMacWaivers intersects ComponentProfile requests with PlatformSecurityPolicy allowlist
 // and records approved waivers on the Tenant for compositions to consume.
 func (r *TenantReconciler) ensureMacWaivers(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ctrl.Result, error) {
 	allowed, err := security.LoadAllowedMacWaivers(ctx, r.Client)

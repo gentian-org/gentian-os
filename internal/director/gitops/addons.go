@@ -44,7 +44,7 @@ func (g *GitOps) SetAddons(ctx context.Context, tenant, profile string, addons [
 // SetAddonsPinned rewrites the addons list of one installed app in the tenant
 // YAML, and the builds its addons are pinned to.
 //
-// The values are AppProfile names, not app-side ids: the operator resolves those
+// The values are ComponentProfile names, not app-side ids: the operator resolves those
 // through spec.customization.addon when it builds the XTenant, so neither this
 // service nor the App Store needs to know that Odoo calls addons modules.
 //
