@@ -22,7 +22,7 @@ CROSSPLANE_IMAGE ?= xpkg.crossplane.io/crossplane/crossplane:$(CROSSPLANE_CLI_VE
 KUBEBUILDER_ASSETS ?= /tmp/envtest-bins/k8s/1.32.0-linux-amd64
 export KUBEBUILDER_ASSETS
 
-.PHONY: verify all build generate manifests test lint docker-build clean install-plugin uninstall-plugin validate-steps gen-credentials gen-authz-model check-credentials lint-cluster-config-keys lint-rbac-coverage lint-marker-ascii test-bootstrap-token-classification test-cert-manager-dns01-args test-step0-sync test-user-tenant-scaffold test-catalogue-default test-kubectl-gentian test-bootstrap-switches test-operator-network-policy test-store-network-policies test-llm-models test-kernel-network-policies gen-kernel-network-policies test-wildcard-cache test-dns-credential-single-writer lint-composed-resource-names lint-sequencer-targets lint-eso-readable-paths lint-template-placeholders lint-portability lint-image-digests check-render-fixtures lint-resolvable lint-unreachable lint-bootstrap-apps lint-step-contracts lint-job-scripts lint-claim-defaults lint-live-identifiers lint-password-schemes test-policy test-policy-openbao test-policy-authz verify-authz-vocabulary test-director-contract run-director-dev lint-namespace-layout verify-claim-applied verify-argocd-config verify-image-updates gen-provider-rbac lint-provider-rbac lint-provider-activation test-provider-activation refresh-provider-types test-default-profile-digest lint-credential-validators lint-credential-catalogue test-openbao-cli-download verify-openbao-cli-release lint-image-pins test-argocd-repo-credentials test-signing-key-lookup test-secret-mode test-dry-run-changes-nothing
+.PHONY: verify all build generate manifests test lint docker-build clean install-plugin uninstall-plugin validate-steps gen-credentials gen-authz-model check-credentials lint-cluster-config-keys lint-rbac-coverage lint-marker-ascii test-bootstrap-token-classification test-cert-manager-dns01-args test-step0-sync test-user-tenant-scaffold test-catalogue-default test-kubectl-gentian test-bootstrap-switches test-operator-network-policy test-store-network-policies test-llm-models test-kernel-network-policies gen-kernel-network-policies test-wildcard-cache test-dns-credential-single-writer lint-composed-resource-names lint-sequencer-targets lint-eso-readable-paths lint-template-placeholders lint-portability lint-image-digests check-render-fixtures lint-resolvable lint-unreachable lint-bootstrap-apps lint-step-contracts lint-job-scripts lint-claim-defaults lint-live-identifiers lint-password-schemes test-policy test-policy-openbao test-policy-authz verify-authz-vocabulary test-director-contract run-director-dev lint-namespace-layout lint-retired-namespaces verify-claim-applied verify-argocd-config verify-image-updates gen-provider-rbac lint-provider-rbac lint-provider-activation test-provider-activation refresh-provider-types test-default-profile-digest lint-credential-validators lint-credential-catalogue test-openbao-cli-download verify-openbao-cli-release lint-image-pins test-argocd-repo-credentials test-signing-key-lookup test-secret-mode test-dry-run-changes-nothing
 
 all: generate build test
 
@@ -514,12 +514,19 @@ lint-bootstrap-apps:
 ## Assert every scripts/steps/*.sh declares its contract and defines apply(),
 ## and that none of them names a kernel namespace by hand. Reads only the step
 ## files — no cluster, no kubeconfig.
-validate-steps: lint-namespace-layout
+validate-steps: lint-namespace-layout lint-retired-namespaces
 	@SCRIPT_DIR="$(CURDIR)" bash -c 'source scripts/lib/load.sh; source scripts/lib/driver.sh; validate_steps'
 	@bash scripts/lint/lint-step-contracts.sh
 
 lint-namespace-layout:
 	@bash scripts/lint/lint-namespace-layout.sh
+
+## Assert no tracked file names a namespace the layout no longer has -- as a
+## variable's default, a template's fallback or a literal in a manifest. The
+## lint above reads the steps and the bootstrap chart; this reads everything,
+## and what it leaves alone is listed in it with the reason.
+lint-retired-namespaces:
+	@python3 scripts/lint/lint-retired-namespaces.py
 
 ## Build the operator container image
 docker-build:
