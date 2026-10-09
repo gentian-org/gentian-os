@@ -347,6 +347,15 @@ session and the bouncer, so only a person with `can_use` on the app begins a sig
 answer has to be about that same person. A member of the realm without the right cannot begin
 one, and an answer they obtain elsewhere answers no request of theirs.
 
+**Who administers the app** is the realm's answer, in the assertion it signs: the one role of the
+sidecar's client, granted to the tenant's `app-admins` group. The sidecar reads it from the signed
+assertion — the assertion's own attribute `Role` with the value `gentian-app-admin` — and from
+nothing a request says about itself; an answer changed after signing is refused whole. The client
+has no other role in scope (`fullScopeAllowed` is off), so a role of that name elsewhere in the
+realm, or at another app's client, is not listed. The handler gives the app's administrator role
+to that person and takes it from anybody else at every sign-in, so a withdrawal is in force
+within the hour a session lasts.
+
 **Which code is handed the app's keys.** The handler is part of the app's bundle. It is run only
 from a bundle of a catalogue of the whole cluster, for an install pinned to that bundle's digest;
 the operator gives the sidecar the bundle's bytes and their sha256, and the sidecar loads no
@@ -367,6 +376,7 @@ no pod of the tenant.
 | The handler is given only what the profile declared, of the app's own | Built |
 | The sidecar's image is one build, named by tag and digest | Built |
 | An app session lasts at most an hour and no longer than its realm session | Built in the sidecar; the handler has to give its token that lifetime |
+| Who administers the app is read from the signed assertion alone; given and withdrawn at sign-in | Built; tests in the sidecar, against Keycloak 26.8.0, and against each of the three apps |
 
 **What remains weak.**
 
@@ -385,6 +395,11 @@ no pod of the tenant.
 - **Within the hour, the app can show the previous person.** Anna signs out, Ben signs in at the
   same browser and opens a page of the app that is not an entry path: the app still has Anna's
   session. Opening the app from its tile goes through the sign-in and gives Ben his own.
+- **App Admin is one role per tenant.** Who holds it administers every app of the tenant that
+  maps it, not one app. The per-app group of the authorization model
+  (`gentian:tenant:<t>:app:<p>:admins`) is not built.
+- **A withdrawn administrator keeps the role until their next sign-in,** at most an hour, in an
+  app that does not ask again in between.
 - **A person is an e-mail address to the app.** An address given to somebody else later is the
   same account. The person's permanent identifier is not what these apps key on.
 - **Accounts are made and never removed.** A person removed at the platform cannot get in, and

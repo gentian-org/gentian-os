@@ -317,9 +317,17 @@ way in which a program beside the app can become anybody in it.
 5. `/sso/acs` is a route of its own with no session, because that post comes from the realm's
    address ([routing.md §4.1](routing.md)). The sidecar checks the response
    ([security.md §2.12](security.md)) and runs the app's handler.
-6. The handler finds or makes the person's account in the app and a session for it. The sidecar
-   writes the response: the app's session cookie, or a page that puts the session where the app's
-   own page keeps it, and a redirect into the app.
+6. The handler finds or makes the person's account in the app, makes it an administrator's or an
+   ordinary one, and makes a session for it. The sidecar writes the response: the app's session
+   cookie, or a page that puts the session where the app's own page keeps it, and a redirect into
+   the app.
+
+**Who administers an app signed in to this way** is who holds the App Admin role: membership of
+`gentian:tenant:<tenant>:app-admins`, given by the tenant's administrator in the admin console
+(*Groups* → *Roles* → `app-admins`). The realm lists it in the signed assertion as the one role of the
+sidecar's client, the sidecar reads it from the signed bytes, and the handler gives or takes the
+app's administrator role at every sign-in. A tenant's administrator is not an app's administrator
+for being that ([app-customization.md §2.3a](../app-customization.md)).
 
 An app session made this way lasts at most an hour and never longer than the realm session it
 came from. When it has run out the app sends the browser to its own sign-in page, which is an

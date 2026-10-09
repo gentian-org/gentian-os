@@ -344,6 +344,7 @@ The handler is the ConfigMap `<profile>.sign-in-handler` of the profile's bundle
 | | By | |
 |---|---|---|
 | Registers the sidecar at the tenant's realm | the app Composition | a SAML client named `https://<app host>/sso`, with one address its answer may be posted to, `https://<app host>/sso/acs`; the response and the assertion both signed; the person named by e-mail address |
+| Has the realm say who administers the app | the app Composition | one role at that client, `gentian-app-admin`, granted to the tenant's group `gentian:tenant:<tenant>:app-admins`, and a mapper that lists a person's roles at that client in the signed assertion. No other role is in the client's scope, and no group is named |
 | Runs the sidecar beside the app | the operator | one pod, with the handler from the bundle, told where the realm is. No service-account token, read-only, not root |
 | Hands the handler what was declared | the operator | `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`; `SECRET_<NAME>`; `APP_URL`. From this app's own vault paths; a profile names which, never where |
 | Routes two paths of the app's host to it | the operator | `/sso/login` as a rule of the app's own route, behind the session and the bouncer; `/sso/acs` on a route of its own with no session ([routing.md §4.1](design/routing.md)) |
@@ -377,11 +378,27 @@ anybody in the app. So it runs only where it is known to be the reviewed file:
 `/sso/login`, which only a person the front door admits to this app reaches, and the answer the
 sidecar accepts has to be about that same person.
 
+**Who administers the app** is who holds the platform's **App Admin** role in that tenant, and
+nobody else: not the tenant's administrator for being that, and not the first person to open the
+app. The role is membership of the tenant's group `gentian:tenant:<tenant>:app-admins`. A tenant's
+administrator appoints somebody in the admin console — *Groups*, under *Roles*, the group
+`app-admins`: add the person; or the person's own page, under their groups — and withdraws it in
+the same place. It
+is one role per tenant, the one `provisioning.privilegedRole` already maps for other apps: who
+holds it administers every app of the tenant that maps it.
+
+The realm states it in the assertion it signs; the sidecar reads it there and nowhere else — no
+header, no form field — and tells the handler (`person.appAdmin`). At every sign-in the handler
+gives the app's own administrator role to a person who holds the role and takes it from a person
+who does not, in the app's own way, before it makes the session. So an appointment takes effect
+the next time the person opens the app, and a withdrawal at their next sign-in, which is within
+the hour a session lasts.
+
 **What a handler is given, what it answers and what it must not do** is in gentian-apps,
-`images/gentian-sidecar-sso-saml/README.md`. In short: it is told who the person is and how long
-the session may last (an hour at most), it answers where to go and which cookies or browser
-storage carry the app's session, and the sidecar writes the response. It makes everybody an
-ordinary member, gives nobody a password, and touches no licence check.
+`images/gentian-sidecar-sso-saml/README.md`. In short: it is told who the person is, whether they
+administer the app and how long the session may last (an hour at most), it answers where to go
+and which cookies or browser storage carry the app's session, and the sidecar writes the
+response. It gives nobody a password and touches no licence check.
 
 **Before reaching for it.** It is the last of three ways to sign people in ([iam.md §1.11](design/iam.md)),
 and the only one in which a program beside the app holds the app's keys. Use it when the edition

@@ -1447,6 +1447,111 @@ spec:
                 assertionConsumerPostUrl: {{ $signInACS | quote }}
               providerConfigRef:
                 name: keycloak
+
+            {{- /* ── Who administers the app ──────────────────────────────────
+                 An app that is signed in to this way has no claim of its own
+                 to read, so the realm tells the sidecar, in the answer it
+                 signs, whether the person holds the platform's App Admin
+                 role: membership of the tenant's group
+                 gentian:tenant:<tenant>:app-admins (internal/keycloak/groups.go),
+                 which a tenant's administrator gives in the admin console.
+
+                 Three resources, and the same projection an OIDC client's
+                 entitlement uses above -- a client role granted to a group:
+
+                   - one role at the sidecar's client;
+                   - that role granted to the tenant's app administrators'
+                     group. exhaustive: false, as for the entitlement: this
+                     adds one mapping and leaves the group's others alone;
+                   - a mapper that lists a person's roles at this client in
+                     the assertion. fullScopeAllowed is false above, so the
+                     client's own role is the only one in scope: the list is
+                     that role or nothing, and it names no group and no role
+                     of anything else.
+
+                 The attribute is named Role, as the list the realm gives
+                 every SAML client by default is: a realm applies one such
+                 list per answer, and whichever it applies the sidecar reads
+                 the same name. The sidecar takes it from the signed assertion
+                 and from nowhere else, and tells the app's handler, which
+                 gives the app's own administrator role to that person and
+                 takes it from anybody else (docs/app-customization.md §2.3a).
+
+                 The group is tenant-default's, found by the name that
+                 Composition gives it.
+
+                 deletionPolicy: Orphan on all three, and nothing is left
+                 behind by it: the client above is deleted from the realm when
+                 the profile stops declaring the sidecar, and the realm
+                 removes a client's roles, their grants and its mappers with
+                 the client. Deleting them one by one beside it would only be
+                 a race to delete what is already gone. */}}
+            {{- $appAdminsGroup := printf "gentian:tenant:%s:app-admins" $tenant | lower | replace ":" "-" | replace "_" "-" | replace "." "-" }}
+            ---
+            apiVersion: role.keycloak.crossplane.io/v1alpha1
+            kind: Role
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-sign-in-admin-role
+              name: {{ $tenant }}-{{ $app }}-sign-in-admin-role
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $realm }}
+                samlClientIdRef:
+                  name: {{ $tenant }}-{{ $app }}-sign-in-client
+                  policy:
+                    resolve: Always
+                name: gentian-app-admin
+                description: {{ printf "Administers %s: held by the tenant's app administrators" $app | quote }}
+              providerConfigRef:
+                name: keycloak
+            ---
+            apiVersion: group.keycloak.crossplane.io/v1alpha1
+            kind: Roles
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-sign-in-admin-grant
+              name: {{ $tenant }}-{{ $app }}-sign-in-admin-grant
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $realm }}
+                exhaustive: false
+                groupIdRef:
+                  name: {{ $appAdminsGroup }}
+                  policy:
+                    resolve: Always
+                roleIdsRefs:
+                  - name: {{ $tenant }}-{{ $app }}-sign-in-admin-role
+                    policy:
+                      resolve: Always
+              providerConfigRef:
+                name: keycloak
+            ---
+            apiVersion: client.keycloak.crossplane.io/v1alpha1
+            kind: ProtocolMapper
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-sign-in-admin-mapper
+              name: {{ $tenant }}-{{ $app }}-sign-in-admin-mapper
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $realm }}
+                samlClientIdRef:
+                  name: {{ $tenant }}-{{ $app }}-sign-in-client
+                  policy:
+                    resolve: Always
+                name: app-admin
+                protocol: saml
+                protocolMapper: saml-role-list-mapper
+                config:
+                  attribute.name: Role
+                  attribute.nameformat: Basic
+                  single: "true"
+              providerConfigRef:
+                name: keycloak
             {{- end }}
 
             {{- /* Canonicalize extraVals so Helm values hashing is stable across reconciles */}}

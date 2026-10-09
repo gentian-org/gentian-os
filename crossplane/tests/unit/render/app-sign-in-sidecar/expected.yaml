@@ -7,7 +7,7 @@ status:
   conditions:
   - lastTransitionTime: "2024-01-01T00:00:00Z"
     message: 'Unready resources: demo-app-api-stable-svc, demo-app-app-secret-kv,
-      demo-app-app-secret-seed-secret, and 8 more'
+      demo-app-app-secret-seed-secret, and 11 more'
     reason: Creating
     status: "False"
     type: Ready
@@ -350,6 +350,98 @@ spec:
   providerConfigRef:
     name: kubernetes
   rollbackLimit: 3
+---
+apiVersion: group.keycloak.crossplane.io/v1alpha1
+kind: Roles
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: demo-app-sign-in-admin-grant
+  labels:
+    crossplane.io/composite: render-demo-app-fixture
+  name: demo-demo-app-sign-in-admin-grant
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XApp
+    name: render-demo-app-fixture
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    exhaustive: false
+    groupIdRef:
+      name: gentian-tenant-demo-app-admins
+      policy:
+        resolve: Always
+    realmId: demo
+    roleIdsRefs:
+    - name: demo-demo-app-sign-in-admin-role
+      policy:
+        resolve: Always
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: client.keycloak.crossplane.io/v1alpha1
+kind: ProtocolMapper
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: demo-app-sign-in-admin-mapper
+  labels:
+    crossplane.io/composite: render-demo-app-fixture
+  name: demo-demo-app-sign-in-admin-mapper
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XApp
+    name: render-demo-app-fixture
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    config:
+      attribute.name: Role
+      attribute.nameformat: Basic
+      single: "true"
+    name: app-admin
+    protocol: saml
+    protocolMapper: saml-role-list-mapper
+    realmId: demo
+    samlClientIdRef:
+      name: demo-demo-app-sign-in-client
+      policy:
+        resolve: Always
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: role.keycloak.crossplane.io/v1alpha1
+kind: Role
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: demo-app-sign-in-admin-role
+  labels:
+    crossplane.io/composite: render-demo-app-fixture
+  name: demo-demo-app-sign-in-admin-role
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XApp
+    name: render-demo-app-fixture
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    description: 'Administers demo-app: held by the tenant''s app administrators'
+    name: gentian-app-admin
+    realmId: demo
+    samlClientIdRef:
+      name: demo-demo-app-sign-in-client
+      policy:
+        resolve: Always
+  providerConfigRef:
+    name: keycloak
 ---
 apiVersion: samlclient.keycloak.crossplane.io/v1alpha1
 kind: Client
