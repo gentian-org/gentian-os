@@ -147,8 +147,8 @@ refused() { # <what> : the last command ended non-zero
 # What was asked of the director that changes something: every request but a read.
 writes() { grep -v '^GET ' "${CALLS}" || true; }
 
-TENANTS='{"cluster":"c1","tenants":[{"name":"aluvian","apps":[],"protected":false},{"name":"acme","apps":[],"protected":false,"customDomain":"acme.example"}]}'
-DOMAIN_ROUTE="/v1/clusters/c1/tenants/aluvian/domain"
+TENANTS='{"cluster":"c1","tenants":[{"name":"globex","apps":[],"protected":false},{"name":"acme","apps":[],"protected":false,"customDomain":"acme.example"}]}'
+DOMAIN_ROUTE="/v1/clusters/c1/tenants/globex/domain"
 
 echo ""
 echo "kubectl gentian tenants domain"
@@ -163,7 +163,7 @@ fresh; reply GET /v1/clusters/c1/tenants 200 "${TENANTS}"
 gentian tenants domain acme
 has "a name alone shows the domain the tenant is bound to" "${OUT}" "bound to the domain acme.example"
 is "... and only reads" "$(cat "${CALLS}")" "GET /v1/clusters/c1/tenants "
-gentian tenants domain aluvian
+gentian tenants domain globex
 has "a tenant with none is said to have none" "${OUT}" "bound to no domain of its own"
 
 fresh; reply GET /v1/clusters/c1/tenants 200 "${TENANTS}"
@@ -173,45 +173,45 @@ has "... by name" "${OUT}" "no tenant named nobody"
 is "... and nothing is sent" "$(writes)" ""
 
 fresh; reply GET /v1/clusters/c1/tenants 200 "${TENANTS}"
-gentian tenants domain aluvian aluvian.io
+gentian tenants domain globex globex.example
 refused "binding without a terminal and without --yes is refused"
 has "... and says how to confirm" "${OUT}" "not a terminal: confirm with --yes"
 is "... before the director is asked anything" "$(cat "${CALLS}")" ""
 
 fresh; reply GET /v1/clusters/c1/tenants 200 "${TENANTS}"
 reply PUT "${DOMAIN_ROUTE}" 202 '{"status":"updated","commit":"0123456789abcdef"}'
-gentian tenants domain aluvian aluvian.io --yes
+gentian tenants domain globex globex.example --yes
 is "binding with --yes succeeds" "${RC}" "0"
 is "... as one PUT of the domain to the director's route" "$(writes)" "PUT ${DOMAIN_ROUTE} {
-  \"domain\": \"aluvian.io\"
+  \"domain\": \"globex.example\"
 }"
-has "... after saying where the desktop moves" "${OUT}" "desktop.aluvian.io"
-has "... and the admin console" "${OUT}" "admin.aluvian.io"
-has "... that the wildcard has to resolve to the cluster" "${OUT}" "*.aluvian.io resolves to this cluster"
+has "... after saying where the desktop moves" "${OUT}" "desktop.globex.example"
+has "... and the admin console" "${OUT}" "admin.globex.example"
+has "... that the wildcard has to resolve to the cluster" "${OUT}" "*.globex.example resolves to this cluster"
 has "... that the issuer has to answer for the zone" "${OUT}" "_acme-challenge"
 has "... and that nobody checks either" "${OUT}" "The director checks none of it, and neither does this command"
 has "... and it names the commit" "${OUT}" "committed (01234567)"
 
 fresh; reply GET /v1/clusters/c1/tenants 200 "${TENANTS}"
 reply PUT "${DOMAIN_ROUTE}" 202 '{"status":"updated","commit":"0123456789abcdef"}'
-gentian tenants domain aluvian Aluvian.IO --yes
-has "a domain typed in capitals is shown in the spelling that is recorded" "${OUT}" "desktop.aluvian.io"
-has "... and sent in it" "$(writes)" '"domain": "aluvian.io"'
+gentian tenants domain globex Globex.EXAMPLE --yes
+has "a domain typed in capitals is shown in the spelling that is recorded" "${OUT}" "desktop.globex.example"
+has "... and sent in it" "$(writes)" '"domain": "globex.example"'
 
 fresh; reply GET /v1/clusters/c1/tenants 200 "${TENANTS}"
 reply PUT "${DOMAIN_ROUTE}" 202 '{"status":"updated","commit":"0123456789abcdef"}'
-gentian_typing "aluvian.io" tenants domain aluvian aluvian.io
+gentian_typing "globex.example" tenants domain globex globex.example
 is "at a terminal, the domain typed out confirms" "${RC}" "0"
 has "... and the request is sent" "$(writes)" "PUT ${DOMAIN_ROUTE}"
 : > "${CALLS}"
-gentian_typing "yes" tenants domain aluvian aluvian.io
+gentian_typing "yes" tenants domain globex globex.example
 refused "anything else typed does not"
 has "... and says nothing was changed" "${OUT}" "not confirmed; nothing was changed"
 is "... and nothing is sent" "$(writes)" ""
 
 fresh; reply GET /v1/clusters/c1/tenants 200 "${TENANTS}"
 reply PUT "${DOMAIN_ROUTE}" 422 '{"error":"invalid custom domain: t.k.example is on the kernel domain, where every tenant already is"}'
-gentian tenants domain aluvian t.k.example --yes
+gentian tenants domain globex t.k.example --yes
 refused "a domain the director refuses ends the command non-zero"
 has "... with the director's own words" "${OUT}" "the director answered 422: invalid custom domain: t.k.example is on the kernel domain, where every tenant already is"
 
@@ -245,12 +245,12 @@ gentian_typing "acme" tenants domain acme --remove
 is "... and the name typed out confirms" "$(writes)" "DELETE /v1/clusters/c1/tenants/acme/domain "
 
 fresh; reply GET /v1/clusters/c1/tenants 200 "${TENANTS}"
-gentian tenants domain aluvian --remove --yes
+gentian tenants domain globex --remove --yes
 has "removing from a tenant with no domain changes nothing" "${OUT}" "nothing was changed"
 is "... and nothing is sent" "$(writes)" ""
 
 fresh
-gentian tenants domain 'aluvian/../x' example.org --yes
+gentian tenants domain 'globex/../x' example.org --yes
 refused "a tenant name that is not a name is refused"
 is "... and asks the director nothing" "$(cat "${CALLS}")" ""
 
@@ -258,8 +258,8 @@ echo ""
 echo "kubectl gentian exposures"
 echo ""
 
-REGISTRY='{"tenant":"aluvian","live":[
-  {"install":"aluvian-store","exposureName":"api","owner":"u-1","reviewAt":"2027-10-09T10:00:00Z","publishedAt":"2026-10-09T10:00:00Z","reason":"the store other clusters read"},
+REGISTRY='{"tenant":"acme","live":[
+  {"install":"shop","exposureName":"api","owner":"u-1","reviewAt":"2027-10-09T10:00:00Z","publishedAt":"2026-10-09T10:00:00Z","reason":"the store other clusters read"},
   {"install":"website","exposureName":"site","owner":"u-2","reviewAt":"2026-01-01T00:00:00Z","publishedAt":"2025-01-01T00:00:00Z","apex":true}],
  "expired":[{"install":"cloud","exposureName":"share","owner":"u-3","reviewAt":"2026-03-01T00:00:00Z","expiresAt":"2026-03-01T00:00:00Z"}],
  "reviewDue":[{"install":"website","exposureName":"site","owner":"u-2","reviewAt":"2026-01-01T00:00:00Z"}]}'
@@ -269,48 +269,48 @@ gentian exposures list
 refused "list without --tenant is refused"
 is "... and asks the director nothing" "$(cat "${CALLS}")" ""
 
-fresh; reply GET /v1/tenants/aluvian/exposures 200 "${REGISTRY}"
-gentian exposures list --tenant aluvian
-is "list reads the tenant's registry and nothing else" "$(cat "${CALLS}")" "GET /v1/tenants/aluvian/exposures "
-has "... an entry in force is published" "$(grep aluvian-store <<<"${OUT}")" "published"
-has "... with who published it and its review date" "$(grep aluvian-store <<<"${OUT}" | tr -s ' ')" "u-1 2026-10-09 2027-10-09"
+fresh; reply GET /v1/tenants/acme/exposures 200 "${REGISTRY}"
+gentian exposures list --tenant acme
+is "list reads the tenant's registry and nothing else" "$(cat "${CALLS}")" "GET /v1/tenants/acme/exposures "
+has "... an entry in force is published" "$(grep shop <<<"${OUT}")" "published"
+has "... with who published it and its review date" "$(grep shop <<<"${OUT}" | tr -s ' ')" "u-1 2026-10-09 2027-10-09"
 has "... one past its review date is review due" "$(grep website <<<"${OUT}")" "review due"
 has "... one that ended is expired" "$(grep cloud <<<"${OUT}")" "expired"
 
-fresh; reply GET /v1/tenants/aluvian/exposures 200 '{"tenant":"aluvian","live":[],"expired":[],"reviewDue":[]}'
-gentian exposures list --tenant aluvian
+fresh; reply GET /v1/tenants/acme/exposures 200 '{"tenant":"acme","live":[],"expired":[],"reviewDue":[]}'
+gentian exposures list --tenant acme
 has "an empty registry is said to be empty" "${OUT}" "has published nothing to the internet"
 
-fresh; reply GET /v1/tenants/aluvian/exposures 403 '{"error":"you may not see this tenant"}'
-gentian exposures list --tenant aluvian
+fresh; reply GET /v1/tenants/acme/exposures 403 '{"error":"you may not see this tenant"}'
+gentian exposures list --tenant acme
 refused "a read the director refuses ends the command non-zero"
 has "... with the director's own words" "${OUT}" "the director answered 403: you may not see this tenant"
 
-WITHDRAW_ROUTE="/v1/tenants/aluvian/exposures/aluvian-store/api"
+WITHDRAW_ROUTE="/v1/tenants/acme/exposures/shop/api"
 
 fresh
-gentian exposures withdraw aluvian-store --tenant aluvian
+gentian exposures withdraw shop --tenant acme
 refused "withdraw without an entry is a usage error"
-gentian exposures withdraw aluvian-store api
+gentian exposures withdraw shop api
 refused "withdraw without --tenant is refused"
-gentian exposures withdraw aluvian-store 'api?x=1' --tenant aluvian
+gentian exposures withdraw shop 'api?x=1' --tenant acme
 refused "an entry that is not a name is refused"
-gentian exposures withdraw 'a/b' api --tenant aluvian
+gentian exposures withdraw 'a/b' api --tenant acme
 refused "an app instance that is not a name is refused"
 is "... and none of them asks the director anything" "$(cat "${CALLS}")" ""
 
 fresh; reply DELETE "${WITHDRAW_ROUTE}" 202 '{"status":"updated","commit":"aaaabbbbccccdddd"}'
-gentian exposures withdraw aluvian-store api --tenant aluvian
+gentian exposures withdraw shop api --tenant acme
 is "withdraw succeeds" "${RC}" "0"
 is "... as one DELETE of the entry, with no body" "$(cat "${CALLS}")" "DELETE ${WITHDRAW_ROUTE} "
 has "... and names the commit" "${OUT}" "committed (aaaabbbb)"
 
 fresh; reply DELETE "${WITHDRAW_ROUTE}" 200 '{"status":"unchanged"}'
-gentian exposures withdraw aluvian-store api --tenant aluvian
-has "withdrawing what is not published says so" "${OUT}" "is not published by aluvian; nothing was committed"
+gentian exposures withdraw shop api --tenant acme
+has "withdrawing what is not published says so" "${OUT}" "is not published by acme; nothing was committed"
 
 fresh; reply DELETE "${WITHDRAW_ROUTE}" 403 '{"error":"publishing and withdrawing is the perimeter approver'"'"'s"}'
-gentian exposures withdraw aluvian-store api --tenant aluvian
+gentian exposures withdraw shop api --tenant acme
 refused "a withdrawal the director refuses ends the command non-zero"
 has "... with the director's own words" "${OUT}" "the director answered 403: publishing and withdrawing is the perimeter approver's"
 
