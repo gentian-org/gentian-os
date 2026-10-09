@@ -36,7 +36,7 @@ const (
 	// NodeExtraCAKey holds the LE staging CA chain for NODE_EXTRA_CA_CERTS.
 	// Node.js appends this file to the default Mozilla trust store; it must
 	// contain the full staging issuer chain (not the server leaf or a duplicate
-	// Mozilla bundle). See docs/design/security.md §9.1.
+	// Mozilla bundle). See docs/design/security.md §12.1.
 	NodeExtraCAKey = "node-extra-ca.crt"
 
 	DefaultCertManagerNS = "cert-manager"

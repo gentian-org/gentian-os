@@ -122,8 +122,8 @@ const (
 	// to be reachable for it to be installed -- which is exactly why the
 	// cluster's own catalogue view exists.
 	EditionPE Edition = "pe"
-	// EditionME is the community edition plus active maintenance by Gentian:
-	// the editions Aluvian itself runs and keeps current.
+	// EditionME is the community edition plus active maintenance: an edition
+	// its maintainer itself runs and keeps current.
 	EditionME Edition = "me"
 	// EditionEE is the enterprise edition: commercially licensed, and
 	// maintained and supported by its supplier. It says the entry is

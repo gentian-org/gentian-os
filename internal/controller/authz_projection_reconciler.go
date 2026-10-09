@@ -43,11 +43,10 @@ import (
 //
 // So this reconciler owns them, and the director is left with read access.
 //
-// What it does NOT own, yet: membership, which arrives as signed Keycloak
-// events and is still applied by the director, and session revocation, which
-// belongs with the edge authorization service that reads it. Both are
-// event-driven rather than projections of declared state, and both move on
-// their own step.
+// What it does NOT own: membership, which arrives as signed Keycloak events
+// and is applied by the operator's membership listener
+// (membership_listener.go), and session revocation, which belongs with the
+// edge authorization service that reads it and which nothing writes yet.
 //
 // Declarative, like the functions it calls: a role whose group the claim no
 // longer names loses its tuple, so authority over a cluster is taken away by
