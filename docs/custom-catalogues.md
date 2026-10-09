@@ -283,18 +283,29 @@ A Component that reaches a cluster some other way is held with the condition `Ho
 same sentence, and nothing of it is installed or routed. Stating `trustTier: platform` changes
 nothing. The list and the reasons: [design/routing.md §3.1](design/routing.md).
 
-**An entry behind sign-in gets no token of the page's.** On a `surface: gateway`, `authMode: oidc`
-entry the front door tells the app who is asking in headers. It replaces the `Authorization`
-header a page sent with its own token and removes that again before the app, with the session's
-cookies, so an app whose pages send its API a bearer token of their own does not receive it.
+**An entry behind sign-in gets no token of the page's, unless it asks and is approved.** On a
+`surface: gateway`, `authMode: oidc` entry the front door tells the app who is asking in headers.
+It replaces the `Authorization` header a page sent with its own token and removes that again
+before the app, with the session's cookies, so an app whose pages send its API a bearer token of
+their own does not receive it. Such an app declares `clientAuthorization: app` on the entry. That
+is a request to the tenant's perimeter approver, listed and approved like a public address
+although it is none; until it is approved nothing changes and the app's own calls fail. Approved,
+the header is left as the page sent it, sign-in and the right to use the app stay required, and
+no platform token reaches the app. It cannot be combined with `forwardToken` or `exchangeToken` in one profile.
 Signing out at the front door tells no app; a session the app keeps itself ends when the app ends
 it.
 
 **An entry on the internet is a request, and the proxy checks no caller.** A `surface: perimeter`
 entry publishes nothing until the tenant's perimeter approver approves it (`kubectl gentian
-exposures requests|approve|list|withdraw --tenant <tenant>`). The proxy it is then served from
-verifies nothing for any `authMode` — `basic`, `bearer`, `jwt` and `signature` are the app's own
-to check — and removes `Authorization`, `Cookie` and the identity headers from every request.
+exposures requests|approve|list|withdraw --tenant <tenant>`). It declares `authMode: none` (the
+paths are for anyone; `Authorization`, `Cookie` and the identity headers are removed) or
+`authMode: app` (the same, but the caller's `Authorization` header is passed to the app, which
+alone checks it: for sync clients, API keys and webhooks holding a credential the app issued).
+The approver of an `app` entry is told that the platform does not know who calls and that a
+removed person's app password works until the app revokes it; cookies pass in neither direction
+and the rate per client address is lower. `basic`, `bearer`, `jwt` and `signature` are refused on
+a perimeter entry: the platform verifies none of them yet. An approval is for the kind of entry
+it was given for; a profile that changes an approved entry's kind is a request again.
 `apex: true` asks for the cluster's main address, for the user tenant of a single-tenancy cluster
 only, with the approver's acknowledgement. Limits, reserved paths and the rule for such a website:
 [app-customization.md §2.10](app-customization.md).

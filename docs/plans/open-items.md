@@ -21,19 +21,19 @@ code does what the decision says; it does not mean a cluster has shown it.
 
 | AD | | State |
 | --- | --- | --- |
-| AD-1 | Nine security principles normative; every request passes one named enforcement point | **Holds, with one gap.** The publishing proxy is a named enforcement point that checks no caller: it filters and limits, and verifies nothing for any `authMode` (see AD-6) |
+| AD-1 | Nine security principles normative; every request passes one named enforcement point | **Holds, with one accepted limit, stated in the decision.** The publishing proxy is a named enforcement point that checks no caller: it filters and limits. On an entry of `authMode: app` it passes the caller's credential to the app, which checks it; the platform does not know that caller, and a removed person's app credential lives until the app revokes it (roadmap 1.34) |
 | AD-2 | The director is the only writer of the deployment repository | **Holds.** Commits are signed, Argo CD syncs only commits signed by the director's key or the break-glass key, the operator holds no git credential. For a private repository the installer gives Argo CD the repository's credential directly until the vault's copy takes over (`A-06`, `C-05-repository-handoff`). Argo CD and the director still share one credential that can push |
 | AD-3 | The store's data is outside the cluster; its interface is an app on it | **Holds on the cluster's side.** The operator places the App Store app on every tenant but the platform's while the cluster reports its licences and names a store; an install is fetched at its digest, checked, committed, and checked again before rollout. A store address that is the cluster's own App Store host is not taken as a store |
 | AD-4 | One catalogue kind, `ComponentProfile` | **Holds.** [app-customization.md](../app-customization.md) still says `AppProfile` in many places |
 | AD-5 | Privileges are requests with one approval path | **Holds**, except that egress a profile declares reaches the network policy without an approval |
-| AD-6 | `authMode` mandatory; a perimeter surface is published per tenant by an approver | **Deviation.** Publishing works as decided: a proxy in `tenant-<t>-dmz` only for an entry an approver published under `can_expose`, with a review date. Two things do not: the proxy checks no caller, so `basic`, `signature` and `jwt` on a perimeter entry promise nothing today; and `can_expose` is held by the members of the group `gentian:tenant:<t>:perimeter` alone, a group nothing creates, so the tenant's admins do not hold it by default as the decision says |
+| AD-6 | `authMode` mandatory; a perimeter surface is published per tenant by an approver | **Deviation.** Publishing works as decided: a proxy in `tenant-<t>-dmz` only for an entry an approver published under `can_expose`, with a review date. The proxy checks no caller, and no entry says it does any more: `authMode: app` passes the caller's credential to the app, which checks it (the accepted limit in AD-1), and `basic`, `signature`, `jwt` and `bearer` are refused on a perimeter entry by the schema. One thing does not work as decided: `can_expose` is held by the members of the group `gentian:tenant:<t>:perimeter` alone, a group nothing creates, so the tenant's admins do not hold it by default as the decision says |
 | AD-7 | Namespaces named by tier | **Holds** |
 | AD-8 | Kernel trust domains are separate namespaces | **Holds** |
 | AD-9 | System services have no public route | **Deviation, one of two closed.** Mail now faces the internet only through a proxy in `system-mail-dmz` that holds nothing; Postfix and Dovecot have no load balancer of their own. Still open: the model gateway's console is routed at `llm.<kernel domain>`, behind the kernel realm's session and `can_configure`, whenever the cluster runs the model gateway, and no setting takes the route away. TURN does not exist |
 | AD-10 | The portal splits two ways; the platform is a tenant | **Holds** |
 | AD-11 | The target layout applies to fresh installs | **Holds** |
 | AD-12 | The authorization store is a projection: the operator writes it, from git and from Keycloak's events; the director asks it | **Holds for who writes, with four things not built and one credential too many.** The operator receives Keycloak's signed statements and projects memberships, and projects roles, tenants, apps and grants from what git declares; the director asks the store and writes nothing to it. **Not built:** no code revokes a person's sessions when their groups change; no realm setting disables offline tokens (an app's client is left the optional scope `offline_access`); nothing reconciles the stored memberships toward Keycloak, so a statement that never arrives is repaired only by the next one about the same person; and the check at start that the defaults git implies are the ones the store holds does not exist. **Against the decision:** the operator still holds Keycloak's master administrator credential (defect 15) |
-| AD-13 | The edge is the only session authority | **Holds, with the two exceptions the entry names**: the App Store app's sign-in to a store, and the sign-in sidecar |
+| AD-13 | The edge is the only session authority | **Holds, with the two exceptions the entry names**: the App Store app's sign-in to a store, and the sign-in sidecar. An approved entry that keeps the app's own `Authorization` header is no exception to it: the session is still the edge's and still required |
 | AD-14 | Catalogue sources on the Cluster claim; a profile reaches a cluster only at a verified digest | **Deviation, not decided.** Sources on the claim and per tenant, delegation, one bundle under one digest, and the console's catalogue view hidden: as decided. But the installer fetches the Operations Console's profile by address at install and commits it with no digest (see part 4) |
 | AD-15 | Multi-language is a core requirement | **Partly.** Desktop, console and sign-in pages are translated. A component's `description` and a store listing's text are single strings; the desktop has no check for a missing translation in CI |
 
@@ -65,6 +65,13 @@ been seen working on a cluster. Until it has, it is not done.
   approver's acknowledgement.
 - The publishing proxy's limits and filters, and the limit on sign-in posts at
   the Gateway.
+- A public entry that passes its callers' credential to the app (`authMode:
+  app`), with its lower limit. Tested against the proxy's own image; no app
+  in the catalogue declares one yet.
+- An entry behind sign-in that keeps the app's own `Authorization` header
+  (`clientAuthorization: app`) once approved. The policy is validated against
+  the pinned Envoy Gateway definitions and the bouncer's decisions are
+  tested; no browser has been through it on a cluster.
 
 ### Network
 
@@ -128,14 +135,14 @@ Each is true of the code today.
 
 | | Defect | Where it is described |
 | --- | --- | --- |
-| 1 | **An app's own client loses its token at the front door.** On a route with a session the Gateway removes the `Authorization` header a client sent; a gateway entry with another `authMode` is not routed at all. Sync clients, mobile apps and scripts that bring a token of their own do not reach their app | [routing.md §4.1](../design/routing.md) |
+| 1 | **An app's own client and its token: closed in two parts, open in a third.** A browser page that sends the app's own token keeps it on an entry that declares `clientAuthorization: app`, once the tenant's perimeter approver approved it; without the declaration or the approval the Gateway still removes the header. A client with no browser session (sync client, mobile app, script, webhook) reaches the app through a public entry of `authMode: app` with a credential the app issued. **Still open**: a client that needs the app's cookies on a public address does not work, which is what Synapse's sign-in needs, so Element is not served yet; no bearer token is verified at the edge; and the catalogue's apps have to declare the entries before any of it helps them | [routing.md §4.1, §7](../design/routing.md) |
 | 2 | **Signing out does not reach most apps.** The session ends at the Gateway when its access token runs out. The realm tells only an app whose own OIDC client declares a back-channel logout address; any other session an app keeps lasts until it ends by itself, a sidecar's at most an hour | AD-13, [security.md §2.12](../design/security.md) |
 | 3 | **One key opens the rights store.** Six programs present the same OpenFGA key, and it can write | [operator-split-plan.md §6](operator-split-plan.md) |
 | 4 | **Nobody may publish by default.** `can_expose` needs the group `gentian:tenant:<t>:perimeter`, which no install and no tenant creation makes; a tenant's admin has to create it and join it before anything can be approved | part 1, AD-6 |
-| 5 | **The publishing proxy checks no caller**, whatever the entry's `authMode` | [security.md §2.14](../design/security.md) |
+| 5 | **The publishing proxy checks no caller.** No entry claims otherwise any more: the modes that named a check are refused by the schema, and `authMode: app` hands the credential to the app. What stays open is the consequence the owner accepted for now: the platform does not know the caller on such a path, and a removed person's app password or token works until the app revokes it | [security.md §2.14](../design/security.md), AD-1, [roadmap.md](../roadmap.md) 1.34 |
 | 6 | **Identity headers are not signed.** An app and a sign-in sidecar believe them; network rules are what keeps another pod from sending its own | [operator-split-plan.md §6](operator-split-plan.md) |
 | 7 | **No kernel namespace restricts outgoing connections** | [security.md §2.13](../design/security.md) |
-| 8 | **An import carries the source's approvals.** The new tenant's manifest is written from the bundle, so the privileges granted and the entries published in the exported tenant arrive approved, and nobody on the importing cluster approved them | [data-lifecycle.md](../design/data-lifecycle.md) |
+| 8 | **An import carries the source's approvals.** The new tenant's manifest is written from the bundle, so the privileges granted and the entries approved in the exported tenant — public addresses, with their kind, and kept `Authorization` headers — arrive approved, and nobody on the importing cluster approved them | [data-lifecycle.md](../design/data-lifecycle.md) |
 | 9 | **A deleted tenant leaves entries behind**: its rights and memberships in the rights store, which a later tenant of the same name would inherit, and its keys in the shared cache | [data-lifecycle.md](../design/data-lifecycle.md) |
 | 10 | **A removed person's mailbox stays** until the tenant is deleted | [mail.md](../design/mail.md) |
 | 11 | **The Operations Console's profile arrives without a digest** | part 4 |
@@ -167,13 +174,15 @@ Each is true of the code today.
    instead (the access token's lifetime and `sessionMaxAge`). The operator's
    hold on Keycloak's master administrator credential is defect 15.
 4. **What `basic`, `signature` and `jwt` mean on a perimeter entry** (AD-6,
-   AD-1). Either the proxy verifies them, or the schema refuses them there
-   until it does, or they stay as a statement about the app that the platform
-   does not check.
-5. **A route for a client that brings its own token** (defect 1). Either a
-   gateway entry may ask for a route where the bouncer verifies the client's
-   bearer token, or such paths are published through the publishing proxy and
-   checked by the app.
+   AD-1). **Decided 2026-10-09**: the schema refuses them there, with
+   `bearer`, until they can be enforced; what can be delivered now is
+   `authMode: app`, where the app checks.
+5. **A route for a client that brings its own token** (defect 1). **Decided
+   2026-10-09**: both, each as an entry type the tenant's perimeter approver
+   approves — behind sign-in the page's own header is kept
+   (`clientAuthorization: app`), and a client without a session goes through
+   the publishing proxy and is checked by the app (`authMode: app`). The
+   app's cookies on a public address are left for later, with Synapse.
 6. **The model gateway's console** (AD-9). Either it gets a switch, off by
    default, or AD-9 names it with the kernel's own tools as a console behind
    the kernel session.

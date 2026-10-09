@@ -348,9 +348,13 @@ catalogue, and never for a tenant that signs in in the kernel realm. Otherwise t
 held with `SignInSidecarRefused` and says why ([security.md §2.12](security.md)).
 
 **What none of the three ways gives.** The identity headers an app or a sidecar receives are not
-signed; network rules are what keep another pod from sending them. An app whose own client sends
-a bearer token of the app's loses it on a session route: the Gateway drops the client's
-`Authorization` header ([routing.md §4.1](routing.md)). And sign-out does not reach an app's own
+signed; network rules are what keep another pod from sending them. An app whose own page sends
+a bearer token of the app's loses it on a session route, where the Gateway drops the client's
+`Authorization` header, unless its entry declares `clientAuthorization: app` and the tenant's
+perimeter approver approved it; sign-in stays required either way ([routing.md §4.1](routing.md)).
+A client with no browser session reaches an app only through a public entry of `authMode: app`,
+with a credential the app issued: the platform does not know that caller, and removing a person
+from the realm does not end such a credential ([security.md §2.14](security.md)). And sign-out does not reach an app's own
 session, unless its OIDC client declares a back-channel logout address (§1.1).
 
 ## 2. Administration UI

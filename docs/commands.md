@@ -418,8 +418,13 @@ kubectl gentian exposures list --tenant demo
 kubectl gentian exposures withdraw cloud share --tenant demo
 ```
 
-`requests` shows every entry an installed app declares for the internet: the
-address it is published at, its paths, who can reach it, and its state.
+`requests` shows every entry an installed app declares for the internet: its
+kind, the address it is published at, its paths, who can reach it, and its
+state. The same list carries the one request that is not a public address:
+an entry behind sign-in that asks to keep the app's own `Authorization`
+header (KIND "Behind sign-in: keeps the app's own Authorization header").
+It is approved, reviewed and withdrawn with the same commands, and nothing
+is published for it.
 `requested` is declared and not approved, so nothing is published.
 `approved`, `review due` and `expired` are as in `list`, with who approved it
 and until when. `unmatched` is an entry in the registry that matches no entry
@@ -427,23 +432,33 @@ of an installed app; nothing is published for it, and `withdraw` clears it.
 Whoever may see the tenant may read the list.
 
 Under SIGN-IN, `none: anyone` means anyone on the internet reaches the paths
-without signing in. `by the app (<mode>)` means the app's profile says the
-app checks its callers itself. The platform checks nobody at a published
-address in either case: the proxy forwards the listed paths and drops
-cookies and tokens on the way in.
+without signing in, and no credential is passed to the app. `none: the app
+checks the credential` is a public address whose callers' `Authorization`
+header is passed to the app (`authMode: app`). The platform checks nobody at
+a published address in either case. `required` is an entry behind sign-in.
+KIND, and everything `approve` prints about an entry, are the director's own
+words.
 
 `approve` is for whoever may publish in the tenant: a member of the tenant's
 group `gentian:tenant:<tenant>:perimeter`. Nothing creates that group; the
 tenant's admin creates it in the admin console (a group named `perimeter`)
 and adds the approver, and without it the director answers 403. It reads the entry from
-the director and prints the address, the paths and who can reach it, then
+the director and prints its kind, the address, the paths, who can reach it
+and the limit per client address, then
 asks you to type `<app instance>/<entry>` (or pass `--yes`). Without
 `--expires` the entry stays until it is withdrawn; a date means the end of
 that day, UTC. It is reviewed after a year at the latest. Approving an entry
 that is approved already is its review, and replaces its expiry and reason.
+For a public address that passes the caller's credential to the app, what
+it prints includes that the platform does not know or check who calls, and
+that an app password or token of a person removed from the tenant keeps
+working until the app itself revokes it. For an entry behind sign-in it
+says that nothing is put on the internet and what changes instead. The
+command sends the kind it showed with the approval, and the director refuses
+it (409) if the app's entry has come to declare another meanwhile.
 The command sends nothing for an entry the director does not list, and the
 director itself refuses an app instance that is not installed in the tenant
-and an entry the profile does not declare for the internet. It also refuses
+and an entry that asks for nothing an approver decides. It also refuses
 an approval that asks for the main address for an entry not declared for it,
 or that does not ask for it for one that is; the command sends what the
 entry is, and prints the director's refusal as it came.

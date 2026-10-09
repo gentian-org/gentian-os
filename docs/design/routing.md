@@ -463,19 +463,46 @@ session is not an exception written into a policy: it is a route of its own
 that no policy names (below). A client cannot present a bearer of
 its own on these routes: `forwardAccessToken` makes the filter drop the
 incoming `Authorization` header before it writes its own. That includes an
-app whose own page or client sends the app's API a bearer token of the app's:
-the token does not arrive, and the app has to go by the identity headers or
-by a session of its own. Command-line
+app whose own page sends the app's API a bearer token of the app's: on an
+ordinary entry the token does not arrive, and the app has to go by the
+identity headers or by a session of its own. Command-line
 clients do not come through the edge at all (`kubectl gentian` reaches the
 director through the API server).
 
-One route keeps the caller's own `Authorization` header: Keycloak's
-administration console on `id.<kernelDomain>`, whose page calls the Admin REST
-API with a token of its own. There `forwardAccessToken` is off, and the
-filter hands the bouncer the session's ID token in `x-gentian-id-token`
-(`forwardIDToken`), a header it clears of anything the client sent before it
-sets it. The bouncer verifies it as an ID token issued to the zone's client
-and removes the header before the backend.
+Two kinds of route keep the caller's own `Authorization` header. One is
+Keycloak's administration console on `id.<kernelDomain>`, whose page calls the
+Admin REST API with a token of its own. The other is an app's gateway entry
+that declares `clientAuthorization: app` and that the tenant's perimeter
+approver has approved (§7). On both, `forwardAccessToken` is off, so the
+filter leaves the header as the browser sent it, and it hands the bouncer the
+session's ID token in `x-gentian-id-token` (`forwardIDToken`), a header it
+clears of anything the client sent before it sets it. The bouncer verifies
+it as an ID token issued to the zone's client, asks the route's relation of
+that person, and removes the ID-token header and the session's cookies
+before the backend. It does not read the `Authorization` header and does not
+remove it.
+
+Keeping the header is not accepting it. The session is required on these
+routes exactly as on every other: the filter still wants its own cookies on
+every request and sends a request without them to sign in, whatever the
+request carries in `Authorization`, because the one setting that would let a
+bearer stand in for the session (`passThroughAuthHeader`) is set on no
+policy. A request that reached the bouncer without the session's ID token
+would be answered `401`. No token of the platform's reaches the app on such a
+route.
+
+A component has one policy for all its hosts. When one of them keeps the
+header, the filter stops writing the edge's token into the header on all of
+them; the bouncer's table then says per host whether the header is the app's
+to keep (`keepClientToken`) or is still removed (`idTokenSession`). An entry
+that forwards the edge's token (`forwardToken`) or asks for an exchanged one
+(`exchangeToken`) and one that keeps the app's own cannot be in one profile:
+the schema refuses it.
+
+For up to about a minute after such an approval is given or withdrawn, the
+policy and the bouncer's table can disagree, because they reach the Gateway
+and the bouncer separately. In that window requests to that component are
+refused with `401`; none is admitted that would not have been.
 
 Identity headers (`x-gentian-subject`, `-realm`, `-session`, `-email`,
 `-name`) are set by the bouncer on every request it allows, replacing
@@ -521,7 +548,9 @@ A bearer route has no session and its `Cookie` header is not touched.
 Routes without a session policy are unchanged and never ask the bouncer:
 perimeter surfaces (a tenant's DMZ, the concierge), the identity provider's
 realm endpoints on `id.<kernelDomain>`, and the redirects. Nobody checks the
-caller of a perimeter surface, whatever its `authMode` says (§7). What
+caller of a perimeter surface at the edge: the proxy forwards for anyone, and
+on an entry of `authMode: app` the app checks the credential it is passed
+(§7). What
 `id.<kernelDomain>` refuses is a route with `authorization: Deny`.
 
 **The sign-in sidecar's answer path.** An app whose profile declares
@@ -689,7 +718,9 @@ keeps serving and is asked at its next review.
 *What the approver sees.* The director's read of a tenant's registry
 (`GET /v1/tenants/{t}/exposures`, `can_view`) also lists every perimeter
 entry an installed app declares, approved or not, with the address it is
-published at, its paths and its `authMode`. The address is resolved by the
+published at, its paths, its `authMode` and its kind, and with them every
+entry behind sign-in that asks to keep the app's own `Authorization` header
+(§7). The address is resolved by the
 function the operator publishes it with (`internal/addresses`). An approval
 of an app that is not installed in the tenant, or of an entry its profile
 does not declare for the perimeter, is refused (`422`) and nothing is
@@ -795,7 +826,8 @@ allowed by policy resources.
 
 A profile declares each entry point under `expose[]` (`ExposureSpec`): a
 name, a `surface` (`gateway`, behind the zone's session, or `perimeter`, with
-none), a mandatory `authMode`, the host label (`subDomain`, else the
+none), a mandatory `authMode` (`oidc` on the gateway; `none` or `app` on the
+perimeter), the host label (`subDomain`, else the
 component's name; `apex` for the bare domain, §5), `paths` and `denyPaths`,
 and the backend Service and port. It has no field for a timeout, a body size
 or a rate: those are the platform's.
@@ -814,8 +846,8 @@ tenant's DMZ, a listener for exactly its host and a route (§2.1).
 
 | | Command line | Director |
 | --- | --- | --- |
-| What the tenant's apps ask for, and what is approved | `kubectl gentian exposures requests --tenant <t>` | `GET /v1/tenants/{t}/exposures`, `entries[]`: state (`requested`, `approved`, `reviewDue`, `expired`, `unmatched`), address, paths, `authMode` |
-| What is published | `kubectl gentian exposures list --tenant <t>` | the same read: `live`, `reviewDue`, `expired` |
+| What the tenant's apps ask for, and what is approved | `kubectl gentian exposures requests --tenant <t>` | `GET /v1/tenants/{t}/exposures`, `entries[]`: state (`requested`, `approved`, `reviewDue`, `expired`, `unmatched`), `kind` and `kindLabel`, address, paths, `authMode`, and in the director's words what approving allows (`access`) and the limit that applies (`rateLimit`) |
+| What is approved | `kubectl gentian exposures list --tenant <t>` | the same read: `live`, `reviewDue`, `expired`, each entry with its `kind`; `kinds` gives the words for each |
 | Approve, or review again | `kubectl gentian exposures approve <app-instance> <entry> --tenant <t> [--expires <date>] [--reason <text>]` | `PUT /v1/tenants/{t}/exposures/{inst}/{name}` |
 | Withdraw | `kubectl gentian exposures withdraw <app-instance> <entry> --tenant <t>` | `DELETE` on the same path |
 
@@ -826,19 +858,46 @@ main-address setting that is not the entry's, is refused (`422`) and nothing
 is committed (§5). The read is from git: it says where an entry will answer,
 not whether it answers yet.
 
+**Three kinds of entry take an approval**, and the registry records which
+one was approved (`kind`):
+
+| Kind | Declared as | Once approved |
+| --- | --- | --- |
+| `public` | `surface: perimeter`, `authMode: none` | The declared paths are published for anyone. No credential reaches the app |
+| `publicAppCredential` | `surface: perimeter`, `authMode: app` | The declared paths are published for anyone, and the caller's `Authorization` header is passed to the app as sent. The app alone checks it; the platform does not know who calls |
+| `signInAppAuthorization` | `surface: gateway`, `authMode: oidc`, `clientAuthorization: app` | Nothing is published. Behind sign-in, the `Authorization` header is left as the app's own page sent it (§4.1) |
+
+An approval holds for the kind it was given for. If the app's catalogue
+entry later declares another kind, the platform does nothing for the entry
+— a public address is taken down, a kept header is removed again — and the
+read lists it as `requested` with the earlier approval beside it, until it
+is approved as what it is now. An approval request may name the kind the
+approver was shown (`"kind"` in the body, which the command line and the
+console send); the director refuses it with `409` if the entry declares
+another. Before the third kind is approved the entry is served like any
+other behind sign-in, and the Component's `ClientAuthorization` condition
+says that the app's own calls will fail until then.
+
 **What a published entry is held to.** The proxy forwards the declared paths
 and nothing else, lets a path through only if it has one reading, removes
-every identity header, `Cookie` and `Authorization` on the way in and
-`Set-Cookie` on the way out, and limits each client address: 10 MB a body,
-20 requests a second with 200 more at once, 100 at a time. The numbers are
+every identity header and `Cookie` on the way in and `Set-Cookie` on the way
+out, removes `Authorization` unless the entry was approved as
+`publicAppCredential`, and limits each client address: 10 MB a body,
+20 requests a second with 200 more at once, 100 at a time — and 5 a second,
+50 more at once, 20 at a time on an entry that passes the credential,
+because every request to it may be a guess at a password. The numbers are
 the cluster administrator's to change and no profile's. Sign-in posts are
 limited at the Gateway, 60 a minute for each client address. The full list,
 and whose address is counted: [security.md §2.14](security.md).
 
-**It checks no caller.** `authMode` on a perimeter entry (`jwt`, `bearer`,
-`basic`, `signature`, `none`) changes nothing the platform does, and since
-`Authorization` is removed, a credential sent in it does not reach the app
-either. The approver is told so for every entry other than `none`.
+**It checks no caller.** On an entry of `authMode: app` the credential in
+`Authorization` reaches the app and the app checks it; the approver is told
+that the platform does not know or check who calls, and that an app password
+or token of a person removed from the tenant keeps working until the app
+itself revokes it. A client that needs the app's cookies on a public address
+does not work: cookies pass in neither direction. `jwt`, `bearer`, `basic`
+and `signature` named a check at the edge that nothing makes; the schema
+refuses them on a perimeter entry until they are built.
 
 ---
 

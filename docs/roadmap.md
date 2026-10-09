@@ -655,11 +655,19 @@ does not exist yet that something cannot be the Composition.
 * **Proposed Solution**: Not decided. Investigate whether the narrower
   replay window is worth an exchange on every relayed call and a client
   credential in every backend, and whether the same mechanism should extend
-  to the apps a tenant installs.
+  to the apps a tenant installs. The same question has a second half at the
+  public edge: a public entry may pass its callers' own credential to the app
+  (`authMode: app`), and that credential is the app's — an app password, an
+  API key — so the platform does not know the caller and a person removed
+  from the tenant keeps access until the app revokes it. Credentials the
+  platform issues for such callers and can revoke, checked at the publishing
+  proxy, would close that; it is also what `basic`, `signature`, `jwt` and
+  `bearer` on a perimeter entry wait for, which the schema refuses until then.
 * **Backlog Items**:
   - `[ ]` Measure what an exchange per relayed call costs, and where a cached exchanged token would have to live.
   - `[ ]` Decide per service whether an audience of its own is wanted.
   - `[ ]` Decide whether user-facing apps take part or stay on their own clients.
+  - `[ ]` Platform-issued, revocable credentials for callers of a public entry, so that removing a person ends their access there; and with them a caller check at the publishing proxy.
 
 ### 1.35 A Credential per Client at the Authorization Store (**) — when available
 * **Target Domain**: Authorization

@@ -634,18 +634,67 @@ approves it with `kubectl gentian exposures approve <install> <name> --tenant
 recorded as its owner, with a review date a year on at the latest;
 `--expires <date>` takes it down on a day, `--reason` is kept with it, and
 approving an approved entry again is its review. The director refuses an approval of an app that is not installed
-in the tenant, of an entry the profile does not declare with `surface:
-perimeter`, and one whose `apex` is not the entry's. The entry then answers at `<subDomain or component
+in the tenant, of an entry that asks for nothing an approver decides (a
+plain entry behind sign-in), and one whose `apex` is not the entry's. The entry then answers at `<subDomain or component
 name>.<tenant's domain>`, from a proxy that passes no cookies either way.
 `exposures list` shows what a tenant has published, and `exposures
 withdraw <install> <name> --tenant <t>` takes one down.
 
-**The proxy checks no caller, whatever `authMode` says.** `basic`, `bearer`,
-`jwt` and `signature` on a perimeter entry are not verified by the platform:
-no credential, no token, no signature. The word only tells the approver that
-the app says it checks its callers itself, and the app has to do so with what
-still reaches it -- the path, the query, the body or a header of its own --
-because `Authorization` and `Cookie` are removed on the way in (below).
+**The proxy checks no caller.** A perimeter entry declares one of two modes:
+
+| `authMode` | What the platform does | Use it for |
+| --- | --- | --- |
+| `none` | Forwards the declared paths for anyone. Removes `Authorization` and `Cookie`: no credential reaches the app | Pages and links for anyone; a link that carries its own secret in the path or query; a webhook signed in a header of its own |
+| `app` | The same, and passes the caller's `Authorization` header to the app as sent. The app alone checks it | Sync clients, mobile apps, API keys and webhooks that present a credential **the app itself issued** |
+
+```yaml
+expose:
+  - name: dav
+    surface: perimeter
+    authMode: app         # the app checks each caller's own credential
+    subDomain: dav
+    paths: ["/remote.php/dav/"]
+    backend: {service: files, port: 8080}
+```
+
+`authMode: app` is approved like any public entry, and the approver is
+shown, in the director's words, what it means: the caller's credential is
+passed to the app; the platform does not know or check who calls; an app
+password or token of a person removed from the tenant keeps working until
+the app itself revokes it; and the limit per client address, which is lower
+for such an entry (5 requests a second, 50 more at once, 20 at a time).
+Its limits: cookies pass in neither direction, so a client that needs the
+app's cookie does not work on it, and `apex` entries cannot use it.
+`basic`, `bearer`, `jwt` and `signature` are refused on a perimeter entry:
+the platform verifies no password, token or signature there yet.
+
+**Behind sign-in: the `Authorization` header as the app's own.** A gateway
+entry may ask for one thing of the same approver:
+
+```yaml
+expose:
+  - name: web
+    surface: gateway
+    authMode: oidc
+    clientAuthorization: app   # the app's pages send the app's own token there
+    backend: {service: flows, port: 8080}
+```
+
+Declare it only for an app whose own pages call its API with a token of the
+app's in `Authorization`. It is listed with the tenant's requests as
+"Behind sign-in: keeps the app's own Authorization header", is no public
+address, and is approved, reviewed and withdrawn with the same commands.
+Until it is approved the entry works like any other behind sign-in — the
+header is removed, so those calls fail — and the Component's
+`ClientAuthorization` condition says so. Once approved, sign-in and the right
+to use the app are required exactly as before; the front door neither puts
+its own token in the header nor removes the page's, and no platform token
+reaches the app. It holds for every entry of the component on the same host,
+excludes `forwardToken` and `exchangeToken` anywhere in the profile, and is not for a service.
+
+An approval is for the kind of entry it was given for. A profile that later
+changes an approved entry from `none` to `app`, or adds
+`clientAuthorization`, is a request again until it is approved as that.
 
 **Address names an app cannot take.** No entry of an app or an add-on, on
 either surface, may use one of the platform's names as its `subDomain` (or as
@@ -703,12 +752,12 @@ client address (200 more at once, then `429`) or 100 at a time; it waits 60
 seconds for the app's answer. It matches
 `paths` by whole segments and `denyPaths` without regard to case, and it
 does not render a path with characters outside letters, digits and
-`/ . _ ~ -`. It removes every identity header, `Cookie` and `Authorization`
-on the way in, and `Set-Cookie` on the way out. A profile has no field to
+`/ . _ ~ -`. It removes every identity header and `Cookie` on the way in, `Authorization`
+too unless the entry is `authMode: app`, and `Set-Cookie` on the way out. A profile has no field to
 change any of this; the numbers are the cluster administrator's
 ([design/security.md §2.14](design/security.md)). An app that needs larger
-uploads or its caller's `Authorization` header on a public path cannot have
-them on a perimeter entry today.
+uploads or cookies on a public path cannot have them on a perimeter entry
+today.
 
 **What an entry behind sign-in is left with.** On a `surface: gateway` entry
 with `authMode: oidc` the app is told who is asking in the front door's
@@ -716,7 +765,8 @@ headers, and nothing else of the session reaches it: the front door puts its
 own token in `Authorization`, replacing whatever the page sent, and takes it
 out again before the app, with the session's cookies. So an app whose pages
 call its own API with a bearer token of their own loses that token on such an
-entry; a profile has no field to keep it. `forwardToken: true` passes the
+entry, unless the entry declares `clientAuthorization: app` and was approved
+(above). `forwardToken: true` passes the
 front door's token on instead, and needs `trustTier: platform`. Signing out
 ends the session at the front door and at the realm, and tells no app: a
 session an app keeps itself lasts until the app ends it -- for an app behind

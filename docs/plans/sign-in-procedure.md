@@ -1136,7 +1136,7 @@ passing token at all of them while it is valid, which is five minutes.
 
 | Tool | How it signs in |
 | --- | --- |
-| Keycloak's administration console | The page runs its own OIDC sign-in in the browser and calls Keycloak with its own token. The front door leaves that token alone on this one route and proves the session by a second token the Gateway hands it (`keepClientToken`, a setting of the operator's route, not of a profile) |
+| Keycloak's administration console | The page runs its own OIDC sign-in in the browser and calls Keycloak with its own token. The front door leaves that token alone on this one route and proves the session by a second token the Gateway hands it (`keepClientToken`, a setting of the operator's route). An app's profile can ask for the same on its own entry with `clientAuthorization: app`, which takes effect once the tenant's perimeter approver approved it ([routing.md §4.1](../design/routing.md)) |
 | Argo CD, Headlamp | Case 1, against the kernel realm |
 | LiteLLM console | Case 4, option a: a user name and password from the vault |
 
