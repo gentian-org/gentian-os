@@ -134,10 +134,11 @@ The word is `workload`, not `executable`: the codebase already uses it as the
 antonym, in `ProfileDeploysWorkload` and in *"a component that is an API client
 rather than a workload"*.
 
-Delivery `api` does not mean external. `litellm-me` is delivery `api` and
-points at `litellm-proxy.platform-kernel.svc.cluster.local`, inside the
-cluster. The axis is whether the platform runs it. (That URL names a v4
-namespace, a separate bug.)
+Delivery `api` does not mean external: a profile may be delivery `api` and
+point at a Service inside the cluster. The axis is whether the platform runs
+it. (The catalogue's one example of that, a console profile for the model
+gateway, has left the catalogue: the gateway is a kernel service and its
+console the platform administrators'.)
 
 ### Axis 3 — trustTier: how far it was reviewed
 

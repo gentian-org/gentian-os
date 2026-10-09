@@ -131,8 +131,8 @@ the realm is adopted rather than created, and the tenant cannot be deleted
 
 Catalogue apps today, by family: activepieces, docmost, element (with
 Matrix), mathesar, nextcloud (base-ce, base-od, nine addons), odoo (base,
-twelve addons), openproject, open-webui, xwiki, litellm-me (API profile),
-gentian-subscriptions (API profile). All tenant-scoped.
+twelve addons), openproject, open-webui, xwiki, gentian-subscriptions (API
+profile). All tenant-scoped.
 
 ### 2.6 Tenant DMZ
 
