@@ -74,12 +74,19 @@ func TestAnExchangeRouteHandsOnTheAppsTokenAndNoOther(t *testing.T) {
 	if len(ex.calls) != 1 || ex.calls[0] != "kernel|root-token|app-wiki" {
 		t.Fatalf("the realm was asked %v", ex.calls)
 	}
-	if dec.Headers[HeaderSubject] != "root" {
-		t.Fatal("the identity headers are gone")
+	// The token is all the backend is told: no identity header is set, and
+	// each is taken out, so one a client sent does not arrive either.
+	for _, h := range IdentityHeaders() {
+		if _, set := dec.Headers[h]; set {
+			t.Errorf("%s is set beside the token", h)
+		}
+		if !removes(dec, h) {
+			t.Errorf("%s is not removed: one the client sent would reach the backend", h)
+		}
 	}
 
 	plain := d.Decide(context.Background(), Request{Host: "shop.k.example", Path: "/", Authorization: "Bearer root-token"})
-	if !plain.Allow || plain.Headers["authorization"] != "" || !removes(plain, "authorization") || len(ex.calls) != 1 {
+	if !plain.Allow || plain.Headers["authorization"] != "" || !removes(plain, "authorization") || len(ex.calls) != 1 || plain.Headers[HeaderSubject] != "root" {
 		t.Fatalf("a route that did not ask: %+v, exchanges %v", plain, ex.calls)
 	}
 }

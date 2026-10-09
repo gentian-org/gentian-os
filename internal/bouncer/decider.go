@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -269,15 +270,37 @@ func (d *Decider) finish(ctx context.Context, route *Route, req Request, who ide
 		d.log.WarnContext(ctx, "token exchange failed; failing closed", "host", req.Host, "realm", who.realm, "error", err.Error())
 		return deny(http.StatusServiceUnavailable, "the app's token could not be obtained")
 	}
-	dec.Headers["authorization"] = "Bearer " + token
-	kept := dec.RemoveHeaders[:0]
+	// The token is all this backend is told. The identity headers say the
+	// same thing with nothing to check them against, and a backend that is
+	// handed both can come to read the one it should not. So on this route
+	// they are not set -- and are taken out, because not setting a header
+	// leaves whatever the client sent under its name.
+	headers := map[string]string{"authorization": "Bearer " + token}
+	remove := make([]string, 0, len(dec.RemoveHeaders)+len(dec.Headers))
 	for _, h := range dec.RemoveHeaders {
 		if h != "authorization" {
-			kept = append(kept, h)
+			remove = append(remove, h)
 		}
 	}
-	dec.RemoveHeaders = kept
+	for name, value := range dec.Headers {
+		if isIdentityHeader(name) {
+			remove = append(remove, name)
+			continue
+		}
+		headers[name] = value
+	}
+	sort.Strings(remove)
+	dec.Headers, dec.RemoveHeaders = headers, remove
 	return dec
+}
+
+func isIdentityHeader(name string) bool {
+	for _, h := range IdentityHeaders() {
+		if h == name {
+			return true
+		}
+	}
+	return false
 }
 
 // session verifies the one token the route's mode says proves who is asking.

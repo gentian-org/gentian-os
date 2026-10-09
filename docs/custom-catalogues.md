@@ -337,8 +337,8 @@ that serves no models, the app is held and its Component says why
 `Authorization: Bearer <token>`: a token of the signed-in person from the tenant's realm, good for a
 few minutes, whose audience (`aud`) is the app's profile name and nothing else. The app, or a
 sidecar in front of it, checks the signature against the realm's keys, the issuer, the audience and
-the expiry. The identity headers are still set; an app that verifies the token has no need to believe
-them. Any profile may ask for this, since the token is worth nothing anywhere else. It is not
+the expiry. The identity headers are not set on such an entry, and any a client sent are removed: the
+token is all the app is told. Any profile may ask for this, since the token is worth nothing anywhere else. It is not
 `forwardToken`, which hands on the session's own token and is for a component of platform trust; a
 profile sets one or the other.
 
