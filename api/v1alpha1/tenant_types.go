@@ -190,13 +190,26 @@ type TenantExposure struct {
 	// +kubebuilder:validation:MaxLength=253
 	Install string `json:"install"`
 
-	// ExposureName names an entry of that component's profile whose surface
-	// is perimeter. An entry that is not is never published here: the
-	// operator checks, because enabling a gateway entry by name would
-	// otherwise put the component's authenticated surface on the internet.
+	// ExposureName names an entry of that component's profile that asks for
+	// approval: one whose surface is perimeter, or one behind sign-in that
+	// declares the Authorization header the app's own. Only a perimeter
+	// entry is ever published: the operator checks the entry's surface,
+	// because enabling a gateway entry by name would otherwise put the
+	// component's authenticated surface on the internet.
 	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
 	// +kubebuilder:validation:MaxLength=40
 	ExposureName string `json:"exposureName"`
+
+	// Kind is what was approved, set by the director from what the profile's
+	// entry declared when the approver said yes: a public address, a public
+	// address that passes the caller's Authorization header to the app, or
+	// an entry behind sign-in whose Authorization header is the app's own.
+	// Empty is a public address, which is all an approval was before kinds
+	// were recorded. The operator acts on an approval only while the entry
+	// still declares this kind, so a profile that later asks for more is
+	// not given it on the strength of an earlier yes.
+	// +optional
+	Kind ExposureKind `json:"kind,omitempty"`
 
 	// Owner is the subject that published it, set by the director from the
 	// caller's token.
@@ -259,6 +272,7 @@ type TenantExposure struct {
 func (e *TenantExposure) Enablement() ExposureEnablement {
 	return ExposureEnablement{
 		ExposureName: e.ExposureName,
+		Kind:         e.Kind,
 		Owner:        e.Owner,
 		ExpiresAt:    e.ExpiresAt,
 		ReviewAt:     e.ReviewAt,

@@ -152,6 +152,10 @@ func (in Inputs) Refusal(tenant *gentianov1alpha1.Tenant, e *gentianov1alpha1.Te
 		return "NotAMainAddressEntry", fmt.Sprintf(
 			"%s/%s was published for the cluster's main address, but the profile does not declare it as a perimeter entry with apex: true. Nothing is published",
 			e.Install, e.ExposureName)
+	case !entry.ApprovedAs(e.Kind):
+		return "ApprovedAsAnotherKind", fmt.Sprintf(
+			"%s/%s was approved as another kind of entry than its profile declares now, and that approval does not cover it. Nothing is published",
+			e.Install, e.ExposureName)
 	case !e.Apex:
 		return "NotRequested", fmt.Sprintf(
 			"%s/%s is declared for the cluster's main address and is published only when the approver says so (apex: true on the request). Nothing is published",

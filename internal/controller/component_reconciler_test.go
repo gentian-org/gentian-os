@@ -226,8 +226,9 @@ func TestAComponentRouteCarriesItsQuestion(t *testing.T) {
 	if len(entries) != 1 || entries[0].Host != "desktop.k.example" || entries[0].Relation != "can_enter" || !entries[0].ForwardToken || entries[0].AuthMode != "oidc" {
 		t.Fatalf("entries = %+v", entries)
 	}
-	// A component's route never keeps the caller's own token, so it never
-	// needs a client to hold an ID token against.
+	// A route whose entry was not approved to keep the app's own
+	// Authorization header keeps nothing, so it needs no client to hold an
+	// ID token against (entry_types_test.go has the ones that were).
 	if entries[0].KeepClientToken || entries[0].IDTokenAudience != "" {
 		t.Fatalf("a component's route: %+v", entries[0])
 	}

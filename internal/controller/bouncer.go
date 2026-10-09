@@ -115,6 +115,12 @@ type routeAuthz struct {
 	// cannot be shown it in the Authorization header. The filter forwards
 	// the session's ID token in a header of its own instead.
 	keepClientToken bool
+	// idTokenSession proves the session by its ID token as keepClientToken
+	// does, on a route whose Authorization header is still removed before
+	// the backend. A component has one policy for all its hosts; where one
+	// host keeps the app's own header the policy stops putting the edge's
+	// token there for every host, and the hosts that did not ask are this.
+	idTokenSession bool
 	// forwardToken lets the edge's access token go on to the BACKEND.
 	//
 	// The filter puts that token on every request of an ordinary route, for
@@ -124,6 +130,17 @@ type routeAuthz struct {
 	// instead.
 	forwardToken bool
 }
+
+// sessionByIDToken reports a route on which the filter leaves the
+// Authorization header as the client sent it and hands the session's ID
+// token to the bouncer in a header of its own.
+//
+// Leaving the header alone is not letting a request through on it. The
+// filter still wants its own session cookies on every request and sends one
+// without them to sign in; the only setting that would let a bearer header
+// stand in for the session is passThroughAuthHeader, which no policy written
+// here sets.
+func (a routeAuthz) sessionByIDToken() bool { return a.keepClientToken || a.idTokenSession }
 
 var securityPolicyGVK = schema.GroupVersionKind{
 	Group:   "gateway.envoyproxy.io",
@@ -230,11 +247,11 @@ func zoneSecurityPolicySpec(kernelDomain string, zone edgeZone, route string, au
 		"cookieConfig": map[string]interface{}{"sameSite": "Lax"},
 		// The bouncer's token. Not what reaches the backend: the bouncer
 		// removes the header again unless the route forwards it.
-		"forwardAccessToken": !authz.keepClientToken,
+		"forwardAccessToken": !authz.sessionByIDToken(),
 		"scopes":             []interface{}{"openid", "profile", "email"},
 		"refreshToken":       true,
 	}
-	if authz.keepClientToken {
+	if authz.sessionByIDToken() {
 		oidc["forwardIDToken"] = map[string]interface{}{"header": edgeIDTokenHeader}
 	}
 	return map[string]interface{}{
@@ -323,8 +340,13 @@ type bouncerRoute struct {
 	Relation        string `json:"relation"`
 	Object          string `json:"object"`
 	KeepClientToken bool   `json:"keepClientToken,omitempty"`
-	// IDTokenAudience is the zone's client, on a route that keeps the
-	// caller's own token: whose ID token proves the session there.
+	// IDTokenSession is a host whose session is proved by its ID token
+	// although its Authorization header is still removed: another host of
+	// the same component keeps the app's own header, and the two share a
+	// policy.
+	IDTokenSession bool `json:"idTokenSession,omitempty"`
+	// IDTokenAudience is the zone's client, on a route whose session is
+	// proved by its ID token: whose ID token that must be.
 	IDTokenAudience string `json:"idTokenAudience,omitempty"`
 	ForwardToken    bool   `json:"forwardToken,omitempty"`
 	// ExchangeScope makes the backend's token one the realm issued for this
@@ -476,6 +498,15 @@ func componentRouteTableEntries(ctx context.Context, c client.Reader) ([]bouncer
 			cookies = splitDenyPaths(ann[bouncerSessionCookiesAnnotation])
 			prefixes = edgeFilterCookiePrefixes
 		}
+		// A route whose policy hands the session over as an ID token names
+		// the client that token was issued to; only a session route can.
+		// Whether the Authorization header is the app's to keep is said
+		// beside it, and means nothing without the first.
+		audience := ""
+		if mode == "oidc" {
+			audience = ann[bouncerIDTokenAudienceAnnotation]
+		}
+		keep := audience != "" && ann[bouncerClientAuthorizationAnnotation] == bouncerClientAuthorizationApp
 		for _, h := range route.Spec.Hostnames {
 			host := string(h)
 			// A component's routes share its host and its question; the
@@ -486,6 +517,12 @@ func componentRouteTableEntries(ctx context.Context, c client.Reader) ([]bouncer
 				cur.ForwardToken = cur.ForwardToken || ann[bouncerForwardAnnotation] == "true"
 				if cur.ExchangeScope == "" {
 					cur.ExchangeScope = ann[bouncerExchangeScopeAnnotation]
+				}
+				// The session's cookies are the host's, so what one entry
+				// on a host was approved for holds for the host.
+				cur.KeepClientToken = cur.KeepClientToken || keep
+				if cur.IDTokenAudience == "" {
+					cur.IDTokenAudience = audience
 				}
 				cur.DenyPaths = mergeDenyPaths(cur.DenyPaths, denied)
 				cur.SessionCookies = mergeDenyPaths(cur.SessionCookies, cookies)
@@ -500,6 +537,7 @@ func componentRouteTableEntries(ctx context.Context, c client.Reader) ([]bouncer
 				ExchangeScope: ann[bouncerExchangeScopeAnnotation],
 				AuthMode:      mode, DenyPaths: denied,
 				SessionCookies: cookies, SessionCookiePrefixes: prefixes,
+				KeepClientToken: keep, IDTokenAudience: audience,
 			}
 			order = append(order, host)
 		}
@@ -507,11 +545,17 @@ func componentRouteTableEntries(ctx context.Context, c client.Reader) ([]bouncer
 	out := make([]bouncerRoute, 0, len(order))
 	for _, h := range order {
 		route := *byHost[h]
+		// A host whose session is proved by its ID token and which keeps
+		// nothing: the header is not read and is still removed.
+		route.IDTokenSession = route.IDTokenAudience != "" && !route.KeepClientToken
 		// A host's backends are handed one token or the other, and the
 		// bouncer refuses a table that says both. A profile cannot declare
 		// both; should two routes of a host ever disagree, the exchange is
 		// what goes, and the host behaves as it did before it was asked for.
-		if route.ForwardToken || route.AuthMode != "oidc" {
+		// The same where the session is proved by its ID token: there the
+		// Authorization header is whatever the client sent, and that is
+		// nothing to exchange.
+		if route.ForwardToken || route.AuthMode != "oidc" || route.KeepClientToken || route.IDTokenSession {
 			route.ExchangeScope = ""
 		}
 		out = append(out, route)

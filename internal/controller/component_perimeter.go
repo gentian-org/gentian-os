@@ -118,6 +118,15 @@ func livePerimeterExposures(
 			// wrote down.
 			continue
 		}
+		if !spec.ApprovedAs(on.Kind) {
+			// Approved as something else than the entry declares now: as a
+			// plain public address, and the profile has since asked to have
+			// the caller's credential passed on, or the other way round; or
+			// in a mode the platform does not serve. What was approved is
+			// not what would be published, so nothing is, until the entry
+			// is approved as what it is.
+			continue
+		}
 		if on.ExpiresAt != nil && !now.Before(on.ExpiresAt.Time) {
 			continue
 		}
@@ -222,7 +231,12 @@ func (r *ComponentReconciler) ensurePerimeterProxy(
 	labels := perimeterLabels(comp, p.spec.Name)
 
 	upstream := fmt.Sprintf("%s.%s.svc.cluster.local", p.spec.Backend.Service, comp.Namespace)
-	config := perimeterProxyConfig(p.spec, upstream, p.spec.Backend.Port, p.website, perimeterLimitsFromEnv(edgeClientAddressHeader(ctx, r.Client)))
+	// Whether the caller's Authorization header goes on to the app is the
+	// approval's word as well as the profile's: livePerimeterExposures let
+	// this entry through only because the two agree.
+	passCredential := p.spec.AuthMode == gentianov1alpha1.AuthModeApp &&
+		p.on.Kind == gentianov1alpha1.ExposureKindPublicAppCredential
+	config := perimeterProxyConfig(p.spec, upstream, p.spec.Backend.Port, p.website, passCredential, perimeterLimitsFromEnv(edgeClientAddressHeader(ctx, r.Client)))
 
 	cm := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: dmz, Labels: labels},

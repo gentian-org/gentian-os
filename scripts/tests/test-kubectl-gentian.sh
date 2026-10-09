@@ -141,6 +141,10 @@ has() { # <what> <text> <part>
     if [[ "$2" == *"$3"* ]]; then ok "$1"; else bad "$1" "    missing: $3
     in: $2"; fi
 }
+lacks() { # <what> <text> <part that must not be there>
+    if [[ "$2" != *"$3"* ]]; then ok "$1"; else bad "$1" "    present: $3
+    in: $2"; fi
+}
 refused() { # <what> : the last command ended non-zero
     if [[ "${RC}" -ne 0 ]]; then ok "$1"; else bad "$1" "    it exited 0: ${OUT}"; fi
 }
@@ -266,7 +270,9 @@ echo ""
 echo "kubectl gentian exposures"
 echo ""
 
-REGISTRY='{"tenant":"acme","live":[
+REGISTRY='{"tenant":"acme","kinds":{"public":"Public address","publicAppCredential":"Public address that passes the caller'"'"'s credential to the app","signInAppAuthorization":"Behind sign-in: keeps the app'"'"'s own Authorization header"},"live":[
+  {"install":"flows","exposureName":"web","kind":"signInAppAuthorization","owner":"u-4","reviewAt":"2027-10-09T10:00:00Z","publishedAt":"2026-10-09T10:00:00Z"},
+  {"install":"sync","exposureName":"dav","kind":"publicAppCredential","owner":"u-5","reviewAt":"2027-10-09T10:00:00Z","publishedAt":"2026-10-09T10:00:00Z"},
   {"install":"shop","exposureName":"api","owner":"u-1","reviewAt":"2027-10-09T10:00:00Z","publishedAt":"2026-10-09T10:00:00Z","reason":"the store other clusters read"},
   {"install":"website","exposureName":"site","owner":"u-2","reviewAt":"2026-01-01T00:00:00Z","publishedAt":"2025-01-01T00:00:00Z","apex":true}],
  "expired":[{"install":"cloud","exposureName":"share","owner":"u-3","reviewAt":"2026-03-01T00:00:00Z","expiresAt":"2026-03-01T00:00:00Z"}],
@@ -284,6 +290,14 @@ has "... an entry in force is published" "$(grep shop <<<"${OUT}")" "published"
 has "... with who published it and its review date" "$(grep shop <<<"${OUT}" | tr -s ' ')" "u-1 2026-10-09 2027-10-09"
 has "... one past its review date is review due" "$(grep website <<<"${OUT}")" "review due"
 has "... one that ended is expired" "$(grep cloud <<<"${OUT}")" "expired"
+has "... an entry with no kind is a public address" "$(grep '^shop' <<<"${OUT}" | tr -s ' ')" "shop api Public address published"
+has "... one that passes the credential says so, in the director's words" "$(grep '^sync' <<<"${OUT}" | tr -s ' ')" "sync dav Public address that passes the caller's credential to the app published"
+has "... and one behind sign-in is not shown as a public address" "$(grep '^flows' <<<"${OUT}" | tr -s ' ')" "flows web Behind sign-in: keeps the app's own Authorization header published"
+
+# A director older than kinds: everything it lists is a public address.
+fresh; reply GET /v1/tenants/acme/exposures 200 '{"tenant":"acme","live":[{"install":"shop","exposureName":"api","owner":"u-1","reviewAt":"2027-10-09T10:00:00Z"}],"expired":[],"reviewDue":[]}'
+gentian exposures list --tenant acme
+has "a director that names no kinds lists public addresses" "$(grep '^shop' <<<"${OUT}" | tr -s ' ')" "shop api Public address published"
 
 fresh; reply GET /v1/tenants/acme/exposures 200 '{"tenant":"acme","live":[],"expired":[],"reviewDue":[]}'
 gentian exposures list --tenant acme
@@ -315,7 +329,7 @@ has "... and names the commit" "${OUT}" "committed (aaaabbbb)"
 
 fresh; reply DELETE "${WITHDRAW_ROUTE}" 200 '{"status":"unchanged"}'
 gentian exposures withdraw shop api --tenant acme
-has "withdrawing what is not published says so" "${OUT}" "is not published by acme; nothing was committed"
+has "withdrawing what is not approved says so" "${OUT}" "is not approved for acme; nothing was committed"
 
 fresh; reply DELETE "${WITHDRAW_ROUTE}" 403 '{"error":"publishing and withdrawing is the perimeter approver'"'"'s"}'
 gentian exposures withdraw shop api --tenant acme
@@ -325,8 +339,9 @@ has "... with the director's own words" "${OUT}" "the director answered 403: pub
 # What a tenant's apps ask to have on the internet, and approving it.
 RULE='Any script that runs in a page on the main address can set cookies for the whole domain. The rule: publish here only a site whose scripts your organisation itself controls -- no third-party scripts and no pages uploaded by users.'
 REQUESTS='{"tenant":"acme","live":[],"expired":[],"reviewDue":[],"entries":[
-  {"install":"cloud","exposureName":"shares","state":"requested","host":"share.acme.example","paths":["/public.php/","/s/"],"denyPaths":["/s/admin/"],"authMode":"none","anyoneWithoutSignIn":true,"access":"Reachable by anyone on the internet without sign-in.","mainAddress":false},
-  {"install":"feeds","exposureName":"hook","state":"approved","host":"hook.acme.example","paths":["/in/"],"authMode":"bearer","anyoneWithoutSignIn":false,"access":"Nobody signs in at the platform'"'"'s edge.","mainAddress":false,
+  {"install":"cloud","exposureName":"shares","state":"requested","kind":"public","kindLabel":"Public address","publicAddress":true,"passesCredential":false,"rateLimit":"Each client address may make 20 requests a second.","host":"share.acme.example","paths":["/public.php/","/s/"],"denyPaths":["/s/admin/"],"authMode":"none","anyoneWithoutSignIn":true,"access":"Reachable by anyone on the internet without sign-in.","mainAddress":false},
+  {"install":"flows","exposureName":"web","state":"requested","kind":"signInAppAuthorization","kindLabel":"Behind sign-in: keeps the app'"'"'s own Authorization header","publicAddress":false,"passesCredential":true,"host":"flows.acme.example","paths":["/"],"authMode":"oidc","anyoneWithoutSignIn":false,"access":"This is not a public address. People still have to sign in, and still have to be allowed to use the app, exactly as before.","mainAddress":false},
+  {"install":"feeds","exposureName":"hook","state":"approved","kind":"publicAppCredential","kindLabel":"Public address that passes the caller'"'"'s credential to the app","publicAddress":true,"passesCredential":true,"rateLimit":"Each client address may make 5 requests a second.","host":"hook.acme.example","paths":["/in/"],"authMode":"app","anyoneWithoutSignIn":false,"access":"Nobody signs in at the platform'"'"'s edge: anyone on the internet can send requests to these paths. The caller'"'"'s credential (the Authorization header) is passed to the app as the caller sent it, and the app alone checks it. The platform does not know or check who calls. An app password or token of a person who was removed from the tenant keeps working until the app itself revokes it.","mainAddress":false,
    "approval":{"install":"feeds","exposureName":"hook","owner":"u-7","reviewAt":"2027-05-01T00:00:00Z","publishedAt":"2026-05-01T00:00:00Z","expiresAt":"2027-01-01T00:00:00Z"}},
   {"install":"website","exposureName":"site","state":"requested","host":"k.example","paths":["/"],"authMode":"none","anyoneWithoutSignIn":true,"access":"Reachable by anyone on the internet without sign-in.","mainAddress":true,"mainAddressRule":"'"${RULE}"'"},
   {"install":"blog","exposureName":"site","state":"requested","paths":["/"],"authMode":"none","anyoneWithoutSignIn":true,"access":"Reachable by anyone on the internet without sign-in.","mainAddress":true,"note":"the main address is already held by website/site"},
@@ -343,8 +358,9 @@ fresh; reply GET "${READ}" 200 "${REQUESTS}"
 gentian exposures requests --tenant acme
 is "requests succeeds" "${RC}" "0"
 is "... as one read of the tenant's entries" "$(cat "${CALLS}")" "GET ${READ} "
-has "... an entry nobody approved is requested, with its address" "$(grep '^cloud' <<<"${OUT}" | tr -s ' ')" "cloud shares requested https://share.acme.example /public.php/ /s/ none: anyone"
-has "... an approved one says by whom and until when" "$(grep '^feeds' <<<"${OUT}" | tr -s ' ')" "approved https://hook.acme.example /in/ by the app (bearer) u-7 2027-05-01 2027-01-01"
+has "... an entry nobody approved is requested, with its address" "$(grep '^cloud' <<<"${OUT}" | tr -s ' ')" "cloud shares Public address requested https://share.acme.example /public.php/ /s/ none: anyone"
+has "... an entry behind sign-in is listed as one, with sign-in required" "$(grep '^flows' <<<"${OUT}" | tr -s ' ')" "flows web Behind sign-in: keeps the app's own Authorization header requested https://flows.acme.example / required"
+has "... an approved one says by whom and until when" "$(grep '^feeds' <<<"${OUT}" | tr -s ' ')" "Public address that passes the caller's credential to the app approved https://hook.acme.example /in/ none: the app checks the credential u-7 2027-05-01 2027-01-01"
 has "... one that matches nothing is marked" "$(grep '^ghost' <<<"${OUT}")" "unmatched"
 has "... with the director's reason" "${OUT}" "ghost/api: tenant acme has no app instance named ghost installed"
 has "... and an entry with no address says why" "${OUT}" "blog/site: the main address is already held by website/site"
@@ -377,11 +393,13 @@ reply PUT "${APPROVE_ROUTE}" 202 '{"status":"updated","commit":"1234abcd5678"}'
 gentian exposures approve cloud shares --tenant acme --yes --reason "shared calendars" --expires 2027-03-31
 is "approve succeeds" "${RC}" "0"
 is "... as the read and then one PUT of the entry" "$(cat "${CALLS}")" "GET ${READ} 
-PUT ${APPROVE_ROUTE} {\"reason\":\"shared calendars\",\"expiresAt\":\"2027-03-31T23:59:59Z\"}"
+PUT ${APPROVE_ROUTE} {\"reason\":\"shared calendars\",\"kind\":\"public\",\"expiresAt\":\"2027-03-31T23:59:59Z\"}"
 has "... after showing the address" "${OUT}" "address:  https://share.acme.example"
 has "... the paths" "${OUT}" "paths:    /public.php/  /s/"
 has "... what is never published" "${OUT}" "refused:  /s/admin/"
 has "... that anyone reaches it without sign-in" "${OUT}" "access:   Reachable by anyone on the internet without sign-in."
+has "... its kind" "${OUT}" "kind:     Public address"
+has "... the limit, in the director's words" "${OUT}" "limit:    Each client address may make 20 requests a second."
 has "... and the expiry" "${OUT}" "expires:  2027-03-31T23:59:59Z"
 has "... and names the commit" "${OUT}" "committed (1234abcd)"
 
@@ -390,7 +408,7 @@ reply PUT "${APPROVE_ROUTE}" 202 '{"status":"updated","commit":"1234abcd5678"}'
 gentian_typing "cloud/shares" exposures approve cloud shares --tenant acme
 is "approve at a terminal succeeds once the entry is typed" "${RC}" "0"
 has "... having shown what is approved first" "${OUT%%Type cloud/shares*}" "address:  https://share.acme.example"
-is "... and sends an approval with no terms" "$(grep '^PUT' "${CALLS}")" "PUT ${APPROVE_ROUTE} {}"
+is "... and sends an approval with no terms" "$(grep '^PUT' "${CALLS}")" "PUT ${APPROVE_ROUTE} {\"kind\":\"public\"}"
 has "... which stays until it is withdrawn" "${OUT}" "expires:  never"
 
 fresh; reply GET "${READ}" 200 "${REQUESTS}"
@@ -404,6 +422,29 @@ gentian exposures approve feeds hook --tenant acme --yes
 is "approving an approved entry is a review" "${RC}" "0"
 has "... and says so, with who approved it" "${OUT}" "is approved already; approving it again is a review"
 has "... and until when" "$(grep 'so far' <<<"${OUT}")" "approved by u-7 on 2026-05-01, review 2027-05-01, expires 2027-01-01"
+has "... that the caller's credential is passed to the app" "${OUT}" "The caller's credential (the Authorization header) is passed to the app as the caller sent it, and the app alone checks it."
+has "... that the platform does not know who calls" "${OUT}" "The platform does not know or check who calls."
+has "... that a removed person's app password keeps working" "${OUT}" "keeps working until the app itself revokes it."
+has "... and the stricter limit" "${OUT}" "limit:    Each client address may make 5 requests a second."
+is "... and the approval names the kind that was shown" "$(grep '^PUT' "${CALLS}")" "PUT /v1/tenants/acme/exposures/feeds/hook {\"kind\":\"publicAppCredential\"}"
+
+# The request that is no public address: behind sign-in, the app's own header.
+fresh; reply GET "${READ}" 200 "${REQUESTS}"
+reply PUT "/v1/tenants/acme/exposures/flows/web" 202 '{"status":"updated","commit":"1234abcd5678"}'
+gentian exposures approve flows web --tenant acme --yes
+is "approving an entry behind sign-in succeeds" "${RC}" "0"
+has "... having said that nothing goes on the internet" "${OUT}" "puts NOTHING on the internet. It changes this, behind sign-in:"
+has "... its kind" "${OUT}" "kind:     Behind sign-in: keeps the app's own Authorization header"
+has "... and the director's words for it" "${OUT}" "what:     This is not a public address. People still have to sign in"
+lacks "... with no public-address wording" "${OUT}" "puts this on the internet"
+is "... and the approval names the kind" "$(grep '^PUT' "${CALLS}")" "PUT /v1/tenants/acme/exposures/flows/web {\"kind\":\"signInAppAuthorization\"}"
+has "... and the outcome says nothing is published" "${OUT}" "Nothing is published."
+
+fresh; reply GET "${READ}" 200 "${REQUESTS}"
+reply PUT "/v1/tenants/acme/exposures/flows/web" 409 '{"error":"the request approves entry web of flows as \"signInAppAuthorization\", and the app'"'"'s catalogue entry declares \"public\". Nothing was changed"}'
+gentian exposures approve flows web --tenant acme --yes
+refused "an approval of a kind the entry no longer declares ends the command non-zero"
+has "... with the director's own words" "${OUT}" "the director answered 409: the request approves entry web of flows"
 
 for missing in "cloud caldav" "nothing shares" "ghost api"; do
     fresh; reply GET "${READ}" 200 "${REQUESTS}"

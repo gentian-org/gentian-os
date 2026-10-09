@@ -61,6 +61,16 @@ import (
 //  4. NO AMBIENT AUTHORITY. Authorization, Cookie and the forwarded-token
 //     header are all dropped. Whatever the application needs to make this
 //     decision is in the URL.
+//
+// One exception to the fourth, and to nothing else. An entry declared
+// authMode app and approved as that has its callers' Authorization header
+// passed on as it came: the callers hold a credential the app issued -- an
+// app password, an API key, a token of the app's -- and only the app can
+// check it. The proxy checks none of it and does not know who calls. Cookie
+// is still dropped and Set-Cookie still hidden, every identity header is
+// still cleared, and only the declared paths are forwarded. Because a
+// guessed password now lands on the app's own sign-in, such an entry is held
+// to a rate of its own, lower than every other entry's.
 
 // perimeterProxyPort is what the proxy listens on inside its pod.
 const perimeterProxyPort = 8080
@@ -84,6 +94,16 @@ type perimeterLimits struct {
 	// Concurrent is how many requests of one client address the proxy
 	// works on at a time. PERIMETER_CONCURRENT_PER_CLIENT.
 	Concurrent int
+	// CredentialRatePerSecond, CredentialBurst and CredentialConcurrent are
+	// the same three for an entry that passes the caller's Authorization
+	// header to the app, where every request may be a guess at a password.
+	// Never above the ones for every entry: a setting that would raise them
+	// past those is held to those. PERIMETER_CREDENTIAL_RATE_PER_SECOND,
+	// PERIMETER_CREDENTIAL_RATE_BURST,
+	// PERIMETER_CREDENTIAL_CONCURRENT_PER_CLIENT.
+	CredentialRatePerSecond int
+	CredentialBurst         int
+	CredentialConcurrent    int
 	// ClientAddressHeader names the request header the caller's address is
 	// read from, on a cluster whose edge is reached through something that
 	// is not the caller: a tunnel. Empty reads the address the Gateway saw
@@ -91,11 +111,14 @@ type perimeterLimits struct {
 	ClientAddressHeader string
 }
 
-const (
-	defaultPerimeterMaxBody       = "10m"
-	defaultPerimeterRatePerSecond = 20
-	defaultPerimeterBurst         = 200
-	defaultPerimeterConcurrent    = 100
+// The numbers themselves are in internal/addresses (PerimeterRateFor), where
+// the director reads them too: what an approver is told of the limit is what
+// the proxy is given.
+const defaultPerimeterMaxBody = "10m"
+
+var (
+	defaultPerimeterRate           = addresses.PerimeterRateFor(false)
+	defaultPerimeterCredentialRate = addresses.PerimeterRateFor(true)
 )
 
 var (
@@ -109,10 +132,14 @@ var (
 func perimeterLimitsFromEnv(clientAddressHeader string) perimeterLimits {
 	l := perimeterLimits{
 		MaxBody:             defaultPerimeterMaxBody,
-		RatePerSecond:       defaultPerimeterRatePerSecond,
-		Burst:               defaultPerimeterBurst,
-		Concurrent:          defaultPerimeterConcurrent,
+		RatePerSecond:       defaultPerimeterRate.PerSecond,
+		Burst:               defaultPerimeterRate.Burst,
+		Concurrent:          defaultPerimeterRate.Concurrent,
 		ClientAddressHeader: clientAddressHeader,
+
+		CredentialRatePerSecond: defaultPerimeterCredentialRate.PerSecond,
+		CredentialBurst:         defaultPerimeterCredentialRate.Burst,
+		CredentialConcurrent:    defaultPerimeterCredentialRate.Concurrent,
 	}
 	if v := strings.TrimSpace(os.Getenv("PERIMETER_MAX_BODY")); perimeterBodySize.MatchString(v) {
 		l.MaxBody = v
@@ -125,6 +152,23 @@ func perimeterLimitsFromEnv(clientAddressHeader string) perimeterLimits {
 	positive("PERIMETER_RATE_PER_SECOND", &l.RatePerSecond, 100000)
 	positive("PERIMETER_RATE_BURST", &l.Burst, 1000000)
 	positive("PERIMETER_CONCURRENT_PER_CLIENT", &l.Concurrent, 60000)
+	positive("PERIMETER_CREDENTIAL_RATE_PER_SECOND", &l.CredentialRatePerSecond, 100000)
+	positive("PERIMETER_CREDENTIAL_RATE_BURST", &l.CredentialBurst, 1000000)
+	positive("PERIMETER_CREDENTIAL_CONCURRENT_PER_CLIENT", &l.CredentialConcurrent, 60000)
+	return l.bounded()
+}
+
+// bounded holds the limits of an entry that passes a credential on to the
+// limits of every entry: they are the stricter ones or the same, never the
+// looser, however each was set.
+//
+// One that was never set is the strictest the proxy starts with, not the
+// general limit: an unset number must not be how such an entry comes to be
+// limited like any other.
+func (l perimeterLimits) bounded() perimeterLimits {
+	l.CredentialRatePerSecond = max(1, min(l.CredentialRatePerSecond, l.RatePerSecond))
+	l.CredentialBurst = max(1, min(l.CredentialBurst, l.Burst))
+	l.CredentialConcurrent = max(1, min(l.CredentialConcurrent, l.Concurrent))
 	return l
 }
 
@@ -256,7 +300,12 @@ func perimeterPublishedPattern(prefix string) string {
 //   - its caller's address is within its rate and its concurrent requests
 //     (429);
 //   - its headers and body are within the sizes below (400, 413, 431).
-func perimeterProxyConfig(e *gentianov1alpha1.ExposureSpec, upstreamHost string, upstreamPort int32, website bool, limits perimeterLimits) string {
+func perimeterProxyConfig(e *gentianov1alpha1.ExposureSpec, upstreamHost string, upstreamPort int32, website, passCredential bool, limits perimeterLimits) string {
+	limits = limits.bounded()
+	rate, burst, concurrent := limits.RatePerSecond, limits.Burst, limits.Concurrent
+	if passCredential {
+		rate, burst, concurrent = limits.CredentialRatePerSecond, limits.CredentialBurst, limits.CredentialConcurrent
+	}
 	denied := perimeterDenied(e)
 	if website {
 		denied = append(denied, mainAddressReservedPrefixes...)
@@ -355,7 +404,7 @@ func perimeterProxyConfig(e *gentianov1alpha1.ExposureSpec, upstreamHost string,
 		b.WriteString("  }\n")
 		client = "$perimeter_client"
 	}
-	fmt.Fprintf(&b, "  limit_req_zone %s zone=perimeter_rate:10m rate=%dr/s;\n", client, limits.RatePerSecond)
+	fmt.Fprintf(&b, "  limit_req_zone %s zone=perimeter_rate:10m rate=%dr/s;\n", client, rate)
 	fmt.Fprintf(&b, "  limit_conn_zone %s zone=perimeter_concurrent:10m;\n", client)
 	b.WriteString("  limit_req_status 429;\n")
 	b.WriteString("  limit_conn_status 429;\n")
@@ -382,8 +431,8 @@ func perimeterProxyConfig(e *gentianov1alpha1.ExposureSpec, upstreamHost string,
 	b.WriteString("      # Anything not declared never reaches the tenant.\n")
 	b.WriteString("      if ($perimeter_published = 0) { return 404; }\n")
 	b.WriteString("      if ($perimeter_denied) { return 404; }\n")
-	fmt.Fprintf(&b, "      limit_req zone=perimeter_rate burst=%d nodelay;\n", limits.Burst)
-	fmt.Fprintf(&b, "      limit_conn perimeter_concurrent %d;\n", limits.Concurrent)
+	fmt.Fprintf(&b, "      limit_req zone=perimeter_rate burst=%d nodelay;\n", burst)
+	fmt.Fprintf(&b, "      limit_conn perimeter_concurrent %d;\n", concurrent)
 	b.WriteString("\n")
 	fmt.Fprintf(&b, "      proxy_pass http://%s:%d;\n", upstreamHost, upstreamPort)
 	b.WriteString("      proxy_set_header Host $host;\n")
@@ -400,7 +449,15 @@ func perimeterProxyConfig(e *gentianov1alpha1.ExposureSpec, upstreamHost string,
 	b.WriteString("      # Property 2, 3 and 4: nothing of the session model goes in.\n")
 	b.WriteString("      # An empty value is what nginx takes for \"do not send this\".\n")
 	b.WriteString("      proxy_set_header Cookie \"\";\n")
-	b.WriteString("      proxy_set_header Authorization \"\";\n")
+	if passCredential {
+		b.WriteString("      # The one header that goes in as it came: this entry was declared\n")
+		b.WriteString("      # and approved as one whose callers present a credential the\n")
+		b.WriteString("      # application issued. The application checks it; this proxy does\n")
+		b.WriteString("      # not, and does not know who is calling.\n")
+		b.WriteString("      proxy_set_header Authorization $http_authorization;\n")
+	} else {
+		b.WriteString("      proxy_set_header Authorization \"\";\n")
+	}
 	b.WriteString("      proxy_set_header X-Forwarded-Access-Token \"\";\n")
 	for _, h := range perimeterStrippedIdentityHeaders() {
 		fmt.Fprintf(&b, "      proxy_set_header %s \"\";\n", h)

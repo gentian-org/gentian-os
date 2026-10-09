@@ -391,7 +391,10 @@ func perimeterTenantListeners(kernelDomain, tenancyMode, kernelRealm string, ten
 // two halves of one host and must not each have an opinion about its name.
 //
 // An enablement naming a profile or an entry that does not exist, or an entry
-// that is not a perimeter one, has no host and gets no listener.
+// that is not a perimeter one, has no host and gets no listener. Nor has an
+// approval of another kind than the entry declares: the approval of an entry
+// behind sign-in that keeps the app's own Authorization header publishes
+// nothing, and neither does one given before the entry asked for more.
 //
 // An expired enablement still gets a listener. A listener with no route
 // behind it serves nothing -- the proxy and the route are what the operator
@@ -412,7 +415,7 @@ func publishedHost(e *gentianov1alpha1.TenantExposure, profiles map[string]*gent
 	}
 	for i := range profile.Spec.Expose {
 		entry := &profile.Spec.Expose[i]
-		if entry.Name == e.ExposureName && entry.Surface == gentianov1alpha1.SurfacePerimeter {
+		if entry.Name == e.ExposureName && entry.Surface == gentianov1alpha1.SurfacePerimeter && entry.ApprovedAs(e.Kind) {
 			return exposureHostIn(zone, e.Install, entry)
 		}
 	}

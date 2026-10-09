@@ -143,7 +143,17 @@ const (
 	// a route behind a session, comma-separated, for the bouncer's table:
 	// the bouncer takes them out of the request before the backend sees it.
 	bouncerSessionCookiesAnnotation = "gentianos.io/bouncer-session-cookies"
-	componentDatabaseSecretSuffix   = "-database"
+	// bouncerIDTokenAudienceAnnotation names the zone's client on a route
+	// whose policy proves the session by its ID token and leaves the
+	// Authorization header as the client sent it.
+	// bouncerClientAuthorizationAnnotation, "app", says that header is the
+	// app's own on this route and stays: the entry declared it and the
+	// tenant's perimeter approver approved it. Without it the header is
+	// removed as on any route.
+	bouncerIDTokenAudienceAnnotation     = "gentianos.io/bouncer-id-token-audience"
+	bouncerClientAuthorizationAnnotation = "gentianos.io/bouncer-client-authorization"
+	bouncerClientAuthorizationApp        = string(gentianov1alpha1.ClientAuthorizationApp)
+	componentDatabaseSecretSuffix        = "-database"
 )
 
 func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -510,6 +520,11 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			"component", comp.Name, "namespace", comp.Namespace, "exposure", e.Name, "authMode", string(e.AuthMode))
 	}
 
+	// The entries whose Authorization header is the app's own: declared by
+	// the profile and approved by the tenant's perimeter approver. Asked of
+	// every component, so the condition goes when the declaration does.
+	kept := approvedClientAuthorization(comp, profile, routable, time.Now())
+
 	exposed := 0
 	if len(routable) > 0 {
 		zoneReady, err := r.zoneReady(ctx, zone)
@@ -529,7 +544,15 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		var oidcRoutes []string
 		forward := false
 		for _, e := range routable {
-			routeName, err := r.ensureExposureRoute(ctx, comp, profile, tenant, zone, e, signIn)
+			authz := exposureAuthz(tenant, comp, profile, e.ForwardToken)
+			// Where any entry keeps its header, the component's one policy
+			// proves the session by its ID token on every route; the routes
+			// that keep nothing still have the header removed.
+			if len(kept) > 0 {
+				authz.keepClientToken = kept[e.Name]
+				authz.idTokenSession = !kept[e.Name]
+			}
+			routeName, err := r.ensureExposureRoute(ctx, comp, profile, zone, e, authz, signIn)
 			if err != nil {
 				return ctrl.Result{}, fmt.Errorf("expose %s: %w", e.Name, err)
 			}
@@ -542,9 +565,11 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		// One policy over every oidc route of the component. Envoy Gateway
 		// binds a session's cookies to the policy that made it, so two
 		// policies on one host would be two sessions; forwardToken is
-		// therefore the component's, held if any of its entries holds it.
+		// therefore the component's, held if any of its entries holds it,
+		// and so is leaving the Authorization header to the app.
 		if len(oidcRoutes) > 0 {
 			authz := exposureAuthz(tenant, comp, profile, forward)
+			authz.idTokenSession = len(kept) > 0
 			if err := r.ensureZonePolicy(ctx, comp, zone, oidcRoutes, authz); err != nil {
 				return ctrl.Result{}, fmt.Errorf("zone policy: %w", err)
 			}
@@ -1156,11 +1181,11 @@ func componentLabels(comp *gentianov1alpha1.Component) map[string]string {
 // The entry a sign-in sidecar stands on carries its rules as well: the login
 // path, and the paths that lead to it. They are rules of this route and of
 // no other, so the session and the question of the route are theirs too.
-func (r *ComponentReconciler) ensureExposureRoute(ctx context.Context, comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile, tenant *gentianov1alpha1.Tenant, zone edgeZone, e *gentianov1alpha1.ExposureSpec, signIn *signInSidecar) (string, error) {
+func (r *ComponentReconciler) ensureExposureRoute(ctx context.Context, comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile, zone edgeZone, e *gentianov1alpha1.ExposureSpec, authz routeAuthz, signIn *signInSidecar) (string, error) {
 	host := exposureHost(zone, comp, e)
 	routeName := comp.Name + "-" + e.Name
 	framers := componentFramers(zone, comp, profile, host)
-	route := buildExposureRoute(comp, routeName, host, zone, e, exposureAuthz(tenant, comp, profile, e.ForwardToken), r.KernelDomain, framers)
+	route := buildExposureRoute(comp, routeName, host, zone, e, authz, r.KernelDomain, framers)
 	if signIn != nil && signIn.exposure.Name == e.Name {
 		route.Spec.Rules = append(signInRouteRules(comp.Namespace, signIn, frameAncestorsFilters(framers)...), route.Spec.Rules...)
 	}
@@ -1222,6 +1247,90 @@ func (r *ComponentReconciler) ensureZonePolicy(ctx context.Context, comp *gentia
 		return r.Patch(ctx, existing, patch)
 	}
 	return nil
+}
+
+// ConditionClientAuthorization is the Component condition that says whether
+// the entries whose profile declares the Authorization header the app's own
+// (clientAuthorization: app) have been approved. Absent on a component that
+// declares none.
+const ConditionClientAuthorization = "ClientAuthorization"
+
+// approvedClientAuthorization are the routable entries on which the
+// Authorization header is left to the app, by name: the profile declares it
+// and an approval of that kind, not expired, is on the Component. It also
+// writes the condition that says so (in memory: the caller's status update
+// carries it).
+//
+// A component with an entry that forwards the edge's token, or that asks for
+// a token exchanged for the app, keeps none. The
+// schema refuses a profile that declares both; this is the same rule where
+// the header is decided, so the edge's token and an app's own header are
+// never the same header on one policy whatever was admitted.
+func approvedClientAuthorization(
+	comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile,
+	routable []*gentianov1alpha1.ExposureSpec, now time.Time,
+) map[string]bool {
+	var declared, waiting []string
+	kept := map[string]bool{}
+	forwards := false
+	for _, e := range routable {
+		// Either way the platform puts a token of its own choosing in the
+		// header: the session's, or one exchanged for the app.
+		forwards = forwards || e.ForwardToken || e.ExchangeToken
+	}
+	for _, e := range routable {
+		if e.RequestKind() != gentianov1alpha1.ExposureKindSignInAppAuthorization {
+			continue
+		}
+		declared = append(declared, e.Name)
+		approved := false
+		for i := range comp.Spec.Exposures {
+			on := &comp.Spec.Exposures[i]
+			if on.ExposureName != e.Name || !e.ApprovedAs(on.Kind) {
+				continue
+			}
+			if on.ExpiresAt != nil && !now.Before(on.ExpiresAt.Time) {
+				continue
+			}
+			approved = true
+		}
+		if approved && !forwards {
+			kept[e.Name] = true
+		} else {
+			waiting = append(waiting, e.Name)
+		}
+	}
+	if len(declared) == 0 {
+		apimeta.RemoveStatusCondition(&comp.Status.Conditions, ConditionClientAuthorization)
+		return nil
+	}
+	sort.Strings(waiting)
+	cond := metav1.Condition{
+		Type: ConditionClientAuthorization, Status: metav1.ConditionTrue, Reason: "Approved",
+		Message: fmt.Sprintf(
+			"the Authorization header is left to the app on %s: approved by the tenant's perimeter approver. Sign-in and the right to use the app are still required",
+			strings.Join(declared, ", ")),
+		ObservedGeneration: comp.Generation,
+	}
+	switch {
+	case forwards:
+		cond.Status, cond.Reason = metav1.ConditionFalse, "ForwardsThePlatformToken"
+		cond.Message = fmt.Sprintf(
+			"%s of profile %s asks to keep the app's own Authorization header, and an entry of the profile has the platform put a token of its own in that header (forwardToken or exchangeToken). One header cannot be both: the app's own is removed as on any entry behind sign-in",
+			strings.Join(declared, ", "), profile.Name)
+	case len(waiting) > 0:
+		cond.Status, cond.Reason = metav1.ConditionFalse, "AwaitingApproval"
+		cond.Message = fmt.Sprintf(
+			"%s of profile %s asks to keep the app's own Authorization header, and the tenant's perimeter approver has not approved that (or the approval has expired). "+
+				"Until then the entry is served like any other behind sign-in and the header is removed before the app, so calls the app's own pages make with a token of the app's will be refused by the app. "+
+				"The request is listed with the tenant's public addresses (kubectl gentian exposures requests)",
+			strings.Join(waiting, ", "), profile.Name)
+	}
+	apimeta.SetStatusCondition(&comp.Status.Conditions, cond)
+	if len(kept) == 0 {
+		return nil
+	}
+	return kept
 }
 
 // exposureHost is where one entry of a component answers in its zone.
@@ -1401,7 +1510,7 @@ func buildExposureRoute(comp *gentianov1alpha1.Component, name, host string, zon
 		bouncerForwardAnnotation:  fmt.Sprint(authz.forwardToken),
 		bouncerAuthModeAnnotation: mode,
 	}
-	if e.ExchangeToken && e.AuthMode == gentianov1alpha1.AuthModeOIDC && !authz.forwardToken {
+	if e.ExchangeToken && e.AuthMode == gentianov1alpha1.AuthModeOIDC && !authz.forwardToken && !authz.sessionByIDToken() {
 		annotations[bouncerExchangeScopeAnnotation] = AppTokenScope(comp.Spec.ProfileRef.Name)
 	}
 	// denyPaths is not a route rule. A gateway route matches by prefix, so
@@ -1416,6 +1525,22 @@ func buildExposureRoute(comp *gentianov1alpha1.Component, name, host string, zon
 	// the zone. A bearer route has no session and names none.
 	if cookies := zone.sessionCookies(); mode == "oidc" && len(cookies) > 0 {
 		annotations[bouncerSessionCookiesAnnotation] = strings.Join(cookies, ",")
+	}
+	// Whose ID token proves the session, where the component's policy hands
+	// that over and leaves the Authorization header as it came; and whether
+	// this route's header is the app's to keep.
+	//
+	// Both are written on every route, empty where they do not hold. A
+	// route that exists is only given the annotations asked for here and
+	// keeps the rest, so one left unmentioned after an approval was
+	// withdrawn would go on saying the header is the app's.
+	annotations[bouncerIDTokenAudienceAnnotation] = ""
+	annotations[bouncerClientAuthorizationAnnotation] = ""
+	if mode == "oidc" && authz.sessionByIDToken() {
+		annotations[bouncerIDTokenAudienceAnnotation] = zone.clientID
+		if authz.keepClientToken {
+			annotations[bouncerClientAuthorizationAnnotation] = bouncerClientAuthorizationApp
+		}
 	}
 	return &gatewayv1.HTTPRoute{
 		ObjectMeta: metav1.ObjectMeta{

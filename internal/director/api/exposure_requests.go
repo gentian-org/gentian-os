@@ -40,6 +40,13 @@ import (
 // recorded as published although the operator publishes nothing for it; it is
 // refused now, and the ones recorded before are shown as matching nothing.
 //
+// Not everything an approver decides here is a public address. An entry
+// behind sign-in may ask that the Authorization header be left as the app's
+// own page sent it; the same approver decides that, in the same list, and
+// every entry says which kind it is. What each kind does is said in the
+// director's words (kindLabel, access, rateLimit), which the console and the
+// command line show as they are.
+//
 // Everything here is read from git, which is all the director reads: the
 // tenant's apps, the profiles in the cluster's catalogue directory, the
 // domain bound to the tenant, and the cluster's tenancy mode and domain. The
@@ -72,6 +79,23 @@ type exposureEntry struct {
 	ExposureName string `json:"exposureName"`
 	// State is requested, approved, reviewDue, expired or unmatched.
 	State string `json:"state"`
+	// Kind is what approving the entry allows: public (a public address
+	// that passes no credential on), publicAppCredential (a public address
+	// that passes the caller's Authorization header to the app) or
+	// signInAppAuthorization (no public address: an entry behind sign-in
+	// whose Authorization header is the app's own). KindLabel is the same
+	// in a few words, for a list.
+	Kind      string `json:"kind,omitempty"`
+	KindLabel string `json:"kindLabel,omitempty"`
+	// PublicAddress says approving the entry publishes something on the
+	// internet. False for an entry behind sign-in.
+	PublicAddress bool `json:"publicAddress"`
+	// PassesCredential says the caller's Authorization header reaches the
+	// app as the caller sent it once the entry is approved.
+	PassesCredential bool `json:"passesCredential"`
+	// RateLimit is the limit one client address is held to on a public
+	// address, in a sentence.
+	RateLimit string `json:"rateLimit,omitempty"`
 	// Host is the public address, without scheme: where the entry answers
 	// once approved. Empty for an entry that is published nowhere; Note
 	// says why.
@@ -100,20 +124,80 @@ type exposureEntry struct {
 	Approval *gitops.Exposure `json:"approval,omitempty"`
 }
 
-// accessOf says who can reach a perimeter entry, in a sentence.
-//
-// The publishing proxy checks nobody, whatever the profile says: it forwards
-// the declared paths and drops every credential on the way in
-// (component_perimeter_config.go). So a mode other than none is the app's
-// own check, and the sentence must not read as one the platform makes.
-func accessOf(mode gentianov1alpha1.AuthMode) (anyone bool, sentence string) {
-	if mode == gentianov1alpha1.AuthModeNone {
-		return true, "Reachable by anyone on the internet without sign-in."
+// The kinds, by the names the registry records (gitops, and the Tenant's
+// schema behind it).
+const (
+	kindPublic                 = gitops.KindPublic
+	kindPublicAppCredential    = gitops.KindPublicAppCredential
+	kindSignInAppAuthorization = gitops.KindSignInAppAuthorization
+)
+
+// kindLabels are the kinds in a few words, for a list.
+var kindLabels = map[string]string{
+	kindPublic:                 "Public address",
+	kindPublicAppCredential:    "Public address that passes the caller's credential to the app",
+	kindSignInAppAuthorization: "Behind sign-in: keeps the app's own Authorization header",
+}
+
+// normalKind reads a registry entry that names no kind as what every entry
+// was before kinds were recorded: a public address.
+func normalKind(k string) string {
+	if k == "" {
+		return kindPublic
 	}
-	return false, fmt.Sprintf(
-		"Nobody signs in at the platform's edge: anyone on the internet can send requests to these paths. "+
-			"The app's catalogue entry says the app itself checks each caller (authMode %s); the platform does not check that.",
-		mode)
+	return k
+}
+
+// accessOf says what approving an entry of a kind allows, for a person who
+// decides on it. The sentences are the whole of what the platform does and
+// does not do; nothing here may read as a check the platform does not make.
+//
+//   - public: the publishing proxy forwards the declared paths and drops
+//     every credential on the way in (component_perimeter_config.go).
+//   - publicAppCredential: the same proxy, passing the one header on.
+//   - signInAppAuthorization: the session and the bouncer as on any entry
+//     behind sign-in; only the header is left alone (internal/bouncer).
+func accessOf(kind string) string {
+	switch kind {
+	case kindPublic:
+		return "Reachable by anyone on the internet without sign-in. " +
+			"No credential is passed to the app: the platform removes the Authorization header and all cookies from every request."
+	case kindPublicAppCredential:
+		return "Nobody signs in at the platform's edge: anyone on the internet can send requests to these paths. " +
+			"The caller's credential (the Authorization header) is passed to the app as the caller sent it, and the app alone checks it. " +
+			"The platform does not know or check who calls. " +
+			"An app password or token of a person who was removed from the tenant keeps working until the app itself revokes it. " +
+			"Cookies are not passed to the app and the app cannot set any, so a client that needs cookies does not work on this address."
+	case kindSignInAppAuthorization:
+		return "This is not a public address. People still have to sign in, and still have to be allowed to use the app, exactly as before. " +
+			"Once approved, the platform leaves the Authorization header on requests to this address as the app's own page sent it: " +
+			"it no longer replaces or removes that header, and puts no token of its own there. " +
+			"The app receives whatever a signed-in person's browser sends in that header, and the app alone checks it. " +
+			"Until approved, the header is removed before the app, and calls the app's own pages make with a token of the app's are refused by the app."
+	}
+	return ""
+}
+
+// rateLimitOf says the limit one client address is held to on a public
+// address. The numbers are the ones the operator renders the proxy from
+// (addresses.PerimeterRateFor); the cluster's administrator may have set
+// others, which the repository does not say.
+func rateLimitOf(kind string) string {
+	var rate addresses.PerimeterRate
+	why := ""
+	switch kind {
+	case kindPublic:
+		rate = addresses.PerimeterRateFor(false)
+	case kindPublicAppCredential:
+		rate = addresses.PerimeterRateFor(true)
+		why = " The limit is lower than on other public addresses, because every request may be a guess at a password."
+	default:
+		return ""
+	}
+	return fmt.Sprintf(
+		"Each client address may make %d requests a second, with %d more at once and %d at a time; beyond that the platform answers 429 (too many requests). "+
+			"These are the platform's defaults; the cluster's administrator may have set others.%s",
+		rate.PerSecond, rate.Burst, rate.Concurrent, why)
 }
 
 // tenantInstalls is what a tenant has installed, by the name its Component
@@ -222,6 +306,7 @@ func (s *Server) readExposureView(ctx context.Context, tenant string) (*exposure
 func registryEntry(e gitops.Exposure) gentianov1alpha1.TenantExposure {
 	out := gentianov1alpha1.TenantExposure{
 		Install: e.Install, ExposureName: e.ExposureName, Owner: e.Owner, Reason: e.Reason, Apex: e.Apex,
+		Kind: gentianov1alpha1.ExposureKind(e.Kind),
 	}
 	if at, err := time.Parse(time.RFC3339, e.ReviewAt); err == nil {
 		out.ReviewAt = metav1.NewTime(at)
@@ -238,25 +323,28 @@ func registryEntry(e gitops.Exposure) gentianov1alpha1.TenantExposure {
 	return out
 }
 
-// perimeterEntry is the profile's entry of this name for the internet, or
-// nil; other names what the profile declares instead, for a refusal.
-func perimeterEntry(profile *gentianov1alpha1.ComponentProfile, name string) (entry *gentianov1alpha1.ExposureSpec, gateway bool, declared []string) {
+// approvableEntry is the profile's entry of this name that asks a perimeter
+// approver for something, or nil: a perimeter entry in a mode the platform
+// serves, or an entry behind sign-in that declares the Authorization header
+// the app's own. exists says the profile has an entry of the name at all,
+// and declared names the entries that do ask, for a refusal.
+func approvableEntry(profile *gentianov1alpha1.ComponentProfile, name string) (entry *gentianov1alpha1.ExposureSpec, exists bool, declared []string) {
 	for i := range profile.Spec.Expose {
 		e := &profile.Spec.Expose[i]
-		if e.Surface == gentianov1alpha1.SurfacePerimeter {
+		asks := e.RequestKind() != ""
+		if asks {
 			declared = append(declared, e.Name)
 		}
 		if e.Name != name {
 			continue
 		}
-		if e.Surface == gentianov1alpha1.SurfacePerimeter {
+		exists = true
+		if asks {
 			entry = e
-		} else {
-			gateway = true
 		}
 	}
 	sort.Strings(declared)
-	return entry, gateway, declared
+	return entry, exists, declared
 }
 
 // resolve is where an entry answers. approval is the registry's entry, or
@@ -279,22 +367,54 @@ func (v *exposureView) resolve(install string, entry *gentianov1alpha1.ExposureS
 	return addresses.Resolve(in, &in.Tenants[0], install, entry, forMain)
 }
 
-// describe fills in what an entry would publish.
+// describe fills in what approving an entry allows.
 func (v *exposureView) describe(out *exposureEntry, entry *gentianov1alpha1.ExposureSpec) {
-	out.Host, out.Note = v.resolve(out.Install, entry, out.Approval)
-	out.Paths = addresses.Prefixes(entry)
+	kind := string(entry.RequestKind())
+	out.Kind, out.KindLabel = kind, kindLabels[kind]
+	out.PublicAddress = entry.Surface == gentianov1alpha1.SurfacePerimeter
+	out.PassesCredential = kind == kindPublicAppCredential || kind == kindSignInAppAuthorization
+	out.AuthMode = string(entry.AuthMode)
+	out.AnyoneWithoutSignIn = kind == kindPublic
+	out.Access, out.RateLimit = accessOf(kind), rateLimitOf(kind)
 	for _, p := range entry.DenyPaths {
 		if p = strings.TrimSpace(p); p != "" {
 			out.DenyPaths = append(out.DenyPaths, p)
 		}
 	}
 	sort.Strings(out.DenyPaths)
-	out.AuthMode = string(entry.AuthMode)
-	out.AnyoneWithoutSignIn, out.Access = accessOf(entry.AuthMode)
+	if !out.PublicAddress {
+		// Behind sign-in: the address is the one the entry already has on
+		// the tenant's own domain, and approving publishes nothing. An
+		// entry that names no paths there is the whole host.
+		zone := addresses.ZoneOf(v.subject, v.inputs.KernelDomain, v.inputs.TenancyMode, v.inputs.KernelRealm)
+		out.Host = addresses.Host(zone, out.Install, entry)
+		out.Paths = append([]string{}, entry.Paths...)
+		if len(out.Paths) == 0 {
+			out.Paths = []string{"/"}
+		}
+		sort.Strings(out.Paths)
+		return
+	}
+	out.Host, out.Note = v.resolve(out.Install, entry, out.Approval)
+	out.Paths = addresses.Prefixes(entry)
 	out.MainAddress = entry.Apex
 	if entry.Apex {
 		out.MainAddressRule = mainAddressRule
 	}
+}
+
+// approvedAsAnother is why an approval in the registry does not cover what
+// the entry declares now, or "".
+func approvedAsAnother(entry *gentianov1alpha1.ExposureSpec, approval *gitops.Exposure) string {
+	was, now := normalKind(approval.Kind), string(entry.RequestKind())
+	if was == now {
+		return ""
+	}
+	return fmt.Sprintf(
+		"This entry was approved by %s as %q, and the app's catalogue entry now asks for %q. "+
+			"The earlier approval does not cover that: the platform does nothing for this entry until it is approved again as what it is now. "+
+			"Withdraw it to clear the earlier approval",
+		approval.Owner, kindLabels[was], kindLabels[now])
 }
 
 // stateOf is what is true of an approved entry now.
@@ -324,16 +444,28 @@ func (v *exposureView) entries() []exposureEntry {
 	for install, profile := range v.profiles {
 		for i := range profile.Spec.Expose {
 			entry := &profile.Spec.Expose[i]
-			if entry.Surface != gentianov1alpha1.SurfacePerimeter {
+			if entry.RequestKind() == "" {
+				// Asks for nothing: an ordinary entry behind sign-in, or
+				// one in a mode the platform does not serve.
 				continue
 			}
 			e := exposureEntry{Install: install, ExposureName: entry.Name, State: exposureRequested}
 			key := gitops.Exposure{Install: install, ExposureName: entry.Name}.Key()
+			changed := ""
 			if approval, ok := approved[key]; ok {
 				matched[key] = true
 				e.Approval, e.State = approval, stateOf(*approval, v.inputs.Now)
+				if changed = approvedAsAnother(entry, approval); changed != "" {
+					// Approved as something else: it is a request again,
+					// with the earlier approval beside it.
+					e.State = exposureRequested
+				}
 			}
 			v.describe(&e, entry)
+			if changed != "" {
+				e.Note = strings.TrimSpace(changed + ". " + e.Note)
+				e.Note = strings.TrimSuffix(e.Note, ". ")
+			}
 			out = append(out, e)
 		}
 	}
@@ -343,13 +475,18 @@ func (v *exposureView) entries() []exposureEntry {
 			continue
 		}
 		e := exposureEntry{Install: p.Install, ExposureName: p.ExposureName, Approval: p, MainAddress: p.Apex}
+		// What the registry says was approved; what the entry declares is
+		// not known here.
+		e.Kind = normalKind(p.Kind)
+		e.KindLabel = kindLabels[e.Kind]
+		e.PublicAddress = e.Kind != kindSignInAppAuthorization
 		if why := v.unknownToTheRepository(p.Install); why != "" {
 			// Not shown as matching nothing: what it matches is not the
 			// repository's to say.
 			e.State, e.Note = stateOf(*p, v.inputs.Now), why
 		} else {
 			e.State, e.Note = exposureUnmatched, v.unmatched(p.Install, p.ExposureName)+
-				". The operator publishes nothing for it; withdraw it to clear the registry"
+				". The operator publishes nothing and changes nothing for it; withdraw it to clear the registry"
 		}
 		out = append(out, e)
 	}
@@ -383,19 +520,33 @@ func (v *exposureView) unmatched(install, name string) string {
 	if profile == nil {
 		return fmt.Sprintf("the profile of %s on this cluster could not be read, so what it would publish is not known", install)
 	}
-	entry, gateway, declared := perimeterEntry(profile, name)
+	entry, exists, declared := approvableEntry(profile, name)
 	switch {
 	case entry != nil:
 		return ""
-	case gateway:
+	case exists && surfaceOf(profile, name) == gentianov1alpha1.SurfacePerimeter:
 		return fmt.Sprintf(
-			"entry %s of %s is not one for the internet: it is served behind sign-in on the tenant's own address (surface gateway), and approval does not publish it",
+			"entry %s of %s declares a way of checking callers that the platform does not offer on a public address, so nothing is published for it. Its catalogue entry has to declare authMode none or authMode app",
+			name, install)
+	case exists:
+		return fmt.Sprintf(
+			"entry %s of %s is not one for the internet and asks for nothing else an approver decides: it is served behind sign-in on the tenant's own address (surface gateway), and approval does not publish it",
 			name, install)
 	case len(declared) == 0:
-		return fmt.Sprintf("%s declares nothing for the internet", install)
+		return fmt.Sprintf("%s declares nothing for the internet and asks for nothing else an approver decides", install)
 	}
-	return fmt.Sprintf("%s declares no entry named %s for the internet. What it declares: %s",
+	return fmt.Sprintf("%s declares no entry named %s for the internet, and none of that name that asks for anything else an approver decides. What it declares: %s",
 		install, name, strings.Join(declared, ", "))
+}
+
+// surfaceOf is the surface of the profile's entry of this name.
+func surfaceOf(profile *gentianov1alpha1.ComponentProfile, name string) gentianov1alpha1.SurfaceKind {
+	for i := range profile.Spec.Expose {
+		if profile.Spec.Expose[i].Name == name {
+			return profile.Spec.Expose[i].Surface
+		}
+	}
+	return ""
 }
 
 // mainAddressMismatch is why an approval's word on the main address is not
@@ -412,8 +563,19 @@ func (v *exposureView) mainAddressMismatch(install, name string, apex bool) stri
 	if profile == nil {
 		return ""
 	}
-	entry, _, _ := perimeterEntry(profile, name)
-	if entry == nil || entry.Apex == apex {
+	entry, _, _ := approvableEntry(profile, name)
+	if entry == nil {
+		return ""
+	}
+	if entry.Surface != gentianov1alpha1.SurfacePerimeter {
+		if apex {
+			return fmt.Sprintf(
+				"the request asks for the cluster's main address (\"apex\": true), and entry %s of %s is not a public address: it is served behind sign-in. Send the request without \"apex\"",
+				name, install)
+		}
+		return ""
+	}
+	if entry.Apex == apex {
 		return ""
 	}
 	if addresses.ZoneOf(v.subject, v.inputs.KernelDomain, v.inputs.TenancyMode, v.inputs.KernelRealm).Kernel {

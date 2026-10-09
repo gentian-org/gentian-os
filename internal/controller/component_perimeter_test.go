@@ -71,7 +71,7 @@ func perimeterScheme() *runtime.Scheme {
 func TestThePublishedSurfaceIsOnlyWhatWasDeclared(t *testing.T) {
 	profile := nextcloudWithPerimeter()
 	e := &profile.Spec.Expose[1]
-	conf := perimeterProxyConfig(e, "nextcloud.tenant-acme.svc.cluster.local", 8080, false, perimeterLimitsFromEnv(edgeClientAddressHeader(context.Background(), nil)))
+	conf := perimeterProxyConfig(e, "nextcloud.tenant-acme.svc.cluster.local", 8080, false, false, perimeterLimitsFromEnv(edgeClientAddressHeader(context.Background(), nil)))
 
 	// Property 1: only the declared prefixes, by whole segments, and
 	// everything else refused here rather than forwarded.
@@ -131,7 +131,7 @@ func TestThePublishedSurfaceIsOnlyWhatWasDeclared(t *testing.T) {
 // added to the bouncer is stripped here without anybody remembering to.
 func TestThePerimeterStripsEveryIdentityHeaderTheFrontDoorSets(t *testing.T) {
 	e := &nextcloudWithPerimeter().Spec.Expose[1]
-	conf := perimeterProxyConfig(e, "nextcloud.tenant-acme.svc.cluster.local", 8080, false, perimeterLimitsFromEnv(edgeClientAddressHeader(context.Background(), nil)))
+	conf := perimeterProxyConfig(e, "nextcloud.tenant-acme.svc.cluster.local", 8080, false, false, perimeterLimitsFromEnv(edgeClientAddressHeader(context.Background(), nil)))
 	stripped := map[string]bool{}
 	for _, h := range perimeterStrippedIdentityHeaders() {
 		stripped[strings.ToLower(h)] = true
@@ -170,7 +170,7 @@ func TestThePerimeterLimits(t *testing.T) {
 	}
 	e := &nextcloudWithPerimeter().Spec.Expose[1]
 	render := func() string {
-		return perimeterProxyConfig(e, "nextcloud.tenant-acme.svc.cluster.local", 8080, false, perimeterLimitsFromEnv(edgeClientAddressHeader(context.Background(), nil)))
+		return perimeterProxyConfig(e, "nextcloud.tenant-acme.svc.cluster.local", 8080, false, false, perimeterLimitsFromEnv(edgeClientAddressHeader(context.Background(), nil)))
 	}
 
 	conf := render()
@@ -256,7 +256,7 @@ func TestAPerimeterEntryWithNoPathsPublishesNothing(t *testing.T) {
 		Name: "everything", Surface: gentianov1alpha1.SurfacePerimeter,
 		Backend: gentianov1alpha1.BackendRef{Service: "nextcloud", Port: 8080},
 	}
-	conf := perimeterProxyConfig(e, "nextcloud.tenant-acme.svc.cluster.local", 8080, false, perimeterLimitsFromEnv(edgeClientAddressHeader(context.Background(), nil)))
+	conf := perimeterProxyConfig(e, "nextcloud.tenant-acme.svc.cluster.local", 8080, false, false, perimeterLimitsFromEnv(edgeClientAddressHeader(context.Background(), nil)))
 	if strings.Contains(conf, "proxy_pass") {
 		t.Fatal("an entry declaring no paths forwarded something")
 	}
@@ -274,7 +274,7 @@ func TestAPathThatWouldBeConfigurationIsNotRendered(t *testing.T) {
 		Paths:   []string{"/ok/", "/a b", "/x { return 200; }", "/q\"", "/semi;", "/d$uri", "/n\nl", "/dup//slash"},
 		Backend: gentianov1alpha1.BackendRef{Service: "app", Port: 8080},
 	}
-	conf := perimeterProxyConfig(e, "app.tenant-acme.svc.cluster.local", 8080, false, perimeterLimitsFromEnv(edgeClientAddressHeader(context.Background(), nil)))
+	conf := perimeterProxyConfig(e, "app.tenant-acme.svc.cluster.local", 8080, false, false, perimeterLimitsFromEnv(edgeClientAddressHeader(context.Background(), nil)))
 	if !strings.Contains(conf, `"~^/ok/" 1;`) {
 		t.Error("the one usable path is not published")
 	}
@@ -284,7 +284,7 @@ func TestAPathThatWouldBeConfigurationIsNotRendered(t *testing.T) {
 		}
 	}
 	e.DenyPaths = []string{"/ok/private x"}
-	conf = perimeterProxyConfig(e, "app.tenant-acme.svc.cluster.local", 8080, false, perimeterLimitsFromEnv(edgeClientAddressHeader(context.Background(), nil)))
+	conf = perimeterProxyConfig(e, "app.tenant-acme.svc.cluster.local", 8080, false, false, perimeterLimitsFromEnv(edgeClientAddressHeader(context.Background(), nil)))
 	if strings.Contains(conf, "proxy_pass") {
 		t.Error("an entry whose denied path cannot be rendered still published the rest")
 	}

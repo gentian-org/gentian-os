@@ -80,6 +80,11 @@ const (
 // +kubebuilder:validation:XValidation:rule="!has(self.classes) || !('service' in self.classes) || self.classes.size() == 1",message="service is exclusive: a component may not be both a service and an app"
 // +kubebuilder:validation:XValidation:rule="!has(self.classes) || !('shared-app' in self.classes) || self.trustTier == 'platform'",message="shared-app requires trustTier platform"
 // +kubebuilder:validation:XValidation:rule="!has(self.expose) || self.expose.all(e, !(has(e.forwardToken) && e.forwardToken) || self.trustTier == 'platform')",message="forwardToken requires trustTier platform: the edge token is valid at the director and at every sibling"
+// One policy carries a component's session on every host it has, and that
+// policy either hands the edge's token over in the Authorization header or
+// leaves the header to the app. It cannot do both.
+// +kubebuilder:validation:XValidation:rule="!has(self.expose) || !self.expose.exists(e, (has(e.forwardToken) && e.forwardToken) || (has(e.exchangeToken) && e.exchangeToken)) || !self.expose.exists(e, has(e.clientAuthorization))",message="clientAuthorization excludes forwardToken and exchangeToken across a component's entries: the Authorization header toward the app is either the app's own or a token the platform puts there, and one policy carries the session for all of a component's entries"
+// +kubebuilder:validation:XValidation:rule="!has(self.classes) || !('service' in self.classes) || !has(self.expose) || self.expose.all(e, !has(e.clientAuthorization))",message="a service does not declare clientAuthorization: it is approved in a tenant's registry by that tenant's perimeter approver, and a service runs in no tenant"
 // +kubebuilder:validation:XValidation:rule="!has(self.requires) || !has(self.requires.services) || !has(self.requires.services.rights) || self.trustTier == 'platform'",message="requires.services.rights requires trustTier platform: the answer says who in the tenant may use what"
 // +kubebuilder:validation:XValidation:rule="!has(self.expose) || self.expose.all(e, !(has(e.exchangeToken) && e.exchangeToken) || (e.surface == 'gateway' && e.authMode == 'oidc'))",message="exchangeToken is for a gateway entry behind a session (authMode oidc): there is a session's token to exchange only there"
 // +kubebuilder:validation:XValidation:rule="!has(self.expose) || !(self.expose.exists(e, has(e.forwardToken) && e.forwardToken) && self.expose.exists(e, has(e.exchangeToken) && e.exchangeToken))",message="a component asks for forwardToken or for exchangeToken, not both: its entries share one host, and a host's backends are handed one token or the other"
@@ -417,11 +422,27 @@ const (
 )
 
 // AuthMode is how a caller of an exposure entry is authenticated.
-// +kubebuilder:validation:Enum=oidc;jwt;bearer;basic;signature;none
+//
+// The values the platform acts on are three. oidc is the zone's session, on a
+// gateway entry. none and app are for a perimeter entry: none publishes the
+// declared paths to anyone and passes no credential on; app passes the
+// caller's own Authorization header to the app, which alone checks it.
+//
+// jwt, bearer, basic and signature remain values of the field, and no
+// perimeter entry may declare them: there they named a check at the edge
+// that nothing makes.
+// +kubebuilder:validation:Enum=oidc;app;jwt;bearer;basic;signature;none
 type AuthMode string
 
 const (
-	AuthModeOIDC      AuthMode = "oidc"
+	AuthModeOIDC AuthMode = "oidc"
+	// AuthModeApp is a perimeter entry whose callers present a credential
+	// the app itself issued -- an app password, an API key, a token of the
+	// app's own -- in the Authorization header. The publishing proxy passes
+	// that one header on and checks nothing; the app checks every caller.
+	// It takes effect once the tenant's perimeter approver has approved the
+	// entry as that.
+	AuthModeApp       AuthMode = "app"
 	AuthModeJWT       AuthMode = "jwt"
 	AuthModeBearer    AuthMode = "bearer"
 	AuthModeBasic     AuthMode = "basic"
@@ -431,11 +452,90 @@ const (
 	AuthModeNone AuthMode = "none"
 )
 
+// ClientAuthorization says whose the Authorization header is on an entry
+// behind the zone's session.
+// +kubebuilder:validation:Enum=app
+type ClientAuthorization string
+
+const (
+	// ClientAuthorizationApp: the header is the app's own. Its pages put a
+	// token the app issued there, and the edge neither replaces nor removes
+	// it. Sign-in and the question who may use the app stay as on any entry
+	// behind the session.
+	ClientAuthorizationApp ClientAuthorization = "app"
+)
+
+// ExposureKind is what approving one entry of a profile allows. The registry
+// records it with the approval, and an approval is in force only for an entry
+// that still declares the kind it was approved as.
+// +kubebuilder:validation:Enum=public;publicAppCredential;signInAppAuthorization
+type ExposureKind string
+
+const (
+	// ExposureKindPublic is a public address: the declared paths of a
+	// perimeter entry, reachable by anyone, with no credential passed on
+	// (authMode none). An approval that names no kind is this one.
+	ExposureKindPublic ExposureKind = "public"
+	// ExposureKindPublicAppCredential is a public address that passes the
+	// caller's Authorization header to the app (authMode app).
+	ExposureKindPublicAppCredential ExposureKind = "publicAppCredential"
+	// ExposureKindSignInAppAuthorization is no public address. It is an
+	// entry behind sign-in on which the Authorization header is the app's
+	// own (clientAuthorization app).
+	ExposureKindSignInAppAuthorization ExposureKind = "signInAppAuthorization"
+)
+
+// Normalized reads an approval that names no kind as the one every approval
+// was before kinds existed: a public address.
+func (k ExposureKind) Normalized() ExposureKind {
+	if k == "" {
+		return ExposureKindPublic
+	}
+	return k
+}
+
+// RequestKind is what this entry asks a perimeter approver for, or "" for an
+// entry that asks for nothing: one behind the session that leaves the
+// Authorization header to the platform, and any entry in a mode the platform
+// does not act on.
+func (e *ExposureSpec) RequestKind() ExposureKind {
+	if e == nil {
+		return ""
+	}
+	switch e.Surface {
+	case SurfacePerimeter:
+		switch e.AuthMode {
+		case AuthModeNone:
+			return ExposureKindPublic
+		case AuthModeApp:
+			return ExposureKindPublicAppCredential
+		}
+	case SurfaceGateway:
+		if e.AuthMode == AuthModeOIDC && e.ClientAuthorization == ClientAuthorizationApp {
+			return ExposureKindSignInAppAuthorization
+		}
+	}
+	return ""
+}
+
+// ApprovedAs reports whether an approval recorded as approved covers what
+// this entry declares now. An entry whose profile changed what it asks for
+// after the approval is not covered until it is approved again.
+func (e *ExposureSpec) ApprovedAs(approved ExposureKind) bool {
+	want := e.RequestKind()
+	return want != "" && want == approved.Normalized()
+}
+
 // ExposureSpec declares one entry point.
 //
 // +kubebuilder:validation:XValidation:rule="!(self.surface == 'perimeter' && has(self.forwardToken) && self.forwardToken)",message="forwardToken is meaningless on a perimeter entry: it has no session"
 // +kubebuilder:validation:XValidation:rule="self.surface != 'perimeter' || self.authMode != 'oidc'",message="a perimeter entry cannot use authMode oidc: the session lives on the gateway"
 // +kubebuilder:validation:XValidation:rule="!has(self.apex) || !self.apex || (self.surface == 'perimeter' && !has(self.subDomain))",message="apex is for a perimeter entry and names the whole host: it takes no subDomain"
+// +kubebuilder:validation:XValidation:rule="self.surface != 'perimeter' || self.authMode in ['none', 'app', 'oidc']",message="authMode jwt, bearer, basic and signature are not available on a perimeter entry yet: the platform verifies no token, password or signature there. Declare authMode app if the app itself checks the credential its callers send in the Authorization header, or authMode none if the paths are for anyone"
+// +kubebuilder:validation:XValidation:rule="self.authMode != 'app' || self.surface == 'perimeter'",message="authMode app is for a perimeter entry: it passes the caller's Authorization header to the app with no sign-in in front. Behind sign-in, declare authMode oidc with clientAuthorization app"
+// +kubebuilder:validation:XValidation:rule="!has(self.clientAuthorization) || (self.surface == 'gateway' && self.authMode == 'oidc')",message="clientAuthorization is for a gateway entry behind the session (authMode oidc): it says whose the Authorization header is once a person has signed in"
+// +kubebuilder:validation:XValidation:rule="!has(self.clientAuthorization) || ((!has(self.forwardToken) || !self.forwardToken) && (!has(self.exchangeToken) || !self.exchangeToken))",message="clientAuthorization excludes forwardToken and exchangeToken: the Authorization header toward the app is either the app's own or a token the platform puts there"
+// +kubebuilder:validation:XValidation:rule="!has(self.apex) || !self.apex || self.authMode == 'none'",message="an apex entry is a website for anyone (authMode none): the cluster's main address passes no credential to an app"
 // +kubebuilder:validation:XValidation:rule="self.surface != 'gateway' || self.authMode == 'oidc' || has(self.source)",message="a gateway entry is behind the zone's session (authMode oidc) or pins its caller (source). What needs neither is a perimeter surface"
 type ExposureSpec struct {
 	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
@@ -508,6 +608,24 @@ type ExposureSpec struct {
 	// names, and any app may ask for it.
 	// +optional
 	ExchangeToken bool `json:"exchangeToken,omitempty"`
+
+	// ClientAuthorization says whose the Authorization header is on this
+	// entry. Unset, it is the platform's: the edge replaces whatever a
+	// client sent there and removes it before the app. "app" says the app's
+	// pages send a token of the app's own in that header, and asks that it
+	// be left alone.
+	//
+	// It is a request. It takes effect once the tenant's perimeter approver
+	// has approved this entry; until then the entry is served like any other
+	// behind sign-in and the header is removed. Approved, a person still has
+	// to be signed in and still has to be allowed to use the app, exactly as
+	// before; the edge puts no token of its own in the header and removes
+	// none, and no platform token reaches the app.
+	//
+	// The session's cookies belong to a host, so what one entry declares
+	// holds for every entry of the component on the same host.
+	// +optional
+	ClientAuthorization ClientAuthorization `json:"clientAuthorization,omitempty"`
 
 	// Annotations are gateway policy for this host, by the same keys
 	// AppProfile's ingress carried: gentianos.io/gateway-frame-ancestors and

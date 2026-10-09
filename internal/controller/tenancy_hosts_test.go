@@ -43,7 +43,7 @@ var (
 	adminEntry        = &gentianov1alpha1.ExposureSpec{Name: "web", SubDomain: "admin"}
 	appEntry          = &gentianov1alpha1.ExposureSpec{Name: "web", SubDomain: "cloud"}
 	appNamelessEntry  = &gentianov1alpha1.ExposureSpec{Name: "web"}
-	conciergeApexSpec = &gentianov1alpha1.ExposureSpec{Name: "front", Apex: true, Surface: gentianov1alpha1.SurfacePerimeter}
+	conciergeApexSpec = &gentianov1alpha1.ExposureSpec{Name: "front", Apex: true, Surface: gentianov1alpha1.SurfacePerimeter, AuthMode: gentianov1alpha1.AuthModeNone}
 )
 
 func TestWhereEverythingAnswersPerTenancyMode(t *testing.T) {
@@ -552,7 +552,7 @@ func TestAReservedAddressGetsNoPerimeterListener(t *testing.T) {
 		p := &gentianov1alpha1.ComponentProfile{}
 		p.Name = "website"
 		p.Annotations = map[string]string{profilebundle.OriginAnnotation: "cluster/main"}
-		p.Spec.Expose = []gentianov1alpha1.ExposureSpec{{Name: "site", Surface: gentianov1alpha1.SurfacePerimeter, SubDomain: sub}}
+		p.Spec.Expose = []gentianov1alpha1.ExposureSpec{{Name: "site", Surface: gentianov1alpha1.SurfacePerimeter, AuthMode: gentianov1alpha1.AuthModeNone, SubDomain: sub}}
 		return map[string]*gentianov1alpha1.ComponentProfile{"website": p}
 	}
 	enabled := &gentianov1alpha1.TenantExposure{Install: "website", ExposureName: "site"}

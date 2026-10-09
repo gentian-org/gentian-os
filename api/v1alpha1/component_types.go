@@ -106,8 +106,10 @@ type ComponentSpec struct {
 	// +optional
 	Config *TenantAppConfig `json:"config,omitempty"`
 
-	// Exposures are the perimeter entries of the profile that are switched on.
-	// Gateway entries need none: they carry the session and are always on.
+	// Exposures are the entries of the profile a perimeter approver approved:
+	// the perimeter entries that are switched on, and the entries behind
+	// sign-in whose Authorization header is left to the app. Every other
+	// gateway entry needs none: it carries the session and is always on.
 	// +optional
 	// +listType=map
 	// +listMapKey=exposureName
@@ -139,7 +141,9 @@ type ProfileRef struct {
 	Digest string `json:"digest,omitempty"`
 }
 
-// ExposureEnablement switches on one perimeter entry of the profile.
+// ExposureEnablement is the approval of one entry of the profile: it switches
+// on a perimeter entry, or lets an entry behind sign-in keep the app's own
+// Authorization header. Which, is Kind.
 //
 // authMode is not repeated here: the profile's entry is the one source, and an
 // enablement cannot weaken it.
@@ -147,11 +151,17 @@ type ProfileRef struct {
 // +kubebuilder:validation:XValidation:rule="self.owner == oldSelf.owner",message="owner is immutable: a renewal by someone else is a new enablement"
 // +kubebuilder:validation:XValidation:rule="!has(self.expiresAt) || self.reviewAt <= self.expiresAt",message="reviewAt must not be later than expiresAt"
 type ExposureEnablement struct {
-	// ExposureName names an entry of the profile's expose list whose surface is
-	// "perimeter".
+	// ExposureName names an entry of the profile's expose list that asks for
+	// approval.
 	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
 	// +kubebuilder:validation:MaxLength=40
 	ExposureName string `json:"exposureName"`
+
+	// Kind is what was approved, copied from the Tenant's entry; empty is a
+	// public address. An approval is in force only for an entry that
+	// declares this kind.
+	// +optional
+	Kind ExposureKind `json:"kind,omitempty"`
 
 	// Owner is the Keycloak subject that enabled the surface, set by the
 	// director from the caller's token.

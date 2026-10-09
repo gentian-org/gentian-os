@@ -32,6 +32,12 @@ import (
 // always its own audit line rather than something an administrator does
 // incidentally while doing everything else.
 //
+// Not every entry here is a public address. An app may also ask that, behind
+// sign-in, the Authorization header be left as its own page sent it; the
+// same approver decides that, it is recorded here the same way, and Kind
+// says which of the two an entry is. Only a perimeter entry of a profile is
+// ever published, whatever is recorded.
+//
 // A review date is required and an expiry is not. A surface meant to stay may
 // have no end, but none goes unlooked-at: the date is when its owner and the
 // approver see it again, and an overdue one is reported.
@@ -51,6 +57,14 @@ type Exposure struct {
 	// ExposureName is the entry of that component's profile, whose surface is
 	// perimeter.
 	ExposureName string `json:"exposureName"`
+	// Kind is what was approved, as the profile's entry declared it when the
+	// approver said yes: "public" (a public address, no credential passed
+	// on), "publicAppCredential" (a public address that passes the caller's
+	// Authorization header to the app) or "signInAppAuthorization" (no
+	// public address: an entry behind sign-in whose Authorization header is
+	// the app's own). Empty is "public". The operator acts on an approval
+	// only while the entry still declares the kind recorded here.
+	Kind string `json:"kind,omitempty"`
 	// Owner is the subject that enabled it, from the caller's token.
 	Owner string `json:"owner"`
 	// ExpiresAt is when it stops answering, RFC 3339. Empty for a surface
@@ -78,6 +92,23 @@ type Exposure struct {
 	// entry. Empty on an entry approved before the rule was asked.
 	ApexAcknowledgedBy string `json:"apexAcknowledgedBy,omitempty"`
 	ApexAcknowledgedAt string `json:"apexAcknowledgedAt,omitempty"`
+}
+
+// The kinds of approval, by the names the Tenant's schema has for them
+// (api/v1alpha1, ExposureKind).
+const (
+	KindPublic                 = "public"
+	KindPublicAppCredential    = "publicAppCredential"
+	KindSignInAppAuthorization = "signInAppAuthorization"
+)
+
+// validKind reports a kind the registry records; empty is a public address.
+func validKind(k string) bool {
+	switch k {
+	case "", KindPublic, KindPublicAppCredential, KindSignInAppAuthorization:
+		return true
+	}
+	return false
 }
 
 // ErrMainAddressHeld is a second surface asked for the cluster's main
@@ -160,6 +191,12 @@ func (g *GitOps) PublishExposure(ctx context.Context, tenant string, e Exposure,
 	if e.Owner == "" {
 		return Result{}, fmt.Errorf("an exposure needs an owner")
 	}
+	if !validKind(e.Kind) {
+		return Result{}, fmt.Errorf("%w: kind %q", ErrInvalidName, e.Kind)
+	}
+	if e.Apex && e.Kind != "" && e.Kind != KindPublic {
+		return Result{}, fmt.Errorf("the cluster's main address is for a public address that passes no credential on")
+	}
 	if e.ReviewAt == "" {
 		return Result{}, fmt.Errorf("an exposure needs a review date: what is public is looked at again")
 	}
@@ -229,6 +266,17 @@ func (g *GitOps) PublishExposure(ctx context.Context, tenant string, e Exposure,
 	if e.Apex {
 		what += " on the cluster's main address"
 	}
+	// The commit says what was approved: a reviewer of the history should
+	// not have to open the file to learn that a credential is passed on.
+	switch e.Kind {
+	case KindPublicAppCredential:
+		what += " (public address that passes the caller's credential to the app)"
+	case KindSignInAppAuthorization:
+		if verb == "Publish" {
+			verb = "Approve"
+		}
+		what += " (behind sign-in, keeping the app's own Authorization header; not a public address)"
+	}
 	return g.writeTenantFileLocked(ctx, tenant, ExposuresFile, renderExposures(tenant, next), listPatch,
 		fmt.Sprintf("%s %s for tenant %s", verb, what, tenant), meta)
 }
@@ -271,7 +319,8 @@ func renderExposures(tenant string, exposures []Exposure) string {
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Key() < sorted[j].Key() })
 
 	var b strings.Builder
-	b.WriteString("# Managed by the director: what this tenant publishes to the internet.\n")
+	b.WriteString("# Managed by the director: what this tenant publishes to the internet,\n")
+	b.WriteString("# and what else its perimeter approver approved for an app's entry.\n")
 	b.WriteString("#\n")
 	b.WriteString("# Each entry is a surface a profile declared and a perimeter approver\n")
 	b.WriteString("# enabled, for a host, until a date. The operator stands a proxy in the\n")
@@ -282,6 +331,14 @@ func renderExposures(tenant string, exposures []Exposure) string {
 	b.WriteString("# proxy goes and the URL stops answering. The entry stays in the history\n")
 	b.WriteString("# either way, because what a tenant once published is the question an\n")
 	b.WriteString("# audit asks.\n")
+	b.WriteString("#\n")
+	b.WriteString("# kind says what was approved. None, or public: a public address that\n")
+	b.WriteString("# passes no credential on. publicAppCredential: a public address that\n")
+	b.WriteString("# passes the caller's Authorization header to the app, which alone\n")
+	b.WriteString("# checks it. signInAppAuthorization: NOT a public address -- an entry\n")
+	b.WriteString("# behind sign-in on which the Authorization header is left as the\n")
+	b.WriteString("# app's own page sent it. An approval holds only while the app's\n")
+	b.WriteString("# catalogue entry still declares that kind.\n")
 	b.WriteString("apiVersion: gentianos.io/v1alpha1\n")
 	b.WriteString("kind: Tenant\n")
 	b.WriteString("metadata:\n")
@@ -291,6 +348,9 @@ func renderExposures(tenant string, exposures []Exposure) string {
 	for _, e := range sorted {
 		b.WriteString("    - install: " + e.Install + "\n")
 		b.WriteString("      exposureName: " + e.ExposureName + "\n")
+		if e.Kind != "" {
+			b.WriteString("      kind: " + e.Kind + "\n")
+		}
 		b.WriteString("      owner: " + e.Owner + "\n")
 		b.WriteString("      reviewAt: " + e.ReviewAt + "\n")
 		if e.Apex {

@@ -22,11 +22,17 @@ import (
 	"github.com/gentian-org/gentian-os/internal/tenancy"
 )
 
-// Publishing a surface to the internet (AD-6).
+// Publishing a surface to the internet (AD-6), and the one other thing a
+// perimeter approver decides for an app's entry (AD-13).
 //
 // A profile declares that it COULD publish something; a perimeter approver
 // decides that it DOES, and when it is looked at again. These are that decision,
 // and the read is the registry of everything this tenant has on the internet.
+//
+// The same routes carry the approval of an entry behind sign-in that asks to
+// keep the app's own Authorization header. It is no public address and is
+// never published; it is decided by the same person, recorded in the same
+// registry with its kind, reviewed and withdrawn the same way.
 
 // maxReview is the longest anything public goes without somebody looking at
 // it again.
@@ -62,6 +68,13 @@ type publishExposureRequest struct {
 	// apex, on a first publication and on every review; refused without
 	// (mainAddressWarning). It means nothing on any other surface.
 	AcknowledgeMainAddressRule bool `json:"acknowledgeMainAddressRule,omitempty"`
+	// Kind is the kind of entry the approver was shown and means to
+	// approve, as the read gave it. Optional. Where it is sent and the
+	// app's catalogue entry now declares another kind -- the profile
+	// changed between the look and the yes -- the approval is refused,
+	// so nobody approves a credential passed on having been shown a plain
+	// public address. What is recorded is always what the entry declares.
+	Kind string `json:"kind,omitempty"`
 }
 
 // tenantExposures answers what this tenant publishes and what its apps ask to
@@ -92,6 +105,10 @@ func (s *Server) tenantExposures(w http.ResponseWriter, r *http.Request, _ call)
 		"expired":   expired,
 		"reviewDue": due,
 		"entries":   view.entries(),
+		// The kinds an entry of the registry may name, in a few words: for
+		// whoever lists live, expired and reviewDue, whose entries carry
+		// the kind and not its wording.
+		"kinds": kindLabels,
 	})
 }
 
@@ -134,11 +151,21 @@ func (s *Server) publishExposure(w http.ResponseWriter, r *http.Request, c call)
 	// something the operator publishes nothing for.
 	// Nor is an approval that the operator would publish nothing for: one
 	// whose word on the main address is not the profile's.
-	if why, err := s.nothingToPublish(r.Context(), r.PathValue("t"), install, exposure, body.Apex); err != nil {
+	kind, why, err := s.nothingToPublish(r.Context(), r.PathValue("t"), install, exposure, body.Apex)
+	if err != nil {
 		s.repoError(w, r, err)
 		return
-	} else if why != "" {
+	}
+	if why != "" {
 		s.fail(w, r, http.StatusUnprocessableEntity, why+". Nothing was changed")
+		return
+	}
+	// What the approver was shown has to be what is approved.
+	if shown := strings.TrimSpace(body.Kind); shown != "" && normalKind(shown) != normalKind(kind) {
+		s.fail(w, r, http.StatusConflict, fmt.Sprintf(
+			"the request approves entry %s of %s as %q, and the app's catalogue entry declares %q (%s). "+
+				"Read the tenant's requests again and approve what is shown there. Nothing was changed",
+			exposure, install, shown, normalKind(kind), kindLabels[normalKind(kind)]))
 		return
 	}
 
@@ -211,6 +238,8 @@ func (s *Server) publishExposure(w http.ResponseWriter, r *http.Request, c call)
 		ExpiresAt: expires,
 		Reason:    strings.TrimSpace(body.Reason),
 		Apex:      body.Apex,
+		// What the profile's entry declares, never the body's word for it.
+		Kind: kind,
 	}
 	if body.Apex {
 		// Who acknowledged is the caller, from the token like the owner.
@@ -270,15 +299,18 @@ const mainAddressWarning = "a website on the cluster's main address needs your a
 // be read here; the installer publishes the platform tenant's page that way.
 // Such an entry can be reviewed where the registry already holds it, on the
 // main-address setting it has, and cannot be published where it does not.
-func (s *Server) nothingToPublish(ctx context.Context, tenant, install, exposure string, apex bool) (string, error) {
+//
+// kind is what an approval of the entry records: what the profile's entry
+// declares, or for the exception what the registry already holds.
+func (s *Server) nothingToPublish(ctx context.Context, tenant, install, exposure string, apex bool) (kind, why string, err error) {
 	if !gitops.ValidName(tenant) || !gitops.ValidName(install) || !gitops.ValidName(exposure) {
 		// The write names the value that is not a name; this has nothing to
 		// add to that.
-		return "", nil
+		return "", "", nil
 	}
 	view, err := s.readExposureView(ctx, tenant)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	if view.unknownToTheRepository(install) != "" {
 		want := gitops.Exposure{Install: install, ExposureName: exposure}.Key()
@@ -289,21 +321,26 @@ func (s *Server) nothingToPublish(ctx context.Context, tenant, install, exposure
 			if have.Apex != apex {
 				// What the profile says of the main address cannot be read,
 				// so a review is not where the registry's word on it changes.
-				return fmt.Sprintf(
+				return "", fmt.Sprintf(
 					"%s is a component the platform itself ships, and its profile is not in the repository, so whether entry %s is one for the cluster's main address cannot be checked. "+
 						"A review keeps the setting the entry has (\"apex\": %t), and this request says \"apex\": %t",
 					install, exposure, have.Apex, apex), nil
 			}
-			return "", nil
+			// Nor its kind: a review keeps the one recorded.
+			return have.Kind, "", nil
 		}
-		return fmt.Sprintf(
+		return "", fmt.Sprintf(
 			"%s is a component the platform itself ships, and its profile is not in the repository, so what it declares cannot be checked. "+
 				"An entry of it that is already published can be reviewed; a new one cannot be published here", install), nil
 	}
 	if why := view.unmatched(install, exposure); why != "" {
-		return why, nil
+		return "", why, nil
 	}
-	return view.mainAddressMismatch(install, exposure, apex), nil
+	if why := view.mainAddressMismatch(install, exposure, apex); why != "" {
+		return "", why, nil
+	}
+	entry, _, _ := approvableEntry(view.profiles[install], exposure)
+	return string(entry.RequestKind()), "", nil
 }
 
 // withdrawExposure takes one down.

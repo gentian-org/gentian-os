@@ -214,7 +214,7 @@ func TestAnApprovalOfWhatDoesNotExistIsRefused(t *testing.T) {
 	for what, tc := range map[string]struct{ path, says string }{
 		"an app the tenant does not have":   {"/v1/tenants/demo/exposures/ghost/api", "has no app instance named ghost installed"},
 		"an app only the cluster has":       {"/v1/tenants/demo/exposures/wiki/shares", "has no app instance named wiki installed"},
-		"an entry the profile lacks":        {"/v1/tenants/demo/exposures/nextcloud/caldav", "declares no entry named caldav for the internet. What it declares: shares"},
+		"an entry the profile lacks":        {"/v1/tenants/demo/exposures/nextcloud/caldav", "declares no entry named caldav for the internet, and none of that name that asks for anything else an approver decides. What it declares: shares"},
 		"the app's page behind sign-in":     {"/v1/tenants/demo/exposures/nextcloud/web", "is not one for the internet"},
 		"a platform component, never asked": {"/v1/tenants/demo/exposures/desktop/front", "is a component the platform itself ships"},
 	} {

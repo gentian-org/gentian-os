@@ -59,9 +59,22 @@ type Route struct {
 	// The session is then proved by its ID token, which the gateway hands
 	// over in HeaderIDToken, and IDTokenAudience says whose it must be.
 	KeepClientToken bool `json:"keepClientToken,omitempty"`
+	// IDTokenSession says the session on this route is proved by its ID
+	// token in HeaderIDToken, as on a KeepClientToken route, while the
+	// Authorization header is NOT the page's to keep: it is not read, and it
+	// is removed before the backend.
+	//
+	// One policy carries the session for every host of a component, so when
+	// one of its hosts keeps the app's own header the gateway stops putting
+	// the edge's token in that header on all of them. A host of the same
+	// component that did not ask, or whose request was not approved, is this:
+	// same proof of the session, and the header still removed as on any
+	// route.
+	IDTokenSession bool `json:"idTokenSession,omitempty"`
 	// IDTokenAudience is the zone's client, the one an ID token on a
-	// KeepClientToken route must have been issued to. Without it such a route
-	// has nothing to hold a token against and refuses everybody.
+	// KeepClientToken or IDTokenSession route must have been issued to.
+	// Without it such a route has nothing to hold a token against and
+	// refuses everybody.
 	IDTokenAudience string `json:"idTokenAudience,omitempty"`
 	// ForwardToken keeps the Authorization header for the backend. Only a
 	// route whose exposure declares it -- the desktop, which relays to the
@@ -173,7 +186,7 @@ func ParseTable(b []byte) (*Table, error) {
 		if r.AuthMode != AuthModeOIDC && r.AuthMode != AuthModeBearer {
 			return nil, fmt.Errorf("route table: entry %d (%q) needs authMode oidc or bearer", i, r.Host)
 		}
-		if r.ExchangeScope != "" && (r.AuthMode != AuthModeOIDC || r.ForwardToken || r.KeepClientToken) {
+		if r.ExchangeScope != "" && (r.AuthMode != AuthModeOIDC || r.ForwardToken || r.KeepClientToken || r.IDTokenSession) {
 			return nil, fmt.Errorf("route table: entry %d (%q) exchanges a token only behind a session, and hands on one token", i, r.Host)
 		}
 		if seen[host] {

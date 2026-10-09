@@ -108,7 +108,7 @@ func startPerimeterRig(t *testing.T, e *gentianov1alpha1.ExposureSpec, website b
 		return path
 	}
 	echoConf := write("echo.conf", perimeterEcho(seenHeaders()))
-	proxyConf := write("proxy.conf", perimeterProxyConfig(e, echo, 8080, website, limits))
+	proxyConf := write("proxy.conf", perimeterProxyConfig(e, echo, 8080, website, e.AuthMode == gentianov1alpha1.AuthModeApp, limits))
 
 	docker := func(args ...string) string {
 		t.Helper()
@@ -146,7 +146,7 @@ func startPerimeterRig(t *testing.T, e *gentianov1alpha1.ExposureSpec, website b
 		}
 		if time.Now().After(deadline) {
 			logs, _ := exec.Command("docker", "logs", proxy).CombinedOutput()
-			t.Fatalf("the proxy did not start with the rendered configuration:\n%s\n--- configuration ---\n%s", logs, perimeterProxyConfig(e, echo, 8080, website, limits))
+			t.Fatalf("the proxy did not start with the rendered configuration:\n%s\n--- configuration ---\n%s", logs, perimeterProxyConfig(e, echo, 8080, website, e.AuthMode == gentianov1alpha1.AuthModeApp, limits))
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
@@ -337,6 +337,134 @@ func TestTheProxyItselfRemovesWhatACallerClaims(t *testing.T) {
 	}
 	if !strings.Contains(lower, "\r\nserver: nginx\r\n") {
 		t.Errorf("the answer names more than the proxy:\n%s", head)
+	}
+}
+
+func davEntry() *gentianov1alpha1.ExposureSpec {
+	return &gentianov1alpha1.ExposureSpec{
+		Name: "dav", Surface: gentianov1alpha1.SurfacePerimeter, AuthMode: gentianov1alpha1.AuthModeApp,
+		Paths:     []string{"/remote.php/dav/", "/ocs/"},
+		DenyPaths: []string{"/remote.php/dav/systemtags/"},
+		Backend:   gentianov1alpha1.BackendRef{Service: "nextcloud", Port: 8080},
+	}
+}
+
+// An entry declared and approved to pass its callers' credential: the
+// Authorization header reaches the application as the caller sent it, on the
+// declared paths and on no other, and that is all that changes. A cookie
+// still does not go in, nothing a caller says of who they are goes in, and
+// the application's own cookie does not come out.
+func TestTheProxyItselfPassesTheCallersCredentialAndNothingElse(t *testing.T) {
+	limits := generousLimits()
+	limits.CredentialRatePerSecond, limits.CredentialBurst, limits.CredentialConcurrent = 10000, 10000, 1000
+	rig := startPerimeterRig(t, davEntry(), false, limits)
+
+	claims := []string{
+		"Cookie: zone=stolen; nc_session=stolen",
+		"X-Forwarded-Access-Token: stolen",
+		"Forwarded: for=10.0.0.1;host=admin.internal",
+		"X-Original-URL: /admin",
+		"X-Forwarded-Host: admin.internal",
+		"X-Real-IP: 10.0.0.1",
+		"X-Forwarded-For: 10.0.0.1, 203.0.113.9",
+	}
+	for _, h := range perimeterStrippedIdentityHeaders() {
+		claims = append(claims, h+": mallory", strings.ReplaceAll(h, "-", "_")+": mallory", strings.ToLower(h)+": mallory")
+	}
+	for _, credential := range []string{
+		"Basic YWxpY2U6YXBwLXBhc3N3b3Jk",
+		"Bearer syt_an_apps_own_token",
+		"Token abc123",
+	} {
+		status, head, body := rig.get("/remote.php/dav/files/alice/", append([]string{"Authorization: " + credential}, claims...)...)
+		if status != 200 || !reached(body) {
+			t.Fatalf("the request did not reach the application: %d\n%s", status, body)
+		}
+		if !strings.Contains(body, "authorization=["+credential+"]\n") {
+			t.Errorf("the caller's credential did not reach the application as sent:\n%s", body)
+		}
+		if strings.Contains(body, "mallory") || strings.Contains(body, "stolen") || strings.Contains(body, "internal") ||
+			strings.Contains(body, "/admin") || strings.Contains(body, "10.0.0.1") {
+			t.Errorf("something else the caller claimed reached the application:\n%s", body)
+		}
+		for _, want := range []string{"cookie=[]", "x-forwarded-access-token=[]", "x-forwarded-for=[203.0.113.9]", "x-real-ip=[203.0.113.9]", "x-forwarded-proto=[https]"} {
+			if !strings.Contains(body, want+"\n") {
+				t.Errorf("the application was not told %s:\n%s", want, body)
+			}
+		}
+		for _, h := range bouncer.IdentityHeaders() {
+			if !strings.Contains(body, h+"=[]\n") {
+				t.Errorf("the front door's %s was not removed:\n%s", h, body)
+			}
+		}
+		if lower := strings.ToLower(head); strings.Contains(lower, "set-cookie") {
+			t.Errorf("the application's cookie came back out:\n%s", head)
+		}
+	}
+	// A request with no credential is the application's to refuse, not the
+	// proxy's: it is passed on with none.
+	if status, _, body := rig.get("/ocs/v2.php/cloud/capabilities"); status != 200 || !strings.Contains(body, "authorization=[]\n") {
+		t.Errorf("a request without a credential: %d\n%s", status, body)
+	}
+	// Outside the declared paths a credential opens nothing: the request
+	// does not reach the application at all.
+	for _, path := range []string{
+		"/", "/index.php/login", "/remote.php/webdav", "/ocsx", "/remote.php/dav/../../index.php",
+		"/remote.php/dav/..%2f..%2findex.php", "/remote.php/dav/systemtags/1", "/remote.php/dav/SystemTags/1",
+	} {
+		status, _, body := rig.get(path, "Authorization: Basic YWxpY2U6YXBwLXBhc3N3b3Jk")
+		if reached(body) || status == 200 || status == 0 {
+			t.Errorf("a credential reached the application outside the declared paths: %q -> %d", path, status)
+		}
+	}
+}
+
+// The same paths under an entry that does not pass the credential are as
+// they always were: the header does not arrive.
+func TestTheProxyItselfStillRemovesTheCredentialOfAnEntryThatDidNotAsk(t *testing.T) {
+	plain := davEntry()
+	plain.AuthMode = gentianov1alpha1.AuthModeNone
+	rig := startPerimeterRig(t, plain, false, generousLimits())
+	status, _, body := rig.get("/remote.php/dav/files/alice/", "Authorization: Basic YWxpY2U6YXBwLXBhc3N3b3Jk")
+	if status != 200 || !strings.Contains(body, "authorization=[]\n") {
+		t.Fatalf("an entry that passes nothing passed the credential: %d\n%s", status, body)
+	}
+}
+
+// Such an entry is held to its own, lower rate, and answers 429 beyond it:
+// a burst of guesses from one address is cut off where the same burst
+// against an entry that passes nothing would not be.
+func TestTheProxyItselfHoldsAnEntryThatPassesTheCredentialToItsOwnLimit(t *testing.T) {
+	// The general limit is far away; only the credential limit can answer 429.
+	limits := perimeterLimits{MaxBody: "10m", RatePerSecond: 10000, Burst: 10000, Concurrent: 1000,
+		CredentialRatePerSecond: 1, CredentialBurst: 4, CredentialConcurrent: 100}
+	rig := startPerimeterRig(t, davEntry(), false, limits)
+	guess := func(address string, n int) (ok, limited int) {
+		for i := 0; i < n; i++ {
+			switch status, _, _ := rig.get("/remote.php/dav/files/alice/",
+				"X-Forwarded-For: "+address, fmt.Sprintf("Authorization: Basic guess-%d", i)); status {
+			case 200:
+				ok++
+			case 429:
+				limited++
+			default:
+				t.Errorf("unexpected answer %d", status)
+			}
+		}
+		return ok, limited
+	}
+	ok, limited := guess("203.0.113.1", 25)
+	if limited == 0 || ok < 4 || ok > 8 {
+		t.Errorf("25 guesses from one address with a burst of 4: %d passed, %d answered 429", ok, limited)
+	}
+	if ok, limited := guess("203.0.113.2", 3); ok != 3 {
+		t.Errorf("a second address was held to the first one's limit: %d passed, %d answered 429", ok, limited)
+	}
+	// The platform's defaults, as rendered: the proxy starts with them.
+	clearEdgeLimitEnv(t)
+	defaults := startPerimeterRig(t, davEntry(), false, perimeterLimitsFromEnv(""))
+	if status, _, body := defaults.get("/remote.php/dav/", "Authorization: Basic x"); status != 200 || !reached(body) {
+		t.Errorf("the proxy with the default limits: %d", status)
 	}
 }
 

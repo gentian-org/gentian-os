@@ -37,7 +37,8 @@
 #   kubectl gentian apps install <app> --tenant <tenant> [--from <source>] [--digest sha256:<hex>] [--for-everyone]
 #   kubectl gentian apps uninstall <app> --tenant <tenant> [--purge]
 #
-#   kubectl gentian exposures requests --tenant <tenant>        what its apps ask to have on the internet
+#   kubectl gentian exposures requests --tenant <tenant>        what its apps ask to have on the internet, or to keep
+#                                                               of their own Authorization header behind sign-in
 #   kubectl gentian exposures approve <app-instance> <entry> --tenant <tenant> [--expires <date>] [--reason <text>]
 #                                     [--acknowledge-main-address-rule] [--yes]
 #   kubectl gentian exposures list --tenant <tenant>            what the tenant has on the internet
@@ -1190,6 +1191,11 @@ cmd_tenants_domain() {
 # when it is looked at again and when it ends. PUBLISHED is in force; REVIEW
 # DUE is in force and past its review date; EXPIRED answers no longer and
 # stays listed as the record that it once did.
+#
+# KIND is what was approved, in the director's words. Not every entry is a
+# public address: one approved to keep the app's own Authorization header
+# is behind sign-in and publishes nothing. A director that names no kinds is
+# older than they are, and everything it lists is a public address.
 cmd_exposures_list() {
     local t answer
     t="$(_tenant_flag "$@")"
@@ -1197,23 +1203,28 @@ cmd_exposures_list() {
     need jq
     answer="$(_call GET "/v1/tenants/${t}/exposures")" || exit 1
     if [[ "$(printf '%s' "${answer}" | jq -r '((.live // []) + (.expired // [])) | length')" == "0" ]]; then
-        echo "Tenant ${t} has published nothing to the internet."
+        echo "Tenant ${t} has published nothing to the internet, and nothing else is approved for its apps' entries."
         return 0
     fi
     printf '%s' "${answer}" | jq -r '
         def day: if (. // "") == "" then "-" else .[0:10] end;
-        def row(state): [.install, .exposureName, state, (if .apex then "yes" else "-" end),
+        (.kinds // {}) as $kinds
+        | def kind: (.kind // "") as $k | (if $k == "" then "public" else $k end) as $k
+            | $kinds[$k] // (if $k == "public" then "Public address" else $k end);
+        def row(state): [.install, .exposureName, kind, state, (if .apex then "yes" else "-" end),
             (.owner // "-"), (.publishedAt | day), (.reviewAt | day), (.expiresAt | day),
             (if (.reason // "") == "" then "-" else .reason end)];
         ((.reviewDue // []) | map(.install + " " + .exposureName)) as $due
-        | (["APP INSTANCE","ENTRY","STATE","MAIN ADDRESS","PUBLISHED BY","PUBLISHED","REVIEW","EXPIRES","REASON"] | @tsv),
+        | (["APP INSTANCE","ENTRY","KIND","STATE","MAIN ADDRESS","APPROVED BY","APPROVED","REVIEW","EXPIRES","REASON"] | @tsv),
           ((.live // [])[] | (.install + " " + .exposureName) as $k
               | row(if ($due | index($k)) != null then "review due" else "published" end) | @tsv),
           ((.expired // [])[] | row("expired") | @tsv)' |
         column -t -s $'\t'
 }
 
-# exposures withdraw: take one entry of an installed app off the internet.
+# exposures withdraw: take one entry of an installed app off the internet, or
+# take back the approval that lets an entry behind sign-in keep the app's own
+# Authorization header.
 # One request to the director (DELETE /v1/tenants/<t>/exposures/<app
 # instance>/<entry>), which decides who may. It removes access and loses no
 # data, so it is not asked twice.
@@ -1240,11 +1251,11 @@ cmd_exposures_withdraw() {
     need jq
     answer="$(_call DELETE "/v1/tenants/${t}/exposures/${inst}/${entry}")" || exit 1
     if [[ "$(printf '%s' "${answer}" | jq -r '.status // ""')" == "unchanged" ]]; then
-        echo "${inst}/${entry} is not published by ${t}; nothing was committed."
+        echo "${inst}/${entry} is not approved for ${t}; nothing was committed."
         return 0
     fi
-    echo "Withdrawn ${inst}/${entry} of ${t}: committed ($(_committed "${answer}")). The platform takes it down, and"
-    echo "its address stops answering once the cluster has taken that in."
+    echo "Withdrawn ${inst}/${entry} of ${t}: committed ($(_committed "${answer}")). Once the cluster has taken that in,"
+    echo "a public address stops answering, and an entry behind sign-in has its Authorization header removed again."
 }
 
 # exposures requests: every entry an app installed in the tenant declares for
@@ -1253,6 +1264,10 @@ cmd_exposures_withdraw() {
 # and whether it was approved. REQUESTED is declared and published nowhere
 # until somebody approves it. UNMATCHED is in the registry and matches no
 # entry of an installed app: nothing is published for it.
+#
+# The same list carries the one request that is no public address: an entry
+# behind sign-in that asks to keep the app's own Authorization header. KIND
+# says which an entry is, in the director's words.
 cmd_exposures_requests() {
     local t answer
     t="$(_tenant_flag "$@")"
@@ -1262,18 +1277,23 @@ cmd_exposures_requests() {
     printf '%s' "${answer}" | jq -e 'has("entries")' >/dev/null ||
         die "this director does not say what a tenant's apps ask to publish: it is older than this command"
     if [[ "$(printf '%s' "${answer}" | jq -r '.entries | length')" == "0" ]]; then
-        echo "No app installed in tenant ${t} asks to have anything on the internet."
+        echo "No app installed in tenant ${t} asks to have anything on the internet, or to keep its own Authorization header behind sign-in."
         return 0
     fi
     printf '%s' "${answer}" | jq -r '
         def day: if (. // "") == "" then "-" else .[0:10] end;
         def state: {"requested": "requested", "approved": "approved", "reviewDue": "review due",
                     "expired": "expired", "unmatched": "unmatched"}[.state] // .state;
-        (["APP INSTANCE","ENTRY","STATE","ADDRESS","PATHS","SIGN-IN","APPROVED BY","REVIEW","EXPIRES"] | @tsv),
-        (.entries[] | [.install, .exposureName, state,
+        def kind: .kindLabel // (if (.kind // "") == "" then "Public address" else .kind end);
+        def signin: if (.authMode // "") == "" then "-"
+            elif .publicAddress == false then "required"
+            elif .anyoneWithoutSignIn then "none: anyone"
+            else "none: the app checks the credential" end;
+        (["APP INSTANCE","ENTRY","KIND","STATE","ADDRESS","PATHS","SIGN-IN","APPROVED BY","REVIEW","EXPIRES"] | @tsv),
+        (.entries[] | [.install, .exposureName, kind, state,
             (if (.host // "") == "" then "-" else "https://" + .host end),
             (if ((.paths // []) | length) == 0 then "-" else (.paths | join(" ")) end),
-            (if (.authMode // "") == "" then "-" elif .anyoneWithoutSignIn then "none: anyone" else "by the app (" + .authMode + ")" end),
+            signin,
             (.approval.owner // "-"), (.approval.reviewAt | day), (.approval.expiresAt | day)] | @tsv)' |
         column -t -s $'\t'
     # Why an entry has no address, or matches nothing, in the director's words.
@@ -1284,6 +1304,8 @@ cmd_exposures_requests() {
 
 # exposures approve: put one entry of an installed app on the internet, or
 # look again at one that is (a review, and the way to change its expiry).
+# Or, for an entry behind sign-in that asks for it, let the app keep its own
+# Authorization header: that publishes nothing, and is said so.
 #
 # It is the perimeter approver's decision, so what is decided is shown first:
 # the entry is read from the director, and its address, its paths and who can
@@ -1330,22 +1352,36 @@ cmd_exposures_approve() {
         [[ -t 0 ]] || die "not a terminal: confirm with --yes"
     fi
     need jq
-    local answer asked state host
+    local answer asked state host public kind
     answer="$(_call GET "/v1/tenants/${t}/exposures")" || exit 1
     printf '%s' "${answer}" | jq -e 'has("entries")' >/dev/null ||
         die "this director does not say what an entry would put on the internet: it is older than this command. Nothing was sent"
     asked="$(printf '%s' "${answer}" | jq -c --arg i "${inst}" --arg e "${entry}" \
         '[.entries[] | select(.install == $i and .exposureName == $e and .state != "unmatched")][0] // empty')"
     [[ -n "${asked}" ]] ||
-        die "the director lists no request ${inst}/${entry} for tenant ${t}: no app installed there declares it for the internet. 'kubectl gentian exposures requests --tenant ${t}' shows what its apps ask for. Nothing was sent"
+        die "the director lists no request ${inst}/${entry} for tenant ${t}: no app installed there declares it as something an approver decides. 'kubectl gentian exposures requests --tenant ${t}' shows what its apps ask for. Nothing was sent"
     state="$(printf '%s' "${asked}" | jq -r '.state')"
     host="$(printf '%s' "${asked}" | jq -r '.host // ""')"
+    # An older director names no kinds: everything it lists is a public address.
+    public="$(printf '%s' "${asked}" | jq -r 'if .publicAddress == false then "" else "yes" end')"
+    kind="$(printf '%s' "${asked}" | jq -r '.kind // ""')"
 
     if [[ "$(printf '%s' "${asked}" | jq -r '.authMode // ""')" == "" ]]; then
         # An entry the director can name and not describe: the platform's own
         # page, which the installer published. Only its review is asked.
         echo "Reviewing ${inst}/${entry} of tenant ${t}. The director cannot show what it publishes:"
         printf '%s' "${asked}" | jq -r '"  " + (.note // "no reason given")'
+    elif [[ -z "${public}" ]]; then
+        if [[ "${state}" == "requested" ]]; then
+            echo "Approving ${inst}/${entry} for tenant ${t} puts NOTHING on the internet. It changes this, behind sign-in:"
+        else
+            echo "${inst}/${entry} of tenant ${t} is approved already; approving it again is a review. Nothing of it is on the internet. Behind sign-in, it has this:"
+        fi
+        printf '%s' "${asked}" | jq -r '
+            "  kind:     " + (.kindLabel // .kind),
+            "  address:  " + (if (.host // "") == "" then "(this cluster declares no domain)" else "https://" + .host end),
+            "  paths:    " + ((.paths // []) | join("  ")),
+            "  what:     " + .access'
     elif [[ -z "${host}" ]]; then
         die "${inst}/${entry} would be published nowhere: $(printf '%s' "${asked}" | jq -r '.note // "the director gives no address for it"'). Nothing was sent"
     else
@@ -1358,10 +1394,12 @@ cmd_exposures_approve() {
             "  address:  https://" + .host,
             "  paths:    " + (.paths | join("  ")) + (if (.paths | index("/")) != null then "   (the whole address)" else "   (nothing else at that address is published)" end),
             (if ((.denyPaths // []) | length) > 0 then "  refused:  " + (.denyPaths | join("  ")) + "   (never published, also below a path above)" else empty end),
-            "  access:   " + .access'
+            "  kind:     " + (.kindLabel // "Public address"),
+            "  access:   " + .access,
+            (if (.rateLimit // "") == "" then empty else "  limit:    " + .rateLimit end)'
     fi
     if [[ -n "${expires}" ]]; then
-        echo "  expires:  ${expires}; it is taken down then"
+        echo "  expires:  ${expires}; the approval ends then"
     else
         echo "  expires:  never; it stays until it is withdrawn"
     fi
@@ -1395,8 +1433,11 @@ cmd_exposures_approve() {
         [[ "${typed}" == "${inst}/${entry}" ]] || die "not confirmed; nothing was changed"
     fi
     local body
-    body="$(jq -cn --arg r "${reason}" --arg x "${expires}" --arg m "${main}" '
+    # The kind that was shown goes with the approval, so the director refuses
+    # it if the app's entry has come to ask for something else meanwhile.
+    body="$(jq -cn --arg r "${reason}" --arg x "${expires}" --arg m "${main}" --arg k "${kind}" '
         (if $r == "" then {} else {reason: $r} end)
+        + (if $k == "" then {} else {kind: $k} end)
         + (if $x == "" then {} else {expiresAt: $x} end)
         + (if $m == "" then {} else {apex: true, acknowledgeMainAddressRule: true} end)')"
     answer="$(_call PUT "/v1/tenants/${t}/exposures/${inst}/${entry}" "${body}")" || exit 1
@@ -1404,8 +1445,14 @@ cmd_exposures_approve() {
         echo "${inst}/${entry} of ${t} is approved on these terms already; nothing was committed."
         return 0
     fi
-    echo "Approved ${inst}/${entry} of ${t}: committed ($(_committed "${answer}")). The platform publishes it once the"
-    echo "cluster has taken that in. 'kubectl gentian exposures requests --tenant ${t}' shows its review date."
+    if [[ -z "${public}" ]]; then
+        echo "Approved ${inst}/${entry} of ${t}: committed ($(_committed "${answer}")). Nothing is published. Once the"
+        echo "cluster has taken that in, the app's own Authorization header is kept on that address behind sign-in."
+    else
+        echo "Approved ${inst}/${entry} of ${t}: committed ($(_committed "${answer}")). The platform publishes it once the"
+        echo "cluster has taken that in."
+    fi
+    echo "'kubectl gentian exposures requests --tenant ${t}' shows its review date."
 }
 
 cmd_exposures() {

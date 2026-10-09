@@ -211,6 +211,10 @@ func TestWhatIsWrittenForEnvoyGatewayIsValidForThePinnedRelease(t *testing.T) {
 		{relation: "can_use", object: "app:acme/files"},
 		{relation: "can_enter", object: "tenant:acme", forwardToken: true},
 		{relation: "can_configure", object: "cluster:c1", keepClientToken: true},
+		// An app's entry behind sign-in whose Authorization header is the
+		// app's own, and the policy of a component one of whose hosts is.
+		{relation: "can_use", object: "app:acme/flows", keepClientToken: true},
+		{relation: "can_use", object: "app:acme/flows", idTokenSession: true},
 	} {
 		create(fmt.Sprintf("a zone policy (%+v)", authz), securityPolicyGVK,
 			zoneSecurityPolicySpec("k.example", zone, "files-web", authz, servicesNamespace, "gentian-os-bouncer"))

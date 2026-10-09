@@ -65,6 +65,9 @@ spec:
               grants anything: every permissive statement here is a request that a named
               person answers on the Component.
 
+              One policy carries a component's session on every host it has, and that
+              policy either hands the edge's token over in the Authorization header or
+              leaves the header to the app. It cannot do both.
               A service may expose -- a console is not a contract surface -- but only on
               the gateway. The perimeter has no session, and a service console published
               there is never what anybody meant.
@@ -740,6 +743,7 @@ spec:
                       description: AuthMode is mandatory and has no default.
                       enum:
                       - oidc
+                      - app
                       - jwt
                       - bearer
                       - basic
@@ -771,6 +775,26 @@ spec:
                       - port
                       - service
                       type: object
+                    clientAuthorization:
+                      description: |-
+                        ClientAuthorization says whose the Authorization header is on this
+                        entry. Unset, it is the platform's: the edge replaces whatever a
+                        client sent there and removes it before the app. "app" says the app's
+                        pages send a token of the app's own in that header, and asks that it
+                        be left alone.
+
+                        It is a request. It takes effect once the tenant's perimeter approver
+                        has approved this entry; until then the entry is served like any other
+                        behind sign-in and the header is removed. Approved, a person still has
+                        to be signed in and still has to be allowed to use the app, exactly as
+                        before; the edge puts no token of its own in the header and removes
+                        none, and no platform token reaches the app.
+
+                        The session's cookies belong to a host, so what one entry declares
+                        holds for every entry of the component on the same host.
+                      enum:
+                      - app
+                      type: string
                     denyPaths:
                       description: |-
                         DenyPaths are refused even where Paths admits them. Deny wins regardless
@@ -991,6 +1015,31 @@ spec:
                       it takes no subDomain'
                     rule: '!has(self.apex) || !self.apex || (self.surface == ''perimeter''
                       && !has(self.subDomain))'
+                  - message: 'authMode jwt, bearer, basic and signature are not available
+                      on a perimeter entry yet: the platform verifies no token, password
+                      or signature there. Declare authMode app if the app itself checks
+                      the credential its callers send in the Authorization header,
+                      or authMode none if the paths are for anyone'
+                    rule: self.surface != 'perimeter' || self.authMode in ['none',
+                      'app', 'oidc']
+                  - message: 'authMode app is for a perimeter entry: it passes the
+                      caller''s Authorization header to the app with no sign-in in
+                      front. Behind sign-in, declare authMode oidc with clientAuthorization
+                      app'
+                    rule: self.authMode != 'app' || self.surface == 'perimeter'
+                  - message: 'clientAuthorization is for a gateway entry behind the
+                      session (authMode oidc): it says whose the Authorization header
+                      is once a person has signed in'
+                    rule: '!has(self.clientAuthorization) || (self.surface == ''gateway''
+                      && self.authMode == ''oidc'')'
+                  - message: 'clientAuthorization excludes forwardToken and exchangeToken:
+                      the Authorization header toward the app is either the app''s
+                      own or a token the platform puts there'
+                    rule: '!has(self.clientAuthorization) || ((!has(self.forwardToken)
+                      || !self.forwardToken) && (!has(self.exchangeToken) || !self.exchangeToken))'
+                  - message: 'an apex entry is a website for anyone (authMode none):
+                      the cluster''s main address passes no credential to an app'
+                    rule: '!has(self.apex) || !self.apex || self.authMode == ''none'''
                   - message: a gateway entry is behind the zone's session (authMode
                       oidc) or pins its caller (source). What needs neither is a perimeter
                       surface
@@ -3091,6 +3140,18 @@ spec:
                 valid at the director and at every sibling'
               rule: '!has(self.expose) || self.expose.all(e, !(has(e.forwardToken)
                 && e.forwardToken) || self.trustTier == ''platform'')'
+            - message: 'clientAuthorization excludes forwardToken and exchangeToken
+                across a component''s entries: the Authorization header toward the
+                app is either the app''s own or a token the platform puts there, and
+                one policy carries the session for all of a component''s entries'
+              rule: '!has(self.expose) || !self.expose.exists(e, (has(e.forwardToken)
+                && e.forwardToken) || (has(e.exchangeToken) && e.exchangeToken)) ||
+                !self.expose.exists(e, has(e.clientAuthorization))'
+            - message: 'a service does not declare clientAuthorization: it is approved
+                in a tenant''s registry by that tenant''s perimeter approver, and
+                a service runs in no tenant'
+              rule: '!has(self.classes) || !(''service'' in self.classes) || !has(self.expose)
+                || self.expose.all(e, !has(e.clientAuthorization))'
             - message: 'requires.services.rights requires trustTier platform: the
                 answer says who in the tenant may use what'
               rule: '!has(self.requires) || !has(self.requires.services) || !has(self.requires.services.rights)

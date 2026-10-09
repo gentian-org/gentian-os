@@ -293,8 +293,11 @@ func (d *Decider) finish(ctx context.Context, route *Route, req Request, who ide
 //   - oidc with KeepClientToken: the Authorization header is the page's own
 //     and is not read. The filter hands over the session's ID token in
 //     HeaderIDToken instead, having removed any the client sent.
+//   - oidc with IDTokenSession: the same proof, on a route whose policy
+//     leaves the header alone for the sake of another host of the component.
+//     The header is not read here either; allow removes it.
 func (d *Decider) session(ctx context.Context, route *Route, req Request) (*authn.Identity, error) {
-	if route.AuthMode == AuthModeOIDC && route.KeepClientToken {
+	if route.AuthMode == AuthModeOIDC && (route.KeepClientToken || route.IDTokenSession) {
 		if route.IDTokenAudience == "" {
 			return nil, errors.New("route names no client to hold its session against")
 		}
@@ -373,7 +376,9 @@ func allow(route *Route, req Request, who identity) Decision {
 	// The edge token is valid at the director and at every sibling; a
 	// backend gets it only where its exposure says forwardToken. A route
 	// that keeps the caller's own token is not stripped either: its backend
-	// authenticates the bearer the page already holds.
+	// authenticates the bearer the page already holds. On such a route the
+	// header never held the edge's token, so nothing of the platform's goes
+	// with it.
 	if !route.ForwardToken && !route.KeepClientToken {
 		dec.RemoveHeaders = append(dec.RemoveHeaders, "authorization")
 	}

@@ -557,7 +557,7 @@ func TestTheMainAddressPathByPath(t *testing.T) {
 // cookie goes in or comes out, and every answer says nosniff.
 func TestTheWebsitesProxyOnTheMainAddress(t *testing.T) {
 	entry := &websiteProfile(t, "website").Spec.Expose[0]
-	cfg := perimeterProxyConfig(entry, "website.tenant-user.svc.cluster.local", 8080, true, perimeterLimitsFromEnv(""))
+	cfg := perimeterProxyConfig(entry, "website.tenant-user.svc.cluster.local", 8080, true, false, perimeterLimitsFromEnv(""))
 	for _, want := range []string{
 		`"~*^/branding/" 1;`,
 		`"~*^/sign-in" 1;`,
@@ -574,7 +574,7 @@ func TestTheWebsitesProxyOnTheMainAddress(t *testing.T) {
 		}
 	}
 	// Any other surface is as it was: this is the main address's alone.
-	other := perimeterProxyConfig(entry, "website.tenant-user.svc.cluster.local", 8080, false, perimeterLimitsFromEnv(""))
+	other := perimeterProxyConfig(entry, "website.tenant-user.svc.cluster.local", 8080, false, false, perimeterLimitsFromEnv(""))
 	if strings.Contains(other, "/branding/") || strings.Contains(other, "nosniff") {
 		t.Errorf("a surface that is not on the main address got its rules:\n%s", other)
 	}
