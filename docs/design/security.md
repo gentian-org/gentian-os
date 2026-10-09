@@ -1236,7 +1236,8 @@ snapshot of OpenBao. What follows:
   nothing is locked out.
 - *OpenBao's storage lost on a cluster that keeps running* is the case
   `random` does not survive. Under `derived` the installer and the operator
-  write the same values again. Under `random` they write new ones, which the
+  write the same values again, from the master password and the salt the
+  recovery kit holds. Under `random` they write new ones, which the
   running databases, buckets and sign-in clients were not created with, and
   every service and app is locked out of its own store until each credential
   is set by hand. A cluster that runs `random` has to snapshot OpenBao itself
@@ -1315,8 +1316,8 @@ openssl rand -hex 32
 ```
 
 and by the operator from `crypto/rand`. The master password is still stored
-in OpenBao in this mode, and the operator still reads it at start, but no
-credential is computed from it.
+in OpenBao in this mode, and the operator still reads it at start; it is used
+only for the three credentials that stay derived (§6.3).
 
 Properties:
 
@@ -1368,11 +1369,12 @@ that has not been taken:
   server. It is asked for twice in one run and held only in Kubernetes
   Secrets.
 
-And in neither mode in OpenBao's `gentian-os/` tree: under `random` the
-installer keeps the client secrets of Argo CD, Headlamp and the model
-gateway's console at `identity/portal-admin`, directly under the KV mount,
-and reads them back from there or from the Kubernetes Secret each is mounted
-from before it draws a new one.
+Outside the `gentian-os/` tree: under `random` the installer keeps the client
+secrets of Argo CD, Headlamp and the model gateway's console at
+`identity/portal-admin`, directly under the KV mount, and reads them back
+from there or from the Kubernetes Secret each is mounted from before it draws
+a new one. Under `derived` they are computed on every run and are in no vault
+path.
 
 ## 7. Write-Once Protection
 

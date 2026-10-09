@@ -174,7 +174,7 @@ func ClusterSecretMode(c client.Reader) secrets.ModeFunc {
 	return func(ctx context.Context) (secrets.Mode, error) {
 		mu.Lock()
 		defer mu.Unlock()
-		if cached != "" && time.Now().Sub(readAt) < clusterSecretModeTTL {
+		if cached != "" && time.Since(readAt) < clusterSecretModeTTL {
 			return cached, nil
 		}
 		mode, err := readClusterSecretMode(ctx, c)
