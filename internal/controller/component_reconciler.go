@@ -373,6 +373,13 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	if models.placed {
 		mergeValues(values, modelAccessValues(comp, profile, models.delivered))
 	}
+	// The key for the rights check, for a component that declares it, before
+	// the chart runs so that its pods find the Secret they are told to read.
+	if !composed {
+		if err := r.ensureRightsCheck(ctx, comp, profile); err != nil {
+			return ctrl.Result{}, fmt.Errorf("rights check: %w", err)
+		}
+	}
 	// What the platform tells any component about itself, where its profile
 	// says its chart takes it. Nothing is keyed on which component this is.
 	mergeValues(values, r.platformValues(profile, tenant, zone))

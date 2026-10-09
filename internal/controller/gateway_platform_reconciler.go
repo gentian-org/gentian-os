@@ -171,6 +171,15 @@ func (r *GatewayPlatformReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			handler.EnqueueRequestsFromMapFunc(mapToPlatform),
 			builder.WithPredicates(zoneSecretPredicate),
 		).
+		// A component's key for the rights check: the bouncer's table must
+		// hold its hash, and stop holding it when the Secret goes.
+		Watches(
+			&corev1.Secret{},
+			handler.EnqueueRequestsFromMapFunc(mapToPlatform),
+			builder.WithPredicates(predicate.NewPredicateFuncs(func(obj client.Object) bool {
+				return obj.GetLabels()[rightsCheckerLabel] == "true"
+			})),
+		).
 		// A component's route carries a question the bouncer's table must hold.
 		Watches(
 			&gatewayv1.HTTPRoute{},

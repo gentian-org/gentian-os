@@ -54,6 +54,12 @@ spec:
       targetPort: grpc
       # What tells Envoy Gateway to speak HTTP/2 to it: ext_authz is gRPC.
       appProtocol: kubernetes.io/h2c
+    # The rights check: one question, for a component that holds a key for
+    # it (requires.services.rights). The operator opens this port, and no
+    # other of this service, to such a component.
+    - name: check
+      port: 8082
+      targetPort: check
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -99,6 +105,8 @@ spec:
               containerPort: 9001
             - name: health
               containerPort: 8081
+            - name: check
+              containerPort: 8082
           env:
             - name: BOUNCER_LISTEN
               value: ":9001"

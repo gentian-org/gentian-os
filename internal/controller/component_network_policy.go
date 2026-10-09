@@ -146,6 +146,11 @@ func (r *ComponentReconciler) ensureNetworkPolicy(ctx context.Context, comp *gen
 	if modelGateway {
 		outside = append(outside, modelGatewayEgress())
 	}
+	// The bouncer's listener for the rights check, for a component that
+	// declared it: one port of the edge namespace.
+	if wantsRightsCheck(profile) {
+		outside = append(outside, rightsCheckEgress())
+	}
 	desired := buildComponentNetworkPolicy(comp, r.componentEgressNamespaces(profile, tenant),
 		append(outside, security.GrantedEgressRules(profile, comp, time.Now())...))
 	key := types.NamespacedName{Name: desired.Name, Namespace: desired.Namespace}

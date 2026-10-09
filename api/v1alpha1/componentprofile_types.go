@@ -80,6 +80,7 @@ const (
 // +kubebuilder:validation:XValidation:rule="!has(self.classes) || !('service' in self.classes) || self.classes.size() == 1",message="service is exclusive: a component may not be both a service and an app"
 // +kubebuilder:validation:XValidation:rule="!has(self.classes) || !('shared-app' in self.classes) || self.trustTier == 'platform'",message="shared-app requires trustTier platform"
 // +kubebuilder:validation:XValidation:rule="!has(self.expose) || self.expose.all(e, !(has(e.forwardToken) && e.forwardToken) || self.trustTier == 'platform')",message="forwardToken requires trustTier platform: the edge token is valid at the director and at every sibling"
+// +kubebuilder:validation:XValidation:rule="!has(self.requires) || !has(self.requires.services) || !has(self.requires.services.rights) || self.trustTier == 'platform'",message="requires.services.rights requires trustTier platform: the answer says who in the tenant may use what"
 // A service may expose -- a console is not a contract surface -- but only on
 // the gateway. The perimeter has no session, and a service console published
 // there is never what anybody meant.

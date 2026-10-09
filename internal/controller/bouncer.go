@@ -346,6 +346,13 @@ type bouncerRoute struct {
 // Every route in it needs a session. A route that needs none has no policy
 // and never asks the bouncer; there is no entry that says "let this through".
 func bouncerRouteTable(specs []kernelHTTPRouteSpec, extra []bouncerRoute) (string, error) {
+	return bouncerTable(specs, extra, nil)
+}
+
+// bouncerTable is the whole table: the routes, and the components that hold
+// a key for the one question the bouncer answers apart from the edge
+// (rights_check.go). A table with no checker says nothing about them.
+func bouncerTable(specs []kernelHTTPRouteSpec, extra []bouncerRoute, checkers []bouncerChecker) (string, error) {
 	var routes []bouncerRoute
 	for _, s := range specs {
 		if s.authz == nil || s.host == "" {
@@ -367,7 +374,11 @@ func bouncerRouteTable(specs []kernelHTTPRouteSpec, extra []bouncerRoute) (strin
 	}
 	routes = append(routes, extra...)
 	sort.Slice(routes, func(i, j int) bool { return routes[i].Host < routes[j].Host })
-	b, err := yaml.Marshal(map[string]interface{}{"routes": routes})
+	table := map[string]interface{}{"routes": routes}
+	if len(checkers) > 0 {
+		table["checkers"] = checkers
+	}
+	b, err := yaml.Marshal(table)
 	if err != nil {
 		return "", err
 	}
@@ -379,7 +390,11 @@ func (r *GatewayPlatformReconciler) ensureBouncerRouteTable(ctx context.Context,
 	if err != nil {
 		return err
 	}
-	table, err := bouncerRouteTable(specs, extra)
+	checkers, err := rightsCheckers(ctx, r.Client)
+	if err != nil {
+		return err
+	}
+	table, err := bouncerTable(specs, extra, checkers)
 	if err != nil {
 		return err
 	}

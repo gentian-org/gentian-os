@@ -215,7 +215,31 @@ type ServiceRequirements struct {
 	// gateway; a component that does not is given none of the three.
 	// +optional
 	LLM *LLMRequirement `json:"llm,omitempty"`
+
+	// Rights declares that the component asks the platform whether a person
+	// may use an app of its tenant, for a person who is not at a browser.
+	// Only a component that declares it is given a key for that question and
+	// a network path to where it is answered.
+	// +optional
+	Rights *RightsRequirement `json:"rights,omitempty"`
 }
+
+// RightsRequirement declares that a component asks the platform one question:
+// may this person use that app of the component's own tenant. Being present
+// is the declaration.
+//
+// It is for a component that acts for a person who has no session at the
+// edge at that moment, and which would otherwise need the authorization
+// store's own credential. The component receives the address the question is
+// answered at and a key of its own -- random, per tenant and component -- in
+// the Secret rights-check-<component> of the tenant's namespace
+// (RIGHTS_CHECK_URL, RIGHTS_CHECK_KEY). The key is good for that question
+// about that tenant, and for nothing else: it cannot write, cannot list and
+// cannot name another tenant's app.
+//
+// The answer says who in the tenant may use what, so the requirement is for
+// a profile of platform trust.
+type RightsRequirement struct{}
 
 // LLMRequirement declares that a component uses the platform's model gateway.
 // Being present is the declaration.

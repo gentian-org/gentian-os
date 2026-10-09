@@ -1362,6 +1362,13 @@ spec:
                           required:
                           - enabled
                           type: object
+                        rights:
+                          description: |-
+                            Rights declares that the component asks the platform whether a person
+                            may use an app of its tenant, for a person who is not at a browser.
+                            Only a component that declares it is given a key for that question and
+                            a network path to where it is answered.
+                          type: object
                         storage:
                           description: Storage specifies object storage (S3) and/or
                             filesystem (WebDAV) requirements.
@@ -2921,6 +2928,13 @@ spec:
                         required:
                         - enabled
                         type: object
+                      rights:
+                        description: |-
+                          Rights declares that the component asks the platform whether a person
+                          may use an app of its tenant, for a person who is not at a browser.
+                          Only a component that declares it is given a key for that question and
+                          a network path to where it is answered.
+                        type: object
                       storage:
                         description: Storage specifies object storage (S3) and/or
                           filesystem (WebDAV) requirements.
@@ -3063,6 +3077,10 @@ spec:
                 valid at the director and at every sibling'
               rule: '!has(self.expose) || self.expose.all(e, !(has(e.forwardToken)
                 && e.forwardToken) || self.trustTier == ''platform'')'
+            - message: 'requires.services.rights requires trustTier platform: the
+                answer says who in the tenant may use what'
+              rule: '!has(self.requires) || !has(self.requires.services) || !has(self.requires.services.rights)
+                || self.trustTier == ''platform'''
             - message: 'a service exposes on the gateway only: the perimeter has no
                 session'
               rule: '!has(self.classes) || !(''service'' in self.classes) || !has(self.expose)
