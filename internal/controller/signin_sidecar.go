@@ -35,6 +35,7 @@ import (
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/bouncer"
 	"github.com/gentian-org/gentian-os/internal/controller/provisioner"
 	"github.com/gentian-org/gentian-os/internal/kernel"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
@@ -113,9 +114,7 @@ const (
 // The front door's identity headers (internal/bouncer). On the route that
 // takes no session nothing sets them, so the Gateway removes whatever a
 // client sent under these names before the sidecar is shown the request.
-var frontDoorIdentityHeaders = []string{
-	"x-gentian-subject", "x-gentian-realm", "x-gentian-session", "x-gentian-email", "x-gentian-name", edgeIDTokenHeader,
-}
+var frontDoorIdentityHeaders = bouncer.IdentityHeaders()
 
 // signInSidecar is one install's sidecar, as decided here.
 type signInSidecar struct {
@@ -458,6 +457,9 @@ func (r *ComponentReconciler) ensureSignInACSRoute(ctx context.Context, comp *ge
 			return err
 		}
 		keep = route.Name
+		if err := r.ensureSignInACSRateLimit(ctx, comp, route); err != nil {
+			return err
+		}
 	}
 	list := &gatewayv1.HTTPRouteList{}
 	if err := r.List(ctx, list, client.InNamespace(comp.Namespace),
@@ -471,8 +473,72 @@ func (r *ComponentReconciler) ensureSignInACSRoute(ctx context.Context, comp *ge
 		if err := r.Delete(ctx, &list.Items[i]); err != nil && !apierrors.IsNotFound(err) {
 			return err
 		}
+		if err := r.deleteSignInACSRateLimit(ctx, comp.Namespace, list.Items[i].Name); err != nil {
+			return err
+		}
 	}
 	return nil
+}
+
+// ensureSignInACSRateLimit holds the route that takes no session to one
+// client address's allowance of posts (edge_rate_limit.go). The route is the
+// one place of an app where a signed answer is checked for anybody who sends
+// one, so it is the place to bound how fast anybody can.
+//
+// A BackendTrafficPolicy of the route's own name, owned by the Component
+// like the route. With the limit switched off there is none, and one an
+// earlier setting left is removed.
+func (r *ComponentReconciler) ensureSignInACSRateLimit(ctx context.Context, comp *gentianov1alpha1.Component, route *gatewayv1.HTTPRoute) error {
+	limit := edgeSignInRateLimit("", edgeClientAddressHeader(ctx, r.Client))
+	if limit == nil {
+		return r.deleteSignInACSRateLimit(ctx, route.Namespace, route.Name)
+	}
+	spec := map[string]interface{}{
+		"targetRefs": []interface{}{map[string]interface{}{
+			"group": "gateway.networking.k8s.io", "kind": "HTTPRoute", "name": route.Name,
+		}},
+		"rateLimit": limit,
+	}
+	desired := &unstructured.Unstructured{}
+	desired.SetGroupVersionKind(backendTrafficPolicyGVK)
+	desired.SetName(route.Name)
+	desired.SetNamespace(route.Namespace)
+	desired.SetLabels(route.Labels)
+	if err := unstructured.SetNestedField(desired.Object, spec, "spec"); err != nil {
+		return err
+	}
+	if err := controllerutil.SetControllerReference(comp, desired, r.Scheme); err != nil {
+		return err
+	}
+	existing := &unstructured.Unstructured{}
+	existing.SetGroupVersionKind(backendTrafficPolicyGVK)
+	err := r.Get(ctx, client.ObjectKeyFromObject(desired), existing)
+	if apierrors.IsNotFound(err) {
+		return r.Create(ctx, desired)
+	}
+	if err != nil {
+		return err
+	}
+	if equality.Semantic.DeepEqual(existing.Object["spec"], desired.Object["spec"]) {
+		return nil
+	}
+	patch := client.MergeFrom(existing.DeepCopy())
+	if err := unstructured.SetNestedField(existing.Object, spec, "spec"); err != nil {
+		return err
+	}
+	return r.Patch(ctx, existing, patch)
+}
+
+func (r *ComponentReconciler) deleteSignInACSRateLimit(ctx context.Context, namespace, name string) error {
+	policy := &unstructured.Unstructured{}
+	policy.SetGroupVersionKind(backendTrafficPolicyGVK)
+	policy.SetName(name)
+	policy.SetNamespace(namespace)
+	err := r.Delete(ctx, policy)
+	if apierrors.IsNotFound(err) || apimeta.IsNoMatchError(err) {
+		return nil
+	}
+	return err
 }
 
 // ensureSignInSidecar keeps an app's sidecar, and removes one the app no

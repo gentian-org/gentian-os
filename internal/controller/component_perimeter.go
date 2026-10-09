@@ -34,6 +34,7 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/addresses"
 	"github.com/gentian-org/gentian-os/internal/kernel"
+	"github.com/gentian-org/gentian-os/internal/kernel/netpolicy"
 	"github.com/gentian-org/gentian-os/internal/layout"
 )
 
@@ -221,7 +222,7 @@ func (r *ComponentReconciler) ensurePerimeterProxy(
 	labels := perimeterLabels(comp, p.spec.Name)
 
 	upstream := fmt.Sprintf("%s.%s.svc.cluster.local", p.spec.Backend.Service, comp.Namespace)
-	config := perimeterProxyConfig(p.spec, upstream, p.spec.Backend.Port, p.website)
+	config := perimeterProxyConfig(p.spec, upstream, p.spec.Backend.Port, p.website, perimeterLimitsFromEnv(edgeClientAddressHeader(ctx, r.Client)))
 
 	cm := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: dmz, Labels: labels},
@@ -357,7 +358,8 @@ func perimeterDeployment(name, dmz string, labels map[string]string, configHash 
 	}
 }
 
-// ensurePerimeterPolicies bound the DMZ in both directions.
+// ensurePerimeterPolicies bound the DMZ in both directions, and who may
+// reach the proxy.
 //
 // Out: the proxy may reach exactly one Service in the tenant's namespace, and
 // DNS. Not the tenant's database, not its other applications, not the kernel.
@@ -376,6 +378,7 @@ func (r *ComponentReconciler) ensurePerimeterPolicies(
 	udp := corev1.ProtocolUDP
 	dns := intstr.FromInt32(53)
 	port := intstr.FromInt32(p.spec.Backend.Port)
+	proxyPort := intstr.FromInt32(perimeterProxyPort)
 
 	egress := &networkingv1.NetworkPolicy{
 		ObjectMeta: metav1.ObjectMeta{Name: name + "-egress", Namespace: dmz, Labels: labels},
@@ -405,6 +408,47 @@ func (r *ComponentReconciler) ensurePerimeterPolicies(
 			return false
 		}
 		existing.Spec = egress.Spec
+		return true
+	}); err != nil {
+		return err
+	}
+
+	// In, to the proxy itself: the Gateway's Envoy pods and nobody else.
+	//
+	// The proxy takes the caller's address from what the Gateway appended
+	// to X-Forwarded-For, limits each address by it and tells the
+	// application that address. That is only the Gateway's word if the
+	// Gateway is the only thing that can open a connection here; a pod of
+	// another tenant that could would choose its own address, and step
+	// round the route's host and the limits with it. Under the cluster's
+	// switch for the kernel's network rules (kernelNetworkPoliciesEnabled).
+	edge := &networkingv1.NetworkPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: name + "-ingress", Namespace: dmz, Labels: labels},
+		Spec: networkingv1.NetworkPolicySpec{
+			PodSelector: metav1.LabelSelector{MatchLabels: labels},
+			PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeIngress},
+			Ingress: []networkingv1.NetworkPolicyIngressRule{{
+				From: []networkingv1.NetworkPolicyPeer{{
+					NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{
+						"kubernetes.io/metadata.name": layout.Namespace(layout.Edge),
+					}},
+					PodSelector: &metav1.LabelSelector{MatchLabels: netpolicy.EdgeProxyPodLabels()},
+				}},
+				Ports: []networkingv1.NetworkPolicyPort{{Protocol: &tcp, Port: &proxyPort}},
+			}},
+		},
+	}
+	if !kernelNetworkPoliciesEnabled() {
+		// The cluster's switch for the kernel's network rules is off, and
+		// this rule rests on the same fact as they do: gone with them.
+		if err := r.Delete(ctx, edge); client.IgnoreNotFound(err) != nil {
+			return err
+		}
+	} else if err := upsert(ctx, r.Client, edge, func(existing *networkingv1.NetworkPolicy) bool {
+		if equality.Semantic.DeepEqual(existing.Spec, edge.Spec) {
+			return false
+		}
+		existing.Spec = edge.Spec
 		return true
 	}); err != nil {
 		return err

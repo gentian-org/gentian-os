@@ -173,6 +173,19 @@ const (
 // removed from every request that goes on to a backend.
 const HeaderIDToken = "x-gentian-id-token"
 
+// IdentityHeaders are every header of the front door's own: the five a
+// backend is told the caller by, and the one the session's ID token travels
+// to this service in.
+//
+// One list, because a route that asks this service nothing has nobody to
+// overwrite them: whatever stands on such a route -- the publishing proxy of
+// a tenant's DMZ, the sign-in route that takes no session -- removes exactly
+// these, and reads them from here. A header added to the block above and not
+// to this list fails a test (TestIdentityHeadersAreAllOfThem).
+func IdentityHeaders() []string {
+	return []string{HeaderSubject, HeaderRealm, HeaderSession, HeaderEmail, HeaderName, HeaderIDToken}
+}
+
 // Decide answers whether the request may reach its route.
 //
 // Fail closed, cached allows carry: a store that cannot be reached leaves

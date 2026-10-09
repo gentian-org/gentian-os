@@ -229,6 +229,21 @@ func TestWhatIsWrittenForEnvoyGatewayIsValidForThePinnedRelease(t *testing.T) {
 	keycloak := keycloakProxyBackendTrafficPolicySpec()
 	attachBackendTrafficPolicyTarget(keycloak, kernelRouteKeycloakIDP)
 	create("Keycloak's backend policy", backendTrafficPolicyGVK, keycloak)
+	// The sign-in limits, keyed each way a cluster can be reached.
+	for _, header := range []string{"", cloudflareClientAddressHeader} {
+		realm := keycloakRealmBackendTrafficPolicySpec(header)
+		if realm["rateLimit"] == nil {
+			t.Fatal("the identity provider's public policy carries no rate limit")
+		}
+		attachBackendTrafficPolicyTarget(realm, kernelRouteKeycloakIDP)
+		create("the identity provider's sign-in limit ("+header+")", backendTrafficPolicyGVK, realm)
+		create("a sign-in sidecar's limit ("+header+")", backendTrafficPolicyGVK, map[string]interface{}{
+			"targetRefs": []interface{}{map[string]interface{}{
+				"group": "gateway.networking.k8s.io", "kind": "HTTPRoute", "name": "notes-web-acs",
+			}},
+			"rateLimit": edgeSignInRateLimit("", header),
+		})
+	}
 	slashes := escapedSlashesKeepUnchangedClientTrafficPolicySpec()
 	attachKernelClientTrafficPolicyTarget(slashes, wildcardListenerName)
 	create("the escaped-slashes client policy", clientTrafficPolicyGVK, slashes)

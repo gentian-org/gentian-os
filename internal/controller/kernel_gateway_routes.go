@@ -130,6 +130,16 @@ func (r *GatewayPlatformReconciler) reconcileKernelHTTPRoutes(ctx context.Contex
 	specs := kernelHTTPRouteSpecs(r.KernelDomain, effectiveDomains, oidcSubs, tenantNames,
 		clusterLLMEnabled(ctx, r.Client), r.Cluster, r.kernelZoneReady(ctx), desktopPresent(ctx, r.Client),
 		door)
+	// The identity provider's public route is held to a rate of sign-in
+	// posts per client address, and which address that is has to be asked of
+	// the cluster (edgeClientAddressHeader), so it is set here and not where
+	// the routes are listed.
+	clientAddressHeader := edgeClientAddressHeader(ctx, r.Client)
+	for i := range specs {
+		if specs[i].name == kernelRouteKeycloakIDP {
+			specs[i].policy = keycloakRealmBackendTrafficPolicySpec(clientAddressHeader)
+		}
+	}
 	// The bouncer's table first: a route whose policy asks the bouncer before the
 	// bouncer knows the host is refused, which is the right direction, but a
 	// short one.
@@ -818,6 +828,18 @@ func keycloakProxyBackendTrafficPolicySpec() map[string]interface{} {
 			"bufferLimit": "128k",
 		},
 	}
+}
+
+// keycloakRealmBackendTrafficPolicySpec is the policy of the identity
+// provider's public route: the proxy's, and a limit on how fast one client
+// address may post to a sign-in page (edge_rate_limit.go). Pages, their
+// assets and the token endpoint are not limited.
+func keycloakRealmBackendTrafficPolicySpec(clientAddressHeader string) map[string]interface{} {
+	spec := keycloakProxyBackendTrafficPolicySpec()
+	if limit := edgeSignInRateLimit(keycloakSignInPostPattern, clientAddressHeader); limit != nil {
+		spec["rateLimit"] = limit
+	}
+	return spec
 }
 
 func escapedSlashesKeepUnchangedClientTrafficPolicySpec() map[string]interface{} {

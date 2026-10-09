@@ -663,6 +663,19 @@ name and the time are recorded with the entry in the exposure registry
 was asked stays published and is asked at its next review
 ([design/security.md §2.10](design/security.md)).
 
+**What every published entry is held to.** Whatever a profile declares, the
+publishing proxy refuses a request whose path has more than one reading
+(`//`, dot segments, encoded slashes, `;`), a body over 10 MB, and more than
+20 requests a second from one client address (200 at once); it matches
+`paths` by whole segments and `denyPaths` without regard to case, and it
+does not render a path with characters outside letters, digits and
+`/ . _ ~ -`. It removes every identity header, `Cookie` and `Authorization`
+on the way in, and `Set-Cookie` on the way out. A profile has no field to
+change any of this; the numbers are the cluster administrator's
+([design/security.md §2.14](design/security.md)). An app that needs larger
+uploads or its caller's `Authorization` header on a public path cannot have
+them on a perimeter entry today.
+
 The component's `MainAddress` condition says whether it is there and, if not,
 why. A profile that should also work on a multi-tenancy cluster declares a
 second entry without `apex`. A fixture profile is in
