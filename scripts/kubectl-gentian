@@ -22,6 +22,9 @@
 #   kubectl gentian tenants import <file.gentian> [--identity-file <f> | --passphrase] [--name <n>]
 #   kubectl gentian tenants import --bucket <b> --prefix <p> [--endpoint <url>] (--identity-file <f> | --passphrase)
 #   kubectl gentian tenants delegate-catalogues <name> on|off
+#   kubectl gentian tenants domain <name>                      the domain of its own it is bound to
+#   kubectl gentian tenants domain <name> <domain> [--yes]     bind it: its addresses move to <label>.<domain>
+#   kubectl gentian tenants domain <name> --remove [--yes]     back to its default address
 #
 #   kubectl gentian catalogues list [--tenant <tenant>]
 #   kubectl gentian catalogues add <name> <https-url> [--tenant <tenant>]
@@ -32,6 +35,9 @@
 #   kubectl gentian apps list --tenant <tenant> [--available]
 #   kubectl gentian apps install <app> --tenant <tenant> [--from <source>] [--digest sha256:<hex>] [--for-everyone]
 #   kubectl gentian apps uninstall <app> --tenant <tenant> [--purge]
+#
+#   kubectl gentian exposures list --tenant <tenant>            what the tenant has on the internet
+#   kubectl gentian exposures withdraw <app-instance> <entry> --tenant <tenant>
 #
 #   kubectl gentian resources plans --tenant <tenant>
 #   kubectl gentian resources show --tenant <tenant>
@@ -1037,6 +1043,220 @@ cmd_tenants_delegate_catalogues() {
     fi
 }
 
+# ---------------------------------------------------------------------------
+# A tenant's own domain, and what a tenant has on the internet
+# ---------------------------------------------------------------------------
+
+# _label <what> <value> — a value that goes into a request's path is a name:
+# lower-case letters, digits and hyphens. Refused here so that nothing typed
+# can turn one request into another; the director checks the name again.
+_label() {
+    [[ "$2" =~ ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$ ]] ||
+        die "$1 is a name of lower-case letters, digits and hyphens, not '$2'"
+}
+
+# _committed <answer> — the first eight characters of the commit an answer
+# names, or a word for none.
+_committed() {
+    local commit
+    commit="$(printf '%s' "$1" | jq -r '.commit // "" | .[0:8]')"
+    echo "${commit:-no commit id}"
+}
+
+# tenants domain: the domain of its own a tenant is served at, instead of its
+# default address under the cluster's domain.
+#
+# With a name alone it shows what git declares. With a domain it binds the
+# tenant to it, with --remove it unbinds it: one request to the director each
+# (PUT or DELETE /v1/clusters/<c>/tenants/<t>/domain), which decides who may
+# and which domains it refuses. What moves and what has to be true first is
+# printed before anything is asked, and the change is confirmed by typing --
+# the domain to bind, the tenant's name to unbind -- unless --yes says the
+# caller already has. The DNS record and the certificate are checked by
+# nobody: not by the director, and not here.
+cmd_tenants_domain() {
+    local name="" domain="" remove="" yes="" typed="" usage_text
+    usage_text="usage: kubectl gentian tenants domain <name> [<domain> | --remove] [--yes]"
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --remove) remove=1; shift ;;
+            --yes) yes=1; shift ;;
+            -*) die "unknown option $1" ;;
+            *)
+                if [[ -z "${name}" ]]; then name="$1"
+                elif [[ -z "${domain}" ]]; then domain="$1"
+                else die "unexpected argument $1"
+                fi
+                shift ;;
+        esac
+    done
+    [[ -n "${name}" ]] || die "${usage_text}"
+    _label "a tenant" "${name}"
+    [[ -z "${remove}" || -z "${domain}" ]] ||
+        die "--remove takes no domain: it puts ${name} back at its default address"
+    # The one spelling the director records, so what is shown is what is sent.
+    domain="$(printf '%s' "${domain}" | tr '[:upper:]' '[:lower:]')"
+    if [[ -n "${domain}${remove}" && -z "${yes}" ]]; then
+        [[ -t 0 ]] || die "not a terminal: confirm with --yes"
+    fi
+    need curl jq
+    _connect
+    local tenants current answer
+    tenants="$(_call GET "/v1/clusters/${_CLUSTER}/tenants")" || exit 1
+    printf '%s' "${tenants}" | jq -e --arg n "${name}" '.tenants[]? | select(.name == $n)' >/dev/null ||
+        die "no tenant named ${name}"
+    current="$(printf '%s' "${tenants}" | jq -r --arg n "${name}" '.tenants[] | select(.name == $n) | .customDomain // ""')"
+
+    if [[ -z "${domain}" && -z "${remove}" ]]; then
+        if [[ -n "${current}" ]]; then
+            echo "Tenant ${name} is bound to the domain ${current}: its desktop is desktop.${current}, its admin"
+            echo "console admin.${current}, and each app <label>.${current}."
+        else
+            echo "Tenant ${name} is bound to no domain of its own: it is served at its default address under the"
+            echo "cluster's domain."
+        fi
+        echo "That is what git declares. Whether the cluster has taken it in (empty when no domain is bound):"
+        echo "  kubectl get tenant ${name} -o jsonpath='{.status.conditions[?(@.type==\"DomainBound\")].message}'"
+        return 0
+    fi
+
+    if [[ -n "${remove}" ]]; then
+        if [[ -z "${current}" ]]; then
+            echo "Tenant ${name} is bound to no domain of its own; nothing was changed."
+            return 0
+        fi
+        echo "Removing the domain ${current} from tenant ${name} puts it back at its default address under the"
+        echo "cluster's domain. Its desktop, its admin console, every app, its mail and the names its people sign in"
+        echo "with move there, and nothing of it answers at ${current} any more."
+        if [[ -z "${yes}" ]]; then
+            read -r -p "Type ${name} to confirm: " typed
+            [[ "${typed}" == "${name}" ]] || die "not confirmed; nothing was changed"
+        fi
+        answer="$(_call DELETE "/v1/clusters/${_CLUSTER}/tenants/${name}/domain")" || exit 1
+        if [[ "$(printf '%s' "${answer}" | jq -r '.status // ""')" == "unchanged" ]]; then
+            echo "Tenant ${name} was bound to no domain; nothing was committed."
+            return 0
+        fi
+        echo "Tenant ${name} is bound to no domain any more: committed ($(_committed "${answer}")). The operator moves it back."
+        return 0
+    fi
+
+    if [[ "${current}" == "${domain}" ]]; then
+        echo "Tenant ${name} is already bound to ${domain}; nothing was changed."
+        return 0
+    fi
+    echo "Binding tenant ${name} to the domain ${domain} moves every address it is served at."
+    if [[ -n "${current}" ]]; then
+        echo "  now:   <label>.${current}"
+    else
+        echo "  now:   its default address under the cluster's domain"
+    fi
+    echo "  then:  desktop.${domain} (its desktop), admin.${domain} (its admin console) and <label>.${domain}"
+    echo "         for every app, installed or yet to be"
+    echo "Its mail and the names its people sign in with move to ${domain} as well. It is served at one domain:"
+    echo "the addresses it has now stop being its own."
+    echo
+    echo "What has to be true first. The director checks none of it, and neither does this command:"
+    echo "  - DNS: *.${domain} resolves to this cluster. The platform publishes records only in the DNS zone that"
+    echo "    holds the cluster's own domain; if ${domain} lies in another zone, the wildcard record is yours to make."
+    echo "  - Certificate: the cluster's DNS-01 certificate issuer can write _acme-challenge records in the zone of"
+    echo "    ${domain} -- its DNS token covers that zone. The tenant gets one wildcard certificate, *.${domain};"
+    echo "    until it is issued its addresses have none."
+    echo
+    echo "The director refuses a name that is not a hostname, one on or under the cluster's own domain, and one"
+    echo "another tenant is bound to."
+    if [[ -z "${yes}" ]]; then
+        read -r -p "Type ${domain} to confirm: " typed
+        [[ "${typed}" == "${domain}" ]] || die "not confirmed; nothing was changed"
+    fi
+    answer="$(_call PUT "/v1/clusters/${_CLUSTER}/tenants/${name}/domain" "$(jq -n --arg d "${domain}" '{domain: $d}')")" || exit 1
+    if [[ "$(printf '%s' "${answer}" | jq -r '.status // ""')" == "unchanged" ]]; then
+        echo "Tenant ${name} is already bound to ${domain}; nothing was committed."
+        return 0
+    fi
+    echo "Tenant ${name} bound to ${domain}: committed ($(_committed "${answer}")). The operator moves it; this says when it has,"
+    echo "or why it has not:"
+    echo "  kubectl get tenant ${name} -o jsonpath='{.status.conditions[?(@.type==\"DomainBound\")].message}'"
+}
+
+# exposures list: the registry of what a tenant has on the internet, as the
+# director keeps it -- every entry a perimeter approver published, who did,
+# when it is looked at again and when it ends. PUBLISHED is in force; REVIEW
+# DUE is in force and past its review date; EXPIRED answers no longer and
+# stays listed as the record that it once did.
+cmd_exposures_list() {
+    local t answer
+    t="$(_tenant_flag "$@")"
+    _label "a tenant" "${t}"
+    need jq
+    answer="$(_call GET "/v1/tenants/${t}/exposures")" || exit 1
+    if [[ "$(printf '%s' "${answer}" | jq -r '((.live // []) + (.expired // [])) | length')" == "0" ]]; then
+        echo "Tenant ${t} has published nothing to the internet."
+        return 0
+    fi
+    printf '%s' "${answer}" | jq -r '
+        def day: if (. // "") == "" then "-" else .[0:10] end;
+        def row(state): [.install, .exposureName, state, (if .apex then "yes" else "-" end),
+            (.owner // "-"), (.publishedAt | day), (.reviewAt | day), (.expiresAt | day),
+            (if (.reason // "") == "" then "-" else .reason end)];
+        ((.reviewDue // []) | map(.install + " " + .exposureName)) as $due
+        | (["APP INSTANCE","ENTRY","STATE","MAIN ADDRESS","PUBLISHED BY","PUBLISHED","REVIEW","EXPIRES","REASON"] | @tsv),
+          ((.live // [])[] | (.install + " " + .exposureName) as $k
+              | row(if ($due | index($k)) != null then "review due" else "published" end) | @tsv),
+          ((.expired // [])[] | row("expired") | @tsv)' |
+        column -t -s $'\t'
+}
+
+# exposures withdraw: take one entry of an installed app off the internet.
+# One request to the director (DELETE /v1/tenants/<t>/exposures/<app
+# instance>/<entry>), which decides who may. It removes access and loses no
+# data, so it is not asked twice.
+cmd_exposures_withdraw() {
+    local inst="" entry="" t="" answer usage_text
+    usage_text="usage: kubectl gentian exposures withdraw <app-instance> <entry> --tenant <tenant>"
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --tenant|-t) t="${2:?}"; shift 2 ;;
+            -*) die "unknown option $1" ;;
+            *)
+                if [[ -z "${inst}" ]]; then inst="$1"
+                elif [[ -z "${entry}" ]]; then entry="$1"
+                else die "unexpected argument $1"
+                fi
+                shift ;;
+        esac
+    done
+    [[ -n "${inst}" && -n "${entry}" ]] || die "${usage_text}"
+    [[ -n "${t}" ]] || die "--tenant is required"
+    _label "a tenant" "${t}"
+    _label "an app instance" "${inst}"
+    _label "an entry" "${entry}"
+    need jq
+    answer="$(_call DELETE "/v1/tenants/${t}/exposures/${inst}/${entry}")" || exit 1
+    if [[ "$(printf '%s' "${answer}" | jq -r '.status // ""')" == "unchanged" ]]; then
+        echo "${inst}/${entry} is not published by ${t}; nothing was committed."
+        return 0
+    fi
+    echo "Withdrawn ${inst}/${entry} of ${t}: committed ($(_committed "${answer}")). The platform takes it down, and"
+    echo "its address stops answering once the cluster has taken that in."
+}
+
+# Publishing has no command. The director has no read that says what an entry
+# of a profile would put on the internet -- its address, its paths, whether
+# anybody has to sign in -- and a command that asked for the publication
+# without showing that would have the person approve something unseen.
+cmd_exposures() {
+    local sub="${1:-}"
+    shift || true
+    case "${sub}" in
+        list) cmd_exposures_list "$@" ;;
+        withdraw) cmd_exposures_withdraw "$@" ;;
+        publish)
+            die "publishing has no command: nothing here can show what the entry would put on the internet before it is asked for. It is a request to the director, PUT /v1/tenants/<tenant>/exposures/<app-instance>/<entry> (docs/app-customization.md, 2.10). Nothing was sent" ;;
+        *) die "usage: kubectl gentian exposures list|withdraw ..." ;;
+    esac
+}
+
 cmd_apps() {
     local sub="${1:-}"
     shift || true
@@ -1152,11 +1372,13 @@ main() {
                 retire) cmd_tenants_retire "$@" ;;
                 import) cmd_tenants_import "$@" ;;
                 delegate-catalogues) cmd_tenants_delegate_catalogues "$@" ;;
-                *) die "usage: kubectl gentian tenants list|create|activate-admin|retire|import|delegate-catalogues" ;;
+                domain) cmd_tenants_domain "$@" ;;
+                *) die "usage: kubectl gentian tenants list|create|activate-admin|retire|import|delegate-catalogues|domain" ;;
             esac
             ;;
         app|apps) cmd_apps "$@" ;;
         catalogue|catalogues) cmd_catalogues "$@" ;;
+        exposure|exposures) cmd_exposures "$@" ;;
         resource|resources) cmd_resources "$@" ;;
         version|--version|-v) cmd_version ;;
         help|--help|-h) usage ;;

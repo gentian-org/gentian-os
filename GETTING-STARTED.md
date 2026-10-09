@@ -755,15 +755,30 @@ differs is listed here, in the order you meet it.
    (`surface: perimeter` in the profile) is not reachable until the tenant's
    approver has published it.
 
-   Binding a domain and publishing an entry are requests to the director —
-   `PUT /v1/clusters/<cluster>/tenants/<tenant>/domain` with
-   `{"domain": "example.com"}`, for whoever may configure the cluster, and
+   Binding the domain is one command, for whoever may configure the
+   cluster. It prints what moves and what has to be true first, and asks
+   for the domain typed out. Run it straight after creating the tenant (2),
+   before anything is installed: a tenant bound later moves every address
+   it already has.
+
+   ```bash
+   kubectl gentian tenants domain <tenant> example.com
+   kubectl gentian tenants domain <tenant>      # what git declares, and how to see that the cluster took it in
+   ```
+
+   Publishing the entry is a request to the director,
    `PUT /v1/tenants/<tenant>/exposures/<app>/<entry>`, for whoever may
    publish in the tenant
-   ([docs/app-customization.md](docs/app-customization.md)). The `gentian`
-   CLI and the admin console have no command or screen for either; a
-   console that offers them, or a request made with your own sign-in token,
-   is how they are made today.
+   ([docs/app-customization.md](docs/app-customization.md) §2.10). The
+   `gentian` CLI and the admin console have no command or screen for it; a
+   console that offers it, or a request made with your own sign-in token,
+   is how it is made today. What the tenant has published, and taking an
+   entry down again, are commands:
+
+   ```bash
+   kubectl gentian exposures list --tenant <tenant>
+   kubectl gentian exposures withdraw <app> <entry> --tenant <tenant>
+   ```
 8. **Check it from outside:** `curl -sI https://<its address>/<a path the
    entry serves>` answers from your service. When that service is the store
    other clusters name as `spec.catalogue.storeUrl`, the two requests under

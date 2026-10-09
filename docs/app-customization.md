@@ -593,7 +593,9 @@ expose:
 Declaring it publishes nothing. The tenant's perimeter approver publishes it
 (`PUT /v1/tenants/{t}/exposures/{install}/{name}`), with an owner and a review
 date. It then answers at `<subDomain or component name>.<tenant's domain>`,
-from a proxy that passes no cookies either way.
+from a proxy that passes no cookies either way. `kubectl gentian exposures
+list --tenant <t>` shows what a tenant has published, and `exposures withdraw
+<install> <name> --tenant <t>` takes one down; publishing is the request above.
 
 **Address names an app cannot take.** No entry of an app or an add-on, on
 either surface, may use one of the platform's names as its `subDomain` (or as

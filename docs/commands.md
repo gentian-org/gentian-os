@@ -92,6 +92,42 @@ kubectl get tenant demo -o yaml
 kubectl describe tenant demo
 ```
 
+### A domain of its own
+
+A tenant is served under the cluster's domain unless it is bound to a domain
+of its own. Binding one moves everything: its desktop to `desktop.<domain>`,
+its admin console to `admin.<domain>`, every app to `<label>.<domain>`, and
+with them its mail and the names its people sign in with.
+
+```bash
+kubectl gentian tenants domain demo                 # the domain git declares for it, if any
+kubectl gentian tenants domain demo demo.example    # bind it
+kubectl gentian tenants domain demo --remove        # back to its default address
+```
+
+Binding and removing are for whoever may configure the cluster. Each prints
+what moves and asks for a word typed out -- the domain to bind, the tenant's
+name to remove -- which `--yes` skips in a script. The director refuses a
+name that is not a hostname, a domain on or under the cluster's own, and one
+another tenant is bound to; its refusal is printed as it worded it.
+
+Two things have to be true first, and neither the director nor the command
+checks them:
+
+- **DNS:** `*.<domain>` resolves to this cluster. The platform publishes
+  records only in the DNS zone that holds the cluster's own domain; in any
+  other zone the wildcard record is yours to make.
+- **Certificate:** the cluster's DNS-01 issuer can write `_acme-challenge`
+  records in the domain's zone, that is, its DNS token covers that zone. The
+  tenant gets one wildcard certificate, `*.<domain>`
+  ([design/multi-tenancy.md](design/multi-tenancy.md)).
+
+The operator reports the outcome on the Tenant:
+
+```bash
+kubectl get tenant demo -o jsonpath='{.status.conditions[?(@.type=="DomainBound")].message}'
+```
+
 ## 4. Uninstall a Tenant
 
 ```bash
@@ -338,6 +374,28 @@ A cluster's stage (`dev`, `staging`, `prod`) is fixed at bootstrap via
 [deployment.md](deployment.md) §1) — `apps`/`tenants` commands don't take a
 `--env`/`--stage` flag; they always target the one cluster selected by
 `GENTIAN_DEPLOYMENTS_CLUSTER_ID`.
+
+### What a tenant has on the internet
+
+An entry of a profile that the public reaches (`surface: perimeter`) answers
+only once the tenant's perimeter approver has published it
+([app-customization.md](app-customization.md) §2.10). The director keeps the
+registry of what was published:
+
+```bash
+kubectl gentian exposures list --tenant demo
+kubectl gentian exposures withdraw cloud share --tenant demo    # <app instance> <entry>
+```
+
+`list` shows each entry with who published it, when it is reviewed and when
+it ends: `published` is in force, `review due` is in force and past its
+review date, `expired` answers no longer and stays as the record. `withdraw`
+takes one down, for whoever may publish in the tenant; it is one commit, and
+the address stops answering once the cluster has taken it in.
+
+Publishing has no command. It is a request to the director,
+`PUT /v1/tenants/<tenant>/exposures/<app instance>/<entry>`, made by a console
+that offers it or with your own sign-in token.
 
 ## 6a. Resource Plans and Usage
 
