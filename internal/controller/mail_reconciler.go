@@ -854,6 +854,12 @@ func (r *TenantReconciler) syncPostfixVirtualMailboxMaps(ctx context.Context) er
 		}
 	}
 	desiredDomains, desiredMaps := domainsFile.String(), mapsFile.String()
+	// The addresses of removed people, refused whatever the recipient policy
+	// (mail_removed_recipients.go). Postfix asks the domains file about a
+	// recipient before anything else and asks for the whole address first,
+	// so the lines go there, beside the domains -- and not into the copy
+	// that decides who may send, where an address would match a sender.
+	recipientAccess := desiredDomains + r.removedRecipients(ctx, emitted)
 
 	// The same domains, space-separated, for the image's ALLOWED_SENDER_DOMAINS.
 	//
@@ -874,7 +880,7 @@ func (r *TenantReconciler) syncPostfixVirtualMailboxMaps(ctx context.Context) er
 	//
 	// One derivation for both directions: a domain that may receive may send.
 	desired := map[string]string{
-		postfixVirtualMailboxDomainsKey: desiredDomains,
+		postfixVirtualMailboxDomainsKey: recipientAccess,
 		postfixVirtualMailboxMapsKey:    desiredMaps,
 		postfixSenderAccessKey:          desiredDomains,
 		postfixAllowedSenderDomainsKey:  desiredAllowed,

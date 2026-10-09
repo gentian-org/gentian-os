@@ -312,12 +312,45 @@ directory there and is archived or deleted like any other. The domain's
 archive, like its mailboxes, is not in the tenant's backup and is not
 destroyed with the tenant.
 
+**Mail to the address is refused.** Archived or deleted, the removed
+person's address is answered at `RCPT` with `550 5.1.1 … Recipient address
+rejected: User unknown`, under every recipient policy, to senders outside and
+to the cluster's own pods alike. Nothing is accepted for it and no new
+directory is made.
+
+- It starts when the person is gone from the realm, before the mailbox is
+  touched, and not while they are still there.
+- It lasts as long as the record of the removal stands and nobody holds the
+  address. The record of an archived mailbox stays as long as the archive; the
+  record of a deleted mailbox, and of an archive deleted later, is removed
+  after 30 days. After that the address is one nobody owns, and the recipient
+  policy decides as for any other: `catchall`, the default, accepts it again.
+- An address given to somebody new receives again. The operator learns that
+  when it next reads the realm's people, which is also when the new person
+  gets a mail password; until then mail to the address is still refused.
+- `abuse@`, `dmarc@` and `postmaster@` are never refused.
+- Which addresses: those of `MailboxRemoval` records the operator did not
+  refuse, whose address is a plain name in the mail domain the record's
+  tenant has now, and that no person of any realm on that domain holds,
+  switched off or not.
+- While the people of a domain cannot be listed, nothing about that domain's
+  addresses changes: one refused before stays refused, none is added. A
+  refusal is permanent for the sender, so none is made on a guess.
+- How: the operator writes one line per address into the file Postfix asks
+  about a recipient first (`virtual_mailbox_domains` in
+  `postfix-kernel-virtual-mailbox-maps`), which is read at every lookup. No
+  Postfix setting changed, and no restart is needed
+  (`internal/controller/mail_removed_recipients.go`).
+- Nothing else changes: mail to an address nobody was removed from is
+  accepted or refused by the recipient policy as before.
+
+Proven against the rendered Postfix in local containers (`make
+test-mail-edge-lab`, part a2); not yet run on a cluster.
+
 **Limits.**
 
-- With the recipient policy `catchall` (the default) mail to a removed
-  person's address is still accepted and makes a new directory, as mail to
-  any address nobody owns does. Somebody given the address later finds that
-  mail, not the archived person's. `strict` refuses it.
+- A person removed before this was built, or whose record is gone, is not
+  known: mail to that address is accepted under `catchall` as before.
 - An IMAP session that was open when the person was removed is not ended.
 - The platform has no shared mailboxes and no aliases other than `abuse@`
   and `postmaster@`, which forward and have no mailbox.
@@ -664,8 +697,9 @@ it.
 of the rendered Postfix and Dovecot in local containers: mail on 25 with
 STARTTLS, authenticated submission on 587 and IMAPS on 993 through the proxy,
 each logged by the server with the client's address; a relay refused to that
-same client; the header ports refusing a connection without a header; the
-pods' listeners unchanged; both limits; and the load-balancer setting. Not
+same client; a removed person's address refused as an unknown recipient while
+the rest of its domain is accepted; the header ports refusing a connection
+without a header; the pods' listeners unchanged; both limits; and the load-balancer setting. Not
 proven: anything that needs a cluster — the load balancer, the policies as a
 CNI enforces them, a pod reaching the public name.
 

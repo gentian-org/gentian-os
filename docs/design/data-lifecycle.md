@@ -299,10 +299,12 @@ much it matters.
    default storage class,** whatever class it had where the bundle was taken.
 5. **A tenant's mail domain that changed leaves the old domain's mailboxes
    behind.** Backup and deletion go by the domain the tenant has now.
-6. **Mail to a removed person's address is still accepted** where the
-   recipient policy is `catchall`, the default. It makes a new mailbox
-   directory, which somebody given the address later finds. The archived or
-   deleted mailbox is not affected.
+6. **Mail to a removed person's address is refused only while the record of
+   the removal stands.** The record of a deleted mailbox is removed after 30
+   days; after that, where the recipient policy is `catchall`, the default,
+   mail to the address is accepted again and makes a new mailbox directory,
+   which somebody given the address later finds
+   ([mail.md §5c](mail.md)).
 7. **The desktop's rows name the tenant they were written in.** A bundle
    imported under another name fills the new tenant's desktop database with
    rows the desktop does not look for.

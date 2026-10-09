@@ -278,7 +278,7 @@ func (r *MailboxRemovalReconciler) step(ctx context.Context, record *gentianov1a
 	}
 
 	// Nobody holds the address.
-	realms, err := r.realmsOfDomain(ctx, domain)
+	realms, err := r.Tenant.realmsOfMailDomain(ctx, domain)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -369,34 +369,6 @@ func cutAddress(address string) (name, domain string, ok bool) {
 		return "", "", false
 	}
 	return address[:at], address[at+1:], true
-}
-
-// realmsOfDomain is every realm whose people have addresses in a mail
-// domain: the realm of each tenant that has its mailboxes under it, and the
-// kernel realm for the cluster's own domain. On a cluster with one user
-// tenant that is more than one realm for one domain, and so more than one
-// place a mailbox's person can be.
-func (r *MailboxRemovalReconciler) realmsOfDomain(ctx context.Context, domain string) ([]string, error) {
-	tenants := &gentianov1alpha1.TenantList{}
-	if err := r.List(ctx, tenants); err != nil {
-		return nil, err
-	}
-	seen := map[string]bool{}
-	for i := range tenants.Items {
-		t := &tenants.Items[i]
-		if strings.EqualFold(mailDomain(t, r.Tenant.KernelDomain, r.Tenant.TenancyMode), domain) {
-			seen[keycloakRealmName(t)] = true
-		}
-	}
-	if r.Tenant.KernelRealm != "" && strings.EqualFold(domain, r.Tenant.KernelDomain) {
-		seen[r.Tenant.KernelRealm] = true
-	}
-	realms := make([]string, 0, len(seen))
-	for realm := range seen {
-		realms = append(realms, realm)
-	}
-	sort.Strings(realms)
-	return realms, nil
 }
 
 // run makes sure the Job exists, and reads what it did once it has ended.

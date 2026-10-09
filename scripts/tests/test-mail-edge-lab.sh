@@ -199,6 +199,22 @@ check "Postfix logs the client's address on the edge listener" "${log}" 'postfix
 refuse "Postfix logs no session from the proxy's address" "${log}" 'smtpd.*(connect from|client=)[^ ]*\[172\.30\.0\.10\]'
 check "the message reaches the mailbox store over LMTP" "${log}" 'postfix/lmtp.*to=<ada@tenant.lab.test>.*status=sent'
 
+echo "(a2) a removed person's address, in a domain that accepts every other"
+got="$(out smtp "${EDGE_OUT}" 2525 someone@gmail.com gone@tenant.lab.test)"
+check "mail to it is refused at RCPT as an unknown recipient, permanently" "${got}" "^refused: \\{'gone@tenant.lab.test': \\(550, '5\\.1\\.1 <gone@tenant.lab.test>: Recipient address rejected: User unknown'\\)\\}\$"
+got="$(out smtp "${EDGE_OUT}" 2525 someone@gmail.com Gone@Tenant.Lab.Test)"
+check "in capitals too" "${got}" "^refused: .*\\(550, '5\\.1\\.1 "
+got="$(out smtp "${EDGE_OUT}" 2525 someone@gmail.com nobody-yet@tenant.lab.test)"
+check "an address nobody was removed from is accepted as before" "${got}" '^accepted: someone@gmail.com -> nobody-yet@tenant.lab.test$'
+got="$(pod smtp "postfix-dev.${SVC}" 587 gone@tenant.lab.test bob@tenant.lab.test smtp-tenant smtp-secret)"
+check "the address as a sender is not what is refused" "${got}" '^accepted: gone@tenant.lab.test -> bob@tenant.lab.test$'
+got="$(pod smtp "postfix-dev.${SVC}" 587 ada@tenant.lab.test gone@tenant.lab.test smtp-tenant smtp-secret)"
+check "a pod with a credential is refused the same way" "${got}" "^refused: .*\\(550, '5\\.1\\.1 <gone@tenant.lab.test>: Recipient address rejected: User unknown'"
+sleep 3
+log="$(postfix_log)"
+check "Postfix logs the refusal" "${log}" 'NOQUEUE: reject: RCPT from [^ ]*\[172\.31\.0\.50\]: 550 5\.1\.1 <gone@tenant.lab.test>'
+refuse "nothing addressed to it reaches the mailbox store" "${log}" 'to=<gone@tenant.lab.test>.*status=sent'
+
 echo "(b) submission on the proxy's port 587"
 got="$(out smtp "${EDGE_OUT}" 2587 ada@tenant.lab.test victim@outlook.com smtp-tenant smtp-secret)"
 check "an authenticated client may relay" "${got}" '^accepted: ada@tenant.lab.test -> victim@outlook.com$'

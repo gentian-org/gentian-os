@@ -909,6 +909,10 @@ mailAdminContact: ""
 # for that domain and say so in the log. Accepting junk for another cycle is
 # recoverable; bouncing a tenant's mail is not.
 #
+# One kind of address is refused under every policy: that of a person who was
+# removed, for as long as the record of what became of their mailbox stands and
+# nobody else holds the address. The operator writes those beside the domains.
+#
 # abuse@, postmaster@ and dmarc@ are accepted in every domain under every
 # policy. RFC 5321 requires postmaster, RFC 2142 requires abuse, and dmarc is
 # the address this cluster's own DMARC record asks reports to be sent to.

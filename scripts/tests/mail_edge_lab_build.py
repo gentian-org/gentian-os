@@ -29,7 +29,10 @@ for k, v in cm(pf, 'postfix-dev-internal-headers').items(): (d/'gentian'/k).writ
 # The maps, as syncPostfixVirtualMailboxMaps writes them for one tenant.
 (d/'kernel-maps').mkdir(exist_ok=True)
 doms = 'lab.test OK\ntenant.lab.test OK\n'
-for k, v in {'virtual_mailbox_domains': doms, 'sender_access': doms,
+# A removed person's address, refused in the file Postfix asks about a
+# recipient first (removedRecipients); who may send is the domains alone.
+removed = 'gone@tenant.lab.test 550 5.1.1 User unknown\n'
+for k, v in {'virtual_mailbox_domains': doms + removed, 'sender_access': doms,
              'virtual_mailbox_maps': '@lab.test lab.test/\n@tenant.lab.test tenant.lab.test/\n', 'virtual_alias': ''}.items():
     (d/'kernel-maps'/k).write_text(v)
 (d/'tenant-keys').mkdir(exist_ok=True); (d/'dkim-keys').mkdir(exist_ok=True)
