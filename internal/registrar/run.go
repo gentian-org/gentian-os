@@ -113,6 +113,14 @@ func NewFromEnvWithMailboxes(ctx context.Context, reader client.Reader, mailboxe
 		log.Warn("REGISTRAR_DATABASE_URL is not set; identity actions are logged but not recorded")
 	}
 
+	// The components that vouch for people, each with the hash of its own
+	// key, as the operator writes them into a ConfigMap that is mounted
+	// here. Followed for as long as the process runs: a component is
+	// installed long after this starts, and one that stops declaring the
+	// requirement must stop being recognised without a restart.
+	vouchingKeys := &VouchingKeys{}
+	go vouchingKeys.Follow(ctx, envOr("REGISTRAR_VOUCHING_KEYS", "/etc/gentian/vouching/keys.json"), 5*time.Second, log)
+
 	srv, err := New(Config{
 		Authn:             verifier,
 		Authz:             graph,
@@ -126,7 +134,8 @@ func NewFromEnvWithMailboxes(ctx context.Context, reader client.Reader, mailboxe
 		InviteRedirectURI: os.Getenv("REGISTRAR_INVITE_REDIRECT_URI"),
 		// Where a tenant's desktop API answers, %s for the tenant: the
 		// settings templates an invitation may apply live there.
-		DesktopAPI: os.Getenv("REGISTRAR_DESKTOP_API_URL"),
+		DesktopAPI:   os.Getenv("REGISTRAR_DESKTOP_API_URL"),
+		VouchingKeys: vouchingKeys,
 	})
 	if err != nil {
 		closer()

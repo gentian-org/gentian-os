@@ -584,7 +584,9 @@ namespaces:
             what: manages people for a signed-in administrator
             from:
               - peer: tenants
-                why: the administration console
+                why: >-
+                  the administration console; and a component that vouches for people
+                  (requires.services.vouching), where a person is linked to it and where it takes a link away
                 evidence:
                   - internal/controller/component_reconciler.go:1567
                   - charts/gentian-os/templates/componentprofile-admin-console.yaml:50

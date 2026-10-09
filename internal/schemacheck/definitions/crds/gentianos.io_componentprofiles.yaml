@@ -1521,6 +1521,44 @@ spec:
                                   type: boolean
                               type: object
                           type: object
+                        vouching:
+                          description: |-
+                            Vouching declares that the component obtains tokens of a person who is
+                            not at a browser, on the strength of that person's earlier consent: it
+                            signs a short statement naming the person, and the tenant's realm
+                            answers with a token of that person for one app.
+                          properties:
+                            keys:
+                              description: |-
+                                Keys says where the component publishes the keys its statements are
+                                signed with, as a JWKS. The realm fetches them from there.
+                              properties:
+                                path:
+                                  default: /.well-known/jwks.json
+                                  description: Path is where the JWKS is served.
+                                  maxLength: 256
+                                  pattern: ^/[A-Za-z0-9._~/-]*$
+                                  type: string
+                                port:
+                                  description: Port is the Service's port.
+                                  format: int32
+                                  maximum: 65535
+                                  minimum: 1
+                                  type: integer
+                                service:
+                                  description: Service is the name of the component's
+                                    Service.
+                                  maxLength: 63
+                                  minLength: 1
+                                  pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                                  type: string
+                              required:
+                              - port
+                              - service
+                              type: object
+                          required:
+                          - keys
+                          type: object
                       type: object
                     name:
                       description: |-
@@ -3136,6 +3174,44 @@ spec:
                                 type: boolean
                             type: object
                         type: object
+                      vouching:
+                        description: |-
+                          Vouching declares that the component obtains tokens of a person who is
+                          not at a browser, on the strength of that person's earlier consent: it
+                          signs a short statement naming the person, and the tenant's realm
+                          answers with a token of that person for one app.
+                        properties:
+                          keys:
+                            description: |-
+                              Keys says where the component publishes the keys its statements are
+                              signed with, as a JWKS. The realm fetches them from there.
+                            properties:
+                              path:
+                                default: /.well-known/jwks.json
+                                description: Path is where the JWKS is served.
+                                maxLength: 256
+                                pattern: ^/[A-Za-z0-9._~/-]*$
+                                type: string
+                              port:
+                                description: Port is the Service's port.
+                                format: int32
+                                maximum: 65535
+                                minimum: 1
+                                type: integer
+                              service:
+                                description: Service is the name of the component's
+                                  Service.
+                                maxLength: 63
+                                minLength: 1
+                                pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                                type: string
+                            required:
+                            - port
+                            - service
+                            type: object
+                        required:
+                        - keys
+                        type: object
                     type: object
                 type: object
               secrets:
@@ -3272,6 +3348,10 @@ spec:
               rule: '!has(self.expose) || !(self.expose.exists(e, has(e.forwardToken)
                 && e.forwardToken) && self.expose.exists(e, has(e.exchangeToken) &&
                 e.exchangeToken))'
+            - message: 'requires.services.vouching requires trustTier platform: the
+                component can obtain a person''s token for any app of the tenant'
+              rule: '!has(self.requires) || !has(self.requires.services) || !has(self.requires.services.vouching)
+                || self.trustTier == ''platform'''
             - message: 'a service exposes on the gateway only: the perimeter has no
                 session'
               rule: '!has(self.classes) || !(''service'' in self.classes) || !has(self.expose)

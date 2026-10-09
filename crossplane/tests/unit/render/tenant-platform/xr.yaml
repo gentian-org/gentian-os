@@ -3,6 +3,12 @@
 # quota, its entitlement groups in the KERNEL realm — and what it must not
 # render is any realm state or realm bridge: no Realm, no broker client, no
 # IdP, no flow, no mapper. The kernel realm is adopted, never composed.
+#
+# What it does render in that realm is what belongs to the tenant and its
+# components there: the zone's clients, and for a component that vouches for
+# people (see required-resources/zone-hosts.yaml) the identity provider entry
+# that makes that component an issuer. That one is not the broker to another
+# realm the sentence above rules out.
 apiVersion: gentianos.io/v1alpha1
 kind: XTenant
 metadata:

@@ -47,6 +47,11 @@ type fakeIdentity struct {
 	removeErr error
 	// log is where a test that cares about order has its steps written.
 	log *[]string
+	// issuers is the profiles whose component vouches for people, per realm,
+	// as "<realm>/<profile>"; links is who is linked to which, as
+	// "<realm>/<profile>/<person>".
+	issuers map[string]bool
+	links   map[string]bool
 }
 
 func newFakeIdentity(realms ...string) *fakeIdentity {

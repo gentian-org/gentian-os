@@ -173,6 +173,8 @@ Design: see [docs/design/agentic-ai.md](design/agentic-ai.md), Scope
   - `[x]` A granted contract opens the provider's side as well as the consumer's, for both ways a component is delivered; one that nobody granted opens nothing.
   - `[x]` A contract tells the provider which consumer is calling: a key per consumer, and their hashes at the provider.
   - `[x]` The rights check is served whichever way a component is delivered.
+  - `[x]` Vouching: a declared issuer per component in the tenant's realm, linking on the person's own token, unlinking by the person, an administrator or the component.
+  - `[ ]` A scope for an app that signs people in with a client of its own, whose audience is that client, so that a vouched token is accepted there.
 
 ### 1.15 Gateway External Authentication (AuthZEN PEP) (**)
 * **Target Domain**: Gateway Security

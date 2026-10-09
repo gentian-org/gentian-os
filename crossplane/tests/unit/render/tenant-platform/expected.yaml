@@ -7,7 +7,7 @@ status:
   conditions:
   - lastTransitionTime: "2024-01-01T00:00:00Z"
     message: 'Unready resources: job-keycloak-gentian-groups-platform, keycloak-edge-exchange-client,
-      keycloak-edge-exchange-default-scopes, and 9 more'
+      keycloak-edge-exchange-default-scopes, and 13 more'
     reason: Creating
     status: "False"
     type: Ready
@@ -545,6 +545,121 @@ spec:
   providerConfigRef:
     name: keycloak
 ---
+apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+kind: ClientDefaultScopes
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-vouching-default-scopes-herald
+  labels:
+    crossplane.io/composite: platform
+  name: platform-vouching-herald-default-scopes
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: platform
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    clientIdRef:
+      name: platform-vouching-herald-client
+      policy:
+        resolve: Always
+    defaultScopes:
+    - basic
+    realmId: kernel
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: oidc.keycloak.crossplane.io/v1alpha1
+kind: IdentityProvider
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-vouching-idp-herald
+    crossplane.io/external-name: vouch-herald
+  labels:
+    crossplane.io/composite: platform
+  name: platform-vouching-herald-idp
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: platform
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    addReadTokenRoleOnCreate: false
+    alias: vouch-herald
+    authenticateByDefault: false
+    authorizationUrl: https://vouch-herald.tenant-platform.svc
+    backchannelSupported: false
+    clientIdSecretRef:
+      key: client_id
+      name: platform-vouching-issuer-credential
+      namespace: kernel-authentication
+    clientSecretSecretRef:
+      key: client_secret
+      name: platform-vouching-issuer-credential
+      namespace: kernel-authentication
+    disableUserInfo: true
+    displayName: Vouching (herald)
+    enabled: true
+    extraConfig:
+      jwtAuthorizationGrantEnabled: "true"
+    hideOnLoginPage: true
+    issuer: https://vouch-herald.tenant-platform.svc
+    jwksUrl: http://herald.tenant-platform.svc.cluster.local:8080/.well-known/jwks.json
+    linkOnly: true
+    providerId: jwt-authorization-grant
+    realm: kernel
+    storeToken: false
+    syncMode: IMPORT
+    tokenUrl: https://vouch-herald.tenant-platform.svc
+    trustEmail: false
+    validateSignature: true
+  managementPolicies:
+  - Observe
+  - Create
+  - Update
+  - Delete
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-vouching-issuer-credential
+  labels:
+    crossplane.io/composite: platform
+  name: platform-vouching-issuer-credential
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: platform
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        labels:
+          app.kubernetes.io/managed-by: crossplane
+        name: platform-vouching-issuer-credential
+        namespace: kernel-authentication
+      stringData:
+        client_id: not-used
+        client_secret: not-used
+  providerConfigRef:
+    name: kubernetes
+---
 apiVersion: kubernetes.crossplane.io/v1alpha2
 kind: Object
 metadata:
@@ -679,3 +794,39 @@ spec:
       }
   providerConfigRef:
     name: openbao
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: vouching-password-herald
+  labels:
+    crossplane.io/composite: platform
+  name: platform-vouching-herald-password
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: platform
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: generators.external-secrets.io/v1alpha1
+      kind: Password
+      metadata:
+        labels:
+          app.kubernetes.io/managed-by: crossplane
+        name: vouching-herald
+        namespace: tenant-platform
+      spec:
+        allowRepeat: true
+        digits: 8
+        length: 48
+        noUpper: false
+        secretKeys:
+        - secret
+        symbols: 0
+  providerConfigRef:
+    name: kubernetes

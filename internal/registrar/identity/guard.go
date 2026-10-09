@@ -47,8 +47,10 @@ import (
 //     another group to it, or creating anything beneath it;
 //   - any write to a person who is in the group: their names, address and
 //     whether they may sign in, removing them, their second factor, a mailed
-//     password link, an activation link. Changing a role holder's address
-//     and then mailing a reset is the same as replacing them.
+//     password link, an activation link, linking them to a component that
+//     vouches for people. Changing a role holder's address and then mailing
+//     a reset is the same as replacing them, and a component that could
+//     obtain their tokens would be them.
 //
 // A member's membership of groups that hold no platform role may still be
 // changed: that does not touch who holds one.
@@ -140,6 +142,9 @@ type change struct {
 	// membership marks a write that only puts user in group or takes them
 	// out. It is judged by the group alone.
 	membership bool
+	// vouching marks a write to a person's link to a component that vouches
+	// for people (vouching.go).
+	vouching bool
 }
 
 // classify reads a request path as a write. ok is false for a path this
@@ -173,6 +178,8 @@ func classify(realm, rel string) (w change, ok bool) {
 			return change{}, true
 		case len(seg) == 4 && seg[2] == "groups":
 			return change{user: unescape(seg[1]), group: unescape(seg[3]), membership: true}, true
+		case len(seg) == 4 && seg[2] == "federated-identity" && strings.HasPrefix(unescape(seg[3]), vouchingAliasPrefix):
+			return change{user: unescape(seg[1]), vouching: true}, true
 		default:
 			return change{user: unescape(seg[1])}, true
 		}
@@ -199,6 +206,18 @@ func (c *Client) guard(ctx context.Context, r Realm, method, rel string, body an
 	w, ok := classify(r.name, rel)
 	if !ok {
 		return fmt.Errorf("%w: %s %s", ErrUnguarded, method, rel)
+	}
+	// Taking away a person's link to a component that vouches for them is
+	// let through for everybody, the holder of a platform role included. It
+	// gives nobody anything: it ends a component's ability to obtain that
+	// person's tokens. Refusing it would leave somebody who was linked before
+	// they were given a role with a link nothing here could remove. Making
+	// the link is a write to the person like any other, and is judged below:
+	// nobody is linked from here while they hold a platform role. A link to
+	// any other identity provider is how that person signs in, and is not
+	// this case in either direction.
+	if w.vouching && method == http.MethodDelete {
+		return nil
 	}
 	which, err := c.roleGroups(ctx)
 	if err != nil {

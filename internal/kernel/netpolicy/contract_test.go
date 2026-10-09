@@ -128,6 +128,54 @@ func TestAContractWithItselfIsNoContract(t *testing.T) {
 	}
 }
 
+// A component that vouches for people reaches the registrar on its one port,
+// and the bouncer's listener for the key it is given as well.
+func TestVouchingOpensTheRegistrarAndTheRightsCheck(t *testing.T) {
+	t.Setenv("GENTIAN_NS_EDGE", "kernel-edge")
+	t.Setenv("GENTIAN_NS_CONTROL", "kernel-control")
+	cfg := netpolicy.DefaultConfig()
+	cfg.ServicesNamespace = layout.Namespace(layout.Edge)
+	profile := &gentianov1alpha1.ComponentProfile{}
+	profile.Spec.Requires = &gentianov1alpha1.RequirementSpec{
+		Services: &gentianov1alpha1.ServiceRequirements{Vouching: &gentianov1alpha1.VouchingRequirement{}},
+	}
+	np := netpolicy.KernelAccessNetworkPolicy("acme", "tenant-acme", "notary", profile, cfg)
+	if np == nil {
+		t.Fatal("no policy for a component that vouches")
+	}
+	want := map[string]int32{cfg.ServicesNamespace: netpolicy.RightsCheckPort, layout.Namespace(layout.Control): netpolicy.RegistrarPort}
+	for _, rule := range np.Spec.Egress {
+		for _, to := range rule.To {
+			if to.NamespaceSelector == nil {
+				continue
+			}
+			ns := to.NamespaceSelector.MatchLabels["kubernetes.io/metadata.name"]
+			port, ok := want[ns]
+			if !ok {
+				continue
+			}
+			if len(rule.Ports) != 1 || rule.Ports[0].Port.IntVal != port {
+				t.Fatalf("%s is opened on %+v, want port %d alone", ns, rule.Ports, port)
+			}
+			delete(want, ns)
+		}
+	}
+	if len(want) != 0 {
+		t.Fatalf("no way to %v", want)
+	}
+	realm := false
+	for _, rule := range np.Spec.Egress {
+		for _, to := range rule.To {
+			if to.NamespaceSelector != nil && to.NamespaceSelector.MatchLabels["kubernetes.io/metadata.name"] == layout.Namespace(layout.Authentication) {
+				realm = true
+			}
+		}
+	}
+	if !realm {
+		t.Fatal("no way to the realm it posts its statements to")
+	}
+}
+
 // An app that declares the rights check reaches the bouncer's listener for
 // it and no other port of the edge.
 func TestTheRightsCheckOpensOnePortOfTheEdge(t *testing.T) {

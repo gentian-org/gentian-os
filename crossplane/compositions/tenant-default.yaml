@@ -57,7 +57,10 @@ spec:
             #
             # The same projection names the profiles whose components ask for
             # an exchanged token, for the same reason it names the hosts: the
-            # operator composes the routes that ask, so it is what knows.
+            # operator composes the routes that ask, so it is what knows. And
+            # it names the components that vouch for people at the realm, with
+            # where each publishes its keys, because the operator is what
+            # reads their profiles.
             - kind: ConfigMap
               into: zoneHosts
               apiVersion: v1
@@ -444,6 +447,23 @@ spec:
             {{- $p = trim $p }}
             {{- if and $p (not (has $p $exchangeProfiles)) }}
             {{- $exchangeProfiles = append $exchangeProfiles $p }}
+            {{- end }}
+            {{- end }}
+            {{- /* The components that vouch for people at this realm
+                 (requires.services.vouching), from the same projection. One
+                 line each: the profile's name, then the Service, the port and
+                 the path its keys are published at, separated by spaces
+                 (zoneVouchingProfilesKey in the operator says why a space is
+                 safe). A line that is not four fields is not guessed at: it
+                 is left out, and that component gets nothing rather than an
+                 issuer whose keys are fetched from somewhere half-read. */}}
+            {{- $vouchingProfiles := list }}
+            {{- $vouchingSeen     := list }}
+            {{- range $line := (splitList "\n" (dig "vouchingProfiles" "" $zhData)) }}
+            {{- $f := splitList " " (trim $line) }}
+            {{- if and (eq (len $f) 4) (not (has (index $f 0) $vouchingSeen)) }}
+            {{- $vouchingSeen = append $vouchingSeen (index $f 0) }}
+            {{- $vouchingProfiles = append $vouchingProfiles (dict "profile" (index $f 0) "service" (index $f 1) "port" (index $f 2) "path" (index $f 3)) }}
             {{- end }}
             {{- end }}
 
@@ -1129,6 +1149,394 @@ spec:
                   {{- end }}
               providerConfigRef:
                 name: keycloak
+            {{- end }}
+
+            {{- /* ── vouching: a component that speaks for people ────────────
+                 A component that works for a person who is not at a browser
+                 has no session to exchange. One whose profile declares
+                 requires.services.vouching signs a short statement naming
+                 the person instead, and this realm answers it with a token
+                 of that person for one app (RFC 7523, which Keycloak calls
+                 the JWT authorization grant).
+
+                 Per such component the realm holds two things under one
+                 name, vouch-<profile> -- VouchingAlias in the operator
+                 (vouching.go), which is what the registrar links people to
+                 and what the component is told, so the name is made here
+                 letter for letter as it is made there. An identity provider
+                 entry, which is what makes the component an issuer the realm
+                 believes and says where its keys are. And a client, which is
+                 what the component asks with and which can do nothing else.
+
+                 Nothing here says who the component may speak for. The realm
+                 finds the person only through a link from that person to
+                 this identity provider entry, and no link is composed: the
+                 registrar makes one on a request that carries the person's
+                 own token. No link, no token.
+
+                 Rendered for the tenant that adopts the kernel realm as well,
+                 like the exchange client above and for its reason: these
+                 belong to a component of the tenant, not to the realm's own
+                 configuration.
+
+                 Not rendered where the cluster has not published Keycloak's
+                 address inside the cluster. The component is told where to
+                 ask in the Secret below, and a Secret that says nowhere is a
+                 component that fails at its first request with nothing to
+                 show for why. */}}
+            {{- if and $kcInternal (gt (len $vouchingProfiles) 0) }}
+            {{- /* A client id and a client secret for the identity provider
+                 entries, which are never used and cannot be left out.
+
+                 The provider has one way to write an identity provider of
+                 this family, its OIDC resource, and that resource cannot be
+                 written without the credentials Keycloak would present AT an
+                 identity provider it signs people in through. Nobody signs
+                 in through these, so Keycloak never presents anything. The
+                 values say what they are, and they are deliberately not the
+                 vouching client's: a real credential in a field nothing
+                 reads is one more place to find it.
+
+                 One per tenant, beside the broker's client id and for the
+                 same reason it is a Secret at all: a secretRef is the only
+                 way the provider takes either. */}}
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              name: {{ $tenant }}-vouching-issuer-credential
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-vouching-issuer-credential
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: v1
+                  kind: Secret
+                  metadata:
+                    name: {{ $tenant }}-vouching-issuer-credential
+                    namespace: {{ $identityNs }}
+                    labels:
+                      app.kubernetes.io/managed-by: crossplane
+                  stringData:
+                    client_id: not-used
+                    client_secret: not-used
+              providerConfigRef:
+                name: kubernetes
+            {{- range $v := $vouchingProfiles }}
+            {{- $p := $v.profile }}
+            {{- /* The three names the operator derives in vouching.go:
+                 VouchingAlias, VouchingIssuer and VouchingSecretName. */}}
+            {{- $vouchAlias  := printf "vouch-%s" $p }}
+            {{- $vouchIssuer := printf "https://%s.%s.svc" $vouchAlias $ns }}
+            {{- $vouchSecret := printf "vouching-%s" $p }}
+
+            {{- /* The component as an issuer the realm believes.
+
+                 The issuer is a name and is never fetched. It is what the
+                 component's statements carry as iss, and Keycloak finds this
+                 entry by it, so it has to be exactly what VouchingIssuer
+                 returns. It is a name no certificate can be had for, on
+                 purpose: nothing could be served there.
+
+                 The keys are fetched, from the component's own Service in
+                 the tenant's namespace, at the address its profile gives.
+                 Over plain HTTP inside the cluster, as Keycloak reaches the
+                 kernel realm's keys further down. A component can therefore
+                 replace its keys by publishing new ones, and nothing here
+                 changes when it does.
+
+                 providerId jwt-authorization-grant, through the one field of
+                 the OIDC resource that says which implementation an entry
+                 is. That is Keycloak's identity provider for exactly this: it
+                 verifies statements and has no sign-in of its own, so a
+                 browser sent to it gets an error page and nobody can link
+                 themselves to it by signing in somewhere. hideOnLoginPage and
+                 linkOnly say the same to anything that reads those instead.
+                 authorizationUrl and tokenUrl are, like the credentials
+                 above, fields the resource insists on and this
+                 implementation never reads; they repeat the issuer so that
+                 they point nowhere new.
+
+                 jwtAuthorizationGrantEnabled is the switch itself, and has no
+                 field on the provider, so it is carried in extraConfig.
+                 useJwksUrl is not stated, for the reason given at the kernel
+                 realm's broker further down: the provider sets it from
+                 jwksUrl.
+
+                 No tokens stored, no email trusted, nobody signed in by
+                 default: nothing of a person comes from this issuer except
+                 the claim that it is them.
+
+                 Orphan and everything except LateInitialize, like every other
+                 identity object here, and with more at stake than most: the
+                 links of the people who agreed hang on this entry, and
+                 Keycloak deletes them with it. An entry that went on a
+                 reconcile that could not read the projection would take
+                 every one of them along. */}}
+            ---
+            apiVersion: oidc.keycloak.crossplane.io/v1alpha1
+            kind: IdentityProvider
+            metadata:
+              name: {{ $tenant }}-vouching-{{ $p }}-idp
+              annotations:
+                crossplane.io/external-name: {{ $vouchAlias }}
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-vouching-idp-{{ $p }}
+            spec:
+              deletionPolicy: Orphan
+              managementPolicies: ["Observe", "Create", "Update", "Delete"]
+              forProvider:
+                realm: {{ $realm }}
+                alias: {{ $vouchAlias }}
+                displayName: {{ printf "Vouching (%s)" $p | quote }}
+                providerId: jwt-authorization-grant
+                enabled: true
+                hideOnLoginPage: true
+                linkOnly: true
+                authenticateByDefault: false
+                trustEmail: false
+                storeToken: false
+                addReadTokenRoleOnCreate: false
+                backchannelSupported: false
+                disableUserInfo: true
+                syncMode: IMPORT
+                validateSignature: true
+                issuer: {{ $vouchIssuer }}
+                jwksUrl: {{ printf "http://%s.%s.svc.cluster.local:%s%s" $v.service $ns $v.port $v.path | quote }}
+                authorizationUrl: {{ $vouchIssuer }}
+                tokenUrl: {{ $vouchIssuer }}
+                extraConfig:
+                  jwtAuthorizationGrantEnabled: "true"
+                clientIdSecretRef:
+                  name: {{ $tenant }}-vouching-issuer-credential
+                  namespace: {{ $identityNs }}
+                  key: client_id
+                clientSecretSecretRef:
+                  name: {{ $tenant }}-vouching-issuer-credential
+                  namespace: {{ $identityNs }}
+                  key: client_secret
+              providerConfigRef:
+                name: keycloak
+
+            {{- /* The client's secret, generated exactly as the exchange
+                 client's is and for the reasons given at the zone client's:
+                 by External Secrets and not minted by Keycloak, once and
+                 never again, no symbols.
+
+                 In the tenant's namespace this time, because that is where
+                 the component runs and the Secret is the component's to
+                 read. And under the key "secret", not "client-secret": the
+                 Secret below is templated, and a template reads a key with a
+                 hyphen in it only the long way round. */}}
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              name: {{ $tenant }}-vouching-{{ $p }}-password
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: vouching-password-{{ $p }}
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: generators.external-secrets.io/v1alpha1
+                  kind: Password
+                  metadata:
+                    name: {{ $vouchSecret }}
+                    namespace: {{ $ns }}
+                    labels:
+                      app.kubernetes.io/managed-by: crossplane
+                  spec:
+                    length: 48
+                    digits: 8
+                    symbols: 0
+                    noUpper: false
+                    allowRepeat: true
+                    secretKeys:
+                      - secret
+              providerConfigRef:
+                name: kubernetes
+
+            {{- /* What the component is told: the Secret VouchingSecretName
+                 names, in the tenant's namespace, under the four keys
+                 vouching.go lists. The generated secret, and beside it the
+                 three things that are not secret and that the component
+                 would otherwise have to work out the way this file does --
+                 what to call itself in a statement, which client to ask as,
+                 and where.
+
+                 Where is the realm's token endpoint as Keycloak is reached
+                 from inside the cluster (identity.internalUrl, which the
+                 broker further down uses for the same server-to-server
+                 half), not the public one: the component is a workload of
+                 the cluster and has no reason to leave it through the
+                 ingress and come back.
+
+                 The template is External Secrets' and not this function's,
+                 which is why the one value it fills in is written inside a
+                 raw string.
+
+                 Written once, like the secret in it. So an address that
+                 changes later -- a cluster that moves its Keycloak -- is not
+                 followed: the Secret is deleted and made again, which is
+                 also a new client secret. */}}
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              name: {{ $tenant }}-vouching-{{ $p }}-secret
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: vouching-secret-{{ $p }}
+            spec:
+              {{- /* Ready when the ExternalSecret is, as for the zone's: the
+                   sequencer rule below holds the Client back on it. */}}
+              readiness:
+                policy: DeriveFromObject
+              forProvider:
+                manifest:
+                  apiVersion: external-secrets.io/v1
+                  kind: ExternalSecret
+                  metadata:
+                    name: {{ $vouchSecret }}
+                    namespace: {{ $ns }}
+                    labels:
+                      app.kubernetes.io/managed-by: crossplane
+                  spec:
+                    refreshPolicy: CreatedOnce
+                    refreshInterval: "0"
+                    target:
+                      name: {{ $vouchSecret }}
+                      creationPolicy: Owner
+                      template:
+                        metadata:
+                          labels:
+                            app.kubernetes.io/managed-by: gentian-os
+                        data:
+                          VOUCHING_ISSUER: {{ $vouchIssuer | quote }}
+                          VOUCHING_CLIENT_ID: {{ $vouchAlias | quote }}
+                          VOUCHING_CLIENT_SECRET: "{{ `{{ .secret }}` }}"
+                          VOUCHING_TOKEN_URL: {{ printf "%s/realms/%s/protocol/openid-connect/token" $kcInternal $realm | quote }}
+                    dataFrom:
+                      - sourceRef:
+                          generatorRef:
+                            apiVersion: generators.external-secrets.io/v1alpha1
+                            kind: Password
+                            name: {{ $vouchSecret }}
+              providerConfigRef:
+                name: kubernetes
+
+            {{- /* The client the component asks with, and does nothing else
+                 with.
+
+                 Confidential, with every flow off, as the exchange client is:
+                 nobody signs in through it and it is nobody itself. What it
+                 can do is in two attributes the provider has no fields for:
+                 that it may use the JWT authorization grant, and for which
+                 issuer -- this component's and no other, so one vouching
+                 component cannot ask on the strength of another's
+                 statements.
+
+                 fullScopeAllowed false, for the exchange client's reason: the
+                 token is to be worth something at one app, and with it on it
+                 would carry every role of the person.
+
+                 Orphan and everything except LateInitialize, as on the
+                 zone's client above. */}}
+            ---
+            apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+            kind: Client
+            metadata:
+              name: {{ $tenant }}-vouching-{{ $p }}-client
+              annotations:
+                crossplane.io/external-name: {{ $vouchAlias }}
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-vouching-client-{{ $p }}
+            spec:
+              deletionPolicy: Orphan
+              managementPolicies: ["Observe", "Create", "Update", "Delete"]
+              forProvider:
+                clientId: {{ $vouchAlias }}
+                name: {{ printf "%s vouching (%s)" $brandName $p | quote }}
+                realmId: {{ $realm }}
+                accessType: CONFIDENTIAL
+                enabled: true
+                standardFlowEnabled: false
+                implicitFlowEnabled: false
+                directAccessGrantsEnabled: false
+                serviceAccountsEnabled: false
+                fullScopeAllowed: false
+                extraConfig:
+                  oauth2.jwt.authorization.grant.enabled: "true"
+                  oauth2.jwt.authorization.grant.idp: {{ $vouchAlias }}
+                clientSecretSecretRef:
+                  name: {{ $vouchSecret }}
+                  namespace: {{ $ns }}
+                  key: VOUCHING_CLIENT_SECRET
+              providerConfigRef:
+                name: keycloak
+
+            {{- /* One default scope, basic, as on the exchange client and for
+                 everything said there: the realm's six defaults would put
+                 the person's profile, email and roles in every token, the
+                 provider cannot hold an empty list, and basic says whose
+                 token it is and nothing about them. */}}
+            ---
+            apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+            kind: ClientDefaultScopes
+            metadata:
+              name: {{ $tenant }}-vouching-{{ $p }}-default-scopes
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-vouching-default-scopes-{{ $p }}
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $realm }}
+                clientIdRef:
+                  name: {{ $tenant }}-vouching-{{ $p }}-client
+                  policy:
+                    resolve: Always
+                defaultScopes:
+                  - basic
+              providerConfigRef:
+                name: keycloak
+
+            {{- /* The app scopes as this client's OPTIONAL scopes: the same
+                 list the exchange client has, read off the same observed
+                 scopes, so a vouching component can ask for a token for any
+                 app of the tenant that has a scope, one app at a time. The
+                 component names the scope it asks for; a token asked for
+                 with none names no app and is worth nothing at one.
+
+                 Not rendered while the list is empty, which is the
+                 provider's limit described above. Until the first app scope
+                 exists this client keeps the optional scopes Keycloak gives
+                 every client, offline_access among them. What they can add
+                 to a token of this client is what Keycloak's own mappers for
+                 them say about the person, a user name for one. With full
+                 scope off and none of them naming an audience, such a token
+                 still names no app and carries no role, and this grant
+                 answers with no refresh token whatever is asked for. */}}
+            {{- if gt (len $exchangeScopes) 0 }}
+            ---
+            apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+            kind: ClientOptionalScopes
+            metadata:
+              name: {{ $tenant }}-vouching-{{ $p }}-optional-scopes
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-vouching-optional-scopes-{{ $p }}
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $realm }}
+                clientIdRef:
+                  name: {{ $tenant }}-vouching-{{ $p }}-client
+                  policy:
+                    resolve: Always
+                optionalScopes:
+                  {{- range $scope := $exchangeScopes }}
+                  - {{ $scope }}
+                  {{- end }}
+              providerConfigRef:
+                name: keycloak
+            {{- end }}
+            {{- end }}
             {{- end }}
 
             {{- if not $adoptsKernelRealm }}
@@ -2215,3 +2623,14 @@ spec:
             - edge-exchange-password
             - edge-exchange-client-secret
             - keycloak-edge-exchange-client
+          # A vouching client's secret before the client, again for that
+          # reason. Patterns, because there is one of each per component that
+          # vouches: every vouching client waits until every vouching Secret
+          # is there, which holds one back a moment longer than it has to and
+          # is simpler than a rule nobody can write per component. A tenant
+          # with no such component has nothing matching the last entry, so
+          # nothing is held back on the first two matching nothing either.
+          - sequence:
+            - vouching-password-.*
+            - vouching-secret-.*
+            - keycloak-vouching-client-.*

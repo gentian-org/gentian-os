@@ -22,6 +22,10 @@ import (
 // (cmd/bouncer, BOUNCER_CHECK_LISTEN: the two must agree).
 const RightsCheckPort = int32(8082)
 
+// RegistrarPort is the registrar's listener (internal/registrar, REGISTRAR_ADDR:
+// the two must agree).
+const RegistrarPort = int32(9445)
+
 // ContractNetworkPolicies are the two policies of one granted contract: the
 // consumer's pods may leave for the provider's, and the provider's pods admit
 // the consumer's. Nothing, when the consumer was granted nothing of it.

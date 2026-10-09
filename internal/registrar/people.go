@@ -977,13 +977,18 @@ func (s *Server) setPasswordPolicy(w http.ResponseWriter, r *http.Request, c cal
 // Keycloak event with no partner is exactly what an audit looks for.
 func (s *Server) recordIdentityAction(r *http.Request, c call, action string, realm identity.Realm, target string) {
 	ctx := r.Context()
+	// A component that was admitted by its own key is recorded as itself.
+	principal := c.subject
+	if c.component != "" {
+		principal = c.component
+	}
 	s.cfg.Log.InfoContext(ctx, "identity action",
 		"request_id", reqID(ctx),
 		"action", action,
 		"realm", realm.Name(),
 		"tenant", r.PathValue("t"),
 		"target", target,
-		"principal", c.subject,
+		"principal", principal,
 		"decision", c.decision,
 	)
 	if s.cfg.Record == nil {
@@ -999,7 +1004,7 @@ func (s *Server) recordIdentityAction(r *http.Request, c call, action string, re
 		Realm:     realm.Name(),
 		Tenant:    r.PathValue("t"),
 		Target:    target,
-		Principal: c.subject,
+		Principal: principal,
 		Decision:  c.decision,
 	})
 	if err != nil {

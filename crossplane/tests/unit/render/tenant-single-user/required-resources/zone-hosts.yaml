@@ -6,6 +6,10 @@
 # observed here: the first pass after an app starts asking. The scope is
 # rendered; its audience mapper and its place among the exchange client's
 # optional scopes wait for the scope's id.
+#
+# No component of this tenant vouches for people, and the projection says so
+# with an empty list rather than by leaving the key out, which is what the
+# operator writes. Nothing of vouching is rendered.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -21,3 +25,4 @@ data:
     desktop
   exchangeProfiles: |
     cloud
+  vouchingProfiles: ""

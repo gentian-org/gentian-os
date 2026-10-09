@@ -51,9 +51,12 @@ const (
 
 func rightsCheckSecretName(component string) string { return "rights-check-" + component }
 
+// wantsRightsCheck reports whether the component is given a key of its own:
+// one that declares the rights check, and one that vouches for people, which
+// presents the same key where it takes a link away (vouching.go).
 func wantsRightsCheck(profile *gentianov1alpha1.ComponentProfile) bool {
 	services := profile.Services()
-	return services != nil && services.Rights != nil
+	return services != nil && (services.Rights != nil || services.Vouching != nil)
 }
 
 func rightsCheckURL(bouncerService string) string {
@@ -144,17 +147,43 @@ type bouncerChecker struct {
 
 // rightsCheckers are the checkers the bouncer's table must hold: one per
 // component that declares the requirement and holds its key.
+func rightsCheckers(ctx context.Context, c client.Reader) ([]bouncerChecker, error) {
+	keys, err := componentKeys(ctx, c, wantsRightsCheck)
+	if err != nil {
+		return nil, err
+	}
+	var out []bouncerChecker
+	for _, k := range keys {
+		out = append(out, bouncerChecker{Tenant: k.Tenant, Component: k.Component, KeyHash: k.KeyHash})
+	}
+	return out, nil
+}
+
+// componentKey is one component that holds a key of its own, with the hash
+// of the key. The key itself never leaves the component's Secret.
+type componentKey struct {
+	Tenant    string
+	Component string
+	// Profile is the profile the component runs.
+	Profile string
+	KeyHash string
+}
+
+// componentKeys are the components that hold a key and whose profile says,
+// now, that they want it for the purpose asked about. It is the one reading
+// of those Secrets: the bouncer's table and the registrar's list are both
+// written from it (rightsCheckers, vouchingKeys), each with its own wants.
 //
 // The label finds the candidates and decides nothing. An entry is written
 // only for a Secret in a tenant's namespace that a Component of that
 // namespace controls, and whose profile declares the requirement now. The
 // tenant is the namespace's, never something the Secret says about itself.
-func rightsCheckers(ctx context.Context, c client.Reader) ([]bouncerChecker, error) {
+func componentKeys(ctx context.Context, c client.Reader, wants func(*gentianov1alpha1.ComponentProfile) bool) ([]componentKey, error) {
 	list := &corev1.SecretList{}
 	if err := c.List(ctx, list, client.MatchingLabels{rightsCheckerLabel: "true"}); err != nil {
 		return nil, err
 	}
-	var out []bouncerChecker
+	var out []componentKey
 	for i := range list.Items {
 		secret := &list.Items[i]
 		tenant, ok := strings.CutPrefix(secret.Namespace, "tenant-")
@@ -181,11 +210,13 @@ func rightsCheckers(ctx context.Context, c client.Reader) ([]bouncerChecker, err
 			}
 			return nil, err
 		}
-		if !wantsRightsCheck(profile) {
+		if !wants(profile) {
 			continue
 		}
 		sum := sha256.Sum256(key)
-		out = append(out, bouncerChecker{Tenant: tenant, Component: comp.Name, KeyHash: hex.EncodeToString(sum[:])})
+		out = append(out, componentKey{
+			Tenant: tenant, Component: comp.Name, Profile: profile.Name, KeyHash: hex.EncodeToString(sum[:]),
+		})
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].Tenant != out[j].Tenant {

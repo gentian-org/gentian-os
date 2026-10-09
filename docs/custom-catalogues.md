@@ -366,6 +366,32 @@ cannot write, cannot list, and cannot name another tenant's app, and the compone
 credential of the authorization store. The answer says who in the tenant may use what, so the
 declaration needs `trustTier: platform`.
 
+**A component that obtains a person's token while the person is away** declares vouching
+(`spec.requires.services.vouching`, with `keys.service`, `keys.port` and optionally `keys.path`:
+where the component publishes its signing keys as a JWKS). It needs `trustTier: platform`. The
+platform enters it in the tenant's realm as a trusted issuer under the alias `vouch-<profile>`,
+gives it a client of the same name to ask with, and tells it what it has to know in the Secret
+`vouching-<profile>` (`VOUCHING_ISSUER`, `VOUCHING_CLIENT_ID`, `VOUCHING_CLIENT_SECRET`,
+`VOUCHING_TOKEN_URL`). The component signs a statement of at most a few minutes that names the
+issuer, the person's subject (their id in the realm), an id of its own, and as its audience the
+realm's issuer as the realm's discovery document names it, and posts it to the token address with the grant `urn:ietf:params:oauth:grant-type:jwt-bearer` and one scope,
+`app-<profile of the app>`. The realm answers with a token of that person for that app and nothing
+else.
+
+It answers only for a person who is linked to that issuer, and who is linked is not the
+component's to decide:
+
+- **Linking needs the person's own token.** `POST /v1/tenants/<t>/vouching/<profile>/link` at the
+  registrar, with the person's token as the bearer, links that person and nobody else. A component
+  that shows a person a page asking for their consent holds that token while they are on it.
+- **Unlinking only takes away.** `DELETE /v1/tenants/<t>/vouching/<profile>/people/<id>` is the
+  person's, an administrator's of the tenant's people, and the component's own, presenting its key
+  (`RIGHTS_CHECK_KEY`, which a vouching component is given as well) as the bearer. A component
+  removes the links to its own issuer and no other.
+
+So the people a component can speak for are the people who said so, for as long as nobody took it
+back.
+
 **An app that opens mailboxes with the person's sign-in token** (IMAP XOAUTH2) declares
 `spec.requires.services.mail.imap.tokenSignIn: true`, beside the sign-in client it needs
 (`spec.requires.services.identity.oidc`). Its client is given the optional scope `mailbox`; a token

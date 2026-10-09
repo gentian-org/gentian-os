@@ -382,6 +382,9 @@ var inClusterAddressFiles = map[string][]kernelAddress{
 	// The same database, for the units of a backup and the Job of a deletion
 	// that run beside kernel-postgres as the database's owner.
 	"internal/backup/desktop.go": {{"kernel-data", 5432}},
+	// A name a component's statements carry as their issuer, in a tenant's
+	// namespace: never dialled, by this program or any other.
+	"internal/controller/vouching.go": {},
 	// The tenants' MariaDB, in a system namespace.
 	"internal/controller/tenantrestore_retained.go": {},
 	// The proxy's upstream is a tenant's Service.

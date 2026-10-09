@@ -7,6 +7,14 @@
 # "notes" and "wiki" each get a client scope that names them as a token's
 # audience, and catalogue-test-app -- installed, on spec.apps, and not asking
 # -- gets none.
+#
+# vouchingProfiles is the components that vouch for people at the realm
+# (requires.services.vouching), one line each: profile, Service, port, path.
+# "scribe" publishes its keys at the default path on a Service called what it
+# is; "steward" on a Service of another name, another port and a path of its
+# own, so that none of the four is taken from another. Each gets an identity
+# provider entry, a client and a Secret of the tenant's namespace, and both
+# clients may ask for the two app scopes above.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -22,3 +30,6 @@ data:
   exchangeProfiles: |
     notes
     wiki
+  vouchingProfiles: |
+    scribe scribe 8080 /.well-known/jwks.json
+    steward steward-keys 8443 /keys/current.json

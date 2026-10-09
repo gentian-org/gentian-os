@@ -222,6 +222,66 @@ type ServiceRequirements struct {
 	// a network path to where it is answered.
 	// +optional
 	Rights *RightsRequirement `json:"rights,omitempty"`
+
+	// Vouching declares that the component obtains tokens of a person who is
+	// not at a browser, on the strength of that person's earlier consent: it
+	// signs a short statement naming the person, and the tenant's realm
+	// answers with a token of that person for one app.
+	// +optional
+	Vouching *VouchingRequirement `json:"vouching,omitempty"`
+}
+
+// VouchingRequirement declares that a component vouches for people at the
+// tenant's realm (RFC 7523, the JWT authorization grant).
+//
+// The platform then, for each install:
+//
+//   - enters the component in the tenant's realm as a trusted issuer, under
+//     the alias vouch-<profile>, with the address its keys are published at;
+//   - gives it a client of the realm to ask with, vouch-<profile>, which can
+//     do nothing else, and which may ask for the scope of any app of the
+//     tenant that has one (app-<profile>, which makes that app the token's
+//     audience);
+//   - delivers the client's secret and what the component has to know in the
+//     Secret vouching-<profile> of the tenant's namespace (VOUCHING_ISSUER,
+//     VOUCHING_CLIENT_ID, VOUCHING_CLIENT_SECRET, VOUCHING_TOKEN_URL);
+//   - gives it the component's own key (the Secret rights-check-<profile>),
+//     as for requires.services.rights.
+//
+// The realm issues a token only for a person who is linked to that issuer.
+// Nothing here links anybody: a person is linked on a request that carries
+// that person's own token, and unlinked on theirs, an administrator's, or
+// the component's own. So the people a component can speak for are the
+// people who said so.
+//
+// A component that can obtain a person's token for any app of the tenant is
+// of platform trust.
+type VouchingRequirement struct {
+	// Keys says where the component publishes the keys its statements are
+	// signed with, as a JWKS. The realm fetches them from there.
+	Keys VouchingKeys `json:"keys"`
+}
+
+// VouchingKeys is the address of a component's signing keys: a Service of the
+// component, in the tenant's namespace.
+type VouchingKeys struct {
+	// Service is the name of the component's Service.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	Service string `json:"service"`
+
+	// Port is the Service's port.
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=65535
+	Port int32 `json:"port"`
+
+	// Path is where the JWKS is served.
+	// +optional
+	// +kubebuilder:default="/.well-known/jwks.json"
+	// +kubebuilder:validation:Pattern=`^/[A-Za-z0-9._~/-]*$`
+	// +kubebuilder:validation:MaxLength=256
+	Path string `json:"path,omitempty"`
 }
 
 // RightsRequirement declares that a component asks the platform one question:

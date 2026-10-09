@@ -170,6 +170,16 @@ func kernelEgressTargets(profile *gentianov1alpha1.ComponentProfile, cfg Config)
 		if kr.Rights != nil {
 			add(cfg.ServicesNamespace, RightsCheckPort)
 		}
+		// Vouching: the bouncer's listener for the rights check, which a
+		// vouching component is given a key for as well, and the registrar,
+		// where a person is linked to the component and where it takes a
+		// link away. One port of each namespace.
+		if kr.Vouching != nil {
+			add(cfg.ServicesNamespace, RightsCheckPort)
+			add(layout.Namespace(layout.Control), RegistrarPort)
+			// And the realm, which it posts its statements to.
+			add(layout.Namespace(layout.Authentication))
+		}
 	}
 
 	for _, ns := range gentianov1alpha1.ProfileKernelEgressNamespaces(profile) {

@@ -180,6 +180,15 @@ func (r *GatewayPlatformReconciler) SetupWithManager(mgr ctrl.Manager) error {
 				return obj.GetLabels()[rightsCheckerLabel] == "true"
 			})),
 		).
+		// A profile that starts or stops declaring a requirement a key is
+		// given for: the Secret does not change then, and the bouncer's
+		// table and the registrar's list must still follow, because a key
+		// counts only while the profile declares what it is for.
+		Watches(
+			&gentianov1alpha1.ComponentProfile{},
+			handler.EnqueueRequestsFromMapFunc(mapToPlatform),
+			builder.WithPredicates(predicate.GenerationChangedPredicate{}),
+		).
 		// A tenant realm's exchange client secret: the bouncer presents it,
 		// from the one Secret this reconciler gathers them into.
 		Watches(

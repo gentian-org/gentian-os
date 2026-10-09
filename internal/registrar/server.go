@@ -27,6 +27,10 @@ SPDX-License-Identifier: MPL-2.0
 // ones the director served; a caller changes the address it calls and
 // nothing else.
 //
+// One caller is not a person: a component that vouches for people, which
+// presents the key the operator gave it and may read and take away the links
+// to itself, on two routes and no other (vouching.go).
+//
 // One thing it will not do for anybody: change who holds a platform role.
 // That rule lives in internal/registrar/identity/guard.go, on the way every
 // write leaves.
@@ -80,6 +84,9 @@ type Identity interface {
 	ActivateAccount(ctx context.Context, r identity.Realm, id, email string, requireMFA bool, clientID, redirectURI string) (identity.Activation, error)
 	GroupMembers(ctx context.Context, r identity.Realm, path string) ([]identity.Person, error)
 	UserCount(ctx context.Context, r identity.Realm) (int, error)
+	VouchingLinked(ctx context.Context, r identity.Realm, id, profile string) (bool, error)
+	LinkVouching(ctx context.Context, r identity.Realm, id, profile string) error
+	UnlinkVouching(ctx context.Context, r identity.Realm, id, profile string) error
 }
 
 // Config assembles a Server.
@@ -118,6 +125,11 @@ type Config struct {
 	// tenant: the settings templates live there, and the registrar relays
 	// the caller's own token to them. Empty means templates are not offered.
 	DesktopAPI string
+	// VouchingKeys is the list of components that vouch for people, each
+	// with the hash of its own key, as the operator writes it. Optional:
+	// with none, no component is recognised by its key, and the people who
+	// may take a link away still can (vouching.go).
+	VouchingKeys *VouchingKeys
 }
 
 // Server is the registrar's API.
@@ -200,11 +212,19 @@ func reqID(ctx context.Context) string {
 
 // call is what a handler receives once the caller is known and allowed.
 type call struct {
-	// subject is the caller's Keycloak subject.
+	// subject is the caller's Keycloak subject. Empty for the one caller
+	// that is not a person (component).
 	subject string
 	// name is how the caller is shown: their address, or their name. Never
 	// used for a decision.
 	name string
+	// realm is the realm that issued the caller's token. No route decides by
+	// it but the ones about a person's own link, which are that person's
+	// only with a token of the tenant's realm.
+	realm string
+	// component names a component that was admitted by its own key, where a
+	// route admits one (vouching.go), as "component:<tenant>/<profile>".
+	component string
 	// decision is the relation and object that permitted the call, in the
 	// form the director's commit trailer uses: "can_manage_users tenant:demo".
 	decision string
@@ -242,6 +262,16 @@ func tenantObject(r *http.Request) (string, error) {
 // relation to the route's object. On refusal it has already answered, and ok
 // is false. A store that does not answer is a refusal.
 func (s *Server) authorize(w http.ResponseWriter, r *http.Request, pattern, relation string, obj object) (c call, ok bool) {
+	return s.authorizeAs(w, r, pattern, func(*authn.Identity) string { return relation }, obj)
+}
+
+// authorizeAs is authorize for a route whose relation depends on who is
+// calling: relation is asked once the caller is known, and names what that
+// caller must hold. It is still one question to the store, and still asked
+// before anything is done.
+func (s *Server) authorizeAs(
+	w http.ResponseWriter, r *http.Request, pattern string, relationFor func(*authn.Identity) string, obj object,
+) (c call, ok bool) {
 	ctx := r.Context()
 	ident, err := s.cfg.Authn.FromRequest(r)
 	if err != nil {
@@ -260,6 +290,7 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request, pattern, rela
 		s.fail(w, r, http.StatusBadRequest, "invalid name")
 		return call{}, false
 	}
+	relation := relationFor(ident)
 	allowed, err := s.cfg.Authz.Check(ctx, reqID(ctx), user, relation, target)
 	if err != nil {
 		// The decision point is unreachable: refuse, and say it is us.
@@ -274,7 +305,7 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request, pattern, rela
 	if name == "" {
 		name = ident.Name
 	}
-	return call{subject: user[len("user:"):], name: name, decision: relation + " " + target}, true
+	return call{subject: user[len("user:"):], name: name, realm: ident.Realm, decision: relation + " " + target}, true
 }
 
 // guarded registers a route with the relation it requires. There is no other
@@ -345,7 +376,8 @@ func (s *Server) action(pattern, relation string, obj object, h func(http.Respon
 // happens once, and people do not belong in an append-only history.
 // can_manage_users throughout, except the password policy, which is a
 // statement about the tenant rather than about a person and sits with
-// can_set_policy.
+// can_set_policy, and a person's link to a component that vouches for them,
+// which is theirs to make and so sits with can_enter.
 func (s *Server) routes() {
 	s.mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
@@ -387,6 +419,15 @@ func (s *Server) routes() {
 	// How many people hold an account on this cluster. A count and no
 	// names, so it is can_audit like every other read of the cluster.
 	s.guarded("GET /v1/clusters/{c}/people/count", "can_audit", s.clusterObject, s.clusterUserCount)
+
+	// A person's link to a component that vouches for people, which is that
+	// person's consent to it (vouching.go). Linking is open to whoever may
+	// enter the tenant and links the caller and nobody else. The link is read
+	// and taken away by that person, by whoever manages the tenant's people,
+	// and by the component itself.
+	s.guarded("POST /v1/tenants/{t}/vouching/{profile}/link", "can_enter", tenantObject, s.linkVouching)
+	s.linkHolders("GET /v1/tenants/{t}/vouching/{profile}/people/{id}", s.vouchingLinked)
+	s.linkHolders("DELETE /v1/tenants/{t}/vouching/{profile}/people/{id}", s.unlinkVouching)
 }
 
 func (s *Server) fail(w http.ResponseWriter, r *http.Request, code int, msg string) {

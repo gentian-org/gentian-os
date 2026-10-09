@@ -179,3 +179,58 @@ status:
     status: "True"
   - type: Synced
     status: "True"
+---
+# The vouching clients' secrets, generated and delivered, for both components
+# that vouch: the sequencer holds every vouching client back until every one
+# of these is ready.
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  name: render-fixture-vouching-scribe-password
+  annotations:
+    crossplane.io/composition-resource-name: vouching-password-scribe
+status:
+  conditions:
+  - type: Ready
+    status: "True"
+  - type: Synced
+    status: "True"
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  name: render-fixture-vouching-scribe-secret
+  annotations:
+    crossplane.io/composition-resource-name: vouching-secret-scribe
+status:
+  conditions:
+  - type: Ready
+    status: "True"
+  - type: Synced
+    status: "True"
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  name: render-fixture-vouching-steward-password
+  annotations:
+    crossplane.io/composition-resource-name: vouching-password-steward
+status:
+  conditions:
+  - type: Ready
+    status: "True"
+  - type: Synced
+    status: "True"
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  name: render-fixture-vouching-steward-secret
+  annotations:
+    crossplane.io/composition-resource-name: vouching-secret-steward
+status:
+  conditions:
+  - type: Ready
+    status: "True"
+  - type: Synced
+    status: "True"

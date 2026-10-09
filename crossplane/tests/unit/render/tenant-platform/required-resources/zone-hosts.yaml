@@ -9,6 +9,12 @@
 #
 # desktop and admin repeat what the base list already has, which is what the
 # projection really looks like, and proves the union does not double them.
+#
+# "herald" vouches for people (requires.services.vouching), in the tenant
+# that adopts the kernel realm: its identity provider entry and its client
+# are composed in that realm, and its Secret in the platform tenant's
+# namespace. No app of this tenant asks for an exchanged token, so there is
+# no app scope and the client is given no optional scopes yet.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -22,3 +28,5 @@ data:
     admin
     desktop
     wiki
+  vouchingProfiles: |
+    herald herald 8080 /.well-known/jwks.json

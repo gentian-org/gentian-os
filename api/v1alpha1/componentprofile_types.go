@@ -88,6 +88,7 @@ const (
 // +kubebuilder:validation:XValidation:rule="!has(self.requires) || !has(self.requires.services) || !has(self.requires.services.rights) || self.trustTier == 'platform'",message="requires.services.rights requires trustTier platform: the answer says who in the tenant may use what"
 // +kubebuilder:validation:XValidation:rule="!has(self.expose) || self.expose.all(e, !(has(e.exchangeToken) && e.exchangeToken) || (e.surface == 'gateway' && e.authMode == 'oidc'))",message="exchangeToken is for a gateway entry behind a session (authMode oidc): there is a session's token to exchange only there"
 // +kubebuilder:validation:XValidation:rule="!has(self.expose) || !(self.expose.exists(e, has(e.forwardToken) && e.forwardToken) && self.expose.exists(e, has(e.exchangeToken) && e.exchangeToken))",message="a component asks for forwardToken or for exchangeToken, not both: its entries share one host, and a host's backends are handed one token or the other"
+// +kubebuilder:validation:XValidation:rule="!has(self.requires) || !has(self.requires.services) || !has(self.requires.services.vouching) || self.trustTier == 'platform'",message="requires.services.vouching requires trustTier platform: the component can obtain a person's token for any app of the tenant"
 // A service may expose -- a console is not a contract surface -- but only on
 // the gateway. The perimeter has no session, and a service console published
 // there is never what anybody meant.

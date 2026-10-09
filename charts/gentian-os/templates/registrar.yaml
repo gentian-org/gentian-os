@@ -189,6 +189,15 @@ spec:
                  because there is no credential for it to cross with. */}}
             - name: REGISTRAR_REALM_CREDENTIALS_PATH
               value: /etc/gentian/realms
+            {{- /* The components that vouch for people
+                 (requires.services.vouching), each with the hash of the key
+                 the operator gave it. A component presents its key to read
+                 and remove the links to itself; the registrar recognises it
+                 by this list, and holds it to the tenant and the profile
+                 written beside the hash. The keys themselves are in the
+                 components' Secrets and never here. */}}
+            - name: REGISTRAR_VOUCHING_KEYS
+              value: /etc/gentian/vouching/keys.json
             {{- /* The durable record of WHO WAS ALLOWED to ask for a change
                  to a person (S7A.17).
 
@@ -237,6 +246,9 @@ spec:
             - name: realm-credentials
               mountPath: /etc/gentian/realms
               readOnly: true
+            - name: vouching-keys
+              mountPath: /etc/gentian/vouching
+              readOnly: true
             {{- with .Values.trustAnchorSecret }}
             - name: kernel-trust-anchor
               mountPath: /opt/gentian-trust-anchor
@@ -250,6 +262,14 @@ spec:
         - name: realm-credentials
           secret:
             secretName: gentian-registrar-realms
+            optional: true
+        # The operator's list of components that vouch for people. Optional,
+        # and followed rather than read once: before the operator writes it,
+        # and on a cluster where no component vouches, no component is
+        # recognised by its key and everything else works as it did.
+        - name: vouching-keys
+          configMap:
+            name: registrar-vouching-keys
             optional: true
         {{- with .Values.trustAnchorSecret }}
         - name: kernel-trust-anchor

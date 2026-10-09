@@ -149,6 +149,12 @@ func (r *GatewayPlatformReconciler) reconcileKernelHTTPRoutes(ctx context.Contex
 	if err := r.ensureBouncerRouteTable(ctx, specs); err != nil {
 		return fmt.Errorf("ensure bouncer route table: %w", err)
 	}
+	// The registrar's list of the components that vouch for people, written
+	// from the same Secrets as the bouncer's checkers and at the same moment,
+	// so a key is known in both places or in neither.
+	if err := r.ensureRegistrarVouchingKeys(ctx); err != nil {
+		return fmt.Errorf("ensure registrar vouching keys: %w", err)
+	}
 	expected := make(map[string]struct{}, len(specs))
 	expectedPolicies := map[string]struct{}{}
 	for _, spec := range specs {

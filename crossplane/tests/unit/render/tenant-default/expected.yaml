@@ -7,7 +7,7 @@ status:
   conditions:
   - lastTransitionTime: "2024-01-01T00:00:00Z"
     message: 'Unready resources: keycloak-broker-client, keycloak-broker-client-id,
-      keycloak-dovecot-oidc-client, and 27 more'
+      keycloak-dovecot-oidc-client, and 36 more'
     reason: Creating
     status: "False"
     type: Ready
@@ -1354,6 +1354,351 @@ spec:
   providerConfigRef:
     name: keycloak
 ---
+apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+kind: Client
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-vouching-client-scribe
+    crossplane.io/external-name: vouch-scribe
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-vouching-scribe-client
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    accessType: CONFIDENTIAL
+    clientId: vouch-scribe
+    clientSecretSecretRef:
+      key: VOUCHING_CLIENT_SECRET
+      name: vouching-scribe
+      namespace: tenant-render-fixture
+    directAccessGrantsEnabled: false
+    enabled: true
+    extraConfig:
+      oauth2.jwt.authorization.grant.enabled: "true"
+      oauth2.jwt.authorization.grant.idp: vouch-scribe
+    fullScopeAllowed: false
+    implicitFlowEnabled: false
+    name: Acme Cloud vouching (scribe)
+    realmId: render-fixture
+    serviceAccountsEnabled: false
+    standardFlowEnabled: false
+  managementPolicies:
+  - Observe
+  - Create
+  - Update
+  - Delete
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+kind: Client
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-vouching-client-steward
+    crossplane.io/external-name: vouch-steward
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-vouching-steward-client
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    accessType: CONFIDENTIAL
+    clientId: vouch-steward
+    clientSecretSecretRef:
+      key: VOUCHING_CLIENT_SECRET
+      name: vouching-steward
+      namespace: tenant-render-fixture
+    directAccessGrantsEnabled: false
+    enabled: true
+    extraConfig:
+      oauth2.jwt.authorization.grant.enabled: "true"
+      oauth2.jwt.authorization.grant.idp: vouch-steward
+    fullScopeAllowed: false
+    implicitFlowEnabled: false
+    name: Acme Cloud vouching (steward)
+    realmId: render-fixture
+    serviceAccountsEnabled: false
+    standardFlowEnabled: false
+  managementPolicies:
+  - Observe
+  - Create
+  - Update
+  - Delete
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+kind: ClientDefaultScopes
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-vouching-default-scopes-scribe
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-vouching-scribe-default-scopes
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    clientIdRef:
+      name: render-fixture-vouching-scribe-client
+      policy:
+        resolve: Always
+    defaultScopes:
+    - basic
+    realmId: render-fixture
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+kind: ClientDefaultScopes
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-vouching-default-scopes-steward
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-vouching-steward-default-scopes
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    clientIdRef:
+      name: render-fixture-vouching-steward-client
+      policy:
+        resolve: Always
+    defaultScopes:
+    - basic
+    realmId: render-fixture
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: oidc.keycloak.crossplane.io/v1alpha1
+kind: IdentityProvider
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-vouching-idp-scribe
+    crossplane.io/external-name: vouch-scribe
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-vouching-scribe-idp
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    addReadTokenRoleOnCreate: false
+    alias: vouch-scribe
+    authenticateByDefault: false
+    authorizationUrl: https://vouch-scribe.tenant-render-fixture.svc
+    backchannelSupported: false
+    clientIdSecretRef:
+      key: client_id
+      name: render-fixture-vouching-issuer-credential
+      namespace: kernel-authentication
+    clientSecretSecretRef:
+      key: client_secret
+      name: render-fixture-vouching-issuer-credential
+      namespace: kernel-authentication
+    disableUserInfo: true
+    displayName: Vouching (scribe)
+    enabled: true
+    extraConfig:
+      jwtAuthorizationGrantEnabled: "true"
+    hideOnLoginPage: true
+    issuer: https://vouch-scribe.tenant-render-fixture.svc
+    jwksUrl: http://scribe.tenant-render-fixture.svc.cluster.local:8080/.well-known/jwks.json
+    linkOnly: true
+    providerId: jwt-authorization-grant
+    realm: render-fixture
+    storeToken: false
+    syncMode: IMPORT
+    tokenUrl: https://vouch-scribe.tenant-render-fixture.svc
+    trustEmail: false
+    validateSignature: true
+  managementPolicies:
+  - Observe
+  - Create
+  - Update
+  - Delete
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: oidc.keycloak.crossplane.io/v1alpha1
+kind: IdentityProvider
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-vouching-idp-steward
+    crossplane.io/external-name: vouch-steward
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-vouching-steward-idp
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    addReadTokenRoleOnCreate: false
+    alias: vouch-steward
+    authenticateByDefault: false
+    authorizationUrl: https://vouch-steward.tenant-render-fixture.svc
+    backchannelSupported: false
+    clientIdSecretRef:
+      key: client_id
+      name: render-fixture-vouching-issuer-credential
+      namespace: kernel-authentication
+    clientSecretSecretRef:
+      key: client_secret
+      name: render-fixture-vouching-issuer-credential
+      namespace: kernel-authentication
+    disableUserInfo: true
+    displayName: Vouching (steward)
+    enabled: true
+    extraConfig:
+      jwtAuthorizationGrantEnabled: "true"
+    hideOnLoginPage: true
+    issuer: https://vouch-steward.tenant-render-fixture.svc
+    jwksUrl: http://steward-keys.tenant-render-fixture.svc.cluster.local:8443/keys/current.json
+    linkOnly: true
+    providerId: jwt-authorization-grant
+    realm: render-fixture
+    storeToken: false
+    syncMode: IMPORT
+    tokenUrl: https://vouch-steward.tenant-render-fixture.svc
+    trustEmail: false
+    validateSignature: true
+  managementPolicies:
+  - Observe
+  - Create
+  - Update
+  - Delete
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-vouching-issuer-credential
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-vouching-issuer-credential
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        labels:
+          app.kubernetes.io/managed-by: crossplane
+        name: render-fixture-vouching-issuer-credential
+        namespace: kernel-authentication
+      stringData:
+        client_id: not-used
+        client_secret: not-used
+  providerConfigRef:
+    name: kubernetes
+---
+apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+kind: ClientOptionalScopes
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-vouching-optional-scopes-scribe
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-vouching-scribe-optional-scopes
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    clientIdRef:
+      name: render-fixture-vouching-scribe-client
+      policy:
+        resolve: Always
+    optionalScopes:
+    - app-notes
+    - app-wiki
+    realmId: render-fixture
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+kind: ClientOptionalScopes
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-vouching-optional-scopes-steward
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-vouching-steward-optional-scopes
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    clientIdRef:
+      name: render-fixture-vouching-steward-client
+      policy:
+        resolve: Always
+    optionalScopes:
+    - app-notes
+    - app-wiki
+    realmId: render-fixture
+  providerConfigRef:
+    name: keycloak
+---
 apiVersion: kubernetes.crossplane.io/v1alpha2
 kind: Object
 metadata:
@@ -1489,3 +1834,177 @@ spec:
       }
   providerConfigRef:
     name: openbao
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: vouching-password-scribe
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-vouching-scribe-password
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: generators.external-secrets.io/v1alpha1
+      kind: Password
+      metadata:
+        labels:
+          app.kubernetes.io/managed-by: crossplane
+        name: vouching-scribe
+        namespace: tenant-render-fixture
+      spec:
+        allowRepeat: true
+        digits: 8
+        length: 48
+        noUpper: false
+        secretKeys:
+        - secret
+        symbols: 0
+  providerConfigRef:
+    name: kubernetes
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: vouching-password-steward
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-vouching-steward-password
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: generators.external-secrets.io/v1alpha1
+      kind: Password
+      metadata:
+        labels:
+          app.kubernetes.io/managed-by: crossplane
+        name: vouching-steward
+        namespace: tenant-render-fixture
+      spec:
+        allowRepeat: true
+        digits: 8
+        length: 48
+        noUpper: false
+        secretKeys:
+        - secret
+        symbols: 0
+  providerConfigRef:
+    name: kubernetes
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: vouching-secret-scribe
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-vouching-scribe-secret
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: external-secrets.io/v1
+      kind: ExternalSecret
+      metadata:
+        labels:
+          app.kubernetes.io/managed-by: crossplane
+        name: vouching-scribe
+        namespace: tenant-render-fixture
+      spec:
+        dataFrom:
+        - sourceRef:
+            generatorRef:
+              apiVersion: generators.external-secrets.io/v1alpha1
+              kind: Password
+              name: vouching-scribe
+        refreshInterval: "0"
+        refreshPolicy: CreatedOnce
+        target:
+          creationPolicy: Owner
+          name: vouching-scribe
+          template:
+            data:
+              VOUCHING_CLIENT_ID: vouch-scribe
+              VOUCHING_CLIENT_SECRET: '{{ .secret }}'
+              VOUCHING_ISSUER: https://vouch-scribe.tenant-render-fixture.svc
+              VOUCHING_TOKEN_URL: http://gentian-idp-keycloak-keycloakx-http.kernel-authentication.svc.cluster.local:8080/auth/realms/render-fixture/protocol/openid-connect/token
+            metadata:
+              labels:
+                app.kubernetes.io/managed-by: gentian-os
+  providerConfigRef:
+    name: kubernetes
+  readiness:
+    policy: DeriveFromObject
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: vouching-secret-steward
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-vouching-steward-secret
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: external-secrets.io/v1
+      kind: ExternalSecret
+      metadata:
+        labels:
+          app.kubernetes.io/managed-by: crossplane
+        name: vouching-steward
+        namespace: tenant-render-fixture
+      spec:
+        dataFrom:
+        - sourceRef:
+            generatorRef:
+              apiVersion: generators.external-secrets.io/v1alpha1
+              kind: Password
+              name: vouching-steward
+        refreshInterval: "0"
+        refreshPolicy: CreatedOnce
+        target:
+          creationPolicy: Owner
+          name: vouching-steward
+          template:
+            data:
+              VOUCHING_CLIENT_ID: vouch-steward
+              VOUCHING_CLIENT_SECRET: '{{ .secret }}'
+              VOUCHING_ISSUER: https://vouch-steward.tenant-render-fixture.svc
+              VOUCHING_TOKEN_URL: http://gentian-idp-keycloak-keycloakx-http.kernel-authentication.svc.cluster.local:8080/auth/realms/render-fixture/protocol/openid-connect/token
+            metadata:
+              labels:
+                app.kubernetes.io/managed-by: gentian-os
+  providerConfigRef:
+    name: kubernetes
+  readiness:
+    policy: DeriveFromObject
