@@ -344,6 +344,16 @@ Specified in [networking.md](networking.md).
       proxy in `system-mail-dmz`; store and DKIM milter in `system-mail`;
       `TCPRoute`s on the perimeter Gateway; external IMAP/submission a
       default-off surface.
+
+      **Note, 2026-10-09:** built in another form. Postfix and Dovecot stay
+      in `system-mail`; `system-mail-dmz` holds a TCP proxy (HAProxy) for 25,
+      587 and 993 that keeps no mail and no key and passes the client's
+      address on, which is AD-9's stateless edge without a mail queue in the
+      namespace that faces the internet. No `TCPRoute`: mail does not pass
+      the Gateway. Built, not yet run on a cluster
+      ([mail.md](../design/mail.md)). Not built: external IMAP and
+      submission as a surface that is off until approved; the three ports
+      are open whenever the cluster runs its own mail.
 - [ ] `system-turn` (coturn or SFU) as a DMZ-tier service with a `UDPRoute`
       and per-session HMAC credentials, when the first conferencing profile
       requires it.

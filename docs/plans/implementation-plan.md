@@ -1362,7 +1362,7 @@ operator and the network policies name six of them.
 | MariaDB | `gentian-infra-<stage>` | `system-mariadb` | ✅ composed |
 | Redis | `gentian-infra-<stage>` | `system-cache` | ✅ composed |
 | MinIO | `gentian-infra-<stage>` | `system-s3` | ✅ composed |
-| Postfix, Dovecot, the DKIM milter | `platform-kernel` + the store's public ports | `system-mail`, `system-mail-dmz` | ✅ composed and deployed; Postfix not yet split into the DMZ |
+| Postfix, Dovecot, the DKIM milter | `platform-kernel` + the store's public ports | `system-mail`, `system-mail-dmz` | ✅ composed and deployed. Postfix was not split into the DMZ: a proxy that holds nothing stands there instead (note of 2026-10-09 below) |
 | LiteLLM, its database, vLLM instances | `platform-kernel`, installer `D-05` | `system-llm` | ✅ composed and deployed |
 
 **The design is not missing, only unbuilt.**
@@ -1471,10 +1471,21 @@ that means Postfix reaching the signer across a namespace boundary with the
 network policy to match, so it is recorded rather than half-done. Both mail
 workloads are in `system-mail` today, which is v4's shape relocated.
 
+**Note, 2026-10-09: closed, in another form.** Postfix did not move. Postfix
+and Dovecot stay in `system-mail` with no load balancer of their own, and
+`system-mail-dmz` holds a TCP proxy (HAProxy) for ports 25, 587 and 993 that
+keeps no mail, no user, no certificate and no key, passes TLS through, and
+hands the servers the client's address in a PROXY-protocol header. That is
+AD-9's stateless edge: a mail server in the DMZ would keep a queue, stored
+mail, in the namespace that faces the internet. Built, not yet run on a
+cluster; [mail.md](../design/mail.md) describes it. The DKIM signer still
+runs with Postfix.
+
 **Done when** a second tenant's desktop reaches Ready on a v5 cluster and
 every engine a catalogue app can ask for is composed and serving. Quotas,
 backup policies and per-engine network policies are not written yet, and
-neither is Postfix's move into the DMZ.
+neither is Postfix's move into the DMZ. (2026-10-09: see the note above for
+what stands in the mail DMZ instead.)
 
 ### WP-x ☐ A password manager instead of per-app SSO tricks
 

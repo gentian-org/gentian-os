@@ -7,7 +7,7 @@ what each one does, and how they work together.
 
 - Sections 1 and 2 say why there are several programs and list them in one
   table.
-- Section 3 shows how they interact, in six diagrams.
+- Section 3 shows how they interact, in seven diagrams.
 - Section 4 has one part per program, all in the same shape: what it does,
   what it must never do, what it holds, who calls it, what happens when it is
   down.
@@ -54,11 +54,11 @@ namespaces is in [kernel/namespaces.yaml](../../kernel/namespaces.yaml).
 | Program | Its job in one sentence | Runs in | Who may call it | What it holds | What it can change |
 | --- | --- | --- | --- | --- | --- |
 | **Director** | Turns a permitted request for a change into a signed commit in the deployment repository, and passes one-off commands to the operator. | `kernel-control` | The consoles' backends and the command line tool, each with the signed-in person's token. | The credential that pushes to the deployment repository, and the key that signs its commits. | The deployment repository. Nothing in the cluster directly. |
-| **Operator** | Makes the cluster match what git declares, and carries out one-off commands. | `kernel-control` | Argo CD (by applying objects), the director and the usher (on its listener), Keycloak (membership events), the Kubernetes API server (admission checks). | Wide rights in the cluster, Keycloak's administrator credential, a vault role that reads and writes every platform secret. | Everything in the cluster, Keycloak, the vault and OpenFGA. |
+| **Operator** | Makes the cluster match what git declares, and carries out one-off commands. That includes what stands beside an app or in front of it: the publishing proxy for an entry published to the internet, the sign-in service for an app with no single sign-on of its own, and what the mail servers read about each tenant. | `kernel-control` | Argo CD (by applying objects), the director and the usher (on its listener), Keycloak (membership events), the Kubernetes API server (admission checks). | Wide rights in the cluster, Keycloak's administrator credential, a vault role that reads and writes every platform secret. | Everything in the cluster, Keycloak, the vault and OpenFGA. |
 | **Custodian** | Takes a secret from the person entitled to set it and puts it in the vault; never gives one back. | `kernel-control` | The admin console's and the App Store app's backends, with the person's token. | A vault role that can write a secret and cannot read one. | Secrets in the vault (write only). |
 | **Registrar** | Keeps the list of people: invites them, puts them in groups, removes them. | `kernel-control` | The admin console's backend and the command line tool, with the person's token. | One Keycloak client secret per realm, and the login of its own database. | People and groups in Keycloak; a realm's password policy. |
 | **Usher** | Tells a signed-in person what is here, what they may open, and what the cluster currently holds of a tenant. | `kernel-control` | The consoles' backends and the command line tool, with the person's token. | An identity the operator admits to reads only. | Nothing. |
-| **Bouncer** | Checks, for every request at the front door, whether this signed-in person may enter this address. | `kernel-edge` | The Gateway only. | Nothing of its own. | Nothing. It lets a request through or refuses it. |
+| **Bouncer** | Checks, for every request at the front door, whether this signed-in person may enter this address. Answers the same question, about one tenant, for a component that was given a key for it. | `kernel-edge` | The Gateway; and, on a second listener, a component whose profile declares the rights check. | Nothing of its own. | Nothing. It lets a request through or refuses it. |
 | **Concierge** | Shows the page on the cluster's bare domain and sends a visitor to the sign-in of their workspace. | `tenant-platform`, published from `tenant-platform-dmz` | Anybody on the internet; no sign-in. | Nothing. | Nothing. |
 
 Six of the seven also hold the key that opens OpenFGA (all but the
@@ -74,6 +74,9 @@ concierge). That is a known weakness, described in section 6.
 | **Gateway** | The front door: it terminates TLS, keeps the sign-in session in a cookie, and asks the bouncer before it forwards a request. It is Envoy Gateway. | `kernel-edge` |
 | **Argo CD** | Reads the deployment repository and applies its files to the cluster. It refuses a commit that is not signed by a trusted key. | `kernel-gitops` |
 | **Keycloak** | The identity provider: it holds the people, their passwords and their groups, and issues the tokens that prove who somebody is. People are kept in *realms*: the kernel realm for platform admins, one realm per tenant for everybody else. | `kernel-authentication` |
+| **Publishing proxy** | Answers what a tenant published to the internet with no sign-in: one small proxy per published entry, written by the operator. It forwards the declared paths to the app and nothing else. | `tenant-<name>-dmz` |
+| **Sign-in sidecar** | Signs a person in to an app that supports neither OIDC nor SAML: one small service per such app, written by the operator, which makes the app's own session for a person the tenant's realm vouches for. | `tenant-<name>`, beside the app |
+| **Mail proxy** | The one thing of mail that faces the internet, on a cluster that runs its own mail: it passes connections on to the mail servers and keeps nothing. | `system-mail-dmz` |
 | **OpenFGA** | The authorization store: the one place that answers "may this person do this to that". | `kernel-authorization` |
 | **The vault** | The secret store (OpenBao). Passwords, tokens and keys live here and nowhere else. | `kernel-secrets` |
 | **The deployment repository** | The git repository that holds the cluster's desired state. | outside the cluster, at a git host |
@@ -149,7 +152,9 @@ flowchart TB
 How to read it:
 
 - A person's browser reaches only the Gateway and the concierge. Everything
-  else is inside the cluster.
+  else is inside the cluster. The concierge, like everything a tenant
+  publishes without a sign-in, is reached through the Gateway and a
+  publishing proxy; section 3.7 draws that path and the one mail takes.
 - The four programs in the middle (director, usher, custodian, registrar) are
   called by the consoles' backends, never by a browser directly. Each verifies
   the person's token and asks OpenFGA (dotted lines) before it acts.
@@ -359,6 +364,69 @@ How to read it:
   on every request it allows, which replaces any such header a client sent
   itself.
 
+### 3.7 What is reached without a sign-in
+
+```mermaid
+flowchart TB
+  NET(("Internet"))
+  subgraph EDGE["kernel-edge"]
+    GW["Gateway"]
+    BO["bouncer"]
+  end
+  subgraph IDP["kernel-authentication"]
+    KC["Keycloak"]
+  end
+  subgraph DMZ["tenant-NAME-dmz"]
+    PX["publishing proxy"]
+  end
+  subgraph TEN["tenant-NAME"]
+    APP["App"]
+    SC["sign-in sidecar"]
+  end
+  subgraph MDMZ["system-mail-dmz"]
+    MP["mail proxy"]
+  end
+  subgraph MAIL["system-mail"]
+    PF["Postfix"]
+    DC["Dovecot"]
+  end
+
+  NET -->|"https"| GW
+  GW -->|"a published entry: no session"| PX
+  PX -->|"declared paths only, identity headers removed"| APP
+  GW -->|"sign-in pages and keys of a realm: no session"| KC
+  GW -->|"/sso/acs: no session, POST only"| SC
+  GW -->|"/sso/login: session, then the bouncer"| SC
+  GW -.->|"asks, on routes with a session"| BO
+  SC -->|"makes the app's session"| APP
+  NET -->|"ports 25, 587, 993"| MP
+  MP -->|"with the client's address"| PF
+  MP -->|"with the client's address"| DC
+```
+
+How to read it:
+
+- Three things answer a request that carries no session: a publishing proxy,
+  the realm's own sign-in pages, and one path of a sign-in sidecar. Every
+  other route on the Gateway signs the person in first and asks the bouncer.
+- A publishing proxy exists only for an entry that an app's profile declares
+  for the internet and that the tenant's perimeter approver published. It
+  checks nobody. It forwards the declared paths, refuses a path that can be
+  read in more than one way, removes every header that says who a person is,
+  the cookies and the `Authorization` header, and limits size, time and the
+  number of requests from one address.
+- The sign-in sidecar has two paths. `/sso/login` is behind the session and
+  the bouncer, so only a person who may use the app begins a sign-in.
+  `/sso/acs` takes Keycloak's signed answer with no session; the sidecar
+  accepts it only if the tenant's realm signed it, for a request the sidecar
+  sent itself, in the same browser, for the same person.
+- Mail does not pass the Gateway. The mail proxy has the one load balancer
+  mail has; it holds no mail, no account and no key, TLS ends at the servers
+  behind it, and the servers accept its connections on ports nothing else
+  may reach. This exists only on a cluster that runs its own mail.
+- The limits on posts to the sign-in pages and to `/sso/acs` are set at the
+  Gateway, per client address.
+
 ## 4. The programs, one by one
 
 ### 4.1 Director
@@ -377,7 +445,15 @@ How to read it:
   cluster.
 - Handles two writers at once by using git: if a push is rejected because the
   repository moved, it re-applies the change to the new state and tries
-  again, up to eight times.
+  again, for up to one minute from the first attempt. A caller who waited
+  that long is told that another writer kept landing first.
+- Lets its git do its housekeeping inside the command that caused it, so
+  nothing is still writing to the checkout after a command has returned.
+- Stops cleanly. Some changes are finished later by a task that waits on the
+  cluster (a purge, an import, the removal of a profile that has left git).
+  When the director is told to stop, a task that is waiting stops waiting,
+  one that is writing finishes that commit first, and what is left to do is
+  in git, where the next start finds it.
 - Before a commit, asks the operator whether the cluster's resource
   definitions know every field the commit sets, and refuses the commit if a
   field would be silently dropped.
@@ -392,7 +468,7 @@ Its routes, by group. Every write is a commit unless marked as a command.
 | Apps and add-ons | Read what git says a tenant has installed; install an app; uninstall it; choose its add-ons. |
 | Catalogues | List the catalogues a tenant or the cluster installs from and their entries; add or remove a catalogue for the whole cluster or for one tenant; allow or forbid a tenant's own admins to add theirs. |
 | Repositories | Declare or remove a repository (its address) for a tenant or for the cluster. The password is the custodian's. |
-| Exposures | Read what a tenant publishes to the internet; publish or withdraw one exposure. |
+| Exposures | Read what a tenant publishes to the internet, and with it what each installed app asks to publish: the address, the paths and whether anybody signs in. Publish or withdraw one exposure. |
 | Privileges | Read which extra privileges a tenant's apps asked for; grant or revoke one. |
 | Settings | Read and change the cluster's settings and its branding; choose a tenant's resource plan; set a tenant's sign-in security policy and the languages its sign-in pages offer; set what an app may consume from other apps. |
 | Backup policy | Set or clear a tenant's backup policy; set the cluster's. |
@@ -410,6 +486,29 @@ and commits it to the deployment repository together with the exact bytes it
 checked. It fetches only from public
 https addresses, so an address somebody typed cannot be used to reach into
 the cluster ([address.go](../../internal/director/catalogue/address.go)).
+
+What it refuses, beyond a missing permission, each before anything is
+committed:
+
+- An install, or an import, of an app whose profile asks for an address name
+  the platform keeps (`desktop`, `admin`, `id` and the others in
+  [routing.md](../design/routing.md)); on a single-tenancy cluster also the
+  names the kernel itself answers on under the cluster's domain. The operator
+  refuses the same from the same list
+  ([hostnames](../../internal/hostnames/)), so an install is not accepted
+  only to never appear.
+- The publication of an entry that no app installed in the tenant declares
+  for the internet.
+- A publication for the cluster's main address of an entry not declared for
+  it, or the other way round; and one for the main address that does not
+  carry the approver's acknowledgement of the rule for a website there. Who
+  acknowledged, and when, is recorded on the entry.
+- A domain for a tenant that is not a hostname, is the cluster's own domain
+  or below it, or is bound to another tenant.
+
+Where an entry answers is worked out by one package that the director and
+the operator both use ([addresses](../../internal/addresses/)), so what the
+director shows before an approval is what the operator publishes after it.
 
 Nothing committed this way is taken out again by itself. Removing a profile
 that no tenant uses is the one commit that does it: the director removes the
@@ -468,9 +567,10 @@ corrects the difference. The operator runs these:
 | Reconciler | What it produces |
 | --- | --- |
 | Tenant | A tenant's namespaces, realm, databases, storage, mail setup, quota and network rules; and one Component for every app and add-on the tenant's manifest lists. |
-| Component | The app itself: its chart installed in the tenant's namespace, the services its component profile requires, and for each address it exposes a route, a session policy and the bouncer's question. |
+| Component | The app itself: its chart installed in the tenant's namespace, the services its component profile requires, and for each address it exposes a route, a session policy and the bouncer's question. For an entry published to the internet: the publishing proxy in the tenant's DMZ namespace, its configuration, its route and its network rule. For a profile that declares the sign-in sidecar: the sidecar, the handler from the app's profile bundle, what it is handed of the app's own, its two routes and its network rules. For a profile that declares the rights check: a key of the component's own, and its line in the bouncer's table. |
+| Mail (a stage of Tenant) | On a cluster that runs its own mail: the maps Postfix reads and the files Dovecot reads for each tenant, written into the namespace where the server that mounts them runs, and each tenant's mail credentials beside what reads them. A tenant's mail is reported ready only once the map Postfix mounts names its domain. |
 | Model access (a stage of Tenant) | For each app, and each component the platform places on the tenant, whose profile declares the model gateway: its key, registered at the gateway and held in the vault, and the Secret that delivers it. It takes both away from an app that does not declare the gateway. |
-| Gateway platform | The shared Gateway objects, the routes of the platform's own tools (Keycloak, Argo CD, the cluster dashboard, the model gateway), their session policies, and the bouncer's route table. |
+| Gateway platform | The shared Gateway objects, the routes of the platform's own tools (Keycloak, Argo CD, the cluster dashboard, the model gateway's console), their session policies, the limit on posts to the sign-in pages, and the bouncer's route table. |
 | Keycloak platform | Browser security settings in every realm, and the registrar's client and secret in every realm (handed over in a Secret the registrar mounts). |
 | Authorization projection | The contents of OpenFGA; see below. |
 | Tile projection | The list of tiles the usher serves, built from the routes that really exist. |
@@ -582,6 +682,16 @@ every request. A positive answer is remembered for thirty seconds.
 - *Admission.* It refuses a Tenant object that breaks the rules (for example
   a second user tenant on a single-tenancy cluster) when the object is
   applied.
+- *The address check.* It installs nothing for a component whose profile
+  asks for an address name the platform keeps, and says so on the component.
+- *The store's address.* A store address whose host is the one this cluster
+  serves its own App Store app on is not a store: the App Store app is then
+  placed on no tenant, and the reason is reported.
+- *The sign-in sidecar's handler.* It runs a sidecar only with the handler of
+  a profile bundle that came from a catalogue of the whole cluster, for an
+  install pinned to that bundle's digest, and never for a tenant that signs
+  in in the kernel realm. Otherwise it holds the component and says why
+  (`SignInSidecarRefused`).
 
 **What it does: the licence report**
 
@@ -830,6 +940,12 @@ request.
 - Remembers a "yes" for five minutes per person, session and address, and
   forgets all of them when OpenFGA's change log moves. It looks at the change
   log every two seconds.
+- Answers one question on a second listener, for a component that acts for
+  a person who is not at a browser: may this person use that app of the
+  component's own tenant (`POST /v1/check`). The component presents a key
+  the operator gave it; the operator's table lists the key's hash and the
+  tenant it is good for. The key cannot write, cannot list, and cannot ask
+  about another tenant.
 
 **What it must never do**
 
@@ -848,7 +964,7 @@ request.
 
 **Who calls it, and whom it calls**
 
-- Called by: the Gateway.
+- Called by: the Gateway; a component with a key for the rights check.
 - Calls: Keycloak's public keys and OpenFGA.
 
 **If it is unavailable**
@@ -987,13 +1103,22 @@ gives.
    taken the program over. It covers the groups the Cluster claim names and
    no others.
 
-6. **Of these programs, only the operator's listener has a network policy.**
-   One network policy lets only the director's and the usher's pods reach the
-   listener's port
+6. **Of these programs, only the operator's listener has a network policy
+   unless the kernel's network rules are switched on, and they are off by
+   default.** One network policy lets only the director's and the usher's
+   pods reach the listener's port
    ([networkpolicy.yaml](../../charts/gentian-os/templates/networkpolicy.yaml)).
-   The operator's other ports are open to any source, and nothing restricts
-   who may connect to the director, the usher, the custodian or the
-   registrar. Each relies on verifying the caller's token. The four shared
+   Without the switch the operator's other ports are open to any source, and
+   nothing restricts who may connect to the director, the usher, the
+   custodian or the registrar. Each relies on verifying the caller's token.
+   With `KERNEL_NETWORK_POLICIES=true` every kernel namespace refuses a
+   connection that a list of callers does not name: the four programs admit
+   tenant namespaces on their own ports, OpenFGA admits the programs that
+   ask it, and the bouncer's port for the Gateway admits the Gateway's
+   proxies alone ([security.md §2.13](../design/security.md)). These rules
+   are built and not yet run on a cluster, which is why the switch is off.
+   They restrict who may connect to a kernel pod, not what a kernel pod may
+   connect to. The four shared
    stores have a policy each, which admits the operator by name and none of
    the other four ([security.md §2.7](../design/security.md)); the kernel's
    own PostgreSQL, which holds the registrar's record, has one too, which
@@ -1039,7 +1164,10 @@ gives.
     is no immediate revocation.
 
 12. **Argo CD and the director use the same repository credential.** Both
-    are fed from one path in the vault. Argo CD only needs to read; whatever
+    are fed from one path in the vault. For a private repository the
+    installer also gives Argo CD that credential directly, before the vault
+    can supply it, and hands it over to the vault's copy later in the
+    install; it is the same credential throughout. Argo CD only needs to read; whatever
     can read Argo CD's copy can push. What still protects the cluster is the
     signature check: Argo CD does not apply a commit that is not signed by
     the director's key or the break-glass key.
@@ -1049,6 +1177,55 @@ gives.
     with one role for platform admins and one for tenant admins. That path
     can read values, and it is decided by a group in the token, not by
     OpenFGA.
+
+14. **What tells an app who the person is, is not signed.** The bouncer sets
+    headers that name the person, and an app or a sign-in sidecar believes
+    them. Nothing in a header proves the bouncer wrote it. What protects them
+    is the network: a tenant's namespace admits the edge namespace, so a pod
+    that can reach an app directly can send headers of its choosing. With the
+    kernel's network rules on, a tenant's namespace admits the Gateway's
+    proxies alone from the edge namespace; with them off, every pod of the
+    edge namespace. At a publishing proxy the same holds for the client's
+    address it counts requests by.
+
+15. **A sign-in sidecar can become anybody in its app.** That is its job: it
+    holds what its handler needs to make a session in the app, usually the
+    app's signing key and database login. Whoever takes one over, or changes
+    the handler in a catalogue the cluster installs from and has an install
+    moved to the new build, has every account of that app in that tenant. Its
+    one path without a session, `/sso/acs`, is guarded by its own checks and
+    by nothing in front of it; and an app session it made can outlast a
+    sign-out by up to an hour ([security.md §2.12](../design/security.md)).
+
+16. **A publishing proxy checks no caller.** An entry's `authMode` may say
+    `basic`, `signature` or `jwt`; the proxy verifies none of them. It limits
+    and filters, and whatever checking there is, is the app's.
+
+17. **A client's own bearer token does not pass the front door.** On a route
+    with a sign-in session the Gateway removes whatever a client sent in the
+    `Authorization` header, and a request with no session is sent to sign
+    in. An app's own client that presents a token of its own (a sync client,
+    a mobile app, a script) therefore never reaches the app with it. A path
+    published through a publishing proxy has no session in front of it, and
+    that proxy removes the header too. No route verifies a bearer token a
+    client brings.
+
+18. **Signing out does not reach most apps.** Ending the session at Keycloak
+    ends it at the Gateway when the access token runs out (weakness 11).
+    Keycloak tells only an app whose own OIDC client declares a back-channel
+    logout address. Any other app that keeps a session of its own keeps it
+    until that session ends by itself.
+
+19. **No kernel namespace restricts what its pods may connect to.** The
+    kernel's network rules are about incoming connections only. A program of
+    the cast that is taken over is stopped at another kernel namespace's door
+    when the rules are on, and on its way to the internet or to a tenant by
+    nothing.
+
+20. **The model gateway's console has an address.** `llm.<domain>` is routed
+    whenever the cluster runs the model gateway, behind the kernel realm's
+    session and `can_configure`. A system service was to have no route from
+    outside at all, and there is no setting that takes this one away.
 
 ## 7. Addresses and tenancy in brief
 
@@ -1071,7 +1248,11 @@ The same in both modes:
   desktop) and administers the cluster at `admin.platform.<domain>`.
 - Keycloak is at `id.<domain>`.
 - A tenant can be given a custom domain; its addresses then sit under that
-  domain.
+  domain. The user tenant of a single-tenancy cluster needs none: it is on
+  the cluster's own domain already, where it also may not take a name the
+  kernel answers on (`id`, `platform`, `www`, `mail` and the others in
+  [routing.md](../design/routing.md)). Only that tenant may put a website on
+  the bare domain, and only while it is on the cluster's domain.
 
 Each tenant has its own sign-in session. The Gateway keeps one session cookie
 per address, and the bouncer's question is always about the tenant or the app
@@ -1118,6 +1299,20 @@ Detail: [iam.md](../design/iam.md) §1.1a for the modes,
   tenant, as its tile does.
 - The command line tool signs in as the person (`kubectl gentian login`) and
   calls the director, the registrar and the usher.
+- The publishing proxy holds every request to its limits and removes every
+  header that says who a person is. The Gateway limits posts to the sign-in
+  pages.
+- The sign-in sidecar, with the conditions of section 3.7, and the App Admin
+  role it reads from the realm's signed answer.
+- Mail faces the internet through the mail proxy; the mail servers have no
+  load balancer of their own.
+- The director refuses the installs, publications and domains listed in
+  section 4.1, stops cleanly, and bounds a contested write by time.
+- The bouncer's rights check for a component with a key.
+- The kernel's network rules for incoming connections, off by default.
+
+Most of what the last six items describe is built and held by tests, and has
+not yet been run on a cluster.
 - Installing the cluster and creating the first commits is described in
   [GETTING-STARTED.md](../../GETTING-STARTED.md).
 
@@ -1132,7 +1327,16 @@ Detail: [iam.md](../design/iam.md) §1.1a for the modes,
   unattended act can carry who it is for.
 - **The operator keeping the order at the front door**, instead of the
   installer setting it once (weakness 10).
-- **Default-deny network policies in the kernel namespaces** (weakness 6).
+- **The kernel's network rules on by default**, which waits for a cluster to
+  have run them (weakness 6); **and rules for what a kernel pod may connect
+  to**, which do not exist (weakness 19).
+- **Signed identity headers**, or another proof to an app that the bouncer
+  wrote them (weakness 14).
+- **A check of the caller at the publishing proxy** for the `authMode` an
+  entry names (weakness 16), and **a route that verifies a client's own
+  bearer token** (weakness 17).
+- **A setting that takes the model gateway's console off the Gateway**
+  (weakness 20).
 - **A read-only repository credential for Argo CD** (weakness 12).
 - **The operator asking OpenFGA again** about the person a command is for
   (weakness 3).
@@ -1210,4 +1414,7 @@ summarised here because no other document carries them.
 | Bundle | The file one backup of a tenant produces. |
 | Session policy | The setting on a route that makes the Gateway require a sign-in and ask the bouncer. |
 | DMZ | A namespace for what is reachable from the internet without a sign-in. |
+| Publishing proxy | The proxy in a tenant's DMZ that answers one published entry. |
+| Sign-in sidecar | The service beside an app that signs people in to it when the app supports neither OIDC nor SAML. |
+| Perimeter approver | A person who may publish a tenant's entries to the internet (`can_expose`). |
 | Break-glass key | A second signing key, kept offline, for changing the deployment repository when the director cannot. |

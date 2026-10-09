@@ -1,145 +1,204 @@
-# Open items on the way to M3
+# Open items, M1 to M4
 
 One list, kept current. An item leaves it when the thing works on a cluster,
-not when the code exists.
+not when the code exists. Last brought in line with the code on 2026-10-09.
 
 M1 is *the platform administrator signs in and the installer leaves a cluster a
-tenant can be provisioned on*. M2 is *the first functional tenant*. M3 is *the
-first user invited by a tenant administrator*. The milestones and their steps
+tenant can be provisioned on*; it was reached on 2026-10-03. M2 is *the first
+functional tenant*, M3 *the first user invited by a tenant administrator*, M4
+*the first app a user can actually work in*. The milestones and their steps
 live in [implementation-plan.md](implementation-plan.md); this file is only
 what is still open and why.
 
-## The architectural decisions, against the code
+Four parts: the architectural decisions against the code, what is built and
+has never run on a cluster, the defects that are known and open, and the
+decisions that wait for the owner.
 
-Checked against the implementation rather than against the plans, because the
-plans are what the code was supposed to become.
+## 1. The architectural decisions, against the code
+
+Checked against the implementation, not against the plans. "Holds" means the
+code does what the decision says; it does not mean a cluster has shown it.
 
 | AD | | State |
 | --- | --- | --- |
-| AD-1 | Nine security principles normative | ✅ |
-| AD-2 | The director is the only writer of `gentian-deployments` | ✅ built end to end: two Ed25519 keys the installer generates, public halves and ids committed under `clusters/<id>/kernel/signing/`, `B-10` puts them in Argo CD's keyring and the director's private half in the vault, the AppProject renders `sourceIntegrity.git.policies[].gpg{mode: head}` scoped to the deployments repository alone, and the director signs what it commits. **Never exercised on a cluster** — whether Argo CD accepts the signatures is what S8 finds out |
-| AD-3 | The store's data is outside the cluster; its interface is an app on it | ◐ the cluster's half of an install is built: an entry is fetched at the digest named, verified, and committed when a tenant installs it. A catalogue with no configured source still syncs wholesale. AD-3 changed on 2026-10-06: the App Store app is not built, the store API is defined ([artefacts/store-api.md](artefacts/store-api.md)) and not yet served, and the message bridge on the desktop is to be removed |
-| AD-4 | One catalogue kind, `ComponentProfile` | ✅ the type is gone, and deleting it found two live reads of a kind the catalogue stopped shipping — the integration-binding reconciler and `provisionAppGroupUsers`, both on the path to M4 — plus an installer step whose check tested for the deleted CRD |
-| AD-5 | Privileges are requests with one approval path | ✅ |
-| AD-6 | `authMode` mandatory; perimeter enabled per tenant | ✅ a perimeter approver publishes a surface under `can_expose`, bounded by an expiry; the operator stands a proxy in `tenant-<t>-dmz` that forwards only the declared prefixes with no session and no identity. `exposures.yaml` is the registry |
-| AD-7 | Namespaces named by tier | ✅ |
-| AD-8 | Kernel trust domains are separate namespaces | ✅ |
-| AD-9 | System services have no public route | ✅ |
-| AD-10 | The portal splits two ways; the platform is a tenant | ✅ |
-| AD-11 | The target layout applies to fresh installs | ✅ |
-| AD-12 | The authorization store is a projection; git holds the defaults | ◐ the projection works; the bootstrap drift check is on the backlog below |
-| AD-13 | The edge is the only session authority | ✅ the text now describes what the code does: ending the session at Keycloak ends it, bounded by the access token's lifetime, with no revocation list for the bouncer to consult |
-| AD-14 | Catalogue sources on the Cluster claim | ✅ `catalogue.sources[]` and `catalogue.storeUrl` are on the Cluster XRD and the installer scaffolds them; the director reads them from the claim in git and serves each source's index at `GET /v1/tenants/{t}/catalogues[/{s}/entries]` — ce and pe only, each with its digest, and the rest counted and pointed at the store. A source has no access mode and no list of tenants: every tenant can be installed for from it, which is not a right to install (AD-3). ◐ AD-14 changed on 2026-10-06: the cluster renders no catalogue in any interface, so the console's table is to be hidden and the listing kept as a read only |
-| AD-15 | Multi-language is a core requirement | ◐ desktop and console both translated; a component's `description` and the store listing's text are still single strings |
+| AD-1 | Nine security principles normative; every request passes one named enforcement point | **Holds, with one gap.** The publishing proxy is a named enforcement point that checks no caller: it filters and limits, and verifies nothing for any `authMode` (see AD-6) |
+| AD-2 | The director is the only writer of the deployment repository | **Holds.** Commits are signed, Argo CD syncs only commits signed by the director's key or the break-glass key, the operator holds no git credential. For a private repository the installer gives Argo CD the repository's credential directly until the vault's copy takes over (`A-06`, `C-05-repository-handoff`). Argo CD and the director still share one credential that can push |
+| AD-3 | The store's data is outside the cluster; its interface is an app on it | **Holds on the cluster's side.** The operator places the App Store app on every tenant but the platform's while the cluster reports its licences and names a store; an install is fetched at its digest, checked, committed, and checked again before rollout. A store address that is the cluster's own App Store host is not taken as a store |
+| AD-4 | One catalogue kind, `ComponentProfile` | **Holds.** [app-customization.md](../app-customization.md) still says `AppProfile` in many places |
+| AD-5 | Privileges are requests with one approval path | **Holds**, except that egress a profile declares reaches the network policy without an approval |
+| AD-6 | `authMode` mandatory; a perimeter surface is published per tenant by an approver | **Deviation.** Publishing works as decided: a proxy in `tenant-<t>-dmz` only for an entry an approver published under `can_expose`, with a review date. Two things do not: the proxy checks no caller, so `basic`, `signature` and `jwt` on a perimeter entry promise nothing today; and `can_expose` is held by the members of the group `gentian:tenant:<t>:perimeter` alone, a group nothing creates, so the tenant's admins do not hold it by default as the decision says |
+| AD-7 | Namespaces named by tier | **Holds** |
+| AD-8 | Kernel trust domains are separate namespaces | **Holds** |
+| AD-9 | System services have no public route | **Deviation, one of two closed.** Mail now faces the internet only through a proxy in `system-mail-dmz` that holds nothing; Postfix and Dovecot have no load balancer of their own. Still open: the model gateway's console is routed at `llm.<kernel domain>`, behind the kernel realm's session and `can_configure`, whenever the cluster runs the model gateway, and no setting takes the route away. TURN does not exist |
+| AD-10 | The portal splits two ways; the platform is a tenant | **Holds** |
+| AD-11 | The target layout applies to fresh installs | **Holds** |
+| AD-12 | The authorization store is a projection; the director writes it from Keycloak's events | **Deviation.** The projection exists, and it is the **operator** that receives Keycloak's events and writes the store; the director only asks it. The operator still holds Keycloak's master administrator credential, which the decision retires. No code revokes a person's sessions when their groups change. The check at start that the defaults git implies are the ones the store holds is not built |
+| AD-13 | The edge is the only session authority | **Holds, with the two exceptions the entry names**: the App Store app's sign-in to a store, and the sign-in sidecar |
+| AD-14 | Catalogue sources on the Cluster claim; a profile reaches a cluster only at a verified digest | **Deviation, not decided.** Sources on the claim and per tenant, delegation, one bundle under one digest, and the console's catalogue view hidden: as decided. But the installer fetches the Operations Console's profile by address at install and commits it with no digest (see part 4) |
+| AD-15 | Multi-language is a core requirement | **Partly.** Desktop, console and sign-in pages are translated. A component's `description` and a store listing's text are single strings; the desktop has no check for a missing translation in CI |
 
-## AD-15 — multi-language
+## 2. Built, and never run on a cluster
 
-A person who cannot read the console cannot use it, so this is not polish.
+Most of what was built since M1 is in this part. Each item has tests; none has
+been seen working on a cluster. Until it has, it is not done.
 
-| Surface | State |
-| --- | --- |
-| Tile labels on the desktop | ✅ `ExposureTile.displayNames`, projected, and `localisedLabel` picks by the viewer's locale |
-| The desktop's own strings | ✅ i18next with JSON catalogues in `src/locales`, English and German, discovered by a glob — adding a language is adding a file |
-| Keycloak login and account | ✅ every realm enables internationalization; the kernel realm reads `GENTIAN_SUPPORTED_LOCALES`, a tenant realm reads `spec.locales` |
-| A language chooser | ✅ in Settings. Clearing it falls back to the tenant's language, not the browser |
-| Where a person's language comes from | ✅ their own choice (which a settings template also sets, because a template copies preferences and language is one), then the tenant's, then the browser |
-| Admin console | ✅ 542 strings in `en.json` and `de.json`, extracted with the TypeScript compiler; `npm run build` fails on an inline string, a missing key or a translation that dropped a `{{placeholder}}`. The German wants a native review before it is customer-facing |
-| A component's other catalogue text | ☐ `description` and the store listing's text are single strings |
-| The account's language | ✅ in the desktop's preferences database, one row per user per tenant, so it follows a person between machines. Browser storage is only a first-paint cache |
-| A missing-translation check in CI | ◐ the console's build enforces it (`scripts/i18n.mjs --check`); the desktop still only documents the script |
+### Signing in and the front door
 
-## AD-4 — what is left
+- The front door in its present order: the Gateway signs a person in first and
+  asks the bouncer second, on Envoy Gateway 1.9.2 and Keycloak 26.8.0.
+- The session's cookies and tokens stopping at the edge.
+- The sign-in sidecar, for an app that supports neither OIDC nor SAML, and the
+  App Admin role it reads from the realm's signed answer. Three apps declare
+  it.
+- A mailbox opened with a sign-in token, for an app that declared it.
+- The bouncer's rights check for a component that holds a key for it.
 
-Steps 1–3 are done: tile localisation, the privilege wiring, and the app
-composition reading `ComponentProfile`. The converter matches the API and every
-profile it writes passes the CRD's schema and its CEL rules.
+### Addresses and publishing
 
-| | |
-| --- | --- |
-| 4 | ✅ Every Go reader, 20 files plus 35 test files |
-| 5 | ✅ `Tenant.spec.apps[].profile` resolves a `ComponentProfile`; `profileRef` by catalogue identity is retired with AD-3's metadata |
-| 6 | ✅ 33 profiles in `gentian-apps` and 5 in `gentian-pro`, converted in place with their comments. 135 review items remain, 8 of them tiles on the placeholder |
-| 7 | ✅ `license` became an annotation, `family` became the chart's name, `categories` went with the webhook that checked it |
-| 8 | ✅ `AppCatalogue`, the profile webhook and now the `AppProfile` type itself. The file became `profile_parts.go` — the parts a `ComponentProfile` is made of, which is what it always held. The portal tile, the portal link target and the browser-proxy route went with the kind |
+- The two tenancy modes, and the user tenant of a single-tenancy cluster
+  created by the installer after the handover (`E-04`).
+- Address names an app may not take, refused by the operator and the director.
+- A tenant bound to a domain of its own with the command line.
+- What a tenant's apps ask to publish as a read; approval, review and
+  withdrawal on the command line and in the administration console.
+- A website on the main address of a single-tenancy cluster, with the
+  approver's acknowledgement.
+- The publishing proxy's limits and filters, and the limit on sign-in posts at
+  the Gateway.
 
-What deleting the type found, which is the argument for deleting a type
-rather than leaving it defined and unused — a dead type keeps every reference
-to it compiling, so code asking the API server for a kind nothing serves looks
-exactly like code that works:
+### Network
 
-- `IntegrationBindingReconciler` fetched an `AppProfile` for the provider's
-  Service. Since the catalogue converted, that `Get` has returned NotFound for
-  every binding, so no contract credential has ever been seeded — M4.7.
-- `applifecycle.provisionAppGroupUsers` did the same for one annotation, from
-  four call sites.
-- `D-08`'s `check()` tested `kubectl get crd appprofiles.gentianos.io`, which
-  after the deletion never exists: the step would have reported MISSING on
-  every run, before M1.
+- The kernel namespaces' rules for incoming connections. They are off by
+  default (`KERNEL_NETWORK_POLICIES`) for exactly this reason: turn them on
+  after a successful install with `./install.sh --only A-01,B-01`.
+- The rules on the shared stores, the kernel's PostgreSQL, the mail servers and
+  the model gateway's namespace.
+- A contract between two apps carrying traffic once it is granted.
 
-One question the migration raised and did not answer: **should the package
-union admit a `composition` alongside a `chart`?** Three apps are delivered as
-a chart *and* rendered by their own Composition, which emits a portal bridge, an
-SSO sidecar or a stable alias beside the Release. `spec.compositionRef` said so
-and the union's exactly-one rule cannot, so it survives as the annotation
-`gentianos.io/composition`.
+### Mail
 
-## The installer, to M3
+- The mail proxy in `system-mail-dmz` and the client's address passed on to the
+  servers. Its test runs the rendered proxy and servers in local containers.
+- Every mail object written into the namespace of the server that reads it,
+  and a tenant's mail held as not ready (`PostfixMapMissing`) until Postfix's
+  map names its domain.
 
-| | |
-| --- | --- |
-| ✅ | `claims/deployments-repository.yaml` is required on v5, and an uncommitted working copy is named. Without that claim the director has no push credential and every write answers 503 — no tenant, no invited user |
-| ✅ | `--prepare-deployment` commits and pushes what it writes, signed with the break-glass key, and so does the install-time precondition. It used to say "commit and push them" and stop — and a `deployments-repository.yaml` left in the working copy is a director with no push credential, which surfaces as a 503 on the first write with nothing pointing back |
-| ✅ | One layout. The v4 step set, kernel trees, `spec.layout`, the `InfraData` kind and `--layout` are gone, and the 50 library functions the v4 steps were the only caller of went with them. `make lint` now runs `lint-unreachable`, so a definition nothing reaches fails the build — the other half of `lint-resolvable` |
-| ✅ | `GETTING-STARTED.md` names the claim set that exists, and says plainly that a leftover `claims/infra-data.yaml` must be deleted — the `InfraData` kind itself is gone, so nothing composes those engines twice |
-| ☐ | S7A.4 — no write has ever succeeded against this cluster |
-| ✅ | S7A.17's durable record: the registrar's own database on `kernel-postgres` holds who was allowed to ask for each identity change, with a retention horizon it enforces. Optional — a cluster without it starts and warns |
-| ☐ | S7A.17's other half: the event listener recording Keycloak **admin** events, carrying the request id so the two records join. It projects group membership today and drops the rest |
-| ☐ | S7A.7 and S7A.11 — built, never exercised in a browser |
-| ✅ | S8 — purge and reinstall, which is what makes M1 reached rather than demonstrated (2026-10-03, beefy1) |
+### Catalogue and apps
 
-## Backlog — wanted, not now, and not forgotten
+- Catalogues added per cluster and per tenant, read when needed; nothing copied
+  into a cluster ahead of an install.
+- A profile bundle with its companions under one digest, and the operator's
+  check of all of it before rollout.
+- What a newer build of an app left behind, listed and removed.
+- The App Store app placed on tenants where the cluster offers a store.
+- The model gateway as a requirement an app declares, with its image named by
+  tag and digest.
 
-Each of these is a decision already taken. What is missing is the work, and
-none of it blocks the purge.
+### Data
 
-| | Why it waits |
-| --- | --- |
-| **The bootstrap drift check** (AD-12): at start the director recomputes the defaults git implies and compares them to what OpenFGA holds, then REPORTS the difference | No urgency, and the reporting-not-fixing part is the point: a store that has diverged is a question, because overwriting it would erase exactly the grants and revocations that are nobody's default |
-| **Simplify the package union back to one** | The union now admits a chart and a composition together, because three entries genuinely are both. If those three ever render their extra objects some other way — a hook, a sidecar, the chart itself — the pair stops being needed and the rule can go back to exactly one, which is easier to answer without reading it twice |
+- Backup bundles of schema version 3: the data of uninstalled apps that was
+  kept, the platform desktop's database, mailboxes, and the rights that follow
+  from nothing else.
+- A restore into a new tenant (`TenantRestore.spec.intoNewTenant`), and an
+  import that gives the tenant its own names.
+- A tenant's deletion removing its mailboxes, and failing loudly.
 
-## Known and deliberately not now
+### Installer and director
 
-- **Migrating a tenant to a different cluster is not a supported path.**
-  Restore is same-cluster by construction: cluster-admin only, no console
-  button, and it replaces live data. A kit + a backup rebuilds a tenant
-  faithfully — definition from the repository, every derived credential
-  identical from the master password and salt, data and member accounts from
-  the bundle, everything but passwords, which are deliberately not in either.
-  A DIFFERENT cluster has a different master password, so the restored app
-  data would meet credentials it does not expect.
+- Argo CD given a private deployment repository's credential before the claim
+  that would supply it.
+- `--dry-run` and `--validate` changing nothing; the break-glass key found by
+  its recorded id; the OpenBao command line fetched and checked.
+- The default catalogue chosen by the ref the platform is installed from.
+- The director's clean stop and its write retry bounded by time.
 
-  Two shapes would work and they are a decision rather than a defect. Either
-  the kit IS the cluster's identity — a new server that imports it becomes the
-  old cluster, and migration reduces to restore, which is what the kit is
-  already shaped for — or the restore re-keys every app credential on import,
-  which is far more work and makes every app that caches a credential in its
-  own database a special case. Nothing here implements either yet.
+Carried over from before, and still not shown:
 
+- Whether Argo CD accepts the director's signatures on a cluster after a
+  rebuild from the recovery kit.
+- The Keycloak event listener recording administrative events with the request
+  id, so that the registrar's record and Keycloak's join. It projects group
+  membership and drops the rest.
+- Opening an app without a second sign-in (M4.6), which changed since it last
+  worked.
 
-- A catalogue source has to publish `index.yaml` for a cluster to browse it.
-  gentian-apps' CI builds the flat, https-served shape on every run
-  (`scripts/build-catalogue-source.py`) and deploys it to GitHub Pages **from
-  `main` only** — one repository has one Pages site, so publishing from
-  develop as well would make the catalogue whichever branch ran last. Pages is
-  enabled. The catalogue therefore follows releases: until the work merges to
-  `main`, a cluster that wants the in-progress one declares no source and
-  syncs it wholesale from git, as every cluster did before AD-3.
-  `https://gentian-org.github.io/gentian-apps` is the URL for
-  `spec.catalogue.sources[].url`.
-- The cluster's catalogue view lists; it does not install. Installing stays the
-  tenant's own act from their own screens, because a third place that installs
-  apps — after the store and the desktop — is a third place to keep correct.
-- The director reads `catalogue.sources[]` once, at start. An edit to the claim
-  reaches it when its Deployment next rolls, which an Argo sync of a changed
-  claim produces anyway. A source is offered to every tenant, so the list of
-  URLs is the only thing that can be stale.
+## 3. Known defects, open
+
+Each is true of the code today.
+
+| | Defect | Where it is described |
+| --- | --- | --- |
+| 1 | **An app's own client loses its token at the front door.** On a route with a session the Gateway removes the `Authorization` header a client sent; a gateway entry with another `authMode` is not routed at all. Sync clients, mobile apps and scripts that bring a token of their own do not reach their app | [routing.md §4.1](../design/routing.md) |
+| 2 | **Signing out does not reach most apps.** The session ends at the Gateway when its access token runs out. The realm tells only an app whose own OIDC client declares a back-channel logout address; any other session an app keeps lasts until it ends by itself, a sidecar's at most an hour | AD-13, [security.md §2.12](../design/security.md) |
+| 3 | **One key opens the rights store.** Six programs present the same OpenFGA key, and it can write | [operator-split-plan.md §6](operator-split-plan.md) |
+| 4 | **Nobody may publish by default.** `can_expose` needs the group `gentian:tenant:<t>:perimeter`, which no install and no tenant creation makes; a tenant's admin has to create it and join it before anything can be approved | part 1, AD-6 |
+| 5 | **The publishing proxy checks no caller**, whatever the entry's `authMode` | [security.md §2.14](../design/security.md) |
+| 6 | **Identity headers are not signed.** An app and a sign-in sidecar believe them; network rules are what keeps another pod from sending its own | [operator-split-plan.md §6](operator-split-plan.md) |
+| 7 | **No kernel namespace restricts outgoing connections** | [security.md §2.13](../design/security.md) |
+| 8 | **An import carries the source's approvals.** The new tenant's manifest is written from the bundle, so the privileges granted and the entries published in the exported tenant arrive approved, and nobody on the importing cluster approved them | [data-lifecycle.md](../design/data-lifecycle.md) |
+| 9 | **A deleted tenant leaves entries behind**: its rights and memberships in the rights store, which a later tenant of the same name would inherit, and its keys in the shared cache | [data-lifecycle.md](../design/data-lifecycle.md) |
+| 10 | **A removed person's mailbox stays** until the tenant is deleted | [mail.md](../design/mail.md) |
+| 11 | **The Operations Console's profile arrives without a digest** | part 4 |
+| 12 | **The model gateway's console cannot be switched off** separately from the model gateway | part 1, AD-9 |
+| 13 | **Crossplane's providers install every resource type they ship** — about 400 — and the compositions use about 27. Nothing narrows what is installed | `crossplane/providers/` |
+| 14 | **Two images float.** `vllm/vllm-openai` falls back to `latest` when the claim names no tag, and the model gateway's cache runs `redis:alpine`. `lint-image-pins` lists the first as known and does not look at the second | `kernel/services/llm/` |
+| 15 | **The operator holds Keycloak's master administrator credential** | part 1, AD-12 |
+| 16 | **Argo CD's repository credential can push** | [operator-split-plan.md §6](operator-split-plan.md) |
+
+## 4. Decisions waiting for the owner
+
+1. **The Operations Console's profile at install** (AD-14). The installer
+   fetches it by address and commits it with no digest; since the catalogue
+   address answers, it really arrives that way, and the cluster takes it for a
+   profile the platform placed. Either the installer pins it to the digest the
+   catalogue's index lists and refuses other bytes, or it places nothing and
+   the profile is installed through the director like any other.
+2. **Who may publish by default** (AD-6). The decision gives the right to the
+   tenant's admins unless a tenant separates the role; the code gives it to a
+   group that does not exist. Either the tenant's admins group is written as
+   perimeter approver when a tenant is made, or the decision is changed to say
+   that the role is always staffed separately, and the group is created empty.
+3. **Who writes the rights store** (AD-12). The operator does, from Keycloak's
+   events, with Keycloak's master administrator credential. Either the
+   decision is changed to name the operator, or the writing moves to the
+   director as decided; the credential is a separate question either way.
+4. **What `basic`, `signature` and `jwt` mean on a perimeter entry** (AD-6,
+   AD-1). Either the proxy verifies them, or the schema refuses them there
+   until it does, or they stay as a statement about the app that the platform
+   does not check.
+5. **A route for a client that brings its own token** (defect 1). Either a
+   gateway entry may ask for a route where the bouncer verifies the client's
+   bearer token, or such paths are published through the publishing proxy and
+   checked by the app.
+6. **The model gateway's console** (AD-9). Either it gets a switch, off by
+   default, or AD-9 names it with the kernel's own tools as a console behind
+   the kernel session.
+7. **External IMAP and submission.** The plans had ports 587 and 993 closed
+   until a tenant's approver opened them; they are open whenever the cluster
+   runs its own mail. Either that is accepted, or the mail proxy gets a
+   setting per port.
+8. **When the kernel's network rules become the default.** The intent is:
+   once a fresh install has passed with them on.
+9. **Should the package union admit a `composition` beside a `chart`?** It
+   does today, because some entries are both. The sign-in sidecar removed one
+   reason for an app to bring its own Composition; if the others go the same
+   way the rule can return to exactly one.
+10. **A domain of its own for the user tenant of a single-tenancy cluster.**
+    `tenants domain` is not refused there. Binding one moves the tenant off
+    the cluster's addresses, and the main address is then not its own. Either
+    that is intended, or the director refuses it in `single` mode.
+
+## 5. Known and deliberately not now
+
+- **Moving a tenant to another cluster goes through export and import**, which
+  re-mint what the platform issues. The alternative, in which the recovery kit
+  is the cluster's identity and a new server that imports it becomes the old
+  cluster, is not taken: it would bind a tenant's portability to its
+  provider's kit.
+- **The director reads the cluster's catalogue sources from the claim in
+  git.** An edit made outside the director reaches it with the next commit it
+  reads.
+- **The check at start of the rights store's defaults** (AD-12): wanted, and
+  it reports, it does not repair. A store that has diverged is a question,
+  because rewriting it would erase the grants and revocations that are
+  nobody's default.

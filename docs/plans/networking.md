@@ -5,6 +5,25 @@ layer may decide. Companion to [roles-and-authorizations.md](roles-and-authoriza
 (who) and [namespace-cleanup.md](namespace-cleanup.md) (where); the rules
 are AD-1, AD-6 and AD-9 in [architectural-decisions.md](architectural-decisions.md).
 
+## Status against the code, 2026-10-09
+
+This document is a plan. The table says, section by section, what of it the
+code holds. "Built" means the code and its tests exist; most of it is built,
+not yet run on a cluster. What is built is described in
+[security.md](../design/security.md), [routing.md](../design/routing.md) and
+[mail.md](../design/mail.md), and those are the documents to read for how it
+works.
+
+| Section | Built | Design only, or built differently |
+| --- | --- | --- |
+| §1 One address, two edges | Two Gateways, `authenticated` and `perimeter`, in `kernel-edge` on one Envoy fleet. Perimeter paths on an app's own host, answered by a publishing proxy in `tenant-<t>-dmz`. The identity provider's realm endpoints and the ACME path as the kernel's two surfaces without a session | TCP and UDP listeners on the perimeter Gateway: mail does not pass the Gateway (note in §5), and neither TURN nor federation on its own port exists. The director has no address on the Gateway (`api.<kernel>` in the diagram). A web application firewall in the proxy image. The diagram's box for Postfix and a Dovecot proxy in the system DMZ |
+| §2 Layers | L0: a limit on sign-in posts at the Gateway, and the publishing proxy's limits per client address. L1: the session per tenant zone. L1′: the proxy removes every identity header and holds a request to one reading of its path, a method, a size and a time. L2: the bouncer, its cache and its eviction. L3, including the sign-in sidecar for an app with no single sign-on of its own. L5: tenant namespaces, the shared stores, the mail servers, the model gateway; the kernel namespaces for ingress, off by default (`KERNEL_NETWORK_POLICIES`) | L0: no limit on a route behind a session or on the token endpoint, and none shared between Envoy pods (that needs a rate limit service). L1: no verification of a bearer token a client sends itself; such a token is removed at the Gateway. L1′: the proxy verifies nothing, whatever the entry's `authMode` says. L2: nothing denies a session by a recorded revocation (AD-13 withdrew that). L4: the MCP gateway and exchanged tokens; a contract between two apps is built. L5: no kernel or system namespace restricts egress, apart from the mail proxy's |
+| §3 Route classes | Tenant app in a browser, tenant desktop, platform desktop, the user tenant of a single-tenancy cluster, the kernel's own tools, the identity provider, perimeter over HTTP, ACME | A tenant app's API with `bearer` or `jwt`. The director's own host. Perimeter over TCP and UDP through the Gateway. Limits per user name at the identity provider (Keycloak's own brute-force detection is on) |
+| §4 Sessions, caching, logout | One client and one session per tenant zone; the token forwarded only where the entry says `forwardToken`; the decision cache per person, session and route, evicted on OpenFGA's change log; refusal when OpenFGA cannot be reached | The paragraph on logout is withdrawn by AD-13: nothing records a revoked session, and a session ended at Keycloak ends at the edge when its access token runs out. Membership reaches OpenFGA through the operator, not the director. No code revokes a person's sessions when their groups change. No cap on a WebSocket's duration |
+| §5, §6 Stress test | The rows that rest on the above: sharing inside a tenant, public links and public paths through the proxy, the bare domain, the desktops, app to app and app to a store, a domain of a tenant's own, certificates | Credentials checked at the proxy (`basic`, `signature`). Bearer routes for automation and agents. TURN and conferencing media. Federation on a port of its own. Mail as these rows draw it: see the note below the table |
+| §7 What this changes in the tree | The two Gateways, certificates by DNS-01, DNS by external-dns, routes and policies from `expose[]`, the bouncer | A back-channel logout address per zone client (withdrawn with §4). The mail split as written (note there). `system-turn` |
+| §8 Exposure management | The tenant's enablement, written through the director under `can_expose` with a review date and an optional expiry; an expired one is treated as absent. What a tenant's apps ask to publish as a read, approval that refuses an entry no installed app declares, withdrawal, on the command line and in the administration console. §8.7 | The cluster's ceiling (`Cluster.spec.exposure`). Structured proxy logs, the log views and their API. The drift job. The `exposure-policy` contract. Notices ahead of a review or an expiry |
+
 ## 1. One address, two edges
 
 The cluster has one external address (`networkMode: static-ip`) or one
@@ -427,6 +446,25 @@ design cannot do for it.
 | **Logout from the desktop** | RP-initiated logout at Keycloak → back-channel to the zone's edge client → session gone | L1 | app cookies live on, unreachable |
 | **Renewing a certificate** | `/.well-known/acme-challenge/*` on port 80 to the solver | none | the only perimeter path the kernel owns; listed so it is never "forgotten" |
 
+**Note, 2026-10-09: mail was built differently from the three mail rows
+above and from §7.** Postfix did not move into `system-mail-dmz`. Postfix and
+Dovecot both run in `system-mail` and neither has a load balancer of its own.
+What faces the internet is a TCP proxy (HAProxy) in `system-mail-dmz` for
+ports 25, 587 and 993, behind the one load balancer mail has. It holds no
+mail, no user, no certificate and no key; TLS passes through it and ends at
+the servers; it hands them the client's address in a PROXY-protocol header,
+on ports of theirs that require the header and admit the proxy alone. This is
+what AD-9 asks for, a stateless edge holding nothing: a mail server in the
+DMZ would keep a queue, which is stored mail, in the namespace that faces the
+internet. The proxy is not a listener of the Gateway's, because a TCP
+listener there has no limit per client address and would open a path from
+the edge namespace to the mail servers. Built, and held by a test that runs
+the rendered proxy in front of the rendered servers; not yet run on a
+cluster. Two things the rows above draw are not built: the three ports are
+open whenever the cluster runs its own mail, not per tenant on a perimeter
+approver's word, and the DKIM signer runs with Postfix, not as a separate
+service. [mail.md](../design/mail.md) describes what is built.
+
 ## 6. What the stress test found
 
 - **The two-gateway picture is two policies on one process** wherever a
@@ -526,6 +564,10 @@ design cannot do for it.
   only while IMAP exposure is enabled). Postfix stays a single instance;
   DKIM moves from the MTA to a milter inside. `system-turn` is added when
   the first conferencing profile declares it as a requirement.
+
+  **Note, 2026-10-09:** not built this way. Postfix and Dovecot stay in
+  `system-mail`, and `system-mail-dmz` holds a TCP proxy that keeps nothing;
+  the note at the end of §5 says what was built and why.
 
 ## 8. Exposure management
 
