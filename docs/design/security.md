@@ -541,9 +541,9 @@ changes only when the code does.
 | Control | Status | Where |
 | --- | --- | --- |
 | Keycloak per-tenant realms, kernel realm, OIDC for portal and apps | Implemented | Suze composition, `identity_reconciler.go` |
-| Keycloak group → OpenFGA tuple sync | Implemented, from events | Membership is stored as `group#member` tuples, a projection the **operator** writes from Keycloak's signed event-listener statements (`membership_listener.go`, `internal/membership`). The poll on a timer is gone from the code. The director was to be that writer (AD-12) and is not: it writes nothing to the store |
+| Keycloak group → OpenFGA tuple sync | Implemented, from events | Membership is stored as `group#member` tuples, a projection the **operator** writes from Keycloak's signed event-listener statements (`membership_listener.go`, `internal/membership`). The poll on a timer is gone from the code. The operator is the writer AD-12 names; the director writes nothing to the store. Not built: nothing reconciles the stored memberships toward Keycloak, and a change of a person's groups ends none of their sessions |
 | Keycloak's master administrator credential | **Held by the operator** | The operator reads the `keycloak-admin` Secret and hands it to the Jobs that configure realms, clients and groups (`identity_reconciler.go`, `internal/keycloak/shell_helpers.go`). The process that writes the rights store is therefore also the one that can change any identity. Narrowing it is **Target** |
-| `AppGrant` → tuples | Implemented | `app_grant_reconciler.go`; grants are structure and stay stored. AD-12 would have made the director the store's only writer; as built the operator writes the store and the director only asks it |
+| `AppGrant` → tuples | Implemented | `app_grant_reconciler.go`; grants are structure and stay stored. The operator writes the store and the director only asks it (AD-12) |
 | Gateway ext-auth calling OpenFGA `Check` on every session route | Implemented | `internal/bouncer`, attached by `internal/controller/bouncer.go`; the session filter runs first and the bouncer refuses a request without a token it verified ([routing.md §4.1](routing.md)). Fails closed |
 | Session cookies: per host, encrypted, `SameSite=Lax`; frame policy naming the tenant's own desktop | Implemented | `zoneSecurityPolicySpec`, `componentFramers` ([routing.md §4.2, §4.3](routing.md)) |
 | Sign-out reaching the apps | **Target** | Sign-out ends the realm session and the edge's cookies. The realm calls an app only where the app's own OIDC client declares a `backchannelLogoutUrl`; any other session an app keeps itself lasts as long as the app lets it, though the front door refuses the person's next request ([routing.md §4.2](routing.md)) |
@@ -639,7 +639,7 @@ flowchart TD
     Users --> Keycloak
     Keycloak -.->|"OIDC / OAuth2 / SAML brokering<br>RFC 8693 Token Exchange → tokens"| Apps
     
-    Keycloak -->|"event-listener feed: membership changes<br>(read-only client reconciles the projection)"| Director
+    Keycloak -->|"event-listener feed: signed membership statements"| Director
     Keycloak -->|"(optional) SPIFFE/SPIRE → SVIDs (mTLS)<br>for autonomous workload agents"| AgentsWorkloads
     
     AgentsWorkloads -->|"acts via OBO token (≤ user)"| Apps

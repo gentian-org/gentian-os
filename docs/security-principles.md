@@ -62,7 +62,7 @@ principle 3 as a licence for a bypassable one.
 One OpenFGA type per CRD kind (`cluster`, `tenant`, `app`, `document`, …), one relation per verb a PEP exposes. A new kind ships with its
 type and a case in `authz/model/*/tests.fga.yaml`, or it does not ship. Group
 membership is in the graph only as a projection of Keycloak, written by the
-director from Keycloak's events and reconciled toward Keycloak, never edited
+operator from Keycloak's events and reconciled toward Keycloak, never edited
 in place; contextual tuples carry runtime facts — a task's TTL, `acting_for`,
 device posture — never a person's memberships. RBAC is only the assignment of
 a role to a group — never a second decision path.

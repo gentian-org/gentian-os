@@ -32,7 +32,7 @@ code does what the decision says; it does not mean a cluster has shown it.
 | AD-9 | System services have no public route | **Deviation, one of two closed.** Mail now faces the internet only through a proxy in `system-mail-dmz` that holds nothing; Postfix and Dovecot have no load balancer of their own. Still open: the model gateway's console is routed at `llm.<kernel domain>`, behind the kernel realm's session and `can_configure`, whenever the cluster runs the model gateway, and no setting takes the route away. TURN does not exist |
 | AD-10 | The portal splits two ways; the platform is a tenant | **Holds** |
 | AD-11 | The target layout applies to fresh installs | **Holds** |
-| AD-12 | The authorization store is a projection; the director writes it from Keycloak's events | **Deviation.** The projection exists, and it is the **operator** that receives Keycloak's events and writes the store; the director only asks it. The operator still holds Keycloak's master administrator credential, which the decision retires. No code revokes a person's sessions when their groups change. The check at start that the defaults git implies are the ones the store holds is not built |
+| AD-12 | The authorization store is a projection: the operator writes it, from git and from Keycloak's events; the director asks it | **Holds for who writes, with four things not built and one credential too many.** The operator receives Keycloak's signed statements and projects memberships, and projects roles, tenants, apps and grants from what git declares; the director asks the store and writes nothing to it. **Not built:** no code revokes a person's sessions when their groups change; no realm setting disables offline tokens (an app's client is left the optional scope `offline_access`); nothing reconciles the stored memberships toward Keycloak, so a statement that never arrives is repaired only by the next one about the same person; and the check at start that the defaults git implies are the ones the store holds does not exist. **Against the decision:** the operator still holds Keycloak's master administrator credential (defect 15) |
 | AD-13 | The edge is the only session authority | **Holds, with the two exceptions the entry names**: the App Store app's sign-in to a store, and the sign-in sidecar |
 | AD-14 | Catalogue sources on the Cluster claim; a profile reaches a cluster only at a verified digest | **Deviation, not decided.** Sources on the claim and per tenant, delegation, one bundle under one digest, and the console's catalogue view hidden: as decided. But the installer fetches the Operations Console's profile by address at install and commits it with no digest (see part 4) |
 | AD-15 | Multi-language is a core requirement | **Partly.** Desktop, console and sign-in pages are translated. A component's `description` and a store listing's text are single strings; the desktop has no check for a missing translation in CI |
@@ -142,8 +142,9 @@ Each is true of the code today.
 | 12 | **The model gateway's console cannot be switched off** separately from the model gateway | part 1, AD-9 |
 | 13 | **Crossplane's providers install every resource type they ship** — about 400 — and the compositions use about 27. Nothing narrows what is installed | `crossplane/providers/` |
 | 14 | **Two images float.** `vllm/vllm-openai` falls back to `latest` when the claim names no tag, and the model gateway's cache runs `redis:alpine`. `lint-image-pins` lists the first as known and does not look at the second | `kernel/services/llm/` |
-| 15 | **The operator holds Keycloak's master administrator credential** | part 1, AD-12 |
+| 15 | **The operator holds Keycloak's master administrator credential.** It reads the `keycloak-admin` Secret and hands it to the Jobs that configure realms, clients and groups. The process that writes the rights store can therefore change any identity as well | part 1, AD-12; `identity_reconciler.go` |
 | 16 | **Argo CD's repository credential can push** | [operator-split-plan.md §6](operator-split-plan.md) |
+| 17 | **A change of a person's groups does not end their sessions**, and offline tokens are not disabled. AD-12 states both; no code does either. An app that read groups from its own token keeps them until that token or the app's session ends | part 1, AD-12 |
 
 ## 4. Decisions waiting for the owner
 
@@ -158,10 +159,13 @@ Each is true of the code today.
    group that does not exist. Either the tenant's admins group is written as
    perimeter approver when a tenant is made, or the decision is changed to say
    that the role is always staffed separately, and the group is created empty.
-3. **Who writes the rights store** (AD-12). The operator does, from Keycloak's
-   events, with Keycloak's master administrator credential. Either the
-   decision is changed to name the operator, or the writing moves to the
-   director as decided; the credential is a separate question either way.
+3. **Sessions and offline tokens when a person's groups change** (AD-12).
+   Who writes the rights store is decided: the operator, and AD-12 says so.
+   Two sentences of the decision have no code: a membership change revokes
+   the person's sessions, and offline tokens are disabled. Either they are
+   built, or the decision is changed to say what bounds a stale group
+   instead (the access token's lifetime and `sessionMaxAge`). The operator's
+   hold on Keycloak's master administrator credential is defect 15.
 4. **What `basic`, `signature` and `jwt` mean on a perimeter entry** (AD-6,
    AD-1). Either the proxy verifies them, or the schema refuses them there
    until it does, or they stay as a statement about the app that the platform
@@ -183,10 +187,6 @@ Each is true of the code today.
    does today, because some entries are both. The sign-in sidecar removed one
    reason for an app to bring its own Composition; if the others go the same
    way the rule can return to exactly one.
-10. **A domain of its own for the user tenant of a single-tenancy cluster.**
-    `tenants domain` is not refused there. Binding one moves the tenant off
-    the cluster's addresses, and the main address is then not its own. Either
-    that is intended, or the director refuses it in `single` mode.
 
 ## 5. Known and deliberately not now
 
