@@ -1,222 +1,129 @@
-# Gentian Admin Console — design
+# Administration console — design
 
-**Status:** Draft v0.1  
-**Scope:** User and group administration, tenant-scoped notifications, member onboarding, and the identity/provisioning contracts for the Suze (`keycloak-native`) path.
+**Scope:** what the administration console is, what each of its screens does and which service answers it, and what is not built.
 
-**Companion docs:** [architecture.md](../architecture.md), [iam.md](iam.md), [security.md](security.md), [multi-tenancy.md](multi-tenancy.md), [tenant-identity-composition.md](tenant-identity-composition.md), [app-catalogue.md](app-catalogue.md), [resource-plans.md](resource-plans.md).
+**Companion docs:** [architecture.md](../architecture.md), [iam.md](iam.md), [security.md](security.md), [multi-tenancy.md](multi-tenancy.md), [routing.md](routing.md), [store-contract.md](store-contract.md), [resource-plans.md](resource-plans.md).
 
 ---
 
 ## 1. Purpose
 
-A desktop operating system is not complete without a way to **manage who may use
-the machine and what they may do** — user accounts, group membership, and
-administrative privilege. Gentian OS applies the same requirement at platform
-scale: every tenant organisation needs a first-party surface to govern **who**
-belongs to the workspace and **which apps and capabilities** each person may use.
+Every tenant needs a place to govern **who** belongs to it and **which apps**
+each person may use. The administration console is that place. It is **an
+app**: a component with its own profile (`admin-console`, shipped by the
+operator chart with `defaultForTenants: true`), so every tenant has one at
+`admin.<tenant domain>`, behind the tenant's session. It reaches a person as a
+tile on the desktop, shown to whoever holds `can_administer` on the tenant and
+to nobody else. The platform tenant has one too, at `admin.platform.<KERNEL_DOMAIN>`.
 
-See [architecture.md §2](../architecture.md#2-the-os-analogy) (OS analogy) and
-[architecture.md §5](../architecture.md#5-the-kernel--default-install-components)
-(kernel default install). The Admin Console is **an app** — a component with
-its own profile, built from the app template like any other — that every tenant
-gets by default rather than one a tenant chooses. It reaches a person as a tile
-on the desktop, held by administrators and by nobody else:
+A console administers the tenant it is installed in and no other. A platform
+administrator reaches another tenant through that tenant's own console.
 
-| Traditional OS | Gentian OS |
+The code is in [gentian-ui](https://github.com/gentian-org/gentian-ui),
+`apps/admin-console`: a React frontend and a small backend. **The console
+holds no credential, keeps no state and decides nothing.** Its backend checks
+the token the edge forwards and relays each call, with that token, to one of
+four services in `kernel-control`; what a person may see or change is that
+service's answer from OpenFGA.
+
+| Service | Asked for |
 |---|---|
-| Settings → Users & Groups; `sudoers`; login security; system log | **Gentian Admin Console** (Members, Groups, Security policies, Sessions, Audit, Notifications) |
-| Desktop shell / Start menu | **Gentian Portal** ([gentian-ui](https://github.com/gentian-org/gentian-ui)) |
+| **director** | Everything that is declared state: a write is a commit to the deployments repository, authored as the person. Also actions that happen once (take an export, publish a notice, purge an app's data) |
+| **usher** | Reads of what the cluster holds: installed components and their state, resources, exports, notices |
+| **registrar** | People and groups. It holds one Keycloak credential per realm; the console holds none |
+| **custodian** | Credentials a person sets: repository credentials, the backup identity |
 
-[architecture.md §13](../architecture.md#13-operational-roles) defines three
-operational roles (cluster admin, tenant admin, tenant user). The Admin Console
-is how **tenant admins** (and, during bootstrap, **platform admins**) exercise
-their scope: create members, assign entitlements, publish tenant notifications,
-and enforce the separation between administrators and day-to-day app users described
-in [iam.md](iam.md) and [multi-tenancy.md §8](multi-tenancy.md#81-admin--user-separation-of-duties).
+### 1.1 Screens
 
-### 1.1 Modules
-
-| Module | Responsibility | Phase |
+| Screen | What it does | Answered by |
 |---|---|---|
-| **Members** | Workspace user lifecycle | P1 — CRUD via Admin API; **P2 — invite, reset** |
-| **Groups** | Membership and entitlements | P1 — CRUD via Admin API |
-| **Security policies** | Tenant realm authentication rules | **P4 — password, session, lockout, MFA policy** |
-| **Sessions** | Active login inventory and revocation | P5 — list sessions, sign-out everywhere |
-| **Audit** | Sign-in and admin-action history | P6 — read-only event log, export |
-| **Notifications** | Scoped broadcasts | P7 — `admin-notifications` contract (**done**) |
-| **Resources** | Resource plans, ceilings, usage history | P10 — see [§4.8](#48-resources-p10) and [resource-plans.md](resource-plans.md) (**done**) |
-| **Apps** | The tenant's installed apps | Per app: state, who has access and the "for everyone" setting, integrations, privileges (requested and approved), uninstall, purge. Uninstall keeps the app's data; purge destroys the data of an app that is no longer installed ([ui-restructure.md](../plans/ui-restructure.md) §2, [store-contract.md](store-contract.md) §8) |
-| **Catalogue** | What this cluster's own sources hold | **Hidden.** The cluster renders no catalogue of its own (AD-14); the view is kept and not linked. With no store, apps are installed by command |
+| **Tenants** (platform administrator) | Create, retire and purge tenants, import one from a bundle, issue a tenant administrator's activation link | director, registrar |
+| **Members** | List, invite, update, switch off, remove; password reset; require or remove an authenticator; mailboxes of removed people (§4.3a) | registrar |
+| **Groups** | Custom groups and who is in each group, the app groups included | registrar |
+| **Apps** | The tenant's installed apps. Per app: state, who has access and whether it is for everyone, integrations, what it asked of the platform and what was approved, public addresses and their approval, uninstall, purge. Uninstall keeps the app's data; purge destroys the data of an app that is no longer installed ([store-contract.md](store-contract.md) §8) | director, usher |
+| **Resources** | Plan, ceiling, usage history (§4.8) | usher (read), director (write) |
+| **Export** | Take one export now, list and download what exists | usher (read), director |
+| **Security** | The realm's password, session and lockout policy (§4.5) | director |
+| **Integrations** | What the tenant's apps consume from each other, and the grants | director |
+| **Credentials** | Repository credentials, backup identity | custodian, director |
+| **Notifications** | Publish a notice to the tenant's people (§5) | director, usher (read) |
+| **Audit** | Changes to declared state, from git (§4.7) | director |
+| **Cluster settings**, **Platform security**, **Customization**, **Licence report** (platform administrator) | The Cluster claim's settings, permitted waivers, customization debt, the last licence report | director |
+| **Catalogues** | Hidden. The cluster renders no catalogue of its own; the screen is kept and not linked |
 
-The **App Store is not a module of the console.** The App Store app is a
-platform UI of its own beside it (AD-3, [store-contract.md](store-contract.md)
-§6): it shows the data of the store outside the cluster and does the
-installing. The console administers what is installed and installs nothing.
-
-Implementation: its own BFF and React UI (`gentian-ui/apps/admin-console`,
-`ui_kits/console` aesthetic), installed from its ComponentProfile. It holds no
-credential: every call is the director's, made with the identity the gateway
-asserts.
+**Nothing is installed from the console.** Apps come from the App Store app, a
+component of its own beside the console ([store-contract.md](store-contract.md)
+§6), or from `kubectl gentian apps install` where there is no store.
 
 ---
 
 ## 2. Placement in the security model
 
-Tenant isolation is enforced at **two independent layers** (see [security.md](security.md)):
+Tenant isolation rests on two independent layers (see [security.md](security.md)):
 
-| Layer | Mechanism | Android analogue |
-|---|---|---|
-| **MAC backbone** | `tenant-{name}` namespace, default-deny NetworkPolicy, Kyverno | SELinux + per-app UID |
-| **Identity domain** | **Per-tenant Keycloak realm** + kernel login façade | Work profile (separate user store) |
+| Layer | Mechanism |
+|---|---|
+| **MAC backbone** | `tenant-<name>` namespaces, default-deny NetworkPolicy, Kyverno |
+| **Identity domain** | One Keycloak realm per tenant |
 
-Keycloak **Organizations** (single realm, logical tenants) are **not** the primary isolation mechanism. They optimize B2B CIAM at scale but share one user database; Gentian prioritizes MAC + realm-per-tenant. See [iam.md §1](iam.md#1-identity-topology-suze--keycloak-native).
+Keycloak Organizations (one realm, logical tenants) are not used: they share
+one user database. See [iam.md §1](iam.md#1-identity-topology-suze--keycloak-native).
 
-Authorization inside the console uses **RBAC groups in Keycloak** (ergonomic) backed by **OpenFGA** (authorization plane) as the bridge matures.
+Authority in the console is not read from a token's groups. Which screens a
+person gets is decided from two answers of the director: the verbs they hold
+on the tenant and on the cluster. Every relayed call is checked again by the
+service that receives it.
 
 ---
 
-## 3. Identity topology (Suze / `keycloak-native`)
+## 3. Identity topology
 
-### 3.1 Realms
+Realms, sign-in, the group names and the member/administrator split are
+described once, in [iam.md §1.1–§1.3](iam.md#1-identity-topology-suze--keycloak-native).
+What the console relies on:
 
-| Realm | Purpose | Human users |
-|---|---|---|
-| `master` | Keycloak operator CLI only | No |
-| `kernel` | Shared portal's own clients, platform admins | Platform admins only |
-| `<tenant>` | **Authoritative store** for tenant members, groups, app OIDC clients, **and where tenant members authenticate** | All tenant members and tenant admins |
-
-Users are **managed and authenticated in the tenant realm** — each tenant realm
-has its own `Cookie → forms` browser flow, so tenant members sign in directly
-there rather than being brokered through `kernel`. `kernel` keeps its own job:
-platform operators, Argo CD, and the portal's own clients.
-
-```mermaid
-flowchart TD
-    TenantHost["desktop.&lt;tenant&gt;.&lt;kernel&gt;<br>(bookmarkable, canonical)"]
-    Apex["&lt;kernel&gt; → id.&lt;kernel&gt;/sign-in/<br>(email prompt only)"]
-
-    TenantHost -->|"edge → email + password, one stage"| TenantRealm
-    Apex -->|"sends the browser to the console,<br>the email in a realm-only cookie"| TenantHost
-
-    subgraph TenantRealm ["tenant realm — Cookie → forms"]
-        direction LR
-        TenantDemo["tenant:demo"]
-        TenantAcme["tenant:acme"]
-        TenantOthers["…"]
-    end
-
-    Ops["platform operator"] -->|"Cookie → forms"| KernelRealm["kernel realm"]
-```
-
-Every OIDC app (Jitsi, Nextcloud, Odoo, …) also uses the tenant realm as its
-IdP, which is why this matters: the session an app's redirect needs already
-lives in the same realm the portal just authenticated against, so it's reused
-silently — no broker hop, no second login screen.
-
-A realm is an isolated user store and a login page belongs to exactly one
-realm, so a single password form in front of users from several realms isn't
-possible — which is why the tenant's desktop, not the apex, is what's meant to
-be bookmarked: it's the only entry point that knows the realm before rendering
-the form, so it can ask for both email and password in one stage. The apex
-lands on the concierge (gentian-ui `apps/concierge`, served beside Keycloak),
-which only asks for an email and sends the browser to that tenant's desktop.
-The edge starts the code flow there and can carry no `login_hint`, so the router
-leaves the address in a ten-minute cookie scoped to `id.<kernel>/auth/realms/`,
-and the login theme fills the username from it.
-
-### 3.2 Login identifiers
-
-| Field | Rule |
-|---|---|
-| **Primary login (`username` / `email`)** | Email address — global uniqueness across the cluster (`user@demo.platform.example.com`) |
-| **`inviteEmail`** | Optional secondary address for **invite**, **password reset**, and **account recovery** only |
-| **Tenant admin bootstrap** | Username and address are the same string, `admin@<tenant-domain>`, derived not configured; password from OpenBao `gentian-os/tenants/<tenant>/admin` |
-| **Platform admin bootstrap** | `admin@<KERNEL_DOMAIN>`, with no password until its holder sets one through a single-use activation link |
-
-### 3.3 Group taxonomy
-
-Gentian uses explicit Keycloak group names for platform scope, tenant membership,
-and per-app entitlements:
-
-| Gentian Keycloak group | Purpose |
-|---|---|
-| `gentian:platform:superadmin` | Platform operator (bootstrap; broad access initially) |
-| `gentian:platform:operator` | Future read-only / constrained platform role |
-| `gentian:platform:break-glass` | Future emergency access (audited) |
-| `gentian:tenant:<t>:members` | All workspace members |
-| `gentian:tenant:<t>:admins` | Tenant IT admins (Admin Console scope) |
-| `gentian:tenant:<t>:app:<profile>` | App entitlement (portal tile + future provisioning) |
-| `gentian:role:member` | Token marker for workspace members |
-
-**OpenFGA sync** (authz bridge): group membership → tuples, e.g. `user:alice#member@group:demo-app-a`, `group:demo-app-a#parent@tenant:demo`.
-
-**Portal visibility:** shell reads JWT **groups** and OpenFGA `can_launch` to decide which app tiles appear on the desktop.
-
-### 3.4 Member vs administrator (mutually exclusive)
-
-Tenant administrators and regular members are **separate identities** — an admin
-account must not double as a day-to-day app user (license, audit, and separation
-of duties). Enforced by group assignment in the Admin Console.
-
-| Role | Groups | Portal desktop |
-|---|---|---|
-| **Member** | `gentian:tenant:<t>:members`, optional `gentian:tenant:<t>:app:*` | User app tiles only |
-| **Tenant admin** | `gentian:tenant:<t>:admins` | Admin Console tiles (Members, Groups, Notifications) — **no** app tiles |
-| **Platform admin** | `gentian:platform:superadmin` | Admin Console (all tenants) + future platform tools |
+- People and groups of a tenant are in the tenant's own realm; the platform
+  tenant's are in the `kernel` realm.
+- The login name is the email address. `gentian.inviteEmail` is an optional
+  second address used for the invitation, password reset and recovery.
+- Administrator and member are separate accounts: `can_use` on an app excludes
+  a tenant's administrators, so an administrator's desktop shows administration
+  tiles and a member's shows apps.
 
 ---
 
-## 4. Gentian Admin Console — product shape
+## 4. What the screens do
 
-### 4.1 Single console, scoped by privilege
+### 4.1 One console, scoped by what the person holds
 
-One web app embedded in the Gentian shell (builtin desktop apps). Menu items shown or hidden from JWT roles + OpenFGA checks:
+The same image runs for every tenant. The screens marked *platform
+administrator* in §1.1 are shown only to a person who holds the cluster's
+verbs; they are reachable from any console such a person can open.
 
-| Module | Platform superadmin (bootstrap) | Tenant admin |
-|---|---|---|
-| Members | All tenants (initially) | Own tenant only |
-| Groups | All tenants (initially) | Own tenant only |
-| Security policies | Kernel + tenant realms | Own tenant realm only |
-| Sessions | All tenants (initially) | Own tenant members only |
-| Audit | Platform + all tenants | Own tenant only |
-| Notifications | Platform-wide publish | Tenant-scoped publish |
-| Resources | All tenants; may force a downgrade | Own tenant; held to its entitlement |
-| Tenants | Yes | Hidden |
-| App Store | Stage 2 | Stage 2 |
+### 4.2 First administrators
 
-**BFF rule:** every Admin API call resolves `tenant` from the authenticated subject and **rejects** cross-tenant mutations unless the caller holds `gentian:platform:superadmin`.
+- **Platform administrator.** The installer creates `admin@<KERNEL_DOMAIN>` in
+  the kernel realm with no password and issues a single-use activation link
+  (`./install.sh --activate-admin` for a new one).
+- **Tenant administrator.** Provisioning creates the realm, its groups and the
+  administrator account (`status.adminEmail` on the Tenant), a member of
+  `gentian:tenant:<t>:admins`, with no password. The registrar issues the
+  activation link: `kubectl gentian tenants activate-admin <tenant>`, or the
+  *Tenants* screen.
 
-### 4.2 Bootstrap flows (parity with install / `kubectl gentian tenants deploy`)
+No password is derived, stored or printed for either ([iam.md §1.4](iam.md)).
 
-**A) Platform admin (install)**
-
-1. `install.sh` seeds Suze + kernel realm.
-2. Job or bootstrap script creates `administrator@<KERNEL_DOMAIN>` in **kernel realm** with `gentian:platform:superadmin`.
-3. Admin signs in at `https://<kernel>/login` (kernel realm, `Cookie → forms`) → Admin Console desktop.
-
-**B) Tenant admin (`kubectl gentian tenants deploy demo`)**
-
-1. Operator seeds OpenBao `gentian-os/tenants/demo/admin`.
-2. Provisioning creates **tenant realm** `demo`, groups, tenant admin user, `gentian:tenant:demo:admins` membership.
-3. CLI prints login email + password (after Keycloak user is ready).
-4. Tenant admin signs in directly at `demo.<kernel>/login` (tenant realm, `Cookie → forms`) → Admin Console.
-
-**C) Tenant admin invites members**
-
-1. Admin Console → **Invite member** → email, name, optional app entitlements (group checkboxes).
-2. BFF creates user in **tenant realm** (`enabled: true`, no password).
-3. BFF calls Keycloak `execute-actions-email` with `VERIFY_EMAIL`, `UPDATE_PASSWORD` (and optionally `CONFIGURE_TOTP` when MFA required).
-4. Gentian-branded Keycloak email theme; link returns to portal `/login`.
+**Inviting a member.** *Members* → *Invite*: address, name, optional recovery
+address, the app groups to join (an app installed for everyone is pre-selected).
+The registrar creates the account with no password and has Keycloak mail a
+link with `VERIFY_EMAIL` and `UPDATE_PASSWORD`.
 
 ### 4.3 Password reset and recovery
 
-| Action | Email target | Mechanism |
-|---|---|---|
-| Admin-triggered reset | `inviteEmail` if set, else primary `email` | `execute-actions-email` with `UPDATE_PASSWORD` |
-| Self-service forgot password | Same | Future: Keycloak account console or portal link (same recovery path) |
-| Invite (first login) | Primary `email` for username; optional copy to `inviteEmail` | `execute-actions-email` |
-
-Store `inviteEmail` as Keycloak user attribute `gentian.inviteEmail`.
+| Action | Mechanism |
+|---|---|
+| Reset by an administrator | The registrar has Keycloak mail a link with `UPDATE_PASSWORD`, to `gentian.inviteEmail` if set, else the primary address |
+| Self-service "forgot password" | Not built |
 
 ### 4.3a Removing a member
 
@@ -241,72 +148,47 @@ archived mailbox is deleted from that list, after a confirmation. Who may do
 all of this: whoever may manage the tenant's people (`can_manage_users`).
 [mail.md §5c](mail.md) says what happens on the mail server.
 
-### 4.4 MFA (v1)
+### 4.4 Second factor
 
-Use **Keycloak built-in TOTP** (`CONFIGURE_TOTP` required action) — no custom crypto.
+Keycloak's built-in TOTP. An administrator requires an authenticator for one
+person (at the next sign-in, or by a mailed link) and removes a person's
+authenticators for a lost device. A realm-wide rule ("everybody must have
+one") cannot be set from the console: Keycloak expresses it as an
+authentication flow, not a realm setting. WebAuthn and passkeys are not
+configured.
 
-| Capability | v1 |
+### 4.5 Security policies
+
+| Policy area | Settings |
 |---|---|
-| Admin enables TOTP per user | Yes (P3) |
-| Realm policy “require TOTP for admins” | Yes (P4 — Security policies) |
-| WebAuthn / passkeys | Stage 2 |
+| **Password** | Minimum length, digits, lower and upper case, special characters, history, maximum age |
+| **Session** | Idle time, maximum length, remember-me |
+| **Lockout** | On or off, failures allowed, lockout duration |
 
-### 4.5 Security policies (P4)
+The policy is declared state: the director commits it as
+`security-policy.yaml` beside the tenant's manifest (`can_set_policy`), and the
+tenant Composition writes it into the realm. Nothing in this path holds a
+Keycloak credential, and a realm rebuilt from scratch comes back with its policy.
 
-Tenant admins configure a **subset** of Keycloak realm authentication settings
-for their tenant realm. The BFF exposes only safe, tenant-scoped knobs — not
-Keycloak operator internals.
+### 4.6 Sessions
 
-| Policy area | Tenant-admin controls | Source |
-|---|---|---|
-| **Password** | Minimum length, complexity, expiry, history | Keycloak realm password policy |
-| **Session** | SSO idle timeout, max session lifespan, remember-me | Keycloak realm / client session settings |
-| **Lockout** | Max failed attempts, lockout duration | Keycloak brute-force detection |
-| **MFA** | Require TOTP for admins, optional/required for members | Keycloak authentication flows + required actions |
+The console has no session screen: listing a person's sessions and ending one
+from the console is not built. A person who was removed is refused by the
+front door on their next request ([iam.md §1.11](iam.md)).
 
-Platform admins may set **kernel realm** defaults separately. Changes are
-recorded in the **Audit** module (§4.7).
+### 4.7 Audit
 
-### 4.6 Sessions (P5)
+The screen shows **changes to declared state**: every such change is a commit
+the director authored as the person, with the relation and object that
+permitted it. It needs no store of its own.
 
-Maps to the desktop-OS question *“who is logged in right now?”* Disabling a
-member or offboarding must not leave stale portal or app sessions valid until
-token expiry alone ([security.md](security.md) — continuous authorization / CAEP is Stage 2).
+Not in it: sign-ins, refused requests and reads of data, for which no store
+exists, and changes to people. For those the registrar keeps a record of who
+asked and what permitted it, with a retention period, beside Keycloak's own
+admin events; the console does not show either yet. The screen says what it
+leaves out. There is no export.
 
-| Capability | Behaviour |
-|---|---|
-| **List sessions** | Per member: client, IP, started, last access (Keycloak user sessions API) |
-| **Revoke session** | End one session |
-| **Sign out everywhere** | Revoke all sessions for a user (admin action + self-service on portal later) |
-| **On disable** | BFF automatically revokes all sessions when `enabled: false` |
-
-Future: **Shared Signals / CAEP** pushes revocation to resource servers without
-waiting for token TTL (Stage 2).
-
-### 4.7 Audit (P6)
-
-Maps to the OS **system / security event log**. Read-only for tenant admins;
-feeds SOC2 access reviews and incident response.
-
-| Event stream | Examples | Source |
-|---|---|---|
-| **Sign-in** | Success, failure, MFA challenge, lockout | Keycloak event listener → Gentian audit store |
-| **Admin actions** | Member created, group changed, policy updated, session revoked | BFF mutation log + Keycloak admin events |
-| **Entitlement changes** | App group added/removed | BFF + provisioning bus (when P8 live) |
-
-| Capability | Phase |
-|---|---|
-| Filterable log UI (user, action, time range) | P6 |
-| CSV / JSON export for SIEM | P6 |
-| Retention policy (per cluster config) | P6 |
-| Access certification campaigns | Stage 2 |
-
-All admin **mutations** through the BFF include actor, tenant, target, and
-correlation id. Platform operators use the same module with broader scope during
-bootstrap; `platformAdminMode: constrained` limits routine cross-tenant visibility
-(§7).
-
-### 4.8 Resources (P10)
+### 4.8 Resources
 
 Maps to the OS question *"how much of this machine may this account use, and how
 much is it using?"* — with the part a desktop OS has no answer for: **what that
@@ -331,12 +213,12 @@ console is one the platform has priced — which is what makes a month resolve t
 SKUs rather than to numbers somebody downstream has to interpret.
 
 **The write is a commit, not a patch.** Selecting a plan is the director
-committing `resource-plan.yaml` to `gentian-deployments` as the caller, after
+committing `resource-plan.yaml` to the deployments repository as the caller, after
 checking `can_set_plan` and validating the choice against the operator's answer
 for that tenant — so the console and the GitOps repository cannot disagree
 about a tenant's ceiling, and the console decides nothing itself. The reads
-are the operator's, relayed by the director; `kubectl gentian resources` reads
-them too, and has no write.
+are the operator's, relayed by the usher; `kubectl gentian resources` reads
+them the same way and writes through the director (`set`).
 
 **A downgrade below current use is refused.** Kubernetes does not evict pods to
 fit a shrunken quota — it refuses the *next* create — so shrinking a tenant too
@@ -351,404 +233,85 @@ changed.
 
 ---
 
-## 5. `admin-notifications` contract
+## 5. Notifications
 
-Cross-app contract (published in `gentian-apps/contracts/admin-notifications.yaml` when the catalogue repo adds it).
+An administrator publishes a notice (a title and a text) to the people of the
+tenant. Publishing is an action at the director (`can_administer`), which
+records who published it. Notices are stored in the tenant's own database,
+in the table the desktop reads; the console keeps no copy and reads the
+history through the usher.
 
-| Property | Value |
-|---|---|
-| **Name** | `admin-notifications` |
-| **Wire format** | [CloudEvents 1.0](https://cloudevents.io/) over HTTP |
-| **Event type** | `gentian.admin.notification.published.v1` |
-| **Consumers (v1)** | None required — storage + Admin Console inbox only |
-| **Future consumers** | Email (Postfix), Element (Matrix), shell notification tray |
-
-**Audience extension** (`gentianaudience` — Gentian-specific, not part of CE core):
-
-```json
-{
-  "scope": "tenant",
-  "tenant": "demo",
-  "groups": ["gentian:tenant:demo:members"]
-}
-```
-
-| Publisher | Allowed audiences |
-|---|---|
-| Platform superadmin | `scope: platform` (all users) or any group under their admin scope |
-| Tenant admin | `scope: tenant` + own tenant id; groups ⊆ `gentian:tenant:<t>:*` |
-
-BFF validates audience ⊆ caller's scope before publish. There is no universal RFC for “admin broadcast”; CloudEvents is the industry-standard **envelope**; the REST publish API is Gentian-specific (same pattern as Okta/Auth0 admin event streams).
+Not built: an audience narrower than the tenant (the director's action takes
+no group) and delivery by mail or chat.
 
 ---
 
-## 6. App entitlements and provisioning bus
+## 6. App access
 
-### 6.1 Console structures (v1 — no app-side workers required)
+Who may use an installed app is membership of the app's Keycloak group,
+`gentian:tenant:<t>:app:<profile>`, and nothing else. The console sets it: per
+person on *Members*, per group on *Groups*, and on *Apps* whether the app is
+for everyone. How membership becomes a decision at the front door and a tile
+on the desktop is [iam.md §1.6](iam.md).
 
-When creating/editing a member, the Admin Console sets **Keycloak group membership** only:
-
-```yaml
-# Conceptual — stored as group joins, not a separate CRD in v1
-entitlements:
-  apps: [app-a, app-b]   # → gentian:tenant:demo:app:app-a, …
-  roles: [member]              # member | tenant-admin
-```
-
-Downstream app provisioning (Nextcloud account, Matrix ID, …) is **deferred** but the **data model exists on day one**.
-
-### 6.2 Provisioning bus (v1 design, v2 implementation)
-
-Identity changes in the Admin Console propagate to installed apps through a
-**standards-based event pipeline** (replacing ad-hoc per-app account sync):
-
-```mermaid
-flowchart TD
-    KCEvent["Keycloak admin event<br>(user/group CRUD)"]
-    Controller["Gentian Provisioning Controller<br>(gentian-os)"]
-    Bus["CloudEvents bus<br>type: gentian.identity.user.updated.v1"]
-    ScimMode["AppProfile.provisioning.mode: native-scim<br>→ HTTP POST to app's SCIM endpoint"]
-    PluginMode["AppProfile.provisioning.mode: plugin<br>→ gentian-apps provisioner plugin"]
-    
-    KCEvent --> Controller
-    Controller -->|"normalize to SCIM 2.0 User / Group resource or PatchOp"| Bus
-    
-    Bus --> ScimMode
-    Bus --> PluginMode
-```
-
-**AppProfile extension (planned):**
-
-```yaml
-spec:
-  provisioning:
-    mode: plugin              # none | native-scim | plugin
-    pluginRef: catalogue-app-provisioner
-    scimEndpoint: ""          # when mode=native-scim
-```
-
-Provisioner plugins live in **`gentian-apps`** (app-developer authored); the controller loads them by reference. **SCIM 2.0 (RFC 7643/7644)** is the canonical payload; **CloudEvents** is the transport — compatible with SCIM-native SaaS and custom OSS apps.
-
-Keycloak **26.6+ experimental SCIM Realm API** is complementary (external IdPs syncing **into** a tenant realm), not the primary internal trigger.
-
-### 6.3 OIDC packs
-
-Per-app tenant-realm OIDC client scopes and role mappings are declared in
-**OIDC pack catalogues** in `gentian-apps` (per `AppProfile` / `OIDCPackCatalog`).
-Each pack maps an **entitlement group** (`gentian:tenant:<t>:app:<profile>`) to
-client roles so OIDC tokens reflect app access granted in the Admin Console.
+**Accounts inside apps.** The platform does not create or remove a person's
+account in an app; an app makes one at the person's first sign-in. The one
+thing synchronised is who administers an app: members of
+`gentian:tenant:<t>:app-admins` are given the administrator role an app's
+profile declares (`spec.hooks.provisioning`, [iam.md §1.8](iam.md)).
 
 ---
 
-## 7. Platform admin least-privilege (phased)
+## 7. Platform roles
 
-**Bootstrap (now):** `gentian:platform:superadmin` may manage all tenants — operational convenience.
+Which Keycloak group holds which platform role is stated on the Cluster claim
+(`spec.platformRoles`; `admin` defaults to `gentian:platform:admin`, the other
+roles have no holder unless a group is named). The operator projects it into
+OpenFGA. A platform administrator administers a tenant the cluster operates
+through that tenant's console.
 
-**Target (flip via cluster config):** `platformAdminMode: constrained`
-
-| Mode | Platform admin can |
-|---|---|
-| `bootstrap` (default) | Cross-tenant user/group visibility, help tenants directly |
-| `constrained` | Tenant metadata + break-glass only; **no** routine cross-tenant member access |
-
-Structures baked in from day one:
-
-- Separate Keycloak groups (`superadmin`, `operator`, `break-glass`)
-- OpenFGA relations `platform#admin` vs `tenant#admin`
-- BFF checks on every route
-- Audit module (§4.7) on all admin mutations
-
-See [roadmap.md § Platform admin least-privilege](../roadmap.md#platform-admin-least-privilege).
+A mode that withholds routine access to tenants' people from platform
+administrators is not built ([roadmap.md](../roadmap.md) §3.3).
 
 ---
 
-## 8. Implementation phases
+## 8. Not built
 
-Aligned with [roadmap.md § Gentian Admin Console](../roadmap.md#gentian-admin-console).
+Designed at some point and absent from the code. None of it should be read as
+a control that exists.
 
-| Phase | Deliverable | Status |
-|---|---|---|
-| **P0** | Suze bootstrap: kernel + tenant realm Jobs; group taxonomy; platform + tenant admin users | **Done** — see [§8.1](#81-p0--p1-status) |
-| **P1** | Admin Console BFF: Members + Groups (Keycloak Admin API, tenant-scoped) | **Done** (`gentian-ui`) — see [§8.1](#81-p0--p1-status) |
-| **P2** | Invite + reset password (`inviteEmail`, Gentian email theme) | **Done** (`gentian-ui`) — see [§8.2](#82-p2-status); branded email theme pending Keycloak SMTP |
-| **P3** | Per-user TOTP enablement; required-action flows | **Done** (`gentian-ui`) — see [§8.3](#83-p3-status) |
-| **P4** | **Security policies** UI — password, session, lockout, MFA realm rules (§4.5) | **Done** (`gentian-ui`) — see [§8.4](#84-p4-status) |
-| **P5** | **Sessions** UI — list/revoke; auto-revoke on member disable (§4.6) | **Done** (`gentian-ui`) — see [§8.5](#85-p5-status) |
-| **P6** | **Audit** UI — sign-in + admin-action log, export (§4.7) | **Done** (`gentian-ui`) — see [§8.6](#86-p6-status) |
-| **P7** | `admin-notifications` gateway + publish UI | **Done** (`gentian-ui`) — see [§8.7](#87-p7-status) |
-| **P8** | Provisioning controller + CloudEvents/SCIM bus; per-member sync status | Planned |
-| **P9** | OpenFGA `can_launch` for admin modules (shell tile shipped in P1) | Planned |
-| **P10** | **Resources** — plan catalogue, ceilings, usage history, billed intervals (§4.8) | **Done** — see [§8.8](#88-p10-status) |
-| **Later** | `platformAdminMode: constrained`; WebAuthn in Security policies | Planned |
-
-**Explicitly not in P0–P7:** tenant app install (GitOps / `kubectl gentian apps`), app-side provisioner execution, Stage 2 authorization surfaces (§9).
-
-### 8.1 P0 / P1 status
-
-Last reviewed against `gentian-os` (`feat/new-security`) and `gentian-ui` (`feat/new-ui`).
-
-#### P0 — Suze identity bootstrap (**done**)
-
-Keycloak-native (Suze) is the only path.
-
-| Item | Status | Notes |
-|---|---|---|
-| Suze Keycloak + OpenFGA install | **Done** | `install.sh` Steps 14–15 |
-| Kernel realm + `gentian-portal` client | **Done** | `scripts/lib/portal-login-bootstrap.sh` Job + optional Crossplane `gentian-portal` Client MR |
-| Platform admin bootstrap | **Done** | `administrator@<KERNEL_DOMAIN>` + `gentian:platform:superadmin`; password `MASTER_PASSWORD`-derived; `groups` scope on `gentian-portal` |
-| Tenant realm Jobs | **Done** | `keycloak-realm-*`, `keycloak-gentian-groups-*`, `keycloak-admin-*` (`tenant_identity_manifests.go`); brokering is `tenant-default`'s |
-| **`gentian:tenant:<t>:*` group taxonomy** | **Done** | `makeGentianGroupsJob` — `members`, `admins`, `app:<profile>` per tenant apps |
-| Tenant admin in `gentian:tenant:<t>:admins` | **Done** | `keycloak-admin-*` Job joins admin user to admins group (+ `realm-admin` for Keycloak Admin API) |
-| OIDC pack entitlement groups | **Done** | Packs map `gentian:tenant:<t>:app:<profile>` entitlement groups |
-| Kernel broker IdP per tenant | **Done** | `makeBrokerIdentityProviderJob` |
-
-**Deploy note:** rebuild/push `gentian-os` operator and re-run tenant provisioning (or delete/recreate tenant Jobs) on existing clusters to pick up group bootstrap Jobs.
-
-#### P1 — Admin Console BFF + UI (**done in `gentian-ui`**)
-
-| Item | Status | Location |
-|---|---|---|
-| Tenant-scoped admin auth | **Done** | `gentian-ui/backend/app/core/admin_context.py`, `gentian_groups.py` — JWT groups + `admin-<tenant>@` fallback |
-| Keycloak Admin API store | **Done** | `gentian-ui/backend/app/services/keycloak_admin_store.py` (`KEYCLOAK_ADMIN_*` from `gentian-portal-secrets`) |
-| Dev in-memory store | **Done** | `memory_admin_store.py` when `AUTH_DISABLED=true` |
-| **Members** CRUD API | **Done** | `GET/POST/PATCH/DELETE /api/v1/admin/members` |
-| **Groups** CRUD + membership | **Done** | `GET/POST/PATCH/DELETE /api/v1/admin/groups`, `PUT …/members/{id}/groups` |
-| Admin Console UI (Members + Groups) | **Done** | `gentian-ui/frontend/src/admin/` — builtin shell app tile |
-| Cluster secret wiring | **Done** | `portal-login-bootstrap.sh` copies `keycloak-admin` → `gentian-portal-secrets` |
-| Deployed to cluster | **Pending** | Rebuild/push `gentian-portal-api` + `gentian-portal-web`; commit on `feat/new-ui` may be outstanding |
-
-**P1 caveats:** Admin API targets the **tenant Keycloak realm** (`realm == tenant id`). Operators must set `KEYCLOAK_ADMIN_*` on the portal API pod. OpenFGA `can_launch` checks for admin routes remain **P9**. `admin-<tenant>@` username fallback in BFF remains for clusters not yet reprovisioned.
-
-### 8.2 P2 status
-
-Last reviewed against `gentian-ui` (`feat/new-ui`).
-
-| Item | Status | Location |
-|---|---|---|
-| **Invite member** API | **Done** | `POST /api/v1/admin/members/invite` — creates user (no password), optional `inviteEmail` attribute, group entitlements, `execute-actions-email` (`VERIFY_EMAIL`, `UPDATE_PASSWORD`) |
-| **Reset password** API | **Done** | `POST /api/v1/admin/members/{id}/reset-password` — `execute-actions-email` (`UPDATE_PASSWORD`); delivery to `gentian.inviteEmail` when set |
-| Admin Console invite UI | **Done** | `MembersSection.tsx` — invite form, optional recovery email, app group checkboxes, reset-password action |
-| Shell placeholder removal | **Done** | Mail/Chat/Files/Settings tiles removed; shell notification tray enabled in P7 |
-| Gentian-branded email theme | **Pending** | Requires Keycloak realm SMTP + email theme packaging (cluster mail stack) |
-| Portal redirect on invite/reset | **Done** | `redirect_uri=https://portal.<KERNEL_DOMAIN>/login`, `client_id=gentian-portal` |
-
-**P2 caveats:** Invite/reset emails require Keycloak realm SMTP configuration. Until Postfix/SMTP is enabled in the cluster, `execute-actions-email` calls succeed only when Keycloak can send mail.
-
-### 8.3 P3 status
-
-Last reviewed against `gentian-ui` (`feat/new-ui`).
-
-| Item | Status | Location |
-|---|---|---|
-| **Per-user TOTP enable** | **Done** | `POST /api/v1/admin/members/{id}/totp/enable` — `CONFIGURE_TOTP` via `execute-actions-email` (default) or required-action on next login (`sendEmail: false`) |
-| **Remove TOTP** | **Done** | `DELETE /api/v1/admin/members/{id}/totp` — deletes OTP credentials and clears `CONFIGURE_TOTP` required action |
-| **Invite with TOTP** | **Done** | `POST /api/v1/admin/members/invite` — optional `requireTotp` adds `CONFIGURE_TOTP` to invite actions |
-| **Member MFA status** | **Done** | `totpConfigured` / `totpPending` on member responses (Keycloak credentials + required actions) |
-| Admin Console MFA UI | **Done** | `MembersSection.tsx` — MFA column, Require/Remove TOTP, invite checkbox |
-| Realm-wide MFA policy | **Done (P4)** | Security policies tab — require TOTP for admins / members |
-
-**P3 caveats:** TOTP uses Keycloak built-in OTP only (no WebAuthn). Realm-wide MFA rules are configured in the **Security** tab (P4).
-
-### 8.4 P4 status
-
-Last reviewed against `gentian-ui` (`feat/new-ui`).
-
-| Item | Status | Location |
-|---|---|---|
-| **Security policies** API | **Done** | `GET/PUT /api/v1/admin/security-policies` |
-| Password policy | **Done** | Keycloak `passwordPolicy` — length, complexity, history, max age |
-| Session policy | **Done** | `ssoSessionIdleTimeout`, `ssoSessionMaxLifespan`, `rememberMe` |
-| Lockout policy | **Done** | `bruteForceProtected`, `failureFactor`, `maxFailureWaitSeconds` |
-| MFA realm rules | **Done** | Realm attributes `gentian.security.requireTotpAdmins` / `requireTotpMembers`; syncs `CONFIGURE_TOTP` to group members on save |
-| Admin Console Security tab | **Done** | `SecurityPoliciesSection.tsx` |
-| Audit log on policy change | **Done (P6)** | BFF mutation audit |
-
-**P4 caveats:** MFA realm rules use required-action sync (not Keycloak authentication-flow binding). `requireTotpMembers: optional` is a policy marker only — enforcement remains per-user via Members (P3). Kernel realm defaults for platform admins use the same API when scoped to `kernel`.
-
-### 8.5 P5 status
-
-Last reviewed against `gentian-ui` (`develop`).
-
-| Item | Status | Location |
-|---|---|---|
-| **List sessions** API | **Done** | `GET /api/v1/admin/sessions`, `GET /api/v1/admin/members/{id}/sessions` |
-| **Revoke session** API | **Done** | `DELETE /api/v1/admin/members/{id}/sessions/{sessionId}` |
-| **Sign out everywhere** API | **Done** | `POST /api/v1/admin/members/{id}/sessions/revoke-all` |
-| **Auto-revoke on disable** | **Done** | `KeycloakAdminStore.update_member` + `MemoryAdminStore.update_member` when `enabled: false` |
-| Admin Console Sessions tab | **Done** | `SessionsSection.tsx` — grouped by member, revoke + sign-out everywhere |
-| Audit log on session revoke | **P6** | BFF mutation audit deferred |
-
-**P5 caveats:** Session list aggregates Keycloak user-session API per member (acceptable for v1 tenant sizes). Offline sessions are not revoked (`isOffline=false`). CAEP / shared-signals push is Stage 2.
-
-### 8.6 P6 status
-
-Last reviewed against `gentian-ui` (`develop`).
-
-| Item | Status | Location |
-|---|---|---|
-| **Audit events** API | **Done** | `GET /api/v1/admin/audit-events` with user/action/category/time filters |
-| **Export** API | **Done** | `GET /api/v1/admin/audit-events/export?format=json\|csv` |
-| **BFF mutation audit** | **Done** | `record_admin_audit()` on Members, Groups, Security, Sessions mutations |
-| **Keycloak sign-in events** | **Done** | `KeycloakAuditFetcher` merges realm user/admin events when `KEYCLOAK_ADMIN_*` configured |
-| Admin Console Audit tab | **Done** | `AuditSection.tsx` — filters, table, CSV/JSON export |
-| Durable audit store / retention | **Done (v1)** | PostgreSQL `admin_audit_events` in per-tenant `{tenant}_shell` database (provisioned with each tenant) |
-
-**P6 caveats:** Keycloak must have user/admin events enabled on the realm for sign-in rows to appear. **BFF-recorded admin actions** are stored in PostgreSQL table `admin_audit_events` in the per-tenant `{tenant}_shell` database (`portal-shell-{tenant}` Secret). Sign-in events are still fetched live from Keycloak at query time and are not duplicated into the database. Cluster retention policy is not yet enforced.
-
-### 8.7 P7 status
-
-Last reviewed against `gentian-ui` (`develop`).
-
-| Item | Status | Location |
-|---|---|---|
-| **Publish** API | **Done** | `POST /api/v1/admin/notifications` — audience validation, CloudEvents envelope in response |
-| **Admin list** API | **Done** | `GET /api/v1/admin/notifications` |
-| **Inbox** API | **Done** | `GET /api/v1/notifications/inbox`, `POST /api/v1/notifications/{id}/dismiss` |
-| **Audience extension** | **Done** | `gentianaudience` (`scope`, `tenant`, `groups`) on CloudEvent + REST |
-| **Durable storage** | **Done (v1)** | PostgreSQL `admin_notifications` + `admin_notification_dismissals` in `{tenant}_shell` |
-| Admin Console Notifications tab | **Done** | `NotificationsSection.tsx` — publish form + history |
-| Shell notification tray | **Done** | `NotificationInbox.tsx` — bell + dismiss in `AppMenu` |
-| External consumers | **Deferred** | Email/Matrix consumers not wired in v1 |
-
-**P7 caveats:** v1 stores notifications and serves the portal inbox only — no Postfix or Element fan-out yet. Platform-wide publishes require platform administrator privileges. Dismissals are per-user and stored in `admin_notification_dismissals`.
-
-### 8.8 P10 status
-
-Last reviewed against `gentian-os` and `gentian-ui` (`develop`).
-
-| Item | Status | Location |
-|---|---|---|
-| **`ResourcePlan` CRD** | **Done** | `gentian-os/api/v1alpha1/resourceplan_types.go`; default catalogue in the operator chart under `usage.plans.catalogue` |
-| **Plan resolution + downgrade guard** | **Done** | `gentian-os/internal/resourceplan/` |
-| **Usage sampler + history store** | **Done** | `gentian-os/internal/usage/` — samples into each tenant's `{tenant}_shell` database |
-| **Resources API** | **Done** | `GET/PUT /v1/tenants/{t}/resources`, `…/plans`, `…/usage`, `…/report` on the app lifecycle API |
-| **GitOps write path** | **Done** | Per-tenant `resource-plan.yaml` patch, listed after the `tenant-defaults` component so it is the last word on the ceiling |
-| **Entitlement ceiling** | **Done** | `gentianos.io/max-resource-tier` on the Tenant, resolved server-side |
-| **CLI** | **Done** | `kubectl gentian resources plans\|show\|set\|report` |
-| **Console Resources tab** | **Done** | `gentian-ui/frontend/src/admin/ResourcesSection.tsx`, `UsageChart.tsx` |
-| **BFF routes + audit** | **Done** | `GET/PUT /api/v1/admin/resources…`; `resources.plan_changed` and `resources.plan_change_refused` |
-| **metrics-server** | **Optional** | `scripts/steps/A-11-metrics-server.sh`; `usage.metricsServer.enabled` |
-
-**P10 caveats:** the billing series is the enforced ceiling and what is committed
-under it, both from the API server — live consumption is advisory and needs
-metrics-server, which is optional and, having no history of its own, is a
-swappable source behind `usage.ActualSource` rather than the record itself.
-History begins when sampling is switched on; there is no backfill, because
-nothing observed the past. A cluster-wide roll-up opens one database connection
-per tenant, which is the price of keeping each tenant's consumption in its own
-database. The portal needs `appLifecycle.url` set, or the tab reports itself
-unconfigured.
+| Topic | State |
+|---|---|
+| Session list and revocation in the console | Not built (§4.6) |
+| Sign-in and access audit, export, retention | Not built (§4.7; [roadmap.md](../roadmap.md) §1.12) |
+| Realm-wide second-factor rule, WebAuthn | Not built (§4.4) |
+| Creating and removing accounts inside apps (SCIM or events) | Not built (§6) |
+| Group-scoped and mailed notices | Not built (§5) |
+| Minting a backup key in the console | Not built: the console must not hold a key |
+| Agents and delegation, access requests, break-glass workflow | Not built |
+| A tenant's own upstream identity provider, service-account registry, dynamic groups, guests with an end date, access certification | Not built |
 
 ---
 
-## 9. Stage 2 — authorization and governance
+## 9. Non-goals
 
-Stage 2 in [security.md](security.md) adds **ReBAC**, **AppGrant**, and **agent identities** on top of the P0–P9 identity admin baseline. The Admin Console grows new modules — still tenant-scoped unless noted.
+These stay outside the console:
 
-### 9.1 Integrations & grants
-
-Manage the authorization layer between installed apps, not just portal tile visibility.
-
-| Capability | Description | CRD / backend |
-|---|---|---|
-| **Integration overview** | Read-only list of active `IntegrationBinding` objects, health, last credential rotation | `IntegrationBinding.status` |
-| **AppGrant editor** | Approve subset of declared contract capabilities (e.g. `webdav:read` without `write`) | **`AppGrant` CRD** → OpenFGA tuples (**Done**; install-time grant UI still evolving) |
-| **Consumer allowlist** | Control which apps may call this app's `provides` contracts | `AppGrant.spec.allowConsumers` |
-| **Effective access preview** | Show `AppProfile ∩ Binding ∩ Grant ∩ user` for a member | OpenFGA `Check` + BFF aggregation |
-
-Tenant admins decide grants; they cannot exceed what `AppProfile` declares ([security.md](security.md)).
-
-### 9.2 Agents & delegation
-
-Humans are not the only principals ([security.md](security.md)).
-
-| Capability | Description |
-|---|---|
-| **Agent registry** | List workflow/agent service accounts in the tenant |
-| **Delegation graph** | View `acting_for` edges (user → agent) |
-| **Revoke delegation** | Single action removes agent ceiling (tuple delete) |
-| **Task TTL** | Show time-boxed `task:` objects and expiry |
-
-User-owned agents cannot exceed the delegating user's rights (derived-ceiling invariant).
-
-### 9.3 Access requests & break-glass
-
-| Capability | Description |
-|---|---|
-| **Approval queue** | Members request elevated or time-boxed access; tenant admin approves/denies |
-| **AuthZEN-style grants** | Approved requests become short-lived OpenFGA tuples or Keycloak roles |
-| **Break-glass (platform)** | `gentian:platform:break-glass` workflow with mandatory audit + alerting — platform scope only |
-
-Maps to human-in-the-loop steps in [security.md](security.md).
-
-### 9.4 Federation & machine identities
-
-| Capability | Description |
-|---|---|
-| **External IdP** | Per-tenant SAML/OIDC upstream ("login with customer IdP") |
-| **Service accounts** | Registry of non-human integration principals (distinct from members) |
-| **OAuth consent** | Admin view of issued tokens / consented scopes per app |
-| **HRIS / SCIM inbound** | Optional connector UI for directory sync into tenant realm |
-
-### 9.5 Advanced membership & governance
-
-| Capability | Description |
-|---|---|
-| **Delegated admin** | Sub-scope admins (e.g. manage one group only) |
-| **Dynamic groups** | Rule-based membership (attribute or email-domain rules) |
-| **Guest / external users** | Time-limited membership (`validUntil` attribute) |
-| **Access certification** | Periodic "still needs access?" campaigns built on Audit (§4.7) |
-| **WebAuthn / passkeys** | Tenant policy + per-user credential management |
-| **App Store** | Self-service catalogue install from console (replaces CLI-only path) |
-
-### 9.6 Stage 2 phase mapping
-
-| Console phase | Depends on | Security-arch milestone |
-|---|---|---|
-| **S2-A** Integrations & grants | P9, AppGrant CRD | Stage 2 — AppGrant + OpenFGA reconciliation |
-| **S2-B** Agents & delegation | S2-A, agent identities | Stage 2 — RFC 8693 Token Exchange, `agent:` tuples |
-| **S2-C** Access requests | S2-A, AuthZEN PEP | Stage 2 — approval profile |
-| **S2-D** Federation & service accounts | P4 policies | Stage 2+ IdP brokering |
-| **S2-E** Governance & App Store | P6 Audit, P8 provisioning | Stage 2 polish + GitOps integration |
-
-### 9.7 Explicit non-goals (console)
-
-These stay outside the Admin Console — cluster admin, GitOps, or dedicated tools:
-
-- MAC / NetworkPolicy / Kyverno editing
-- `AppProfile` catalogue authoring
-- SPIFFE / mesh identity
-- ITAM device inventory (optional future thin view only)
-- Platform operator PAM / session recording (separate operator tool)
-- Crypto tiering / envelope encryption admin
+- Installing apps (the App Store app, or the command line)
+- Scheduled backups, the backup policy and its destinations (the Operations Console)
+- Editing NetworkPolicy, Kyverno policy or other MAC rules
+- Authoring a `ComponentProfile` or a catalogue
 
 ---
 
-## 10. Open design points
-
-| Topic | Notes |
-|---|---|
-| **Email-domain → tenant routing** | Kernel login broker must handle `multi` tenancy (`user@demo.platform.example.com`) and `single` tenancy (`user@platform.example.com`). Reuse `Tenant.EffectiveDomain()` logic. |
-| **Authz bridge** | Currently syncs users; group/entitlement sync needed for accurate portal tiles (P6). |
-| **OIDC pack field names** | Catalogue uses `entitlementGroup` to map packs to `gentian:tenant:<t>:app:<profile>` groups. |
-| **Platform vs tenant admin UI** | Single console with scoped menus; BFF enforces tenant boundary on every mutation. |
-
-| **Audit retention** | Default retention and SIEM forwarder config are cluster-level; tenant admins see only their slice. |
-| **Session API limits** | Keycloak session APIs may paginate; BFF normalizes for Members detail view. |
-
----
-
-## 11. References
+## 10. References
 
 | Topic | Location |
 |---|---|
-| OS analogy & kernel install | [architecture.md §2, §5](../architecture.md) |
-| Operational roles | [architecture.md §13](../architecture.md#13-operational-roles) |
+| Roles and sign-in | [iam.md](iam.md) |
+| Hosts, the front door, sessions | [routing.md](routing.md) |
 | MAC backbone | [security.md](security.md) |
-| IAM & group taxonomy | [iam.md](iam.md) |
-| OpenFGA model | `authz/model/v0/model.fga` |
-| Tenant provisioning Jobs | [tenant-identity-composition.md](tenant-identity-composition.md) |
-| App contracts | [app-catalogue.md](app-catalogue.md) |
-| UI shell | `gentian-ui/legacy/design-system/ui_kits/console/` |
+| OpenFGA model | `authz/model/v1/model.fga` |
+| Tenant identity objects | [tenant-identity-composition.md](tenant-identity-composition.md) |
+| The App Store app | [store-contract.md](store-contract.md) |
 | Resource plans and usage | [resource-plans.md](resource-plans.md) |
-| Stage 2 authorization | [security.md](security.md) |

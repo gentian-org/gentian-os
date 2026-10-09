@@ -7,39 +7,29 @@
 
 ## 1. Backup Strategy
 
-Backup is **per subsystem** — each kernel component uses the
-industry-standard tool for its data type, orchestrated centrally.
+Backup is **per tenant**. A `TenantExport` captures one tenant into one
+encrypted bundle in object storage: each app's databases (PostgreSQL and
+MariaDB dumps), buckets and volume claims, the tenant's realm, its mailboxes
+where the cluster runs its own mail server, and the rights that follow from
+nothing else. A `BackupPolicy` says where bundles go, when they are taken and
+how long they are kept; the operator turns it into a `TenantExportSchedule`
+per tenant. What a bundle carries per kind is in
+[data-lifecycle.md](data-lifecycle.md); the reference is §9.
 
-| Data type | Tool | Scope | Method |
-|---|---|---|---|
-| PostgreSQL databases | **pgBackRest** or CloudNativePG built-in | Per-database (tenant-scoped restores) | WAL archiving + base backups to S3 |
-| MariaDB databases | **Mariabackup** or MariaDB Operator backup CRD | Per-database | Full + incremental to S3 |
-| S3 / MinIO buckets | **MinIO replication** or **Restic** | Per-bucket (tenant-scoped) | Cross-site replication or snapshot to external S3 |
-| Dovecot mailboxes | **dsync** or **Restic** | Per-domain (`/var/mail/{domain}/`) | Filesystem-level backup or Dovecot-native sync |
-| Keycloak realms | **Keycloak realm export** (JSON) | Per-realm (tenant-scoped) | Scheduled export to S3, versioned |
-| OpenBao secrets | **OpenBao snapshots** (`bao operator raft snapshot`) | Full vault | Raft snapshots to S3, encrypted |
-| Kubernetes resources | **Velero** | Per-namespace (tenant-scoped) | CRD state, ConfigMaps, Secrets (encrypted) |
-
-**Velero** serves as the cross-cutting backup orchestrator for
-Kubernetes-native resources (CRDs, ConfigMaps, namespace metadata)
-and triggers pre/post-backup hooks coordinating with the
-application-specific tools.
+Nothing else is backed up by the platform. There is no continuous archiving of
+a database (no WAL archive, no point-in-time recovery), no replication of the
+object store, no scheduled vault snapshot and no Velero; a cluster that wants
+any of these adds it itself. The kernel's own state is rebuilt, not restored
+(§4).
 
 ## 2. Tenant-Scoped Restore
 
-The per-tenant isolation model (separate databases, buckets, realms,
-namespaces) enables **single-tenant restore** without touching others.
-Restoring tenant `demo` means:
-
-1. Restore PostgreSQL databases matching `demo_*` from pgBackRest.
-2. Restore MinIO buckets matching `demo-*`.
-3. Restore Dovecot mailboxes for the tenant mail domain.
-4. Re-import the Keycloak realm `demo` from JSON export.
-5. Restore namespace `tenant-demo` via Velero.
-
-This sequence is being automated by the namespaced `TenantExport` /
-`TenantRestore` CRs, which also back self-service export and restore in the
-Admin Console. Restore is **data-only** — the tenant's shape is re-composed
+Each tenant has its own databases, buckets, realm and namespace, so one tenant
+is restored without touching another. A `TenantRestore` in the tenant's
+namespace does it from a bundle; `scripts/recovery.sh` and
+[recovery-playbook.md](../recovery-playbook.md) are the procedure. Export can
+be started from the administration console; a restore is a cluster
+administrator's act. Restore is **data-only** — the tenant's shape is re-composed
 from its claim, never restored — and quiesces one app at a time, since the
 consistency boundary that matters is an app's database plus its bucket plus
 its PVC, not the tenant as a whole. What a bundle carries per kind and what no
@@ -48,12 +38,11 @@ restore decides by is in §9.4.
 
 ## 3. Tenant Migration Between Clusters
 
-Same backup/restore pattern: backup on source, restore on target,
-update DNS. The key requirement is that OpenBao secrets are either
-migrated or re-provisioned. Re-provisioning is the natural path —
-applying the Tenant CR on the target cluster triggers the full
-Crossplane Composition, which picks up the existing data from the
-restored databases and buckets.
+Export on the source, import on the target, update DNS:
+`kubectl gentian tenants import` declares the tenant from the bundle's
+manifest, waits for the operator to provision it, and restores the data into
+it ([commands.md](../commands.md) §12a). Credentials are not carried; the
+target provisions its own.
 
 ### 3.1 Node Flavour Migration
 
@@ -64,20 +53,22 @@ CNPG and RWO cases that need manual steps — is covered in
 
 ## 4. Disaster Recovery
 
-For full-cluster DR, recovery follows the deployment layers:
+For full-cluster DR ([recovery-playbook.md](../recovery-playbook.md) §1):
 
-1. Bootstrap: install ArgoCD + Crossplane (one-shot script).
-2. Apply the `Cluster` XR — Crossplane provisions kernel
-   infrastructure from declared state.
-3. Restore data: OpenBao snapshots, database backups, S3 replication.
-4. Apply Tenant CRs — the operator and Crossplane re-provision tenant
-   resources; apps pick up the restored data.
+1. `./install.sh --recover <kit>` on a fresh cluster, with the same
+   deployments repository and cluster id. The recovery kit carries what git
+   cannot hold: the master password and salt, the unseal material, the
+   repository and registry credentials, the backup key.
+2. The install runs as normal: Argo CD, Crossplane and the `Cluster` claim
+   bring the kernel back from git.
+3. Each tenant is imported from its newest bundle (§3).
 
-GitOps ensures the desired state of all workloads is recoverable from
-Git; only stateful data requires backup restoration. The deterministic
-secret-derivation model (see [security.md](security.md)) means kernel
-credentials can be regenerated from the master password alone if
-OpenBao itself is unrecoverable.
+With `secretMode: derived` (the default) the kernel's service credentials are
+derived from the master password and salt, so they come back with their
+original values; with `secretMode: random` they are generated anew
+(`scripts/lib/bootstrap.sh`). People's and administrators' passwords are never
+derived: a realm export carries none, and every member resets theirs after a
+restore.
 
 ## 5. Observability via the K8s API
 
@@ -86,56 +77,61 @@ Crossplane's MR status model gives uniform observability:
 ```bash
 # Tenant health at a glance
 kubectl get tenants
-NAME          STATUS         APPS   READY   MAIL         AGE
-demo          Ready          2      2/2     selfhosted   30d
+NAME   STATUS   APPS   READY   ADMIN               AGE
+demo   Ready    2      2       admin@example.com   30d
 
-# Tenant app installs (Crossplane claims → helm Releases)
-kubectl get apps -n tenant-demo
+# What is installed for a tenant (Component → App claim → helm Release)
+kubectl get components,apps -n tenant-demo
 kubectl get releases.helm.crossplane.io -n tenant-demo
 
-# Optional: Crossplane composite for namespace/policy (if XTenant is used)
-kubectl get xtenant demo 2>/dev/null || true
+# The tenant's composite (namespace, quota, policy)
+kubectl get xtenant demo
 
 # Integration contract health
 kubectl get integrationbindings -n tenant-demo
 
 # Kernel / GitOps (not per-tenant app charts)
-kubectl get applications -n argocd
+kubectl get applications -n kernel-gitops
 ```
 
-Tenant apps are observed via **`App` claim status** and **helm `Release`
-MRs** in `tenant-{name}`. ArgoCD Applications cover kernel services and
-catalogue sync (`gentian-appprofiles`), not each tenant app install.
+A tenant's apps are observed through the **`Component`**, its **`App` claim**
+and the **helm `Release`** in `tenant-{name}`. Argo CD Applications cover the
+kernel's services, the claims and the deployments repository's tenant and
+catalogue directories, not each tenant app install.
 
 ## 6. Metrics
 
-Prometheus metrics exposed by Crossplane and the kernel:
+The operator exposes Prometheus metrics (`internal/controller/metrics.go`); the
+chart ships a `ServiceMonitor` for them, off unless `metrics.serviceMonitor`
+is enabled. The platform installs no Prometheus.
 
-| Metric | Source | Description |
-|---|---|---|
-| `crossplane_resource_total{kind="XTenant"}` | Crossplane | Total tenants |
-| `crossplane_reconcile_duration_seconds` | Crossplane | Reconcile latency per claim kind |
-| `crossplane_reconcile_errors_total` | Crossplane | Failed reconciliations |
-| `crossplane_resource_ready_status` | Crossplane | Ready conditions per MR |
-| `externalsecrets_sync_calls_total` | ESO | OpenBao → K8s Secret sync health |
-| `argocd_app_health_status` | ArgoCD | Kernel Application health |
-| `gentian_os_credentials_age_seconds` | Custom | Age of oldest credential per tenant |
-| `gentian_os_integration_bindings_status` | Custom | Binding health by contract |
+| Metric | Description |
+|---|---|
+| `gentianos_tenants_total` | Tenants managed |
+| `gentianos_tenant_apps_total` | Requested apps per tenant |
+| `gentianos_provisioning_duration_seconds` | Duration of a tenant provisioning pass |
+| `gentianos_reconcile_errors_total` | Reconcile errors by controller |
+| `gentianos_credentials_age_seconds` | Age of last-provisioned credentials per tenant |
+| `gentianos_integration_bindings_status` | Binding state by contract |
+| `gentianos_externalsecrets_sync_status` | ExternalSecret sync state per tenant |
+| `gentianos_tenant_export_total`, `gentianos_tenant_export_quiesce_duration_seconds` | Exports that ended, and how long an app was paused for one |
+
+Crossplane, External Secrets and Argo CD expose their own upstream metrics.
 
 ### 6.1 Usage sampling
 
 The operator runs a leader-elected worker that records each tenant's enforced
 ceiling and what is committed under it into that tenant's own `{tenant}_shell`
 database, every `usage.sampler.interval` (15 minutes by default). It is what the
-Admin Console's Resources tab and `kubectl gentian resources report` read — see
+administration console's Resources screen and `kubectl gentian resources report` read — see
 [resource-plans.md](resource-plans.md).
 
 ```bash
 # Is it running, and is any tenant being skipped?
-kubectl logs -n gentian-system deployment/gentian-os | grep usage-sampler
+kubectl logs -n kernel-control deployment/gentian-os | grep usage-sampler
 ```
 
-A tenant without a `portal-shell-<tenant>` Secret in `platform-kernel` is skipped
+A tenant without a `desktop-database` Secret in its namespace is skipped
 and logged; the others are unaffected. One tenant's database being unreachable
 never stops the pass, because a single broken tenant must not become a
 cluster-wide gap in the billing record.
@@ -251,13 +247,12 @@ It describes what the operator sends and changes nothing about it.
 
 The kernel is a **singular shared service**: one kernel version per
 cluster, all tenants on the same version. This is intentional — kernel
-upgrades are platform-wide and atomic, unlike app upgrades which can
-roll per-tenant.
+upgrades are platform-wide and atomic.
 
-App upgrades are catalogue-wide: bumping an `AppProfile`'s chart
-version propagates to every tenant referencing the profile via
-Crossplane helm `Release` reconciliation (and operator-driven
-`App` claim updates when `spec.apps` changes).
+An app is not upgraded with the kernel. A tenant's install names the build of
+the profile it runs (`spec.apps[].digest`); the `ComponentProfile` is
+committed to the deployments repository at that digest and delivered by
+Argo CD ([custom-catalogues.md](../custom-catalogues.md)).
 
 ### 7.2 Per-Environment Update Policies
 
@@ -265,42 +260,21 @@ Cluster-to-stage mapping and promotion workflows (simplified dev→prod and
 fortified dev→staging→prod) are documented in
 [deployment.md](../deployment.md).
 
-A per-environment `ImageUpdater` CR watches the registry and updates
-the kernel `Application` whenever a new image is published:
+Nothing rolls the kernel forward on its own. The `gentian-os` Application
+(in `kernel-gitops`) follows the ref the cluster tracks, and the operator's
+image is pinned to the build of the installer's checkout: a branch resolves
+to that commit's image, a release tag to its version.
+`./install.sh --only B-01` advances the pin.
 
-| Environment | Policy | Target tag |
-|---|---|---|
-| **dev** | Aggressive — track latest develop builds | `latest`, `develop`, `newest-build` |
-| **staging** | Track release candidates | `semver:v*-rc.*` |
-| **prod** | Conservative — only released semver | `semver:v1.x.x` |
-
-```yaml
-apiVersion: argocd-image-updater.argoproj.io/v1alpha1
-kind: ImageUpdater
-metadata:
-  name: gentian-os-kernel-prod
-  namespace: argocd
-spec:
-  applicationRefs:
-    - namePattern: "prod-kernel-os"
-      images:
-        - imageName: ghcr.io/gentian-org/gentian-os
-          policy: semver:v1.*
-          tagsMatchRegex: '^v[0-9]+\.[0-9]+\.[0-9]+$'
-          ignoreTagsRegex: '^.*-(rc|alpha|beta)\..*$'
-  updateMethod:
-    method: argocd          # patch Application params, no Git commit
-  webhook:
-    enabled: true            # immediate update on registry push
-```
-
-The full flow takes 30–60 seconds from image push to running new
-pods.
+Argo CD Image Updater is installed (step A-06), but the platform writes no
+`ImageUpdater` resource, so it updates nothing. A cluster that wants an image
+to roll on its own adds one in `kernel-gitops`, naming the Application and the
+tags it may take.
 
 ### 7.3 Tenant Impact
 
 Tenants are not parameterised by kernel version — when the kernel
-updates, all tenants automatically use the new kernel. This is the
+is updated, all tenants use the new kernel. This is the
 intended behaviour: cluster admins manage kernel versions, tenant
 admins do not.
 
@@ -392,18 +366,18 @@ letting Argo CD roll the operator and the bouncer. In that order:
 
 ## 8. Safety Guards
 
-- **Stateful Argo Apps** (OpenBao, Crossplane) deploy with `prune: false` and `finalizers: []` —
-  prevents Argo from ever deleting them if their manifests are
-  temporarily missing from Git. Self-healing remains on for value
-  drift.
+- **The vault's Argo CD Applications** (`openbao`, `openbao-transit`) deploy
+  with `prune: false` and `finalizers: []`, so Argo CD never deletes them when
+  their manifests are temporarily missing from git. The Applications of the
+  claims and of the catalogue directory also sync without pruning.
 - **OpenBao paths** managed by Crossplane use
   `managementPolicies: [Observe, Create]` — never overwrite live
   credentials. See [security.md](security.md).
-- **Plaintext-secret admission policy** rejects any `Release` MR that
-  literally embeds a secret value instead of referencing one.
-- **Backup verification** runs daily: pgBackRest verify, MinIO
-  replication lag check, OpenBao snapshot integrity check. Failures
-  alert on the platform team's PagerDuty.
+- **Backups are not verified by the platform.** Nothing runs a restore or
+  checks a bundle on a schedule, and nothing alerts. `scripts/recovery.sh
+  inspect` reads a bundle and its key without writing anything, and
+  [commands.md](../commands.md) §15 is the restore drill. A schedule records
+  its last success so that it can be watched.
 
 ## 9. Data Lifecycle: Reference
 

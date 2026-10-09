@@ -10,7 +10,8 @@
 
 A **tenant** is an organisation. Each tenant gets:
 
-- A dedicated Kubernetes namespace (`tenant-{name}`).
+- A dedicated Kubernetes namespace (`tenant-{name}`), and a second one
+  (`tenant-{name}-dmz`) for what the tenant publishes to the internet.
 - A dedicated Keycloak realm with its own user pool, branding, and
   password policy.
 - Per-app PostgreSQL/MariaDB databases with isolated users.
@@ -156,7 +157,7 @@ removed). The operator reads the mode at start.
 
 | Plane | Domain | Example hosts | Origin TLS (cert-manager) | DNS responsibility |
 |---|---|---|---|---|
-| **Kernel** | `KERNEL_DOMAIN` | `id.platform.example.com`, `platform.platform.example.com` (the platform admin's desktop) | One DNS-01 wildcard `*.<kernel_domain>` at install | Cluster operator (kernel namespace only) |
+| **Kernel** | `KERNEL_DOMAIN` | `id.platform.example.com`, `platform.platform.example.com` (the platform admin's desktop) | One DNS-01 wildcard `*.<kernel_domain>` at install | Cluster operator |
 | **Platform tenant** | `platform.<KERNEL_DOMAIN>` | `admin.platform.platform.example.com` (its admin console) | One DNS-01 wildcard `*.platform.<kernel_domain>`, issued like a tenant's | Platform zone |
 | **Tenant apps** | `effectiveDomain` | `meet.demo.platform.example.com` (multi) or `meet.platform.example.com` (single) | One DNS-01 wildcard `*.<effectiveDomain>` **per tenant** (none on the kernel domain) | Platform zone; the customer's for a custom domain |
 
@@ -167,10 +168,6 @@ removed). The operator reads the mode at start.
 - Else → `<tenant-name>.<KERNEL_DOMAIN>` (e.g. `demo.platform.example.com`; `platform.<KERNEL_DOMAIN>` for the platform tenant, under either mode).
 
 App hostnames are always `{subDomain}.{effectiveDomain}`. The one host that is not is the platform tenant's desktop, which answers on its `effectiveDomain` itself.
-
-**Portal contact deep links** (video call / chat from the address book): the
-Gentian shell resolves per-tenant app URLs from `effectiveDomain` and entitlement
-groups (`gentian:tenant:<t>:app:<profile>`).
 
 The gentian-os operator creates, for every tenant with edge-routed apps:
 
@@ -195,7 +192,7 @@ The kernel wildcard (`*.<kernel_domain>`) is **never** replicated into tenant na
 
 Wildcard certificates require **DNS-01**. The operator uses a single cluster-wide issuer name, configurable via `TENANT_DNS01_CLUSTER_ISSUER` (Helm: `tenantDNS01ClusterIssuer`, default `letsencrypt-dns01-cloudflare`). That `ClusterIssuer` must use a cert-manager DNS webhook matching your provider (Cloudflare, Route53, Azure DNS, Google Cloud DNS, etc.) and must be able to write `_acme-challenge` records in the zone that contains `effectiveDomain`.
 
-`AppProfile.spec.ingress.clusterIssuer` is **not** used for tenant edge TLS today; it is reserved for future per-app overrides.
+A profile cannot choose an issuer for its own hosts: `ComponentProfile` has no such field.
 
 ### Edge TLS (optional, CSP-specific)
 
@@ -242,7 +239,7 @@ cluster's list of customers is not published.
 
 ### Kernel DNS credential
 
-The Cloudflare (or other) API token for the **kernel** wildcard lives only in the kernel/`cert-manager` namespace (`gentian-os/kernel/dns/cloudflare` via OpenBao). The **tenant** DNS-01 issuer typically uses the same provider credentials at the cluster level but issues certs in each `tenant-*` namespace; it does not expose kernel secrets to tenants.
+The Cloudflare (or other) API token for the **kernel** wildcard lives only with cert-manager in `kernel-edge` (`gentian-os/kernel/dns/cloudflare` via OpenBao). The **tenant** DNS-01 issuer typically uses the same provider credentials at the cluster level but issues certs in each `tenant-*` namespace; it does not expose kernel secrets to tenants.
 
 ### ACME rate limits and dev staging
 
@@ -250,10 +247,10 @@ Let's Encrypt production enforces per-account and per-registered-domain limits (
 
 | Environment | Recommendation |
 |---|---|
-| **Dev** | `ACME_ENV=staging` in `install.env`; staging `ClusterIssuer`s from `kernel/manifests/cert-manager/chart/templates/cluster-issuers-staging.yaml`; Helm `tenantDNS01ClusterIssuer: letsencrypt-staging-dns01-cloudflare` (see `gentian-deployments/profiles/dev.yaml`). Staging certs are **not** browser-trusted but use separate rate limits. `install.sh` and the operator bootstrap `gentian-staging-ca-tls`; compositions apply staging-only Synapse/Jitsi TLS workarounds when `ACME_STAGING=true`. See [security.md](security.md) §9. Re-apply with `./install.sh --only A-06-cluster-issuers,C-01-wildcard-cert`. |
+| **Dev** | `certificates.acmeEnv: staging` on the Cluster claim; staging `ClusterIssuer`s from `kernel/manifests/cert-manager/chart/templates/cluster-issuers-staging.yaml`; Helm `tenantDNS01ClusterIssuer: letsencrypt-staging-dns01-cloudflare` (see `gentian-deployments/profiles/dev.yaml`). Staging certs are **not** browser-trusted but use separate rate limits. The operator builds the trust bundle `gentian-trust-anchor-tls` and copies it into tenant namespaces; what an app's Composition does with it is in [security.md](security.md) §12.1. Re-apply with `./install.sh --only A-09-cluster-issuers,C-03-wildcard-cert`. |
 | **Prod** | Production issuers only. One DNS-01 wildcard per tenant at origin; avoid `install.sh --uninstall` loops that re-issue everything. |
 | **Tunnel + proxied (Cloudflare)** | Origin TLS (cert-manager) and **edge** TLS are independent. Enable **Total TLS** (or Advanced Certificate Manager) so `*.demo.platform.example.com` gets an edge cert — Universal SSL on `*.platform.example.com` does not cover multi-label tenant hosts. Optional: **Cloudflare Origin CA** at the origin to stop ordering public LE certs on every reinstall (edge still needs Total TLS when orange-cloud). |
-| **Switching issuer on a live cluster** | Patch operator Helm value, run `./install.sh --only A-06-cluster-issuers,C-01-wildcard-cert`, delete existing `Certificate` CRs (kernel `wildcard-kernel`, tenant `tenant-*-wildcard`) so cert-manager re-issues against the new issuer. |
+| **Switching issuer on a live cluster** | Patch operator Helm value, run `./install.sh --only A-09-cluster-issuers,C-03-wildcard-cert`, delete existing `Certificate` CRs (kernel `wildcard-kernel`, tenant `tenant-*-wildcard`) so cert-manager re-issues against the new issuer. |
 
 Manifests: production `cluster-issuers.yaml`; staging `cluster-issuers-staging.yaml`. Kernel wildcard `wildcard-kernel-cert.yaml` templates `DNS01_CLUSTER_ISSUER` from `ACME_ENV` at install time.
 
@@ -288,10 +285,10 @@ Each tenant gets a dedicated Keycloak realm; apps authenticate users via OIDC
 against that realm, and its people sign in there too: the edge in front of a
 tenant's desktop sends the browser to the tenant realm, and the concierge
 on the kernel domain sends an address to its tenant's desktop (see
-[iam.md](iam.md)). App-to-app calls use **OIDC token exchange (RFC 8693)** — app A
-presents its user-bound token and receives a scoped token usable against app B.
-The `IntegrationBinding` configures which exchanges are permitted; the binding's
-status surfaces credential validity and last rotation time.
+[iam.md](iam.md)). App-to-app calls do not go through the realm: a consumer
+calls a provider with a key of its own, once the tenant's administrator has
+granted the relation (§4, rule 3). The `IntegrationBinding` records the pair
+and where its credential is kept.
 
 ### 5.1 One realm · One namespace — the canonical isolation rule
 
@@ -307,14 +304,14 @@ Breaking realm ↔ namespace correspondence is a configuration error and must ne
 
 ### 5.2 Identity and Access Management (IAM)
 
-For Keycloak realm structure, group entitlements, Admin Console roles, and how
+For Keycloak realm structure, the groups that give access to apps, and how
 tenant admin vs member are separated, see [iam.md](iam.md) and
 [admin-console.md](admin-console.md).
 
 ## 6. Database Isolation
 
 Each app within each tenant gets a database named
-`{databasePrefix}_{app}` (e.g., `gtn_demo_app`) with a dedicated
+`{databasePrefix}{app}` (the prefix defaults to `{tenant}_`, e.g. `demo_nextcloud_base_ce`) with a dedicated
 user that has grants limited to that database only. There is no
 shared schema, no cross-app access, no possibility of one tenant
 seeing another's data via SQL.
@@ -345,7 +342,7 @@ Three roles, three scopes:
 
 | Role | Primary scope | Can do | Cannot do |
 |---|---|---|---|
-| **Cluster admin** | Cluster + kernel | Run installer, configure ArgoCD/OpenBao/cert-manager, manage kernel upgrade policy, approve tenant onboarding manifests | Perform tenant business actions, bypass GitOps in prod for tenant changes |
+| **Cluster admin** | Cluster + kernel | Run installer, configure Argo CD/OpenBao/cert-manager, manage kernel upgrade policy, create tenants, add catalogues | Perform tenant business actions, bypass GitOps in prod for tenant changes |
 | **Tenant admin** | One tenant's apps | Install/uninstall apps for the tenant, edit tenant-level config, view tenant health and reconciliation state | Touch kernel components, modify other tenants, alter cluster-wide policy |
 | **Tenant user** | Day-to-day app use | Use installed apps via SSO, consume integrations | Install/uninstall apps, modify tenant manifest, see admin surfaces |
 
@@ -355,24 +352,20 @@ The **tenant admin and tenant user are strictly separate identities**.
 It is strongly recommended that a single person does not use the same
 account for both day-to-day app usage and tenant administration.
 
-**Portal tile enforcement:**
-Access to apps is controlled through **Keycloak group entitlements**
-(`gentian:tenant:<t>:app:<profile>`) and OpenFGA `can_launch` checks.
-Tenant admins and members are **mutually exclusive** roles provisioned
-via the [Gentian Admin Console](admin-console.md).
+**What each sees.** Access to an app is membership of its Keycloak group
+(`gentian:tenant:<t>:app:<profile>`), which OpenFGA holds as `can_use` on the
+app; `can_use` excludes the tenant's administrators. So a member's desktop
+shows apps, and an administrator's shows the administration console and the
+App Store app ([iam.md §1.6](iam.md)). Both roles are given in the
+[administration console](admin-console.md).
 
-**Current operating model:** tenant admins edit Tenant manifests in
-the deployments repo via PR (process-controlled), and manage members/groups in
-the Admin Console (when deployed).
-
-**App Store (current):** tenant admins use the **App Store app** or
-`kubectl gentian apps` to install apps. The store's data is served from
-outside the cluster and its interface is an app on the cluster; an install is
-a commit to `gentian-deployments` made by the director as the person who
-asked. See [commands.md](../commands.md) §5.
-
-**Future:** further self-service (tenant config, quotas) via the same surfaces
-without requiring YAML edits.
+**How a tenant is administered.** Tenant admins manage people, groups and
+installed apps in the administration console, and install apps with the
+**App Store app** or `kubectl gentian apps`. The store's data is served from
+outside the cluster and its interface is an app on the cluster. Every change
+to declared state (an install, a plan, a policy) is a commit to the
+deployments repository made by the director as the person who asked; nobody
+edits a Tenant manifest by pull request. See [commands.md](../commands.md) §5 and §6.
 
 ## 9. Future: Capability Enforcement at Runtime
 

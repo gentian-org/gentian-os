@@ -170,8 +170,10 @@ scripts/recovery.sh cluster --kit /path/to/gentian-recovery-kit-<cluster>.age
 which is a wrapper over:
 
 ```bash
-# 1. Load the kit and install. Derived credentials reproduce their original
-#    values from the master password and salt the kit carries.
+# 1. Load the kit and install. With `secretMode: derived` (the default) the
+#    kernel's service credentials reproduce their original values from the
+#    master password and salt the kit carries. With `secretMode: random` they
+#    are generated anew.
 ./install.sh --recover /path/to/gentian-recovery-kit-<cluster>.age
 ```
 
@@ -201,7 +203,7 @@ from a list.
 
 ### Reading the bundles before the cluster exists
 
-The restore in step 3 needs a cluster to restore *into*, but reading a bundle
+The restore in step 2 needs a cluster to restore *into*, but reading a bundle
 does not. With the bucket, its credentials and the key, `inspect` works from a
 laptop:
 
@@ -313,7 +315,8 @@ kubectl get tenantrestore restore-<date> -n tenant-<t> \
   -o jsonpath='{.status.startedAt} -> {.status.completedAt}{"\n"}'
 ```
 
-Send every member through a password reset from **Admin Console → Members**.
+Send every member through a password reset from the administration console's
+**Members** screen.
 The elapsed time is your measured RTO — publish it rather than assuming one.
 
 ---
@@ -323,7 +326,7 @@ The elapsed time is your measured RTO — publish it rather than assuming one.
 **When:** the bundle was encrypted to a key you hold — either a key you minted
 in the console, or a passphrase you chose for a manual backup.
 
-> **There is no self-service restore.** The Admin Console has no restore
+> **There is no self-service restore.** The administration console has no restore
 > button, and no API behind one. A restore is a cluster-administrator
 > operation, so this scenario is a handover, not a procedure you run.
 

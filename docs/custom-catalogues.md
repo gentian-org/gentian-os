@@ -83,7 +83,7 @@ The profile:
   (the platform writes those), any label or annotation beginning `argocd.argoproj.io/`, or the label
   `gentianos.io/profile-name` with another profile's name.
 
-What goes into a profile is described in [design/app-profiles.md](design/app-profiles.md) and, for
+What goes into a profile is described in [design/app-catalogue.md](design/app-catalogue.md) §3 and, for
 customizing an app, in [app-customization.md](app-customization.md).
 
 **The file is at most 180 KiB**, companions included. The director carries the file's bytes beside

@@ -1,28 +1,31 @@
 # Gentian OS
 
 Gentian OS is the open-source cloud-native operating system at the core of the Gentian
-ecosystem: a Kubernetes operator (kernel), CRDs (`AppProfile`, `Cluster`, tenant resources), and
+ecosystem: a Kubernetes operator and the services beside it (director, usher, custodian,
+registrar, bouncer), CRDs (`ComponentProfile`, `Component`, `Tenant`, `Cluster`, …), and
 the automation that lets a cluster provision identity, mail, gateway routing, and third-party
 apps for multiple tenants from declarative config.
 
 ## Purpose & scope
 
-This repo owns the **kernel** — the operator, CRDs, install/uninstall tooling, and the
+This repo owns the **kernel** — the operator and the director, CRDs, install/uninstall tooling, and the
 kernel-level services (identity, mail, gateway, infra data stores) that every Gentian cluster
 needs regardless of which apps run on it. It does **not** contain:
 
 - App or sidecar implementations/catalogues — see [gentian-apps](https://github.com/gentian-org/gentian-apps)
-  (OSS AppProfiles) and [gentian-sidecars](https://github.com/gentian-org/gentian-sidecars)
+  (open-source profiles) and [gentian-sidecars](https://github.com/gentian-org/gentian-sidecars)
   (sidecar templates).
-- Proprietary AppProfiles, or any private catalogue: supplied by whoever operates
-  the cluster, as an additional catalogue repository.
+- Proprietary profiles, or any private catalogue: published by whoever maintains
+  them, at an address a cluster or a tenant adds as a catalogue
+  ([docs/custom-catalogues.md](docs/custom-catalogues.md)).
 - Any licence gate. Editions (`ce · pe · me · ee`) say who maintains and
   supports an app; the OS gates none of them. Whether a paid app arrives is
   decided at the repository it is pulled from, by the credential a tenant
   holds for it ([docs/design/store-contract.md](docs/design/store-contract.md) §2).
 - Cluster-specific GitOps manifests (tenant instances, per-cluster config) — see
   [gentian-deployments](https://github.com/gentian-org/gentian-deployments).
-- The kernel shell UI (login hub, app launcher) — see [gentian-ui](https://github.com/gentian-org/gentian-ui).
+- The user interfaces (the desktop, the administration console, the App Store app, the
+  sign-in page) — see [gentian-ui](https://github.com/gentian-org/gentian-ui).
 
 ## Getting started
 
@@ -33,8 +36,12 @@ bootstrap via `install.sh`.
 
 - [AGENTS.md](AGENTS.md) — repo rules for coding agents
 - [docs/architecture.md](docs/architecture.md) — system architecture overview
-- [docs/commands.md](docs/commands.md) — `kubectl gentian` / operator commands
+- [docs/commands.md](docs/commands.md) — `kubectl gentian` commands
+- [docs/install-reference.md](docs/install-reference.md) — installer steps, flags and configuration
 - [docs/deployment.md](docs/deployment.md) — deployment model
+- [docs/custom-catalogues.md](docs/custom-catalogues.md) — publishing your own apps
+- [docs/app-customization.md](docs/app-customization.md) — customizing an installed app
+- [docs/security-principles.md](docs/security-principles.md) — the security rules
 - [docs/node-pool-migration.md](docs/node-pool-migration.md) — migrating a cluster to a new node flavour
 - [docs/faq.md](docs/faq.md) — frequently asked questions
 - [docs/roadmap.md](docs/roadmap.md) — roadmap

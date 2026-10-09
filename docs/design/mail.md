@@ -12,7 +12,7 @@ Three layers are easy to conflate:
 |---|---|---|
 | **Cluster** | `mail.serviceMode` on the Cluster claim (`external` \| `system`) | Whether the cluster runs its own Postfix and Dovecot, or relays everything to an external SMTP host. A claim that says `kernel`, the value's former name, is refused |
 | **Per tenant** | `Tenant.spec.mail.mode` | What the operator provisions: the tenant's mail domain, its entries in the Postfix maps, and its Dovecot realm auth |
-| **Per app** | `AppProfile` `mail.smtp` / `mail.imap` | Whether the operator hands an app kernel or external mail endpoints |
+| **Per app** | `ComponentProfile` `spec.requires.services.mail.smtp` / `.imap` | Whether the operator hands an app kernel or external mail endpoints |
 
 Postfix and Dovecot run in `system-mail`, and the operator writes what they
 mount into that namespace: a Pod can only mount a ConfigMap or a Secret from
@@ -70,8 +70,8 @@ outbound SMTP for notifications. Mail is therefore modelled as an
 **optional kernel extension** — shared infrastructure with
 tenant-scoped configuration, enabled per cluster.
 
-Apps consume mail through the `smtp` and `imap` kernel requirements
-declared in their `AppProfile`. The platform satisfies those
+Apps consume mail through the `smtp` and `imap` requirements
+declared in their `ComponentProfile` (`spec.requires.services.mail`). The platform satisfies those
 requirements differently depending on each tenant's chosen mode.
 
 ## 2. Tenant Mail Modes
@@ -332,8 +332,8 @@ live mailbox of that address and removes nothing.
 
 ## 6. Per-App Mail Wiring
 
-For each app in the tenant that declares `mail.smtp` and/or
-`mail.imap` in its `AppProfile`, the operator materialises:
+For each app in the tenant that declares `requires.services.mail.smtp` and/or
+`.imap` in its `ComponentProfile`, the operator materialises:
 
 - **SMTP**: host (`mail.<kernelDomain>`; without a kernel domain, `postfix-<stage>.system-mail.svc.cluster.local`), port, user,
   password — copied from the tenant's own `smtp-credentials-<tenant>` Secret into
@@ -384,7 +384,7 @@ no app-specific mail logic in the platform.
   its own mail server and the tenant has mailboxes in a realm of its own; the
   kernel realm, and so the platform tenant, has no such scope, and there the
   declaration grants nothing. The four checks and who makes each are in
-  [security.md](security.md) §2.11.
+  [security.md](security.md) §2.16.
 - **Rate limits and per-user quotas are not enforced.** Postfix runs with
   `smtpd_client_message_rate_limit = 0`, its default, which is no limit, and
   Dovecot loads no quota plugin. This section previously described both as

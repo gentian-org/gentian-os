@@ -1,11 +1,7 @@
 # Gentian OS — Platform Architecture
 
-**Version:** 3.0-draft
-**Status:** Proposal
-
-> A standalone overview of the Gentian OS architecture. Deeper material
-> on individual concerns is split into focused companion documents
-> linked from each section.
+> An overview of the Gentian OS architecture. Each section says what exists
+> and links to the document that holds the detail.
 
 ---
 
@@ -16,12 +12,12 @@ business applications. It runs on Kubernetes and exposes the same
 "install / uninstall / use" experience to organisations that a desktop
 OS exposes to a single user — except the "user" is a tenant
 (organisation) and the "apps" are full multi-user products like
-Nextcloud, OpenProject, OX App Suite, Element, or XWiki.
+Nextcloud, OpenProject, Element, or XWiki.
 
 The design optimises for two things:
 
-1. **Onboarding a new application** to the catalogue is a
-   single-file change.
+1. **Onboarding a new application** is one catalogue entry: a
+   `ComponentProfile` and the few objects that travel with it.
 2. **Onboarding a new tenant** is a single declarative resource
    (`Tenant`) that triggers the entire provisioning pipeline.
 
@@ -38,93 +34,84 @@ direct analogues for every layer:
 
 | Traditional OS | Gentian OS |
 |---|---|
-| Syscall API (`open`, `socket`, `fork`) | **CRDs**: `Tenant`, `AppProfile`, `IntegrationBinding` |
+| Syscall API (`open`, `socket`, `fork`) | **CRDs**: `Tenant`, `ComponentProfile`, `Component`, `IntegrationBinding` |
 | `libc` — friendly call → raw syscalls | **Crossplane Compositions** |
 | Syscall dispatcher / VFS | **Crossplane Composition engine** |
-| Loadable kernel modules / device drivers | **Crossplane providers** (`provider-helm`, `provider-vault`, `provider-kubernetes`, `provider-keycloak`, …) |
+| Loadable kernel modules / device drivers | **Crossplane providers** (`provider-helm`, `provider-vault`, `provider-kubernetes`, `provider-keycloak`) |
 | Hardware (disks, NICs) | **External operators & APIs** (Keycloak, CloudNativePG, MinIO, OpenBao, cloud APIs) |
 | File descriptor / process handle | **Managed Resource (MR) status** |
 | Kernel scheduler / writeback | **Crossplane reconcile loop** |
-| `init` / `systemd` | **ArgoCD** |
-| Default mounts (`C:`, `/`, `~/`) | **Default-install kernel components** (Suze, MinIO, PostgreSQL, Portal, Gateway API, …) |
+| `init` / `systemd` | **Argo CD** |
+| Default mounts (`C:`, `/`, `~/`) | **Default-install kernel components** (Keycloak, OpenFGA, OpenBao, PostgreSQL, MinIO, Envoy Gateway, the desktop, …) |
 
-The CRDs are the syscall API. Crossplane is the kernel that implements
-those syscalls. Providers are the device drivers. Compositions are
-libc. ArgoCD is `init`. The full unpacking of this analogy and the
-reasoning behind each mapping is in
+The reasoning behind each mapping is in
 [design/kernel.md](design/kernel.md).
 
 ---
 
 ## 3. Architecture at a Glance
 
-Two control loops do all the work, with one shared secret store:
+Git says what a cluster is. Two processes of the platform stand on either
+side of it: the **director** is the only one that writes to the deployments
+repository, and the **operator** is the one that writes to the cluster. Argo
+CD applies what git holds; Crossplane composes what the operator asks for.
 
 ```mermaid
 graph TD
-    GIT[Git<br/>gentian-os / gentian-apps / gentian-deployments]
-    AC[ArgoCD<br/>— deployment plane —<br/>Git sync · Drift · Rollback · Health]
-    XP[Crossplane<br/>— provisioning plane —<br/>XR → MR composition<br/>Reconciliation]
-    PROV[Crossplane Providers<br/>provider-helm / provider-kubernetes<br/>provider-vault / provider-keycloak]
-    OB[OpenBao<br/>— secret store —]
-    OP[Upstream Operators<br/>Keycloak · CloudNativePG<br/>MinIO · ESO · Reloader]
+    P[A person<br/>admin console · App Store app · kubectl gentian]
+    DIR[Director<br/>checks the caller · commits, signed]
+    GIT[Git<br/>gentian-os · the deployments repository]
+    AC[Argo CD<br/>applies git · drift · rollback]
+    OP[Operator<br/>reconciles Tenant, Component, …]
+    XP[Crossplane<br/>XCluster · XTenant · App claims → managed resources]
+    OB[OpenBao + ESO<br/>secrets]
+    UP[Keycloak · CloudNativePG · MinIO · Helm releases]
 
+    P --> DIR
+    DIR -- commits --> GIT
     GIT --> AC
-    AC -- applies XRs, Compositions, Providers --> XP
-    XP -- runs --> PROV
-    PROV -- writes secrets/policies --> OB
-    PROV -- creates operator CRs --> OP
-    OP -- store credentials --> OB
-
-    style XP fill:#e8f4f8,stroke:#2980b9
-    style AC fill:#eafaf1,stroke:#27ae60
-    style OB fill:#f5eef8,stroke:#8e44ad
-    style OP fill:#fdf2e9,stroke:#e67e22
-    style PROV fill:#fef9e7,stroke:#f39c12
+    AC -- Tenant, ComponentProfile, claims, kernel charts --> OP
+    AC --> XP
+    OP -- claims, seeds --> XP
+    OP -- seeds --> OB
+    XP --> UP
+    OB --> UP
 ```
 
-| Tool | Role | Boundary |
+| Part | Role | Boundary |
 |---|---|---|
-| **ArgoCD** | Deployment plane: pulls Git, syncs all manifests, shows drift, supports rollback. | Never provisions infrastructure. |
-| **Crossplane** | Provisioning plane: composes `XCluster`, `XTenant`, and per-tenant **`App`** claims into managed resources (namespace shell, helm `Release`, ESO, init Jobs, …). | Owns tenant infrastructure lifecycle via Compositions. |
-| **gentian-os operator** | Orchestration: reconciles `Tenant` CRs, seeds OpenBao secrets, writes the manifest bridge ConfigMap, patches `XTenant`, waits on composed resources, aggregates status. | Does not create duplicate shell resources or App claims; shared-kernel side effects (portal, Cloudflare DNS, stale gateway cleanup) remain operator-owned — see [roadmap.md](roadmap.md). |
-| **OpenBao + ESO** | Single secret store, synced into Kubernetes Secrets that Helm charts consume via `existingSecret` references. | Secrets never touch Git or appear in CR specs. |
+| **Argo CD** (`kernel-gitops`) | Pulls git and applies it: the kernel's charts from `gentian-os`, and from the deployments repository the cluster's claims, its materialised catalogue and its tenants. Syncs only commits signed by the director or the break-glass key. | Provisions nothing itself. |
+| **Director** (`kernel-control`) | The API people's requests go to. It verifies the caller's token, asks OpenFGA whether that person may make the change, and commits it to the deployments repository as that person. | Holds the git push credential and no cluster credential. |
+| **Operator** (`kernel-control`) | Reconciles `Tenant`, `Component` and the other kinds of §4: seeds secrets in OpenBao, writes the tenant's composite and each app's claim, routes, policies, and status. Projects tenants, installs and group memberships into OpenFGA. | Writes to the cluster only; holds no git credential. |
+| **Crossplane** (`kernel-provisioning`) | Composes `XCluster`, `XTenant` and per-app `App` claims into managed resources: namespaces, vault policies, Jobs, `ExternalSecret`s, Helm `Release`s. | Owns what can be written down before it happens (below). |
+| **OpenBao + ESO** (`kernel-secrets`) | The one secret store, synced into Kubernetes Secrets that charts read. | Secrets never touch git or a resource's spec. |
+| **Usher, custodian, registrar** (`kernel-control`) | The other three services people's requests reach: the usher answers reads (what is here, what may I open), the custodian sets credentials in the vault, the registrar manages people and groups at Keycloak. Each asks OpenFGA first and holds one credential only. | None of them writes git. |
+| **Bouncer** (`kernel-edge`, beside the Gateways) | Asks OpenFGA, per request, whether the signed-in person may reach the host. | Decides nothing else ([design/routing.md §4.1](design/routing.md)). |
 
 ### 3.0 Who does what (tenant install)
 
-Three control planes, one Git truth. ArgoCD applies declarations; the
-operator orchestrates tenant intent; Crossplane materialises infrastructure.
-
 ```mermaid
 flowchart TD
-    git["Git<br/>gentian-os · gentian-apps · gentian-deployments"]
+    req["kubectl gentian tenants create · admin console"]
+    dir["Director<br/>commit clusters/&lt;cluster&gt;/tenants/&lt;t&gt;/tenant.yaml"]
+    ac["Argo CD<br/>gentian-tenants ApplicationSet applies the Tenant"]
+    op1["Operator<br/>seed OpenBao · write provisioning manifests · write XTenant"]
+    xp1["Crossplane tenant-default<br/>namespaces · vault policy · Jobs"]
+    op2["Operator<br/>one Component per app and per default component"]
+    xp2["Crossplane app-default (App claim)<br/>ExternalSecret · helm Release"]
+    op3["Operator<br/>routes · policies · Tenant.status"]
 
-    ac["ArgoCD<br/>sync manifests · drift · rollback"]
-    tcr["Tenant CR · AppProfiles · Crossplane XRDs / Compositions"]
-
-    op1["Operator<br/>seed OpenBao secrets"]
-    op2["Operator<br/>write manifest bridge ConfigMap"]
-    op3["Operator<br/>patch XTenant spec"]
-
-    xp1["Crossplane tenant-default<br/>namespace · Vault policy · Jobs · App claims"]
-    xp2["Crossplane app-* compositions<br/>ExternalSecret · helm Release"]
-
-    op4["Operator<br/>wait on Jobs/MRs · portal/DNS · Tenant.status"]
-
-    git --> ac
-    ac --> tcr
-    tcr --> op1 --> op2 --> op3
-    op3 --> xp1
-    xp1 --> xp2
-    xp1 --> op4
-    xp2 --> op4
+    req --> dir --> ac --> op1 --> xp1 --> op2
+    op2 --> xp2 --> op3
+    op2 --> op3
 ```
 
-| Step | Owner | Does *not* do |
+| Owner | Does | Does *not* do |
 |---|---|---|
-| **ArgoCD** | Pull Git; apply kernel YAML, catalogue, `Tenant` CRs, Crossplane packages | Run provisioning logic; create `App` claims or Helm releases per tenant |
-| **Operator** | Seed secrets; drive manifest bridge; patch `XTenant`; wait; shared-kernel side-effects; aggregate `Tenant.status` | Duplicate shell resources or `App` claims (Crossplane creates those) |
-| **Crossplane** | Reconcile `XTenant` + `App` claims into MRs (Jobs, Objects, ESO, `provider-helm` Releases) | Sync Git; interpret `Tenant.spec.apps` without the operator bridge |
+| **Director** | Decide whether the caller may; commit the tenant's manifest, an app's entry in it, a materialised profile | Touch the cluster |
+| **Argo CD** | Apply the kernel's charts, the claims, the catalogue directory and each tenant's directory | Run provisioning logic; create a Helm release per tenant app |
+| **Operator** | Seed secrets; write `XTenant`; create a `Component` per installed app; write each Component's Helm release or `App` claim; routes, network policies, status | Create what a Composition creates |
+| **Crossplane** | Reconcile `XTenant` and `App` claims into managed resources (Jobs, Objects, ESO, `provider-helm` Releases) | Sync git |
 
 **Where the imperative/declarative line falls.** The matrix above says who does what. The rule
 behind it is one question:
@@ -132,10 +119,11 @@ behind it is one question:
 > Can the answer be written down before it happens?
 
 If it can, it is a statement about what should exist and **Crossplane owns it** — namespace shell
-and policy via `provider-kubernetes`, realms, clients, users, groups, identity providers and
+and policy via `provider-kubernetes`, realms, clients, groups, identity providers and
 authentication flows via `provider-keycloak`, policies via `provider-vault`, charts via
-`provider-helm`. An object already existing is not a reason to keep it imperative: Crossplane adopts
-by `crossplane.io/external-name`, verified against this platform's live Keycloak realm.
+`provider-helm`. An object already
+existing is not a reason to keep it imperative: Crossplane adopts by
+`crossplane.io/external-name`.
 
 If it cannot, **the operator owns it**, and only for four reasons:
 
@@ -145,96 +133,87 @@ If it cannot, **the operator owns it**, and only for four reasons:
    `argon2.IDKey`). Compositions template; they do not compute.
 3. **Adoption gaps** — where a provider cannot safely take over an object that already exists.
    `provider-vault`'s jwt `AuthBackend` is the standing example; see
-   `scripts/steps/B-07-openbao-oidc-mount.sh`.
+   `scripts/steps/B-09-vault-oidc-mount.sh`.
 4. **Change-triggered action** — "restart when this changes" is a moment, not a thing.
 
 Observing Crossplane's work and aggregating it into `Tenant.status` is not a fifth reason; it is the
-operator being a controller. Eighteen `ensure*` steps provision nothing and exist only to wait and
-report.
+operator being a controller.
 
 This is a boundary, not a description of how far a migration got. Where the two disagree, the
 boundary is right and the code has not caught up — a Job that survives is only correct if one of
-the four reasons above names it.
+the four reasons above names it. Two places where the code is behind are stated in the code
+itself: the operator still seeds an app's secrets and its model-gateway key before the app's
+claim can resolve them (`internal/controller/app_reconciler.go`), and it installs the desktop
+and the consoles as Helm releases it writes directly rather than through the app Composition
+(`internal/controller/component_composition.go`).
 
 **The same rule applies to installer steps.** `scripts/steps/*` is the same question asked at
 bootstrap time instead of tenant-onboarding time: a step that only applies a manifest belongs in an
-ApplicationSet (Git is where the answer lives), a step that calls a running service's admin API is
-the operator's four reasons above, and a step that only guards or validates stays a step. Two named
-exceptions today:
+ApplicationSet (git is where the answer lives), a step that calls a running service's admin API is
+the operator's four reasons above, and a step that only guards or validates stays a step.
 
-- The vLLM GPU chart install (`render_and_apply_vllm_gpu_manifest` in `scripts/lib/llm-lib.sh`)
-  reads live GPU device-plugin time-slicing state to decide `manageTimeSlicing` — reasons 1 and 2,
-  discovery and computation. The rule says this is operator territory, not a shell step; it stays
-  imperative because nothing yet reads that state and republishes it somewhere an ApplicationSet's
-  values could reference.
-- The LiteLLM model-registration Job (`ensure_litellm_vllm_model`, same file) POSTs to LiteLLM's
-  admin API to sync registered models with a Tenant's `llm.instances` — reason 4, change-triggered,
-  ArgoCD cannot POST. This one has a solved precedent: `litellm_team.go` does exactly this for
-  LiteLLM Teams. This is migration debt, not a boundary question.
-
-**Why two tools, not one:** ArgoCD's drift detection, UI, and rollback
-work for *every* Kubernetes resource, not just MRs. Crossplane's
+**Why two tools, not one:** Argo CD's drift detection, UI, and rollback
+work for *every* Kubernetes resource, not just managed resources. Crossplane's
 reconcile loop handles the slow, eventually-consistent external APIs
-that Argo cannot reason about. They compose cleanly and a bug in one
-does not break the other.
-
-A full dependency-graph walk for a single `Tenant` claim is in
-[design/app-catalogue.md](design/app-catalogue.md).
+that Argo CD cannot reason about.
 
 ### 3.1 How provisioning works on the cluster today
 
-This section matches a running dev cluster (e.g. kernel domain
-`platform.example.com`, a provisioned tenant such as `demo` with Element). It is the
-authoritative “today” view; §3’s diagram is the stable mental model.
+A fresh install leaves the platform tenant (`Tenant/platform`, whose realm is
+the kernel realm) and, on a single-tenancy cluster, the one user tenant
+`user`. Every other tenant is created afterwards, through the director.
 
-Fresh installs leave **no tenants** in Git or on the cluster until a cluster
-admin deploys a definition from `clusters/<cluster>/definitions/tenants/` into `tenants/`.
+**What Argo CD syncs**
 
-**Two planes, one Git truth for tenants**
-
-| Layer | What runs it | What it does today |
+| From | What | By |
 |---|---|---|
-| **Deployment** | ArgoCD | Syncs `gentian-os` kernel manifests, Crossplane XRDs/compositions, `gentian-deployments` env config, and the **`gentian-appprofiles`** Application (install step **15c**) — not per-tenant app installs |
-| **Provisioning** | Crossplane + **gentian-os operator** | Operator reconciles each `Tenant`; Crossplane reconciles each `App` claim into `ExternalSecret` + helm `Release` |
+| `gentian-os` | the bootstrap Applications (Reloader, CNPG, Kyverno, Headlamp, OpenBao and its seal, the kernel Postgres) and the platform's own chart, `charts/gentian-os` (operator, director, usher, custodian, registrar, bouncer) | `kernel/bootstrap/chart`, applied by the installer |
+| `gentian-os` | the system tier's data plane, identity (Keycloak, OpenFGA), and — where the claim asks — mail and the model gateway | the ApplicationSets of `kernel/appsets/raw/` |
+| deployments repository | `clusters/<cluster>/kernel/claims/` — the cluster's Crossplane claims | `gentian-claims` |
+| deployments repository | `clusters/<cluster>/catalogue/` — the profiles tenants have installed | `gentian-catalogue` |
+| deployments repository | `clusters/<cluster>/tenants/<tenant>/` — one directory per tenant | `gentian-tenants` |
 
-**Tenant lifecycle**  
-Applying a `Tenant` from `gentian-deployments` (e.g. `demo` with
-`spec.apps: [element]`) triggers the operator orchestration loop:
+There is no Argo CD Application per tenant app.
 
-1. **OpenBao seeding** — credentials before Compositions reconcile  
-2. **Manifest bridge** — operator writes `tenant-{name}-provisioning-jobs` (`jobs.json`, `objects.json`)  
-3. **`XTenant` patch** — Crossplane `tenant-default` materialises namespace shell, Vault policy, Jobs, Objects, and **`App` claims** (one per `spec.apps` entry); `function-sequencer` gates App claims until identity Jobs are Ready  
-4. **Wait-only ensures** — identity Jobs (Keycloak-native per tenant), databases, storage, cache, gateway objects, IntegrationBindings  
-5. **Bootstrap side-effects** — registry pull secret, staging CA trust in tenant namespace  
-6. **Shared-kernel extensions** — portal shell convergence, mail/office when configured (see [design/mail.md](design/mail.md); operator-owned today)  
-7. **Status** — per-step conditions; `CrossplaneReady` from `XTenant` Ready; **`Phase=Ready` requires both operator paths and `CrossplaneReady`**
+**Tenant lifecycle.** Once a `Tenant` is applied the operator runs its stages
+(`internal/controller/tenant_reconcile_stages.go`):
 
-Crossplane owns creation; the operator seeds secrets, drives the ConfigMap, and waits
-for composed resources to become Ready.
+1. **Bootstrap** — seed the tenant's credentials in OpenBao; write the
+   provisioning manifests (`tenant-<name>-provisioning-jobs`) and the
+   `XTenant` composite, which Crossplane's `tenant-default` turns into the
+   namespaces `tenant-<name>` and `tenant-<name>-dmz`, the vault policy and
+   the provisioning Jobs; network policies, registry credential, CA trust.
+2. **Data plane** — the tenant's Keycloak realm, then databases, object
+   storage and cache for the apps that declare them.
+3. **Apps and edge** — one `Component` per entry of `spec.apps` and per
+   component the platform places on every tenant (the desktop, the
+   administration console, the App Store app where a store is offered);
+   privileges, drop-ins, model-gateway keys; routes and their policies.
+4. **Integrations** — `IntegrationBinding`s and app grants.
+5. **Shared services** — mail registration and the model gateway's team,
+   where the cluster runs them.
+6. **Status** — per-step conditions on the Tenant; `Ready` needs both the
+   operator's steps and the composite.
 
-**App install flow** — not ArgoCD per app  
-Catalogue entries live in **`gentian-apps/profiles/`** and reach the
-cluster only via ArgoCD Application **`gentian-appprofiles`**. Installing
-for a tenant means appending a profile name to **`Tenant.spec.apps`** in
-`gentian-deployments`; Crossplane creates namespace-scoped **`App` claims**
-via `tenant-default`; app Compositions deploy charts via **`provider-helm`
-`Release`** MRs. There is no third “app-of-apps” source for tenant apps.
+**App install flow.** A person asks the director (`kubectl gentian apps
+install`, the App Store app). The director fetches the profile's bundle from a
+catalogue — an https address serving an index and one bundle per app — checks
+it against the digest the install names, and commits two things: the bundle
+under `clusters/<cluster>/catalogue/` and the app's entry in the tenant's
+`spec.apps`. Argo CD applies both; the operator creates the `Component`; the
+Component either writes the Helm release itself or writes the `App` claim that
+the `app-default` Composition answers with an `ExternalSecret` and a
+`provider-helm` `Release`. Nothing copies a catalogue into a cluster ahead of
+an install. See [custom-catalogues.md](custom-catalogues.md) and
+[design/store-contract.md](design/store-contract.md).
 
-**Identity / Keycloak — two mechanisms**
+**Identity.** Realms, clients, groups and brokering are described in
+[design/iam.md](design/iam.md) §1.8–1.9 and
+[design/tenant-identity-composition.md](design/tenant-identity-composition.md).
 
-| Scope | Mechanism today | Git location |
-|---|---|---|
-| **Kernel / shared realm clients** (portal, static integrations) | **`provider-keycloak`** `Client` / scope MRs | `kernel/services/keycloak-config/` |
-| **Per-tenant realms and OIDC clients** | Crossplane **Object Jobs** via manifest bridge (operator wait-only) | `tenant-{name}-provisioning-jobs` → `tenant-default` |
-| **Identity brokering** (kernel IdP, tenant IdP, their mappers) | **`provider-keycloak`** `IdentityProvider` / `IdentityProviderMapper` MRs | `tenant-default` |
-
-The platform ships **`app-default`** in `crossplane/compositions/`. Catalogue
-profiles with custom MR graphs set `spec.compositionRef` to a Composition bundled
-in their own catalogue repository (e.g. `app-element-pro`). Those compositions
-emit `openidclient.keycloak.crossplane.io/Client` MRs; the operator skips
-duplicate OIDC client Jobs for those apps.
-
-For Keycloak consolidation and other follow-ups see [roadmap.md](roadmap.md).
+The platform ships `app-default` in `crossplane/compositions/`. A profile
+whose app needs more than it renders brings a Composition of its own in its
+bundle and names it in `spec.package.composition`.
 
 Placeholder semantics (`${TENANT_DOMAIN}` vs `${KERNEL_DOMAIN}`) are
 documented in [gentian-apps/docs/app-profile-guide.md](../../gentian-apps/docs/app-profile-guide.md) §2.
@@ -242,7 +221,7 @@ documented in [gentian-apps/docs/app-profile-guide.md](../../gentian-apps/docs/a
 ### 3.2 Diffing: server-side
 
 Argo CD runs with **server-side diff** (`controller.diff.server.side`, set by
-`scripts/lib/argocd.sh`). It asks the API server what a manifest *would* become —
+installer step `A-06-argocd`). It asks the API server what a manifest *would* become —
 a dry-run apply — and compares that against the live object, rather than
 comparing the YAML in Git against the live object directly.
 
@@ -267,105 +246,110 @@ Two consequences worth knowing:
 
 ---
 
-## 4. The Four User-Facing CRDs
+## 4. The Kinds
 
-The platform exposes four custom resources to humans, separated by who
-owns them. Everything else is generated.
+Four kinds carry the model. The rest are listed at the end of the section.
 
-### 4.1 `AppProfile` (cluster-scoped) — the app catalogue entry
+### 4.1 `ComponentProfile` (cluster-scoped) — the catalogue entry
 
-Declares **what an app is**: its kernel requirements (does it need a
-database? OIDC? S3? mail?), the capabilities it exposes to other apps
-(file storage? project management? MCP server?), the upstream Helm
-chart, a typed `valueMapping` that tells the platform how to wire
-kernel-provided values into the chart's `values.yaml`, and optional
-branding tokens and integration hooks. Adding a new app to the catalogue
-is one YAML file in `gentian-apps`. Cluster admins publish `AppProfile`
-CRs; tenant admins consume them by name.
+Declares **what a component is**: whether it is an app, a shared app or a
+service (`classes`), how a person opens it (`launch`), its trust tier, how it
+is delivered (`package`: a chart, a Composition, an API integration or an
+addon, with a typed `valueMapping` that says where the chart takes
+platform-provided values), what it needs from the platform
+(`requires.services`: identity, database, storage, cache, mail, models;
+`requires.privileges`), what it offers and consumes (`provides`,
+`integrations`), and where it answers (`expose`, each entry with a `surface`
+and a mandatory `authMode`, and optionally a tile for the desktop). Nothing in
+a profile grants anything: every permissive statement is a request that a
+named person answers. A profile reaches a cluster only when a tenant installs
+it (§3.1). The types are `api/v1alpha1/componentprofile_types.go` and
+`profile_parts.go`.
 
 ### 4.2 `Tenant` (cluster-scoped) — the customer
 
-Declares **who** uses the platform: an
-isolation mode (namespace), resource quotas, mail mode, a deletion
-policy, and **`spec.apps`** — the list of catalogue profiles to install
-for this tenant (e.g. `element` — Jitsi is deployed as an Element sidecar). Creating a `Tenant`
-provisions kernel-layer infrastructure: namespace, RBAC, OpenBao
-policies, DNS/TLS, and the Keycloak tenant realm. The operator then creates one **`App` claim per
-`spec.apps` entry**; Crossplane deploys the Helm charts. User/group administration
-is via the [Gentian Admin Console](design/admin-console.md) on the Suze path.
+Declares **who** uses the platform: isolation, quotas, mail mode, deletion
+policy, the catalogues only this tenant sees, and **`spec.apps`** — the
+profiles installed for it, each optionally pinned to a digest, with its
+addons. It also records what was approved for the tenant: public addresses
+(`spec.exposures`) and privileges (`spec.privileges`). The manifest lives in
+the deployments repository and the director writes it. Creating a `Tenant`
+provisions its namespaces, vault policy, DNS and TLS, and Keycloak realm. A
+custom domain is a `TenantDomain` beside the tenant, not a Tenant field.
 
-### 4.3 `App` (namespace-scoped) — the tenant's app installation
+### 4.3 `Component` (namespace-scoped) — one installed instance
 
-Declares **which app a tenant wants installed**: a reference to an
-`AppProfile` by name and optional per-installation overrides (replica
-count, branding tokens, enabled integrations). `App` claims live in the
-tenant's namespace (`tenant-{name}`), so RBAC limits write access to the
-tenant admin — the cluster admin never needs to be involved in
-installing or uninstalling a tenant's applications.
-
-A Crossplane Composition processes each `App` claim by fetching the
-referenced `AppProfile` (via `function-extra-resources`) and emitting:
-- One `ExternalSecret` that renders a `sensitive-values.yaml` file from
-  per-tenant OpenBao paths (OIDC credentials, database password, S3
-  keys, etc.), consuming the `valueMapping` from the profile.
-- One `helm.crossplane.io/Release` MR that deploys the chart into the
-  tenant namespace with `valuesFrom` pointing at the rendered secret.
-- Zero or more `kubernetes.crossplane.io/Object` MRs for extra
-  Kubernetes resources the chart does not ship (RBAC, NetworkPolicies,
-  `ConfigMap` patches).
-
-This model allows the Kubernetes API to act as the app store: tenant
-admins install apps with `kubectl apply`, browse the catalogue with
-`kubectl get appprofiles`, and watch install progress via the `App`
-claim's `.status.conditions`. A web UI or CLI is a thin wrapper over
-this API — no separate store backend is required.
+One per installed app and per component the platform places, in the tenant's
+namespace, created by the operator. It names its profile (and the digest the
+install pinned), and it is what installs the app: directly as a Helm release,
+or through a Crossplane **`App` claim** that the app Composition answers. Its
+conditions say whether the app is ready and what it is waiting for (an
+unapproved privilege, a reserved address, a cluster without a model gateway).
+The `App` claim is an implementation detail of delivery; nobody writes one by
+hand.
 
 ### 4.4 `IntegrationBinding` (namespace-scoped) — the cross-app contract
 
-When two `App` claims in the same tenant namespace declare matching
-provider/consumer contracts (e.g., OX App Suite consumes `file-store`
-provided by Nextcloud), the platform generates an `IntegrationBinding`
-that provisions shared credentials, configures OIDC token exchange
-(RFC 8693), and tracks health. Bindings are owned by the constituent
-`App` claims and garbage-collected when either app is uninstalled.
+Where two apps installed in one tenant declare the two sides of a contract
+(`provides` / `integrations`), the platform creates an `IntegrationBinding`:
+the operator derives it and the tenant's composite carries it.
+It is a request: the tenant's administrator grants it for the consumer
+through the director, and only then are the two network policies written
+that let the consumer's pods reach the provider's. The granted capabilities
+are recorded and not enforced by the platform, and the provider is not told
+which app is calling ([app-customization.md §2.3](app-customization.md)).
 
-Schema details, value-mapping rules, contract definitions, and worked
-examples are in [design/app-catalogue.md](design/app-catalogue.md).
+**Other kinds.** `Cluster` (the Crossplane claim that says what a cluster is:
+domain, tenancy mode, mail, models, catalogues), `Customization`
+([app-customization.md §5](app-customization.md)), `AppPackage`, `AppGrant`,
+`Branding`, `ResourcePlan`, `TenantDomain`, `BackupPolicy`, `TenantExport`,
+`TenantExportSchedule`, `TenantRestore`, `MailboxRemoval`,
+`CredentialRequirement`, `OIDCPackCatalog`, `PlatformSecurityPolicy`. Profile
+fields, tiers and contracts are in
+[design/app-catalogue.md](design/app-catalogue.md).
 
 ---
 
 ## 5. The Kernel and the Default Install
 
 Like a desktop OS, Gentian OS ships with a default install — components
-that must exist before any tenant app can run, because they back the
-**kernel functions** every app assumes are available:
+that must exist before any tenant app can run. Namespaces are named by tier
+and function; the list is `kernel/namespaces.yaml`.
 
-| Kernel function | Default-install component | Desktop OS analogue |
+| Function | Component | Namespace |
 |---|---|---|
-| Identity & SSO | **Suze** (Keycloak + OpenFGA) | `/etc/passwd` + PAM |
-| Object storage | **MinIO** (S3) | Page cache, scratch space |
-| Relational data | **CloudNativePG** + **MariaDB Operator** | Per-app SQLite / registry |
-| Cache | **Redis** + **Memcached** | Page cache / `tmpfs` |
-| Edge routing | **Gateway API** (Envoy Gateway) | Network stack |
-| Mail (extension) | **Postfix + Dovecot + Rspamd** (optional) | Built-in mail spool |
-| Window manager | **Gentian Portal** + **Admin Console** ([gentian-ui](https://github.com/gentian-org/gentian-ui)) | Desktop shell / Start menu |
-| Notifications | **Notification Gateway** | Notification daemon |
-| Secrets keyring | **OpenBao** | Keychain |
-| AI Inference & Gateway (planned) | **vLLM + LocalAI + LiteLLM** | Co-processor / AI acceleration API |
-| Pod restart on secret rotation | **Stakater Reloader** | (no equivalent) |
+| GitOps | Argo CD | `kernel-gitops` |
+| Provisioning | Crossplane, its providers and functions | `kernel-provisioning` |
+| Secrets | OpenBao, External Secrets Operator, Reloader; the transit seal apart | `kernel-secrets`, `kernel-seal` |
+| Authentication | Keycloak | `kernel-authentication` |
+| Authorization | OpenFGA | `kernel-authorization` |
+| Kernel data | CloudNativePG operator and the kernel's own Postgres | `kernel-data` |
+| Control | operator, director, usher, custodian, registrar | `kernel-control` |
+| Edge | Envoy Gateway and the two Gateways, the bouncer, cert-manager, external-dns | `kernel-edge` |
+| Admission | Kyverno and the baseline policies | `kernel-admission` |
+| Cluster view | Headlamp | `kernel-observability` |
+| Relational data for tenants | PostgreSQL (CloudNativePG), MariaDB | `system-postgresql`, `system-mariadb` |
+| Cache | Redis | `system-cache` |
+| Object storage | MinIO | `system-s3` |
+| Mail (where the claim asks) | Postfix and Dovecot; the mail edge | `system-mail`, `system-mail-dmz` |
+| Models (where the claim asks) | LiteLLM and vLLM | `system-llm` |
 
-These are not "apps" the user picks à la carte — they are the **kernel
-devices** that must be Ready before a `Tenant` claim can reach Ready.
+Kernel namespaces are created by the installer; system namespaces are
+composed from the Cluster claim; each tenant gets `tenant-<t>` and
+`tenant-<t>-dmz`.
 
-**Catalogue apps** (Nextcloud, Collabora, Element, …) install
-per tenant from `gentian-apps` via `AppProfile` + the `app-default`
-Crossplane composition — the same "install from app store" path as any
-other catalogue entry. See [design/kernel.md](design/kernel.md) for the
-kernel vs catalogue split.
+**The user interfaces are components, not kernel services.** The desktop
+(`desktop.<tenant domain>`), the administration console (`admin.`), the App
+Store app (`store.`) and the sign-in page (the concierge) are built in
+[gentian-ui](https://github.com/gentian-org/gentian-ui), described by
+`ComponentProfile`s this repository's chart ships, and installed into tenant
+namespaces by the operator like any other component. The platform is itself
+a tenant: its desktop answers at `platform.<kernel domain>` and shows platform
+administrators the kernel's consoles.
 
-The full kernel function list, the default-drive analogy, and the
-"kernel extensions" mechanism (optional shared services like mail) are
-in [design/kernel.md](design/kernel.md).
+**Catalogue apps** (Nextcloud, Element, …) are installed per tenant from a
+catalogue (§3.1). See [design/kernel.md](design/kernel.md) for the kernel
+functions and the kernel-versus-catalogue split.
 
 ---
 
@@ -373,109 +357,71 @@ in [design/kernel.md](design/kernel.md).
 
 Multiple tenants share one cluster:
 
-- **Default isolation** is one Kubernetes namespace per tenant
-  (`tenant-{name}`), with NetworkPolicies, ResourceQuotas, and
-  LimitRanges. Identity, data, and mail are isolated through dedicated
-  Keycloak realms, per-app database users, MinIO bucket policies,
-  Redis ACLs, and (for mail) per-domain DKIM keys.
-- **Domains** use a two-plane model: a per-cluster wildcard
-  (`*.<kernel_domain>`) covers **kernel UIs only**; each tenant app zone
-  gets its own wildcard (`*.<effectiveDomain>`) via DNS-01. Default
-  effective domain depends on **`TENANCY_MODE`**: `multi` →
-  `<tenant>.<kernelDomain>`; `single` → `<kernelDomain>` (flat URLs; the
-  platform tenant is the only one). A custom domain (e.g. `acme.com`) is a
-  `TenantDomain` beside the tenant, not a Tenant field. See
+- **Isolation** is one Kubernetes namespace per tenant (`tenant-<name>`)
+  and a second for what it publishes without sign-in (`tenant-<name>-dmz`),
+  with NetworkPolicies, ResourceQuotas and LimitRanges. Identity, data and
+  mail are separated by a Keycloak realm per tenant, per-app database users,
+  bucket policies, and per-domain DKIM keys.
+- **Domains.** The cluster's wildcard (`*.<kernelDomain>`) covers the
+  kernel's own hosts. Each tenant has its own zone: `<tenant>.<kernelDomain>`
+  under `tenancyMode: multi`; under `single` the one user tenant, `user`,
+  answers directly on `<kernelDomain>`. The platform tenant is
+  `platform.<kernelDomain>` under either mode. A custom domain is a
+  `TenantDomain`. See [design/routing.md](design/routing.md) §3 and
   [design/multi-tenancy.md](design/multi-tenancy.md) §3.
-- **App-to-app calls** go through OIDC token exchange, with the
-  `IntegrationBinding` defining which exchanges are permitted.
-- **Database isolation:** each app within each tenant gets its own
-  database user with grants limited to its own database — no cross-app
-  or cross-tenant access is possible.
+- **The edge is the only session authority.** One sign-in client per tenant
+  zone at the gateway; behind it every request passes the bouncer, which asks
+  OpenFGA whether this person may use this app. Apps receive identity headers,
+  not the edge's token ([design/routing.md](design/routing.md) §4).
+- **Publishing without sign-in** is a `surface: perimeter` entry, served by a
+  proxy in the tenant's DMZ namespace only after the tenant's perimeter
+  approver approved it ([app-customization.md §2.10](app-customization.md)).
+- **Database isolation:** each app within each tenant gets its own database
+  user with grants limited to its own database.
 
-Full details — isolation modes, RBAC, NetworkPolicies, OIDC trust
-chain, mail security (DKIM/SPF/DMARC), the domain model and TLS
-issuance flow — are in
-[design/multi-tenancy.md](design/multi-tenancy.md).
+The nine rules everything above follows are in
+[security-principles.md](security-principles.md); the detail is in
+[design/multi-tenancy.md](design/multi-tenancy.md) and
+[design/security.md](design/security.md).
 
 ### 6.1 TLS certificate provisioning
 
-For each tenant with edge-routed apps, the **gentian-os controller** ensures:
+For each tenant the operator ensures:
 
-1. One cert-manager `Certificate` per tenant for `*.<effectiveDomain>` and
-   `<effectiveDomain>` (DNS-01), stored as `tenant-{name}-wildcard-tls`.
-2. One Gateway API `HTTPRoute` per app host, referencing the tenant Gateway
-   listener TLS secret:
-   `{subDomain}.{effectiveDomain}` → `Service:{servicePort}`, all referencing
-   that TLS secret on the tenant Gateway listener or Ingress TLS block.
+1. One cert-manager `Certificate` for `*.<effectiveDomain>` (DNS-01), stored
+   as `tenant-<name>-wildcard-tls` in the tenant's namespace. The bare domain
+   is deliberately not in it ([design/routing.md](design/routing.md) §3).
+2. One Gateway API `HTTPRoute` per host an app's `expose` entries answer on
+   (`<subDomain>.<effectiveDomain>`), attached to the kernel's Gateways in
+   `kernel-edge`, whose listeners read the tenant's certificate across
+   namespaces under a ReferenceGrant.
 
 `effectiveDomain` is the custom domain a `TenantDomain` binds, when there is
-one; otherwise it follows
-`TENANCY_MODE` (`multi` → `<tenant>.<kernelDomain>`; `single` →
-`<kernelDomain>`). The issuer is configured cluster-wide via
-`TENANT_DNS01_CLUSTER_ISSUER` (Helm: `tenantDNS01ClusterIssuer`).
-`AppProfile.spec.ingress.clusterIssuer` is reserved for a possible future
-per-host HTTP-01 mode; the operator does not read it today.
+one; otherwise it follows the tenancy mode (§6). The issuer is configured
+cluster-wide via `TENANT_DNS01_CLUSTER_ISSUER` (Helm:
+`tenantDNS01ClusterIssuer`). A profile has no field that selects an issuer.
 
-The **kernel** wildcard (`*.<kernelDomain>`, DNS-01 at install) covers
-platform hostnames only (`portal`, `id`, Argo CD, …) on
-`kernel-public-gateway` and is never replicated into tenant namespaces.
+The **kernel** wildcard (`*.<kernelDomain>`, DNS-01 at install) covers the
+platform's own hostnames (`platform`, `id`, `argocd`, `headlamp`, …).
 
 When traffic is proxied through Cloudflare, an optional operator adapter
-ensures `*.<effectiveDomain>` CNAME records so Total TLS can mint edge
-certs for multi-level tenant hostnames. Origin TLS remains cert-manager in
-the tenant namespace. See [design/multi-tenancy.md](design/multi-tenancy.md) §3.
+maintains the tenant's wildcard DNS record so the provider can issue edge
+certificates for multi-level hostnames. See
+[design/multi-tenancy.md](design/multi-tenancy.md) §3.
 
 ### 6.2 CORS and iframe embedding
 
-Gentian OS sidesteps most browser CORS restrictions by design:
-
-- **Apps run in iframes** inside the Gentian Portal on `portal.<kernelDomain>`.
-  Each app is served on `{sub}.<effectiveDomain>` (cross-origin). The operator
-  sets `frame-ancestors` so the portal can embed them.
-- **OIDC token exchange is server-side.** The browser never calls the identity
-  provider directly from an app's origin — the OIDC redirect flow terminates at
-  the app's server, not at a JS `fetch()`.
-- **Cross-origin API calls** that the Gentian shell will make on behalf of the
-  browser may be declared in `spec.browserProxy` (see [roadmap.md](roadmap.md)
-  and [gentian-ui/docs/architecture.md](../../gentian-ui/docs/architecture.md)):
-  proxy paths under `/api/apps/{name}/…` with forwarded bearer tokens. This is
-  not required for apps whose UI only talks to its own origin.
-
-The remaining app-side requirement is the **`frame-ancestors` CSP header**:
-by default browsers block iframe embedding unless the embedded page explicitly
-permits it. The gentian-os controller injects this on every edge route it
-creates:
-
-- Envoy `BackendTrafficPolicy` / `HTTPRoute` `ResponseHeaderModifier` filters
-  (see [design/routing.md](design/routing.md)).
-
-For standard AppProfile apps (Element, Jitsi, OpenProject, …) it clears upstream
-`X-Frame-Options` and `Content-Security-Policy`, then sets a single
-`frame-ancestors 'self' https://portal.<kernel_domain>
-https://<tenant-effective-domain> https://*.<tenant-effective-domain>` policy —
-many charts only emit `frame-ancestors 'self'`, and **appending** a second CSP
-header leaves both active so browsers still block the portal iframe. The portal
-answers on the tenant apex as well as `portal.<kernel_domain>`, and the top frame
-is whichever of the two the user signed in on, so both are named. Apps with
-extra edge snippet needs keep those lines; frame-ancestors is still injected on
-each route according to its role.
-
-A route may narrow that list with the
-`gentianos.io/gateway-frame-ancestors` annotation, whose `portal` token resolves
-to the same routed portal hosts (`portalOrigins`) rather than its own list.
-Enumerating them per policy is how document editing broke once already: the
-annotation kept naming only `portal.<kernel_domain>` after the portal gained the
-tenant apex, and the server side gives no sign of it — the browser drops the
-frame after a `200`.
-
-**IdP (`id.<kernel_domain>`) is the inverse case.** Portal-embedded apps (e.g.
-`chat.<tenant>.<kernel>`) load Keycloak OIDC pages inside the app iframe. The
-Keycloak proxy route must allow both `https://portal.<kernel_domain>` and
-`https://*.<tenant-effective-domain>` (CSP allows only one `*.` label, so
-`https://*.<kernel_domain>` does not cover `chat.demo.<kernel>`). The
-**KeycloakPlatformReconciler** (gentian-os operator) owns frame-ancestors policy
-on the Keycloak IdP HTTPRoute and re-converges it when tenants change or Helm
-drifts.
+The desktop opens apps in frames, so the operator sets the frame policy on
+every route it creates, at the edge and not in the app: it removes upstream
+`X-Frame-Options` and sets `Content-Security-Policy: frame-ancestors 'self'`
+plus, by name, the desktop of the component's own tenant and the component's
+own other hosts. No wildcard is used, and the platform's desktop frames no
+tenant's app. Keycloak's endpoints on `id.<kernelDomain>` carry a separate
+policy naming the hosts whose pages embed its session frames. A frame only
+works where desktop and app are on the same site, because the session cookie
+is `SameSite=Lax`. The rules, the table of who may frame what, and the
+`gentianos.io/gateway-frame-ancestors` annotation are in
+[design/routing.md](design/routing.md) §4.3.
 
 ---
 
@@ -483,347 +429,232 @@ drifts.
 
 All secrets live in **OpenBao** and are synced into Kubernetes Secrets
 by **External Secrets Operator (ESO)**. Helm charts consume them via
-standard `existingSecret` references; for charts that lack
-`existingSecret` support, `provider-helm` injects values via
-`valuesFrom: secretKeyRef`. Either way, **secrets never appear in Git
-or in CR specs**.
+`existingSecret` references; for charts that lack `existingSecret`
+support, `provider-helm` injects values via `valuesFrom`. Either way,
+**secrets never appear in git or in a resource's spec**.
 
-Two key properties:
+Three properties:
 
-1. **Deterministic seeding.** Kernel credentials are derived from a
-   single master password via **HKDF-SHA256** (see `internal/kernel/secrets`),
-   so re-seeding produces identical values and full disaster recovery is
-   possible from the master password alone.
-2. **Write-once protection.** Crossplane manages KV paths with
-   `managementPolicies: [Observe, Create]` — the platform creates
-   secrets on first reconcile and never overwrites live credentials.
+1. **Kernel service secrets are derived by default.** With the Cluster
+   claim's `secretMode: derived` they are computed from the master password
+   with HKDF-SHA256 (`internal/kernel/secrets`), so the same password
+   reproduces them; `random` makes them independent of it.
+2. **No person's password is derived.** An administrator account has no
+   password until its holder sets one through a single-use activation link.
+3. **Seeding is write-once.** The operator writes a credential where the path
+   is empty and does not overwrite a live one.
+
+A credential a person supplies (a DNS token, a registry login) is set through
+the custodian, which can write a secret and cannot read one.
 
 ### 7.1 Two Secret Delivery Patterns
 
-All upstream Helm charts fall into one of two categories, both served
-by the same ESO → K8s Secret pipeline:
-
 | Pattern | Mechanism | When to use |
 |---|---|---|
-| **Pattern A** | ESO syncs OpenBao → K8s Secret; chart references it via `existingSecret` | Charts with native `existingSecret` support. This covers **kernel services**: PostgreSQL, MariaDB, Keycloak bootstrap, Redis, MinIO, Postfix, Dovecot. |
-| **Pattern B** | ESO syncs OpenBao → K8s Secret; `provider-helm` `spec.valuesFrom` maps individual keys to Helm value paths | Charts that accept secrets as plain values but have no structured `existingSecret` field. |
-
-In both patterns:
-- Secrets are RBAC-restricted K8s Secrets, never written to Git or CR specs.
-- `provider-helm` manages the full Helm release lifecycle as a Crossplane
-  Managed Resource — drift detection, upgrade, and rollback are all visible
-  in ArgoCD.
-- etcd encryption at rest applies to the K8s Secrets.
-
-**Pattern A example** (Keycloak — standalone Suze path):
-```yaml
-# ExternalSecret (ESO) pulls from OpenBao → creates k8s Secret keycloak-credentials
-# provider-helm HelmRelease references it:
-spec:
-  values:
-    auth:
-      existingSecret: keycloak-credentials
-      passwordSecretKey: admin-password
-```
-
-**Pattern B example** (hypothetical chart with no existingSecret):
-```yaml
-# Same ExternalSecret creates k8s Secret my-app-secrets
-# provider-helm HelmRelease references individual keys:
-spec:
-  valuesFrom:
-    - kind: Secret
-      name: my-app-secrets
-      valuesKey: admin-password
-      targetPath: app.adminPassword
-```
+| **A** | ESO syncs OpenBao → Secret; the chart references it via `existingSecret` | Charts with native `existingSecret` support, which covers the kernel's services. |
+| **B** | ESO syncs OpenBao → Secret; `provider-helm` `valuesFrom` maps individual keys to Helm value paths | Charts that accept secrets only as plain values. The profile's `package.valueMapping` says which path takes which key. |
 
 ### 7.2 OpenBao Bootstrap
 
-OpenBao itself must be configured before ESO or Crossplane can
-authenticate to it — a one-time bootstrap. The `install.sh` script
-performs this via `bao` CLI calls directly:
+OpenBao must be initialised before ESO or Crossplane can authenticate to
+it. The installer does this once, in its `B` phase: it initialises the
+transit seal and the vault (`B-02`, `B-03`), creates the KV mount and
+Crossplane's policy and token (`B-04`), and seeds the kernel's paths
+(`B-07`, `B-08`). Everything after that — Kubernetes auth, roles, the ESO
+`ClusterSecretStore`, policies per tenant — is composed from the Cluster
+claim and the tenant composites through `provider-vault`.
 
-```bash
-bao secrets enable -path=secret kv-v2
-bao auth enable kubernetes
-bao write auth/kubernetes/config kubernetes_host="$K8S_HOST"
-bao policy write eso-read <(cat kernel/bootstrap/eso-policy.hcl)
-bao write auth/kubernetes/role/eso ...
-```
-
-After this bootstrap, all further OpenBao configuration (additional
-policies, roles for new services) is managed as Crossplane Managed
-Resources via `provider-vault`, which can authenticate using the
-already-configured Kubernetes auth backend.
-
-The OpenBao path layout, ESO sync flow, derivation algorithm, rotation
-mechanics (Stakater Reloader), and credential-leak guard rails are in
-[design/security.md](design/security.md).
+The path layout, the derivation, rotation and the recovery kit are in
+[design/security.md](design/security.md) §4–6 and
+[install-reference.md](install-reference.md) §4.
 
 ---
 
 ## 8. Repository Structure
 
-Three Git repositories, separated by rate of change:
-
 ```
-gentian-os/              # The OS itself (versioned artifact)
-├── crossplane/
-│   ├── xrds/            # Tenant, App, Cluster XRDs
-│   ├── compositions/    # Pipelines that fan out into MRs
-│   ├── functions/       # Composition functions (valueMapping, auto-ready, …)
-│   └── providers/       # Provider configs
-├── kernel/              # Static manifests not provisioned by an XR
+gentian-os/              # The OS itself
+├── api/                 # The resource types (a Go module of its own)
+├── cmd/, internal/      # Operator, director, usher, custodian, registrar, bouncer
+├── charts/gentian-os/   # The chart that installs them, with the CRDs
+├── crossplane/          # XRDs, Compositions, providers
+├── kernel/              # What Argo CD applies that is not composed
+├── scripts/, install.sh # The installer and kubectl-gentian
 └── docs/
 
-gentian-apps/            # The catalogue (versioned artifact)
-├── profiles/            # One AppProfile YAML per app
-├── apps/                # First-party app source (FastAPI + React + Helm)
-│   ├── _template/       # gentian-app-template copy
-│   └── admin-console/   # The administration console
-├── app-profile-guide.md # Wrap upstream charts (profile only)
-├── custom-app-guide.md  # Build new Gentian-native apps
-└── contracts/           # Contract schema definitions
+gentian-apps/            # A catalogue: profiles, charts, app sources
+gentian-ui/              # The desktop, the consoles, the App Store app, the sign-in page
 
-gentian-deployments/     # Per-cluster state (the only repo specific to a cluster)
-└── <env>/
-    ├── kernel/          # Operator Helm values, image updater
-    └── tenants/
-        ├── kustomization.yaml
-        └── instances/<tenant>/
-            └── tenant.yaml   # Tenant CR with spec.apps[] (tenant-admin managed)
+<deployments repository> # Per-cluster state; the only repository specific to a cluster
+├── profiles/            # Values shared by the clusters of a stage
+└── clusters/<cluster>/
+    ├── kernel/          # claims/, values.yaml, signing/
+    ├── catalogue/       # Profiles installed on this cluster, as the director committed them
+    └── tenants/<tenant>/tenant.yaml
 ```
 
-`gentian-os` and `gentian-apps` publish versioned OCI artifacts;
-`gentian-deployments` references them by version. ArgoCD syncs kernel
-manifests, the **`gentian-appprofiles`** Application (profiles only), and
-tenant YAML. The **gentian-os operator** creates in-cluster `App` claims
-from `Tenant.spec.apps`. Adding an app to the catalogue is a PR to
-`gentian-apps/profiles/` (synced by `gentian-appprofiles`); installing an
-app for a tenant appends a profile to `spec.apps` in
-`gentian-deployments` (see
-[gentian-deployments/README.md](../../gentian-deployments/README.md)).
+The layout of this repository is in [folder-structure.md](folder-structure.md);
+the deployments repository and how a cluster follows a release are in
+[deployment.md](deployment.md).
 
 ---
 
 ## 9. The Mail Kernel Extension
 
-Mail is **optional** — not every tenant needs self-hosted mail. It is
-modelled as a **kernel extension**: shared infrastructure (one Postfix,
-one Dovecot, one Rspamd) with tenant-scoped configuration (per-tenant
-SASL credentials, per-domain DKIM keys, isolated mailbox paths).
+Mail is **optional** and decided twice.
 
-On the dev cluster today, Postfix (and Dovecot when enabled) run in
-**`gentian-dev`** as helm Releases `postfix-dev` /
-`dovecot-dev` — in-cluster SMTP is
-`postfix-dev.platform-kernel.svc.cluster.local:587`, not
-`postfix.platform-kernel.svc.cluster.local`.
+**Per cluster**, the Cluster claim's `mail.serviceMode` says whether the
+cluster runs its own mail stack. With `system`, Postfix and Dovecot run in
+`system-mail` with no load balancer, and a proxy in `system-mail-dmz` takes
+ports 25, 587 and 993 from the internet and holds no mail, no user and no
+key. Otherwise the cluster relays through a provider and neither namespace
+exists. A cluster behind a tunnel cannot run its own stack.
 
-**Install-time vs per-tenant:** `MAIL_SERVICE_MODE` in
-`gentian-deployments/clusters/<cluster>/kernel/cluster-settings.env`
-(`external` or `kernel`) decides whether the installer deploys kernel
-mail and how Postfix relays. **`Tenant.spec.mail.mode`** (`selfhosted`,
-`external`, `transport-only`, `disabled`) decides what the operator
-provisions for each organisation. See [design/mail.md](design/mail.md).
+**Per tenant**, `Tenant.spec.mail.mode` says what the operator registers:
 
-Each tenant picks a mode:
+- `selfhosted` — a domain and mailboxes on the cluster's shared stack.
+- `external` — the tenant's own provider, with its credential.
+- `transport-only` — outbound through the cluster's relay, no mailboxes.
+- `disabled` — no mail.
 
-- `selfhosted` — full mail stack, shared infrastructure.
-- `external` — tenant uses Gmail / its own server.
-- `transport-only` — kernel relays SMTP, storage is external.
-- `disabled` — outbound notifications only.
-
-Configuration model, isolation guarantees, blast-radius trade-offs and
-the per-tenant opt-out (dedicated mail stack for high-value tenants)
-are in [design/mail.md](design/mail.md).
+Configuration, isolation and DNS records are in
+[design/mail.md](design/mail.md).
 
 ---
 
 ## 9b. Collabora (catalogue app)
 
-Collaborative document editing (Collabora) is a **catalogue app**, not a kernel
-service. Profiles in `gentian-apps` (e.g. `nextcloud`, `nextcloud-pro`, Collabora
-integration packs) declare the Helm charts and OIDC packs; Crossplane
-`app-default` deploys them into the tenant namespace when listed in
-`Tenant.spec.apps`.
-
-Nextcloud is a common file-store catalogue app; Collabora integrates with it
-via WOPI/embed contracts declared in `AppProfile` optional integrations. See
+Collaborative document editing is a **catalogue app**, not a kernel service:
+it is installed with the file store that uses it, as part of that app's
+profile or as an addon of it. See
 [design/app-catalogue.md](design/app-catalogue.md).
 
 ---
 
 ## 10. Backup, DR and Observability
 
-Backup is **per subsystem** — each kernel component uses the
-industry-standard tool for its data type (pgBackRest for PostgreSQL,
-MinIO replication or Restic for buckets, dsync for Dovecot, Keycloak
-realm export, OpenBao Raft snapshots, Velero for K8s state). The
-per-tenant isolation model enables **single-tenant restore** without
-touching others.
+A tenant is backed up as a whole. A `TenantExport` captures one tenant's
+data — its apps' databases, buckets, volumes and vault paths, and its
+realm — into an encrypted bundle; a `TenantExportSchedule` repeats it and
+expires old bundles; a `BackupPolicy` names object storage other than the
+platform's own to write them to; a `TenantRestore` or `kubectl gentian tenants import` brings one back, on the
+same cluster or another. A profile's `spec.backup` says how its app is
+quiesced and what of it is captured. The cluster itself is rebuilt from git
+and its recovery kit.
 
-Observability is built into the CRD model: `kubectl get tenants`,
-`kubectl get integrationbindings`, and `crossplane trace tenant/<name>`
-show the entire dependency graph. Crossplane's standard metrics expose
-reconcile latency, error counts, and per-MR readiness; ESO and ArgoCD
-provide the rest.
+State is read through the Kubernetes API: `kubectl get tenants`,
+`kubectl get components -A`, `kubectl get integrationbindings -A`, and
+`crossplane beta trace` on a composite show what was provisioned and what
+is waiting.
 
-The full backup matrix, tenant-restore procedure, DR drill, and
-metrics catalogue are in [design/operations.md](design/operations.md).
+See [design/data-lifecycle.md](design/data-lifecycle.md),
+[design/operations.md](design/operations.md),
+[tenant-backup-guide.md](tenant-backup-guide.md) and
+[recovery-playbook.md](recovery-playbook.md).
 
 ---
 
 ## 11. Kernel and App Image Updates
 
-### 11.1 Operator Image (gentian-os controller)
+### 11.1 The platform's own image
 
-The `gentian-os` operator image is managed by **ArgoCD Image Updater**
-through the `gentian-os` ArgoCD Application registered at install time.
-The update chain is:
+Operator, director, usher, custodian, registrar and bouncer are one image
+and one chart, delivered by the `gentian-os` Argo CD Application
+(`kernel/bootstrap/chart/templates/gentian-os.yaml`). The installer pins the
+image to the build of the commit it is installing from
+(`<branch>-<short-sha>`, or the version for a release tag), so the manifests
+Argo CD syncs and the binary the kubelet pulls come from one commit.
 
-1. A CI push to `develop` (or `main` / a version tag) triggers the
-   GitHub Actions `docker` job, which builds and pushes a new image to
-   `ghcr.io/gentian-org/gentian-os:<branch>` (and a short-SHA tag).
-2. `argocd-image-updater` polls GHCR every two minutes. The
-   **`ImageUpdater` CR** and the `argocd-image-updater.argoproj.io/*`
-   annotations on the `gentian-os` Application tell it which Application
-   to watch and which image to track (`newest-build` strategy).
-3. When a new digest is detected, the updater patches the `image.tag`
-   Helm parameter directly on the ArgoCD Application (`write-back-method:
-   argocd`).
-4. ArgoCD detects the parameter change, runs `helm upgrade`, and performs
-   a rolling restart of the operator Deployment — no manual
-   `kubectl rollout restart` needed.
+**Nothing advances that pin on its own.** A cluster following a branch takes
+a newer build when `./install.sh --only B-01` is run again; a cluster pins its
+own tag in `clusters/<cluster>/kernel/values.yaml`. `argocd-image-updater` is
+installed with Argo CD, and the platform ships no `ImageUpdater` resource: a
+cluster that wants an image to roll by itself writes one. See
+[install-reference.md](install-reference.md) §4, "Image tags".
 
-The `ImageUpdater` CR is inlined in
-`kernel/bootstrap/chart/templates/gentian-os.yaml` and applied with the
-Application it refers to, by `install.sh` — it is not committed to
-`gentian-deployments` and Argo CD does not sync it. Its content never varies
-by cluster or stage, so a per-cluster copy in the deployments repository would
-be duplication that could drift. See [deployment.md](deployment.md) §3.1.
+### 11.1.1 The user interfaces
 
-**Why this Application is not itself managed by Argo CD.** The updater
-writes with `write-back-method: argocd`: it patches the `image.tag` Helm
-parameter onto the live `gentian-os` Application object. An Application
-owned by an ApplicationSet with `selfHeal` would have that patch reverted
-on the next reconcile, and every rollout would silently undo itself. So
-the bootstrap Applications the updater writes into — `gentian-os` and
-`gentian-portal` — are rendered from templates in this repository and
-applied directly. The `argocd-image-updater` *controller* is separate: it
-is installed by Helm at `A-10-argocd-image-updater`, immediately after
-Argo CD's own install at `A-09-argocd`, because both are the CD control
-plane and neither can be delivered by the thing it bootstraps.
-
-Environment policies:
-
-| Environment | Strategy | Tracks |
-|---|---|---|
-| dev | `newest-build` | Latest push to `develop` |
-| staging | `newest-build` | Latest push to `staging` |
-| prod | `semver` | Semver tags `v*` only |
-
-### 11.1.1 Portal shell images (`gentian-portal-api` / `gentian-portal-web`)
-
-The Gentian portal shell uses the same Image Updater pattern as the operator:
-
-1. `gentian-ui` CI pushes `ghcr.io/gentian-org/gentian-portal-{api,web}:develop`
-   (and a short-SHA tag) on every merge to `develop`.
-2. The `gentian-portal` Argo CD Application (see
-   `gentian-deployments/clusters/<cluster>/kernel/gentian-portal-<stage>.yaml`)
-   carries Image Updater annotations for both images (`newest-build` on
-   `:develop`).
-3. The `ImageUpdater` CR in `image-updater-<stage>.yaml` includes
-   `gentian-portal` in `applicationRefs`.
-4. New digests trigger a Helm upgrade and rolling restart of API and web
-   Deployments — typically within 30–60 seconds of the CI push.
-
-Keycloak clients and `gentian-portal-secrets` are still created by
-`install.sh --only D-03-portal-login` (`scripts/lib/portal-login-bootstrap.sh`);
-Argo CD owns only the Helm release.
-
-For cluster-to-environment mapping, promotion workflows (with and without a
-staging tier), and `gentian-deployments` layout, see
-[deployment.md](deployment.md).
+The desktop, the administration console, the App Store app and the concierge
+are charts published by `gentian-ui`. Their `ComponentProfile`s ship in this
+repository's chart, and the installer resolves the chart version each one
+names (`PORTAL_IMAGE_TAG`, step `D-03`). They are installed per tenant by the
+operator, not by an Argo CD Application of their own.
 
 ### 11.2 Install-time bootstrap
 
-`install.sh --step D-01-operator` uses a **two-step** approach to avoid a
-chicken-and-egg problem (ArgoCD can't sync the chart if the CRDs aren't
-established yet):
-
-- **Direct Helm install**: CRDs are applied and the operator is installed
-  immediately via `helm upgrade --install`. Subsequent install steps that
-  depend on CRDs or the webhook proceed without waiting for ArgoCD.
-- **ArgoCD handoff**: The `gentian-os` Application is rendered from
-  `kernel/bootstrap/chart/templates/gentian-os.yaml` (a Helm chart now, not the
-  `.tmpl` + `envsubst` this used to be — the values carry the deployments repo,
-  branch, cluster and stage) and applied with `kubectl apply`. ArgoCD adopts the already-running resources via
-  `ServerSideApply` and deploys the `ImageUpdater` CR on the first sync. From
-  this point, all future upgrades — including image rollouts — are git-driven
-  and fully automatic.
+`install.sh` drives the steps of `scripts/steps/` in five phases: **A** the
+control plane (namespaces, cert-manager, ESO, Crossplane, Envoy Gateway,
+Argo CD), **B** secrets (the bootstrap Applications, the vault, Crossplane's
+providers and definitions, seeded secrets, the signing keys), **C** the
+platform (the Cluster claim, the ApplicationSets, the wildcard certificate),
+**D** the applications (operator and director, the kernel realm, the
+platform tenant and its desktop), **E** the handover (recovery kit, the
+bootstrap token revoked, the user tenant of a single-tenancy cluster). Step 0
+writes the cluster's definition into the deployments repository first. See
+[install-reference.md](install-reference.md) §1 and
+[deployment.md](deployment.md) §3.
 
 ### 11.3 App images
 
-App (tenant-facing) images update through the same `newest-build` /
-`semver` mechanism applied per-AppProfile; each tenant picks up the new
-chart version on the next ArgoCD sync triggered by the ImageUpdater.
+An app's images are what its chart, at the version its profile names,
+pulls. An install is pinned to the digest of the profile's bundle, so an app
+moves to a newer build when it is installed again at that build
+([custom-catalogues.md](custom-catalogues.md)).
 
 ---
 
 ## 12. The AI Layer
 
-The Gentian Portal may host an AI assistant that uses three kernel services —
-identity, an MCP (Model Context Protocol) registry, and OIDC token exchange —
-to discover what apps are installed and act across them on behalf of the user.
+A cluster may serve language models. Where the Cluster claim enables it,
+**LiteLLM** runs in `system-llm` as the model gateway, in front of the
+**vLLM** instances the claim lists. An app that declares
+`requires.services.llm` is given a key of its own at the gateway, the
+gateway's address and a network path to it; no other app can reach it. The
+gateway has no public route; its console is a claim setting, for platform
+administrators, behind the kernel sign-in.
 
-### Kernel vs. Tenant Land Split for LLM Serving
-To support resource-heavy LLM capabilities, Gentian OS uses a split-layer architectural model:
-* **Kernel Space:** Computational backends (e.g., GPU pools running **vLLM** and CPU fallbacks running **LocalAI**), model weight storage volumes (PVCs), the edge API Gateway (upgraded to **Envoy AI Gateway** with OpenFGA/Keycloak checks), and the centralized **LiteLLM** routing proxy live in the kernel to allow efficient hardware resource sharing and centralized security controls.
-* **Tenant Land:** Downstream applications (e.g., Nextcloud, OpenProject) consume the LLM API via injected credentials and virtual keys, keeping their user traffic isolated. Optional tenant-level proxies can also run in tenant space for custom routing and client-side budgeting.
+Agents acting for a person across apps, and an MCP gateway for them, are
+designed and not built.
 
-See [design/agentic-ai.md](design/agentic-ai.md), [design/llms.md](design/llms.md) and [roadmap.md](roadmap.md).
+See [design/llms.md](design/llms.md), [design/agentic-ai.md](design/agentic-ai.md)
+and [design/security.md](design/security.md) §2.9.
 
 ---
 
 ## 13. Operational Roles
 
-Three roles, three scopes:
+A role is membership of a Keycloak group; what a role may do is a relation
+in OpenFGA, asked by the director, the custodian, the registrar, the usher
+and the bouncer before they act. Nobody is given Kubernetes RBAC on the
+platform's kinds to do their work.
 
-| Role | Scope | Kubernetes primitives | Cannot do |
+| Role | Scope | Does it through | Cannot do |
 |---|---|---|---|
-| **Cluster admin** | Cluster + kernel | `Tenant`, `AppProfile`, `Cluster` XRs; all verbs | Bypass GitOps in prod, perform tenant business actions |
-| **Tenant admin** | One tenant namespace | `App` claims (create/delete/get/list in `tenant-{name}`); read `AppProfile` catalogue | Touch kernel, write outside own namespace |
-| **Tenant user** | Day-to-day app use | Use installed apps with SSO | Install/uninstall, see admin surfaces |
+| **Platform administrator** | The cluster and the platform tenant | `kubectl gentian`, the platform desktop's consoles; creates tenants, declares catalogues, sets plans | Open a tenant's apps |
+| **Tenant administrator** | One tenant | The administration console and the App Store app: people, groups, installs, grants | Use the tenant's apps as a member; touch another tenant or the kernel |
+| **Perimeter approver** | One tenant | Approves what the tenant publishes without sign-in | Anything else |
+| **Member** | One tenant | The desktop: the apps they were given | Install, administer |
 
-Tenant admin RBAC is namespace-scoped: they hold `create`/`delete`
-verbs on `apps.gentianos.io` in their own namespace and read-only on
-`appprofiles.gentianos.io` cluster-wide. They cannot read `Tenant`
-CRs or touch another tenant's namespace. The current model is
-GitOps-driven (tenant admins edit `Tenant.spec.apps` in
-`gentian-deployments` via `kubectl gentian apps install/uninstall`). Permissions, audit, and the future tenant-self-service flow
-are in [design/multi-tenancy.md](design/multi-tenancy.md#roles).
+Administrator and member are separate accounts by design. Roles, groups and
+the relations behind them are in [design/iam.md](design/iam.md) §1.2–1.3 and
+[design/multi-tenancy.md](design/multi-tenancy.md#roles).
 
 ---
 
 ## 14. Why This Architecture Scales
 
-- **Adding an app to the catalogue = one YAML file** in `gentian-apps`.
-  No code, no Composition change for typical apps; the generic `App`
-  Composition reads the `AppProfile` via `function-extra-resources`.
-- **Installing an app for a tenant = one entry in `Tenant.spec.apps`** in
-  `gentian-deployments`; the operator materialises `App` claims. Tenant
-  admins do this themselves; cluster admins are not involved.
-- **Adding a tenant = one `Tenant` CR.** The operator and Crossplane
-  reconcile kernel and app resources in parallel where dependencies allow.
-- **Adding a cluster = one Argo App-of-Apps + one `Cluster` XR.** The
-  same Compositions serve every environment; differences are
-  per-environment values files.
-- **Adding a kernel capability = one provider.** The driver model
-  scales the way Linux kernel modules scale: pluggable, independently
-  versioned, no kernel fork needed.
-- **AI-friendly.** The platform's full state is queryable via the K8s
-  API; AI agents see exactly the same model that operators see.
+- **Adding an app to a catalogue = one profile bundle.** No code and no
+  Composition change for a typical app; `app-default` reads the profile.
+- **Installing an app for a tenant = one request to the director**, which
+  becomes one entry in `Tenant.spec.apps`. Tenant administrators do this
+  themselves.
+- **Adding a tenant = one `Tenant`.** The operator and Crossplane reconcile
+  kernel and app resources in parallel where dependencies allow.
+- **Adding a cluster = one directory in a deployments repository and one
+  run of the installer.** The same Compositions serve every cluster;
+  differences are the claim and a values file.
+- **Adding a kernel capability = one provider.**
+- **Queryable.** The platform's state is in git and in the Kubernetes API.
 
 ---
 
@@ -832,22 +663,27 @@ are in [design/multi-tenancy.md](design/multi-tenancy.md#roles).
 | Topic | Document |
 |---|---|
 | Deployment environments and promotion | [deployment.md](deployment.md) |
+| Installing, configuration surfaces, tenancy modes | [install-reference.md](install-reference.md) |
 | Why a cloud OS at all | [design/cloud-os-rationale.md](design/cloud-os-rationale.md) |
 | Kernel functions, default install, OS analogy details | [design/kernel.md](design/kernel.md) |
 | Tenants, isolation, domains, network/identity security | [design/multi-tenancy.md](design/multi-tenancy.md) |
+| Routing, the edge, sign-in sessions, embedding | [design/routing.md](design/routing.md) |
 | One brand on every page: tokens, identity, publishing | [design/branding.md](design/branding.md) |
-| AppProfile schema, IntegrationBindings, contracts, deployment flow | [design/app-catalogue.md](design/app-catalogue.md) |
-| Catalogue tiers, sidecars, admission and CI policy | [design/app-catalogue.md](design/app-catalogue.md) |
+| Profile schema, IntegrationBindings, contracts, tiers | [design/app-catalogue.md](design/app-catalogue.md), [design/app-profiles.md](design/app-profiles.md) |
+| Publishing your own catalogue | [custom-catalogues.md](custom-catalogues.md) |
+| Customizing an installed app | [app-customization.md](app-customization.md) |
 | What the cluster accepts from an App Store | [design/store-contract.md](design/store-contract.md) |
-| OpenBao, ESO, TLS, deterministic seeding, rotation | [design/security.md](design/security.md) |
+| The security rules | [security-principles.md](security-principles.md) |
+| OpenBao, ESO, TLS, derivation, rotation | [design/security.md](design/security.md) |
 | Identity and Access Management (IAM) and Roles | [design/iam.md](design/iam.md) |
-| OIDC paths (catalogue apps) | [app-profile-guide.md](../../gentian-apps/docs/app-profile-guide.md) §8, [design/iam.md](design/iam.md) |
+| The administration console | [design/admin-console.md](design/admin-console.md) |
+| Resource plans and quotas | [design/resource-plans.md](design/resource-plans.md) |
 | Mail kernel extension | [design/mail.md](design/mail.md) |
-| Backup, DR, observability, image updates | [design/operations.md](design/operations.md) |
+| Backup, DR, observability, upgrades | [design/operations.md](design/operations.md) |
 | What create, backup, restore, import, uninstall, purge, retire and delete do with a tenant's and an app's data | [design/data-lifecycle.md](design/data-lifecycle.md) |
 | Backing up and recovering a workspace (tenant admin) | [tenant-backup-guide.md](tenant-backup-guide.md) |
 | Recovering after a loss — cluster, tenant or key | [recovery-playbook.md](recovery-playbook.md) |
 | Agentic AI / MCP integration | [design/agentic-ai.md](design/agentic-ai.md) |
-| LLM serving architecture & Stage 1 plan | [design/llms.md](design/llms.md) |
-| AppProfile authoring (upstream charts) | [gentian-apps/docs/app-profile-guide.md](../../gentian-apps/docs/app-profile-guide.md) |
+| LLM serving | [design/llms.md](design/llms.md) |
+| Profile authoring (upstream charts) | [gentian-apps/docs/app-profile-guide.md](../../gentian-apps/docs/app-profile-guide.md) |
 | Custom Gentian-native apps | [gentian-apps/docs/custom-app-guide.md](../../gentian-apps/docs/custom-app-guide.md) |

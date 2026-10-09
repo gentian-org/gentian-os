@@ -23,126 +23,94 @@ Four layers, each holding only what the layer below it can't know:
 
 | Layer | Lives in | Scope | Holds |
 | --- | --- | --- | --- |
-| 1. Chart defaults | `gentian-os/charts/gentian-os/values.yaml` | every cluster, every deployer | sane defaults for every key — including things that turned out to be universal across every current profile (see below) |
-| 2a. Cross-stage shared | `gentian-deployments/profiles/_base.yaml` | every cluster, this deployment | same across all stages, but too app/catalogue-specific for the chart (e.g. Kyverno MAC waivers for specific tenant apps) |
-| 2b. Stage profile | `gentian-deployments/profiles/<stage>.yaml` | every cluster of that stage tier | *genuine* stage deltas only: log level, ACME issuer |
-| 3. Cluster overlay | `gentian-deployments/clusters/<cluster>/kernel/values.yaml` | one cluster | genuine deltas only: image tag pin, Cloudflare zone, LDAP endpoint |
-| 4. Cluster identity | `gentian-deployments/clusters/<cluster>/kernel/claims/cluster.yaml` | one cluster | `kernelDomain` — the single source of truth |
+| 1. Chart defaults | `gentian-os/charts/gentian-os/values.yaml` | every cluster, every deployer | a default for every key |
+| 2a. Cross-stage shared | `<deployments>/profiles/_base.yaml` | every cluster of this deployment | what is the same in all stages but not something every deployer wants |
+| 2b. Stage profile | `<deployments>/profiles/<stage>.yaml` | every cluster of that stage | genuine stage deltas only: log level, ACME issuer |
+| 3. Cluster overlay | `<deployments>/clusters/<cluster>/kernel/values.yaml` | one cluster | genuine deltas only |
+| 4. Cluster definition | `<deployments>/clusters/<cluster>/kernel/claims/cluster.yaml` | one cluster | what the cluster is: `kernelDomain`, tenancy mode, network mode, mail, models, catalogues |
 
-ArgoCD merges Helm values in that order (1 → 2a → 2b → 3). Layer 4 isn't a
-Helm value at all — it's the Crossplane `Cluster` Claim, a plain Kubernetes
-object. Its schema (`crossplane/xrds/cluster.yaml`) requires only
-`kernelDomain`; every other field (OpenBao address, ArgoCD/ESO namespaces,
-`certManager.letsencryptEmail`) has a schema or Composition default, so the
-Claim itself stays a handful of lines.
+Argo CD merges the Helm values of the platform's own chart in that order
+(1 → 2a → 2b → 3), and over them the values the installer renders into the
+`gentian-os` Application itself: the image tag (§4) and the namespace layout.
+Both profile files must exist, even empty
+([install-reference.md](install-reference.md) §4). Layer 4 isn't a Helm value
+at all — it's the Crossplane `Cluster` claim. Its schema
+(`crossplane/xrds/cluster.yaml`) requires only `kernelDomain`; every other
+field has a default, and step 0 of the installer writes each setting it asked
+for.
 
-**Layer 2 splits in two because "shared across stages" and "universal
-across every deployer" are different claims.** A value that's identical in
-every stage profile *of this deployment* isn't necessarily something every
-gentian-os installer wants — `platformSecurityPolicy.allowedMacWaivers`
-names specific catalogue apps (`element`, `nextcloud-office`, ...), which
-depends on which apps this deployment's tenants use, not on the chart
-itself. Promoting it to a chart default would just relocate the "OS
-shouldn't know about apps" problem instead of fixing it. Anything that
-*is* the same regardless of deployer (e.g. `authzBridge.enabled`,
-`servicesNamespace`) belongs in the chart, not in `_base.yaml` — when in
-doubt: would a different organization deploying gentian-os from scratch
-want this value too? If yes, chart default. If it's the same across your
-stages but tied to your app catalogue, `_base.yaml`. If it varies by
-stage, `profiles/<stage>.yaml`.
+**When in doubt where a value belongs:** would a different organisation
+deploying gentian-os from scratch want this value too? If yes, chart default.
+If it is the same across your stages but particular to your deployment,
+`_base.yaml`. If it varies by stage, `profiles/<stage>.yaml`.
 
-**`kernelDomain` has exactly one authored copy** (Layer 4, the Claim).
-Everything else that needs it *reads* from there rather than declaring it
-independently:
+**`kernelDomain` is authored on the claim** (Layer 4). `install.sh` reads it
+from there. Layer 3's `values.yaml` repeats it for the platform's chart,
+because a running process needs it as an environment variable at start and
+cannot read a file in git: one copy that exists for a structural reason.
+There is no `cluster-settings.env` any more; everything it carried is a field
+of the claim.
 
-- `install.sh` read it via `yq '.spec.kernelDomain'` — there is
-  no `KERNEL_DOMAIN=` line in `cluster-settings.env` anymore.
-- Layer 3's `values.yaml` mirrors it for the operator's Helm chart, because
-  a running Go process needs it as a boot-time env var
-  (`cmd/main.go: os.Getenv("KERNEL_DOMAIN")`), which can't read a live git
-  file. This is the one place a second copy is structurally necessary — a
-  schema-boundary artifact (Crossplane Claim vs. Helm values are different
-  shapes), not independently-owned data. A CI lint that diffs the two is
-  cheap insurance if you want zero tolerance for it.
-
-**A cluster has exactly one stage, fixed at bootstrap.** Stage is not a
-runtime toggle — it selects which `profiles/<stage>.yaml` a cluster's Layer
-2 reads, once, when the cluster is scaffolded (§3). To move a cluster to a
-different stage, re-run bootstrap against a fresh cluster; don't mutate an
-existing one in place.
+**A cluster has exactly one stage, fixed at bootstrap.** The stage selects
+which `profiles/<stage>.yaml` the cluster reads and is half of the claim's
+name (`<cluster>-<stage>`). To move a cluster to a different stage, bootstrap
+a fresh cluster.
 
 Directory layout:
 
 ```text
-gentian-deployments/
+<deployments repository>/
   profiles/
-    _base.yaml                    # Layer 2a — shared across every stage, this deployment
-    dev.yaml                      # Layer 2b — shared by every dev-tier cluster
-    staging.yaml
+    _base.yaml                    # Layer 2a
+    dev.yaml                      # Layer 2b
     prod.yaml
   clusters/
     <cluster>/
       kernel/
-        cluster-settings.env       # hand-maintained: network mode, storage class, mail, etc.
-        values.yaml                # Layer 3 — cluster-unique deltas only
+        values.yaml                # Layer 3
         claims/
-          cluster.yaml             # Layer 4 — kernelDomain, the single source
-          infra-data.yaml
-          suze.yaml
-        addons/
-          <add-on>/
-            application.yaml        # optional add-on — hand-added, not every cluster runs one
-      definitions/
-        components/tenant-defaults/  # cluster-wide defaults applied to every tenant at activation
-        tenants/<tenant>/tenant.yaml # tenant catalogue (inactive) — stage-agnostic, see below
-      tenants/<tenant>/              # activated tenants (ArgoCD sync target)
+          cluster.yaml             # Layer 4
+          suze.yaml                # identity: Keycloak and OpenFGA
+          deployments-repository.yaml   # this repository, and the director's push credential
+          gentian-os-repository.yaml    # the repositories Argo CD reads
+          gentian-ui-repository.yaml
+        signing/                   # public halves of the keys commits are signed with
+      catalogue/                   # profiles installed on this cluster, as committed by the director
+      tenants/<tenant>/            # tenant.yaml + kustomization.yaml; platform/ from the first install
 ```
 
-Note what's conspicuously **not** in `kernel/`: an `app-of-apps.yaml`,
-`gentian-portal.yaml`, or `image-updater.yaml`. These bootstrap ArgoCD
-`Application`/`ImageUpdater` objects are near-100%-identical across every
-cluster — the only things that ever vary are the cluster and stage that
-appear in a couple of `$deploy/...` paths. Committing a full copy per cluster
-would be the exact per-cluster-duplication problem this whole model exists to
-avoid, just one layer up from the Claims. Instead they are templates in
-`gentian-os`'s own chart at `kernel/bootstrap/chart/templates/`
-(`gentian-os.yaml`, `gentian-portal.yaml`), rendered by `helm template` and
-applied directly to the cluster by
-`install_gentian_os_operator()`/`install_portal_login()` — never committed to
-`gentian-deployments` at all. See §3.1.
+What is **not** in `kernel/`: any Argo CD `Application`. The bootstrap
+Applications are the same on every cluster apart from a few values, so they
+are templates in `gentian-os` (`kernel/bootstrap/chart`, `kernel/appsets`),
+rendered and applied by the installer. See §3.1.
 
-There's also no `-<stage>` suffix, or `<stage>/` subdirectory, anywhere
-inside a single cluster's tree — `clusters/<cluster>/` already scopes
-everything under it to that cluster's one, permanent stage (previous
-paragraph), so re-encoding the stage a second time underneath it, whether
-as a filename suffix (`values-dev.yaml`) or a directory level
-(`tenants/<tenant>/dev/`), is always redundant: there is no cluster whose
-own tree could ever contain a second stage to disambiguate against. This is
-why `definitions/tenants/<tenant>/tenant.yaml` and `tenants/<tenant>/tenant.yaml`
-are flat, not nested under a `<stage>/` directory — an earlier revision of
-this design nested them, reasoning that "a tenant *can* have different
-definitions per stage," but that's not actually true once a cluster is
-pinned to one stage for life: every definition or activated instance under
-`clusters/test/...` is implicitly a `dev` one, so a `dev/` subdirectory
-there disambiguates nothing. The suffix only earns its place where a
-directory *isn't* already doing that job: `profiles/<stage>.yaml` sits
-above any single cluster, so it's the one place stage is a real selector.
+There is no `<stage>` suffix or subdirectory inside a cluster's tree:
+`clusters/<cluster>/` already means one stage.
 
 ---
 
 ## 2. Three repositories
 
-| Repository | Role | Typical branch |
+| Repository | Role | Typical ref |
 | --- | --- | --- |
-| **gentian-os** | Operator Helm chart, Crossplane packages, installer | `develop` (dev) · tagged `v*` (prod) |
-| **gentian-deployments** | Stage profiles, per-cluster kernel config, tenant manifests | `main` (all environments) |
-| **gentian-apps** | AppProfile catalogue | `main` |
+| **gentian-os** | The platform's chart, Crossplane definitions, kernel manifests, installer | a branch (dev) · a release tag `v*` (prod) |
+| **gentian-ui** | The charts of the desktop, the consoles, the App Store app and the sign-in page | a branch or tag |
+| **deployments repository** | Stage profiles, per-cluster claims and values, the materialised catalogue, tenant manifests | `main` |
+
+A catalogue such as `gentian-apps` is not among them: a cluster reads no
+catalogue's git repository. A profile arrives one at a time through the
+director, from the https address a catalogue is published at
+([custom-catalogues.md](custom-catalogues.md)).
 
 Environment separation lives in **directory paths and layered values files**
-inside `gentian-deployments`, not in separate deployment branches, and not
-(beyond `kernelDomain`) inside `gentian-os`. Secrets never go in Git — the
-installer prompts for them and OpenBao holds them (see
+inside the deployments repository, not in separate branches. Secrets never go
+in git — the installer prompts for them and OpenBao holds them (see
 [design/security.md](design/security.md)).
+
+**Who writes the deployments repository.** The installer, at step 0 of a run,
+signed with the break-glass key; after that the director, for every tenant,
+install and setting, signed with its own key and committed in the name of
+the person who asked. Argo CD syncs only commits signed by one of the two.
 
 ---
 
@@ -180,201 +148,128 @@ accumulate faster than anything else the kernel creates.
 
 ### What `install.sh` does
 
-`install.sh` does two genuinely different jobs, and they have different
-safety rules:
+Two different jobs. The steps, flags and configuration are in
+[install-reference.md](install-reference.md); this is the part that concerns
+the deployments repository.
 
-**A. Scaffolding `gentian-deployments` (new cluster only)** —
-`scaffold_cluster_deployment()`, step 0 of the forward run. Given
-`GENTIAN_DEPLOYMENTS_CLUSTER_ID` and `GENTIAN_DEPLOYMENTS_STAGE` in
-`install.env`, and every cluster setting from the prompt — each asked with
-its default, so Enter accepts it:
+**A. Writing the cluster's definition** — `scaffold_cluster_deployment()`,
+step 0 of the forward run. Given `GENTIAN_DEPLOYMENTS_CLUSTER_ID` and
+`GENTIAN_DEPLOYMENTS_STAGE` in `install.env`, and every cluster setting from
+the prompt — each asked with its default:
 
-1. For each of `claims/cluster.yaml`, `claims/suze.yaml`,
-   `claims/deployments-repository.yaml` and `values.yaml`: generate it **only
-   if it doesn't already exist**. Per-file, not directory-level — re-running
-   never overwrites a file a human has since hand-edited.
+1. For each of the files of `clusters/<cluster>/kernel/` listed in §1, and
+   for `tenants/platform/` (and `tenants/user/` on a single-tenancy cluster):
+   write it **only if it doesn't already exist**. Per file — re-running never
+   overwrites one a person has since edited.
 2. Publish the two signing keys' public halves and ids under `signing/`,
    generating the keys in `~/.gentian/gnupg` if this host has none.
-3. Commit everything dirty under `clusters/<cluster>/kernel`, signed with the
-   break-glass key, and push it to the branch. A claim whose kind no XRD in
-   this checkout defines is refused rather than committed.
+3. Place the default profile under `catalogue/`, held to its digest.
+4. Commit what changed, signed with the break-glass key, and push it. A claim
+   whose kind no XRD in this checkout defines is refused rather than
+   committed.
 
-The commit is the installer's because Argo CD syncs `claims/` from the
-repository, not from the checkout: a file left uncommitted is applied by
-nothing, and the one that matters most — `deployments-repository.yaml` — is
-what gives the director its push credential. There is no review-and-edit
-pause between writing and installing: under AD-2 the operator does not push
-to this repository by hand, so the interview is where the settings are
-decided. A later edit to the claim is committed the same way, by the next
+The commit is the installer's because Argo CD syncs from the repository, not
+from the checkout: a file left uncommitted is applied by nothing, and
+`deployments-repository.yaml` is what gives the director its push credential.
+A later edit to the claim is committed the same way, by the next
 `./install.sh` run.
 
-No cluster is contacted before this runs, and `--validate` never runs it — a
-missing definition is reported there, not scaffolded.
+No cluster is contacted before this runs, and `--validate` and `--dry-run`
+never run it.
 
-Note what `scaffold_cluster_deployment()` deliberately does **not**
-generate: the `gentian-os`/`gentian-portal` ArgoCD `Application` objects or
-the `ImageUpdater` CR. Those come from step B below instead — see §3.1 for
-why.
+**B. Bootstrapping the cluster.** Install Crossplane and Argo CD, then render
+and `kubectl apply` the bootstrap Applications from `kernel/bootstrap/chart`
+(step `B-01`, and `D-01` for the platform's own chart): the `gentian`
+AppProject, the kernel Applications, the `gentian-os` Application — the
+platform's chart with the values layered per §1 — and the root of the
+ApplicationSets in `kernel/appsets/`, among them `gentian-claims`,
+`gentian-catalogue` and `gentian-tenants`, which read the three directories
+of §1.
 
-**B. Bootstrapping this cluster's control plane.** Install Crossplane and
-ArgoCD, then render and `kubectl apply` the bootstrap Applications directly
-from `kernel/bootstrap/chart`, the chart that ships in `gentian-os` itself:
+They are rendered by `helm template` with the cluster, stage, repositories,
+refs and image tag as values, and neither the rendered output nor a
+per-cluster variant is committed anywhere. Helm, rather than `envsubst`,
+because these manifests carry Argo CD's multi-source `$values` references,
+which Helm passes through untouched.
 
-- `kernel/bootstrap/chart/templates/gentian-os.yaml` — rendered and
-  applied by `handoff_gentian_os_to_argocd()` (`scripts/lib/catalogue.sh`,
-  called from `install_gentian_os_operator()`, step `D-01-operator`). Produces
-  three objects: the `gentian-os` Application (operator Helm chart, values
-  layered per §1 — `$deploy/profiles/_base.yaml` →
-  `$deploy/profiles/<stage>.yaml` → `$deploy/clusters/<cluster>/kernel/values.yaml`),
-  the `gentian-tenants` `ApplicationSet` (git-directory generator over
-  `clusters/<cluster>/tenants/*` — no stage segment, since a cluster's own
-  tenants/ tree is already implicitly that cluster's one stage), and the
-  `ImageUpdater` CR.
-- `kernel/bootstrap/chart/templates/gentian-portal.yaml` — rendered and
-  applied by `apply_gentian_portal_argocd_application()`
-  (`scripts/lib/portal-login-bootstrap.sh`, called from
-  `install_portal_login()`, step `D-03-portal-login`). Produces the
-  `gentian-portal` Application, values layered the same way.
-
-Both are templates in `kernel/bootstrap/chart`, rendered by `helm template`
-with the cluster, stage, deployments repo/branch and image tag passed as
-values. Neither their rendered output nor any per-cluster variant of them is
-ever committed to `gentian-deployments` — see §3.1.
-
-Helm, rather than `envsubst` or `sed`, because these manifests carry Argo CD's
-multi-source `$values` references: `$values` is not Helm syntax, so it renders
-through untouched with no allowlist of substitutable names to maintain.
-
-Installing Crossplane/ArgoCD and applying these first Applications is the
-one unavoidable imperative step in the whole design — GitOps needs an agent
-already running to pull from git, and something has to install that agent
-the first time. Every GitOps system has this same day-0 seam; it isn't
-specific to this design.
-
-From here, ArgoCD reconciles everything else: the Claims (§1 Layer 4), the
-layered Helm values (§1 Layers 1-3) for kernel services and the portal, and
-the kernel `ApplicationSet`s (`kernel/appsets/` — a small Helm chart in
-`gentian-os` whose only templated value is `stage`, passed in by
-`install.sh` the same way as everything else here — see the comments in
-`kernel/appsets/templates/appsets.yaml` for why this isn't a live git
-generator: ArgoCD in this design is per-cluster/self-managing, not
-hub-and-spoke, so there's no "other clusters" for a generator to read).
-`install.sh` isn't run again for this cluster except to re-bootstrap it
-from scratch, or to day-2 re-apply a bootstrap Application by hand (see the
-comment block at the top of each chart template).
+Installing Crossplane and Argo CD and applying the first Applications is the
+one imperative step every GitOps system has: something has to install the
+agent that pulls from git. From there Argo CD reconciles the rest.
+`install.sh` is run again to change a cluster setting (step 0 commits the
+edited claim), to take a newer build (§4), or to repair.
 
 ### 3.1 What belongs in a cluster's `kernel/` — and what doesn't
 
-Three different kinds of things can end up looking like they belong in
-`clusters/<cluster>/kernel/`. Only two of them actually do — and one of
-those two is intentionally *not* committed anywhere in
-`gentian-deployments`:
-
 | Kind | Example | Where it goes | Scaffolded? |
 | --- | --- | --- | --- |
-| **Kernel instance data** — genuinely unique per cluster | Crossplane Claims (`kernelDomain`), the cluster's `values.yaml` overlay | `clusters/<cluster>/kernel/{claims/*.yaml,values.yaml}` | Yes — `scaffold_cluster_deployment()` generates these (§3A) |
-| **Kernel bootstrap Applications** — near-identical across every cluster | `gentian-os` Application, `gentian-tenants` ApplicationSet, `gentian-portal` Application, `ImageUpdater` CR | Nowhere in `gentian-deployments` — they live as templates in `gentian-os`'s own `kernel/bootstrap/chart`, rendered by `helm template` and `kubectl apply`'d directly by `install.sh` (§3B) | No — not per-cluster data at all, just the same template rendered with different placeholders |
-| **Optional cluster add-ons** — most clusters run none | A private or org-specific app deployed beside the platform, not part of the gentian-os offering | `clusters/<cluster>/kernel/addons/<add-on>/application.yaml`, hand-added | No — not every cluster wants one, so nothing generates it for you |
-| **Tenant apps** — the actual SaaS catalogue | Nextcloud, OpenProject, LiteLLM, ... | `clusters/<cluster>/definitions/tenants/<tenant>/tenant.yaml` → `Tenant.spec.apps` (AppProfile) | N/A — never a hand-maintained ArgoCD `Application` at all |
+| **Cluster data** — unique per cluster | the claims, the `values.yaml` overlay, the signing keys' public halves | `clusters/<cluster>/kernel/` | Yes, by step 0 |
+| **Bootstrap Applications** — the same on every cluster | the `gentian-os` Application, the ApplicationSets | Nowhere in the deployments repository: templates in `gentian-os`, rendered and applied by `install.sh` | No |
+| **Tenants and their apps** | a tenant's manifest; Nextcloud for it | `clusters/<cluster>/tenants/<tenant>/` and `clusters/<cluster>/catalogue/`, written by the director | No — created through the director |
+| **Add-ons** — something a deployer runs beside the platform | an organisation's own service | Not in the platform's tree at all (below) | No |
 
-Add-ons follow a rule of their own: the *manifests* they deploy don't have to
-live in `gentian-deployments` at all — they can live in the add-on's own repo
-(`<add-on>/deploy/`), with the `Application` in `gentian-deployments` reduced
-to a repo pointer plus an inline Kustomize patch for the one or two values
-that repo can't know on its own (`kernelDomain`, typically). Same logic as the
-kernel bootstrap Applications above, one level down: don't commit a copy of
-something that already has a canonical home elsewhere.
+The test for the first two rows: **does this cluster need its own copy of
+the data, or just its own values in an otherwise identical template?**
+`kernelDomain` is data and goes in `claims/cluster.yaml`. The Application
+that references it is the same everywhere, so it stays a template: change it
+once in `gentian-os`, and every cluster picks it up on its next
+`./install.sh`.
 
 **An add-on is self-contained, and gentian-os does not know it exists.** There
-is deliberately no register-your-add-on hook here, because everything an add-on
-needs is already a plain Argo CD object it can create for itself:
+is deliberately no register-your-add-on hook, and nothing in gentian-os syncs
+an add-on's manifests. Everything an add-on needs is a plain Argo CD object it
+creates for itself:
 
 | It needs | It ships |
 | --- | --- |
 | Permission to sync from its own repo | Its own `AppProject`, naming its own `sourceRepos` and destination namespace. It must not borrow the `gentian` project — that one covers the platform's repositories only. |
-| Its private repo readable by Argo CD | Its own `repository` Secret in `argocd`, created by its installer. Nothing can GitOps this: it is the credential needed to read the repo that would contain it. |
-| Image tags followed | Its own `ImageUpdater` CR. Several may coexist in `argocd`; the platform's lists the platform's Applications only. |
+| Its private repo readable by Argo CD | Its own `repository` Secret in `kernel-gitops`, created by its installer. |
+| Image tags followed | Its own `ImageUpdater` resource, if it wants one. |
 
 Consequently a cluster can install, upgrade and run gentian-os with no add-on
 present, and an add-on can be removed by deleting its `Application`,
-`AppProject` and namespace — with nothing left behind in the platform to
-clean up.
+`AppProject` and namespace — with nothing left behind in the platform.
 
-The middle two rows are the ones easy to blur, since they used to be the
-same thing: earlier revisions of this design committed a
-`gentian-portal.yaml`/`app-of-apps.yaml`/`image-updater.yaml` per cluster,
-generated once at scaffold time. That turned out to be the wrong DRY
-tradeoff — those files were ~100% identical across clusters, so "generate
-once, then drift silently" was strictly worse than "render fresh from one
-template every bootstrap." The bootstrap chart in `gentian-os` is the
-fix: change the Application definition once, in `gentian-os`, and every
-cluster picks it up on its next `install.sh`/day-2 re-apply — no
-per-cluster file to remember to update.
-
-The test for whether something is kernel *instance data* (scaffolded into
-`gentian-deployments`) versus a kernel *bootstrap Application* (rendered
-from the `gentian-os` bootstrap chart, never committed): **does this cluster need its
-own copy of the data, or just its own copy of the values referenced by an
-otherwise-identical template?** `kernelDomain` is real per-cluster data —
-it goes in `claims/cluster.yaml`. The `gentian-os` Application object that
-*references* `kernelDomain` via `$deploy/clusters/<cluster>/kernel/values.yaml`
-is not itself per-cluster data — it's the same object shape everywhere, so
-it stays a template.
-
-Add-ons are a separate axis from that same-vs-different question: **would
-every gentian-os deployer want this running?** If yes, it's kernel
-infrastructure (either instance data or a bootstrap template, per the test
-above). If no — it's specific to what *this* deployment happens to run —
-it's an optional add-on: still fine to commit to `gentian-deployments`
-since it's still deployment-instance data, just not something `install.sh`
-should auto-create for every cluster.
-
-Tenant apps are a different category entirely, not a variant of the other
-three: they're not ArgoCD `Application` objects hand-maintained per cluster
-at all. They go through the `gentian-apps` AppProfile catalogue and the
-`Tenant` CR (`kubectl gentian apps install <profile> --tenant <name>`),
-reconciled by the operator/Crossplane — namespaced per tenant, activated
-independently of any kernel bootstrap step. If you're adding something a
-*tenant* uses, it almost certainly belongs there, not as a new file in
-`kernel/`.
+Something a *tenant* uses is not an add-on: it is an app, installed from a
+catalogue through the director (`kubectl gentian apps install <app> --tenant
+<name>`).
 
 ---
 
 ## 4. Image update policies per stage
 
-Argo CD Image Updater watches the operator image according to the
-stage-specific `ImageUpdater` CR. See [design/operations.md](design/operations.md)
-§7 for details.
+Nothing moves a cluster's image on its own. The installer pins the platform's
+image to the build of the commit it installs from, and renders that tag into
+the `gentian-os` Application; `./install.sh --only B-01` run from a newer
+checkout advances it. `argocd-image-updater` is installed with Argo CD, and
+the platform ships no `ImageUpdater` resource for itself. The detail is in
+[install-reference.md](install-reference.md) §4, "Image tags".
 
-| Stage | Policy | Tracks |
+| Stage | Follows | By |
 | --- | --- | --- |
-| **dev** | Aggressive (`newest-build`) | Latest CI build on `develop` |
-| **staging** | Release candidates | Semver tags, including `v*-rc.*` |
-| **prod** | Conservative (`semver`) | Stable `v*.*.*` tags only |
+| **dev** | a branch | `GENTIAN_OS_BRANCH=<branch>`; re-run `--only B-01` to take a newer build |
+| **prod** | a release | `GENTIAN_OS_BRANCH=vX.Y.Z` (§5.4) |
 
-### Which tag to write in a cluster's values.yaml
-
-`image.tag` in `clusters/<cluster>/kernel/values.yaml` is the tag the cluster
-pulls. Argo CD reconciles the operator chart from that file continuously, so it
-wins over the `--set image.tag` the installer passes — a value here is the
-decision, not a default.
+### Which tag a cluster runs
 
 **The stage name is not a tag.** CI (`.github/workflows/ci.yaml`) publishes:
 
 | Tag | Published when | Mutable? | Use for |
 | --- | --- | --- | --- |
-| `v1.2.3` | a `v*` git tag is pushed | no, by convention | **prod** |
+| `1.2.3` | a `v1.2.3` git tag is pushed | no, by convention | **prod** |
 | `1.2` | same | yes — moves with each patch | nothing to pin |
-| `develop`, `main` | every build of that branch | yes | dev clusters |
+| `develop`, `main` | every build of that branch | yes | nothing to pin |
 | `abc1234` | every commit, any branch | no | ambiguous across branches |
-| `develop-abc1234` | every commit on that branch | no | what Image Updater tracks |
+| `develop-abc1234` | every commit on that branch | no | what the installer pins a branch to |
 
-There is no `prod`, `staging` or `latest`, and none should be added. Writing one
-produces a manifest the registry answers 404 to, and the failure surfaces
-nowhere near its cause: the operator sits in `ImagePullBackOff`, so it never
-creates the kernel Gateway, so the install waits out a timeout and reports
-success over a cluster with no ingress and no tenant admission. Pre-flight now
-checks the tag exists before anything is deployed.
+There is no `prod`, `staging` or `latest`, and none should be added. The
+installer's preflight checks that the tag it is about to render exists, and
+that `image.tag` in `clusters/<cluster>/kernel/values.yaml` does, before
+anything is deployed.
+
+The tag the installer renders is set on the Application itself, over the
+values files, so it is what the cluster runs. To hold a cluster to an exact
+build regardless of the installer, set `image.digest` in the cluster's
+`values.yaml`: the chart prefers a digest over any tag.
 
 ### Why not a `prod` or `latest` tag
 
@@ -390,30 +285,23 @@ to different content over time. In production that costs more than it saves.
 - **Replicas drift.** A pod rescheduled after a re-push pulls the new content
   while its siblings keep the old, so one Deployment runs two versions with no
   indication that it does.
-- **It defeats the update policy above.** `semver` exists so a human decides
-  when prod moves. A mutable tag moves it whenever someone pushes.
+- **Nobody decided.** A mutable tag moves production whenever someone pushes.
 
-The industry practice is the opposite: **immutable, content-addressable
-references in production, and automation that proposes the change as a
-reviewable commit.** Concretely, in order of strength:
+The practice here is the opposite: **immutable, content-addressable
+references.** In order of strength:
 
-```yaml
-# clusters/<cluster>/kernel/values.yaml
+- **A digest**, in `clusters/<cluster>/kernel/values.yaml`. It cannot be
+  re-pointed at different content by anyone, and the chart prefers
+  `image.digest` over any tag:
 
-# Best — a digest. Cannot be re-pointed at different content by anyone.
-# The chart prefers image.digest over image.tag when both are set.
-image:
-  digest: "sha256:…"
+  ```yaml
+  image:
+    digest: "sha256:…"
+  ```
 
-# Good — an immutable release tag, never re-pushed once published.
-image:
-  tag: "v1.2.3"
-```
-
-If what you want is "prod follows releases without editing a file each time",
-that is the *update policy*, not a tag: Argo CD Image Updater tracks `semver`
-and writes the new version back as a commit, so the moving part is a reviewed
-change in Git rather than a pointer that shifts underneath you.
+- **An immutable tag**, which is what the installer renders: `1.2.3` for
+  `GENTIAN_OS_BRANCH=v1.2.3`, `<branch>-<short-sha>` for a branch. Set
+  `GENTIAN_OS_IMAGE_TAG` only to run something else.
 
 `GENTIAN_OS_BRANCH` (`install.env`) is the ref every in-cluster Application
 tracks — the kernel ApplicationSets, the operator Application and the
@@ -440,7 +328,7 @@ tagged releases.
 | Cluster | Stage | Purpose |
 | --- | --- | --- |
 | Homelab / lab (`test`) | `dev` | Daily integration, experimental tenants |
-| Cloud / customer-facing (`pck-kulxwmm`) | `prod` | First release and live workloads |
+| Cloud / customer-facing (`prod-1`) | `prod` | Live workloads |
 
 Example `install.env` per machine:
 
@@ -449,20 +337,19 @@ Example `install.env` per machine:
 GENTIAN_DEPLOYMENTS_CLUSTER_ID=test
 GENTIAN_DEPLOYMENTS_STAGE=dev
 GENTIAN_DEPLOYMENTS_BRANCH=main
-KERNEL_DOMAIN=platform.example.com
-ACME_ENV=staging
+GENTIAN_OS_BRANCH=develop
 
 # Cloud production
-GENTIAN_DEPLOYMENTS_CLUSTER_ID=pck-kulxwmm
+GENTIAN_DEPLOYMENTS_CLUSTER_ID=prod-1
 GENTIAN_DEPLOYMENTS_STAGE=prod
 GENTIAN_DEPLOYMENTS_BRANCH=main
-KERNEL_DOMAIN=gentian.cloud
-ACME_ENV=production
+GENTIAN_OS_BRANCH=v1.2.3
 ```
 
-`install.sh` uses `KERNEL_DOMAIN` only to scaffold `claims/cluster.yaml` on
-first run (§3) — it isn't consulted again afterward; the Claim is
-authoritative from that point on.
+The domain and the other cluster settings are not in `install.env`: step 0
+asks for them and writes them to `claims/cluster.yaml` (§3), which is
+authoritative from then on. A cluster property set in `install.env` overrides
+the claim, so leave it out after the first run.
 
 ### 5.2 Promotion diagram
 
@@ -478,25 +365,29 @@ flowchart TD
     
     FeatureBranches --> Develop
     Develop -->|"CI"| ImageDev
-    Develop -->|"(auto via Image Updater)"| DevCluster
+    Develop -->|"./install.sh --only B-01"| DevCluster
     DevCluster -->|"manual: merge develop → main, tag vX.Y.Z"| Main
     Main -->|"CI"| ImageProd
-    Main -->|"(semver Image Updater or pinned tag in values.yaml)"| ProdCluster
+    Main -->|"GENTIAN_OS_BRANCH=vX.Y.Z, ./install.sh"| ProdCluster
 ```
 
 ### 5.3 Tenant workflow
 
-1. Edit tenant definition:
-   `clusters/<cluster>/definitions/tenants/<tenant>/tenant.yaml`
-2. Activate on cluster: `kubectl gentian tenants deploy <tenant>`
-3. Commit the generated copy under `clusters/<cluster>/tenants/<tenant>/`
-4. ArgoCD `gentian-tenants` ApplicationSet syncs the Tenant CR
+1. Sign in: `kubectl gentian login`.
+2. Create the tenant: `kubectl gentian tenants create <name>`. The director
+   checks that you may, and commits
+   `clusters/<cluster>/tenants/<name>/tenant.yaml`.
+3. Argo CD's `gentian-tenants` ApplicationSet applies the Tenant and the
+   operator provisions it.
+4. Hand the tenant to its administrator:
+   `kubectl gentian tenants activate-admin <name>` issues a single-use
+   activation link.
 
-This is a Day-2 change to a live cluster — PR review applies here (unlike
-bootstrap, §3). For production tenants, promote tested YAML from the dev
-cluster's path to the prod cluster's path (a different `clusters/<cluster>/`
-tree entirely — see §1 on why there's no `<stage>/` subdirectory to promote
-*within* one cluster's tree) via a pull request on `main`.
+Tenants are not promoted between clusters by copying manifests: each
+cluster's tenants are created through that cluster's director. A tenant's
+data moves between clusters as an export bundle
+(`kubectl gentian tenants import`,
+[design/data-lifecycle.md](design/data-lifecycle.md)).
 
 ### 5.4 Release runbook
 
@@ -508,16 +399,15 @@ runs both back to back, which is why they are listed together.
 
 - CI is green on `develop`. The tag rebuilds the same tree, so a red
   `develop` is a red release.
-- The dev cluster has been running that tree long enough to trust it (§4,
-  `newest-build`).
+- The dev cluster has been running that tree long enough to trust it.
 
 **Cut the release**
 
 1. On `develop`, bump `version` and `appVersion` in
    `charts/gentian-os/Chart.yaml` to `X.Y.Z` as its own `chore(release):`
-   commit. This is load-bearing, not bookkeeping: the operator Deployment
-   renders `image.tag | default .Chart.AppVersion`, so `appVersion` is the
-   image a pinned cluster pulls until Image Updater writes a tag back. It
+   commit. This is load-bearing, not bookkeeping: the chart's Deployments
+   render `image.tag | default .Chart.AppVersion`, so `appVersion` is the
+   image a cluster pulls where no tag is set. It
    must match what CI publishes — `docker/metadata-action` strips the `v`,
    so tag `vX.Y.Z` becomes image `:X.Y.Z`.
 2. Merge `develop` → `main`.
@@ -532,9 +422,9 @@ runs both back to back, which is why they are listed together.
 
 5. Set `GENTIAN_OS_BRANCH=vX.Y.Z` in that cluster's `install.env` (§4 — the
    tag must be named explicitly; checking it out is not enough).
-6. Pin the portal in the same file if this cluster should not follow the
-   portal's `develop`: `GENTIAN_UI_BRANCH` and `PORTAL_IMAGE_TAG` are
-   independent of `GENTIAN_OS_BRANCH` and each default to `develop`.
+6. Pin the user interfaces in the same file if this cluster should not
+   follow gentian-ui's `develop`: `GENTIAN_UI_BRANCH` and `PORTAL_IMAGE_TAG`
+   are independent of `GENTIAN_OS_BRANCH` and each default to `develop`.
 7. Re-run `./install.sh`. It is idempotent; the bootstrap Applications are
    re-rendered against the new ref and Argo CD follows the tag from there.
 8. Confirm the cluster actually moved:
@@ -546,10 +436,9 @@ runs both back to back, which is why they are listed together.
 
 **Additionally, when the target is a new production cluster**
 
-- Finish `clusters/<prod-cluster>/kernel/values.yaml` and confirm
-  `claims/cluster.yaml` carries the right domain, before step 7.
-- Run install with `GENTIAN_DEPLOYMENTS_STAGE=prod`.
-- Add prod tenant definitions, then deploy and commit them (§5.3).
+- Run the install with `GENTIAN_DEPLOYMENTS_STAGE=prod`; make sure
+  `profiles/prod.yaml` exists in the deployments repository first.
+- Create the tenants afterwards (§5.3).
 
 ---
 
@@ -565,8 +454,8 @@ production), not on a homelab.
 | Cluster | Stage | Purpose |
 | --- | --- | --- |
 | Homelab (`test`) | `dev` | Fast feedback, LE staging certs, tunnel or lab network |
-| Cloud (`pck-kulxwmm`) | `staging` | Pre-production validation on real infra |
-| Cloud (`pck-kulxwmm`) or second cloud cluster | `prod` | Live workloads |
+| Cloud (`staging-1`) | `staging` | Pre-production validation on real infra |
+| Cloud (`prod-1`) | `prod` | Live workloads |
 
 Because one cluster runs one kernel stage for life (§1), staging and prod
 on the **same** cloud cluster require either:
@@ -585,9 +474,9 @@ flowchart TD
     FeatureBranches["feature branches"]
     Develop["develop"]
     ImageDev[":develop"]
-    DevCluster["homelab / dev (newest-build)"]
-    StagingCluster["cloud / staging (semver RC policy)"]
-    ProdCluster["cloud / prod (semver stable only)"]
+    DevCluster["homelab / dev (a branch)"]
+    StagingCluster["cloud / staging (release candidates)"]
+    ProdCluster["cloud / prod (releases)"]
     
     FeatureBranches --> Develop
     Develop -->|"CI"| ImageDev
@@ -600,9 +489,9 @@ flowchart TD
 
 **Code (gentian-os):**
 
-1. `develop` → homelab dev (automatic).
-2. Tag `vX.Y.Z-rc.N` on `main` → staging Image Updater adopts RC.
-3. After validation, tag `vX.Y.Z` → prod Image Updater adopts stable release.
+1. `develop` → homelab dev (`./install.sh --only B-01`).
+2. Tag `vX.Y.Z-rc.N` on `main` → roll it onto staging.
+3. After validation, tag `vX.Y.Z` → roll it onto prod.
 
 Each tag is cut and rolled out by the §5.4 runbook — an RC differs only in
 the tag it creates, and still needs its own chart bump so the staging
@@ -611,37 +500,24 @@ cluster pulls the RC image rather than the last stable one.
 **Stage policy (`gentian-deployments/profiles/`):** edit `staging.yaml` or
 `prod.yaml` directly — since it's shared by every cluster of that tier,
 a one-line change (e.g. flipping `metrics.serviceMonitor.enabled`) applies
-everywhere that tier runs without touching any cluster's overlay. This is
-a Day-2 change; PR review applies.
+everywhere that tier runs without touching any cluster's overlay. Argo CD
+syncs only signed commits (§2), so such an edit is signed with the
+break-glass key.
 
-**Tenants (gentian-deployments):**
+**Tenants:** created on each cluster through its director (§5.3); nothing is
+copied between clusters' trees.
 
-Stage isn't a dimension *within* a tenant definition here — it's which
-cluster's tree the definition lives in (§1). So promoting a tenant across
-stages means promoting it across clusters:
-
-1. Test on dev: `clusters/<dev-cluster>/definitions/tenants/<tenant>/tenant.yaml`.
-2. Open a PR copying/adapting that YAML to
-   `clusters/<staging-cluster>/definitions/tenants/<tenant>/tenant.yaml`, then to
-   `clusters/<prod-cluster>/definitions/tenants/<tenant>/tenant.yaml`.
-3. Deploy on each cluster: `kubectl gentian tenants deploy <tenant>`.
-
-**Apps (gentian-apps):**
-
-AppProfile changes on `main` propagate to all clusters via catalogue sync.
-Pin chart versions in tenant `spec.apps` when you need per-environment
-control.
+**Apps:** a tenant's install is pinned to the digest of the profile's bundle,
+so a new build of an app reaches a tenant when it is installed again at that
+build, per cluster ([custom-catalogues.md](custom-catalogues.md)).
 
 ### 6.4 Staging configuration
 
-`gentian-deployments/profiles/` currently holds `_base.yaml`, `dev.yaml` and
-`prod.yaml` — there is no `staging.yaml`. A staging tier means writing one
-first, with the tier policy you want (ACME issuer, log level, RC image
-tracking), and giving the staging cluster's own `clusters/<cluster>/kernel/`:
-
-- `claims/cluster.yaml` — `kernelDomain` (e.g. `staging.example.com`)
-- `values.yaml` — `image.tag` initial value (Image Updater overrides
-  in-cluster afterward)
+A staging tier needs a `profiles/staging.yaml` in the deployments repository
+before the install, with the tier policy you want (ACME issuer, log level);
+the installer warns when the stage's profile is missing and does not write
+it. Step 0 then scaffolds the staging cluster's own
+`clusters/<cluster>/kernel/` like any other.
 
 ---
 
@@ -649,18 +525,16 @@ tracking), and giving the staging cluster's own `clusters/<cluster>/kernel/`:
 
 | Location | Committed? | Contents |
 | --- | --- | --- |
-| `gentian-deployments/profiles/` | Yes | Stage-tier policy, shared across clusters of that tier |
-| `gentian-deployments/clusters/<cluster>/kernel/claims/` | Yes | Crossplane Claims — `kernelDomain` and other cluster identity |
-| `gentian-deployments/clusters/<cluster>/kernel/` (rest) | Yes | Cluster-unique overlay `values.yaml`, `cluster-settings.env`, optional add-ons (`addons/<add-on>/application.yaml`) — **not** bootstrap Applications, see §3.1 |
-| `gentian-deployments/clusters/<cluster>/definitions/` | Yes | Tenant definitions (inactive) |
-| `gentian-deployments/clusters/<cluster>/tenants/` | Yes | Activated tenant manifests |
-| `install.env` | No (per machine) | `GENTIAN_DEPLOYMENTS_*`, `KERNEL_DOMAIN`, `ACME_ENV`, repo URLs |
-| Credentials | **Never** | Master password, registry, deployments token, Cloudflare token: prompted for by the installer (or read from the environment unattended) and stored in OpenBao. There is no secrets file |
+| `<deployments>/profiles/` | Yes | Stage-tier values, shared across clusters of that tier |
+| `<deployments>/clusters/<cluster>/kernel/claims/` | Yes | Crossplane claims — what the cluster is |
+| `<deployments>/clusters/<cluster>/kernel/` (rest) | Yes | The `values.yaml` overlay and the signing keys' public halves — **not** bootstrap Applications, see §3.1 |
+| `<deployments>/clusters/<cluster>/catalogue/` | Yes, by the director | The profiles installed on this cluster |
+| `<deployments>/clusters/<cluster>/tenants/` | Yes, by the director | Tenant manifests |
+| `install.env` | No (per machine) | `GENTIAN_DEPLOYMENTS_*`, `GENTIAN_OS_BRANCH`, repository addresses |
+| Credentials | **Never** | Master password, registry, deployments token, DNS token: prompted for by the installer (or read from the environment unattended) and stored in OpenBao. There is no secrets file |
 
 All deployment configuration for every cluster and stage can live on the
-`main` branch of `gentian-deployments`. For bootstrap commits, `install.sh`
-pushes directly (§3). For Day-2 changes to a live cluster, access control
-and review policy (PR approvals) provide the safety gate.
+`main` branch of one deployments repository.
 
 ---
 
@@ -668,18 +542,19 @@ and review policy (PR approvals) provide the safety gate.
 
 | Task | Command / action |
 | --- | --- |
-| List tenant definitions | `kubectl gentian tenants list` |
-| Activate a tenant | `kubectl gentian tenants deploy <name>` |
-| Install an app on a tenant | `kubectl gentian apps install <profile> --tenant <name>` |
-| Re-apply Argo bootstrap apps | `./install.sh --update` (uses current `install.env` and git branch) |
+| List tenants | `kubectl gentian tenants list` |
+| Create a tenant | `kubectl gentian tenants create <name>` |
+| Install an app on a tenant | `kubectl gentian apps install <app> --tenant <name>` |
+| Change a cluster setting | edit `claims/cluster.yaml`, then `./install.sh` (step 0 commits it signed) |
+| Take a newer build of the platform | `./install.sh --only B-01` |
 | Monitor GitOps sync | `kubectl get applications -n kernel-gitops` |
 
-Kernel upgrades are **cluster-wide**: when the operator image updates, all
-tenants on that cluster use the new kernel version. See
-[design/operations.md](design/operations.md) §7.3.
+Kernel upgrades are **cluster-wide**: when the platform's image changes, all
+tenants on that cluster run on the new version. See
+[design/operations.md](design/operations.md) §7.
 
-Unlike bootstrap (§3), Day-2 changes go through normal git review — the
-cluster is live, and a second set of eyes catches what the author missed.
+Day-2 changes go through the director, which checks the person and records
+who asked; the full command list is in [commands.md](commands.md).
 
 ---
 
@@ -688,9 +563,9 @@ cluster is live, and a second set of eyes catches what the author missed.
 | Topic | Document |
 | --- | --- |
 | First-time install | [GETTING-STARTED.md](../GETTING-STARTED.md) |
+| Installer steps, flags, configuration surfaces | [install-reference.md](install-reference.md) |
 | System architecture | [architecture.md](architecture.md) |
-| Image updater details | [design/operations.md](design/operations.md) §7 |
+| Upgrades | [design/operations.md](design/operations.md) §7 |
 | Secrets and TLS | [design/security.md](design/security.md) |
 | Multi-tenancy and DNS | [design/multi-tenancy.md](design/multi-tenancy.md) |
-| Deployments repo layout | [gentian-deployments/README.md](../../gentian-deployments/README.md) |
 | kubectl reference | [commands.md](commands.md) |

@@ -786,7 +786,7 @@ property of the design rather than of this contract:
 
 Not the App Store app's business, and not the desktop's. An app that is
 installed is administered in the admin console's **Apps** tab
-([ui-restructure.md](../plans/ui-restructure.md) §2), from the cluster's own
+([admin-console.md](admin-console.md)), from the cluster's own
 reads. The store is not asked: what is installed, how it is doing and who
 may open it are facts the cluster holds.
 

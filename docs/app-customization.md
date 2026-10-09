@@ -4,12 +4,6 @@
 **Companion to:** [design/app-catalogue.md](design/app-catalogue.md), [design/app-profiles.md](design/app-profiles.md),
 [design/multi-tenancy.md](design/multi-tenancy.md), [gentian-apps/docs/app-profile-guide.md](https://github.com/gentian-org/gentian-apps/blob/main/docs/app-profile-guide.md)
 
-**The kind is `ComponentProfile`.** Where this document still says `AppProfile`, that is the kind
-meant, and four of the old field names have moved: `spec.kernelRequirements` is
-`spec.requires.services`, `spec.valueMapping` and `spec.extraValues` are under `spec.package`,
-`spec.optionalIntegrations` is `spec.integrations`, and `spec.postInstallJob` is
-`spec.hooks.postInstall`. `spec.customization` is where it was.
-
 ---
 
 ## 0. Problem statement
@@ -32,7 +26,7 @@ This document proposes:
 
 1. **A seven-rung ladder** (§2) ordered by how much of the app's own artifact Gentian ends up owning.
 2. **A second, independent axis — scope** (§3): tenant / profile / platform blast radius.
-3. **A per-app capability declaration** — `AppProfile.spec.customization` (§4) — so the ladder is
+3. **A per-app capability declaration** — `ComponentProfile.spec.customization` (§4) — so the ladder is
    *app-specific*: which rungs are reachable at all, and by which mechanism.
 4. **A customization record** — DEP-3-inspired manifest (§5) — so every rung ≥ L2 is tracked,
    owned, dated, and has exit criteria.
@@ -50,7 +44,7 @@ Research that informed the design is in §10; open questions in §11.
 | # | Principle | Origin |
 |---|---|---|
 | P1 | **Lowest viable rung, narrowest viable scope.** Two independent minimisations, always both. | SAP Clean Core; ServiceNow OOTB-first |
-| P2 | **The app declares its own ladder.** Rung availability is a property of the app, published in its `AppProfile`. Generic advice is useless; "Odoo supports L3 via addons, Collabora does not" is actionable. | Eclipse *declared* extension points |
+| P2 | **The app declares its own ladder.** Rung availability is a property of the app, published in its `ComponentProfile`. Generic advice is useless; "Odoo supports L3 via addons, Collabora does not" is actionable. | Eclipse *declared* extension points |
 | P3 | **Upstream first.** Any rung ≥ L4 carries an obligation to attempt the change upstream and to record the outcome. Carrying a downstream delta is a debt with a due date, not a decision. | Fedora "Upstream First"; Debian DEP-3 `Forwarded:` |
 | P4 | **Every customization is a tracked artifact in git.** No rung of this ladder terminates in a live cluster. The existing absolute prohibition on cluster hotfixes is Rung X (§2.8). | gentian-apps `app-profile-guide.md` |
 | P5 | **Descend over time.** Rungs are not permanent homes. Each record names exit criteria and a review date; the platform reports on aging debt. | Debian patch series shrink as patches land upstream |
@@ -116,7 +110,7 @@ only. Without the declaration Keycloak refuses the scope. It is served where
 the cluster runs its own mail server and the tenant has mailboxes on it;
 elsewhere it is accepted and does nothing, so an app keeps a fallback (an app
 password) for those clusters. Who checks what:
-[security.md §2.11](design/security.md).
+[security.md §2.16](design/security.md).
 
 **Language models are a need like the others.** An app that calls models
 declares the platform's model gateway, and only an app that declares it is
@@ -213,13 +207,18 @@ Change behaviour using knobs the app already exposes. No new files, no new code.
 
 | Scope | Where | Mechanism |
 |---|---|---|
-| Tenant | `gentian-deployments` | `Tenant.spec.apps[].config.extraValues` (deep-merged over profile) |
-| Profile | `gentian-apps/profiles/<n>/profile.yaml` | `spec.extraValues`, `spec.ingress`, `spec.portalTiles`, `spec.kernelRequirements` |
+| Tenant | the tenant's manifest in the deployments repository | `Tenant.spec.apps[].config.extraValues` (deep-merged over profile) |
+| Profile | `gentian-apps/profiles/<n>/profile.yaml` | `spec.package.extraValues`, `spec.expose` (with its tiles), `spec.requires.services` |
+
+The director's install route writes an app's profile, digest, catalogue, add-ons and default
+grant, and nothing under `config`: a tenant-scoped value is an edit of the tenant's manifest that
+no route of the director makes today.
 
 **Obligations:** none beyond normal review. **Test:** chart renders; app starts.
 
 **Making L0 first-class:** every Gentian-owned chart should ship a `values.schema.json`. Today
-`extraValues` is `PreserveUnknownFields` on both `AppProfile` and `TenantAppConfig` — a typo is
+`extraValues` is `PreserveUnknownFields` on both `ComponentProfile` (`spec.package.extraValues`)
+and `TenantAppConfig` — a typo is
 silently accepted and only fails at Helm render time. A published schema makes L0 machine-checkable
 in CI, and lets an agent *discover* whether the change it wants is already an L0 knob.
 
@@ -229,15 +228,17 @@ Add a **file** into a directory the app already treats as an extension point: a 
 file, a locale bundle, an `xml`/`yaml` snippet, a logo, a config fragment. The app's binary and
 its own config files are untouched.
 
-**Mechanism:** the app's profile declares its drop-in directories (§4). The composition materialises
-a ConfigMap/Secret and mounts it at that path; the chart mounts nothing app-specific.
+**Mechanism:** the app's profile declares its drop-in directories (§4), and the app's chart mounts
+a ConfigMap or Secret at each declared path. The platform's app Composition generates no mount:
+the declaration is what the platform checks tenant content against (§2.2.1), and the chart's
+values name what is mounted.
 
 **Precedence (fixed, systemd-style):**
 
 ```
 image defaults          (lowest)
   → chart values.yaml
-    → AppProfile.spec.extraValues
+    → ComponentProfile.spec.package.extraValues
       → profile drop-ins (profiles/<n>/dropins/*)
         → Tenant.spec.apps[].config.extraValues
           → tenant drop-ins                       (highest)
@@ -257,7 +258,7 @@ makes sense: a tenant admin can supply a logo, a locale bundle, or a config frag
 catalogue PR, but cannot introduce code.
 
 ```yaml
-# gentian-deployments — Tenant.spec.apps[]
+# the tenant's manifest — Tenant.spec.apps[]
 - profile: odoo-cb-base
   config:
     extraValues: { }
@@ -269,12 +270,15 @@ catalogue PR, but cannot introduce code.
 ```
 
 **Delivery.** The operator reconciles `Tenant.spec.apps[].config.dropIns` into a ConfigMap
-`app-<profile>-dropin-<name>` in the tenant namespace; the composition mounts it at the declared
-path *after* the profile drop-in mount, so tenant files win by mount order and by the `90-`–`99-`
-numeric prefix convention. No composition change is needed per app — the mount is generated from
-`spec.customization.dropIns`, which keeps this generic (§3, platform boundary).
+`app-dropin-<profile>-<name>` in the tenant namespace
+(`internal/controller/dropin_reconciler.go`) and removes it when the entry goes. Mounting it is
+the chart's: the platform generates no mount, so a chart that takes tenant drop-ins mounts the
+ConfigMap of that name at the declared path, after the profile's own, and tenant files win by
+the `90-`–`99-` prefix.
 
-**Guardrails** — enforced by the operator and by admission:
+**Guardrails** — checked by the operator when it reconciles the tenant. One entry that fails
+holds every drop-in of the tenant back (the Tenant's `DropInsReady` condition is false, reason
+`InvalidDropIn`); nothing is refused at admission:
 
 | Rule | Why |
 |---|---|
@@ -282,12 +286,13 @@ numeric prefix convention. No composition change is needed per app — the mount
 | Declared entry must set `tenantEditable: true` | not every drop-in dir is safe to expose (a policy file usually is not) |
 | Filenames must match `^[9][0-9]-[a-zA-Z0-9._-]+$` | reserves the platform/profile ranges |
 | Total size ≤ `maxBytes` (default 256Ki) | ConfigMap limits; DoS |
-| `format` must match the declared format; content is parsed before mount | a malformed fragment must fail at admission, not crash the app at boot |
-| No secret material — values land in a ConfigMap, in etcd, visible in the Admin Console | secrets go through `valueMapping`, always |
+| Content must parse as the declared `format` | a malformed fragment must fail before it is mounted, not crash the app at boot |
+| No secret material — values land in a ConfigMap, in etcd | secrets go through `valueMapping`, always |
 
-**Admin Console.** Surfaced as a per-app "Customization" tab for the tenant admin: declared
-tenant-editable drop-ins, a validating editor, and the resulting diff. This is the self-service
-front door that makes Rung X unattractive.
+**No self-service yet.** Neither the director nor the admin console has a way to set
+`config.dropIns`; like `config.extraValues` (§2.1) it is an edit of the tenant's manifest. An
+editor for the tenant's administrator — the declared tenant-editable drop-ins, validated, with
+the resulting diff — is designed and not built.
 
 ### 2.3 L2 — Companion (side-by-side)
 
@@ -320,7 +325,7 @@ app is calling. What a consumer may do there is the target's to check.
 
 | Choose **L2 Companion** when | Choose **L3 Extension** when |
 |---|---|
-| The function can stand alone (own URL, own portal tile, own data) | The function must appear *inside* the app's own UI, menus, or workflow |
+| The function can stand alone (own URL, own tile on the desktop, own data) | The function must appear *inside* the app's own UI, menus, or workflow |
 | It needs its own scaling, language, or release cadence | It must extend the app's data model / ORM / permission model |
 | The app's plugin API is absent, unstable, or undocumented | The app has a documented, versioned plugin API (`customization.extension.apiStability: stable`) |
 | You need the change to survive a *major* upstream upgrade | Round-tripping through HTTP would be absurd for the semantics |
@@ -455,20 +460,20 @@ the handler writes itself that the app's own interface would not have done.
 Use the app's **own extension system**. Odoo addons (`_inherit`, view `xpath`/`inherit_id`),
 Nextcloud apps, XWiki extensions, Activepieces pieces, Keycloak SPIs, Collabora — none.
 
-Gentian already has two delivery paths for this, and the framework should name them explicitly:
+`spec.customization.extension.delivery` names how an addon arrives:
 
 | Delivery | Mechanism | Use when |
 |---|---|---|
 | `git-sidecar` | `gentian-sidecar-git-modules` syncs a git repo into the app's addon path (`odoo` chart: `gentian.git.repo` → `gentian.modulesPath`) | addons iterate faster than the app image |
 | `image-layer` | addons baked into a Gentian-built image layer at build time | reproducibility/airgap matters more than iteration speed |
-| `addon-profile` | a thin `AppProfile` with `deployment-role: addon` declaring `spec.customization.addon.{id,of}`; the tenant selects it into a base via `Tenant.spec.apps[].addons` | the addon is a *catalogue-visible product* |
-| `app-store-api` | the app's own runtime API installs the extension (Nextcloud `occ app:install`) via `spec.postInstallJob` | the app owns its own registry |
+| `addon-profile` | a thin `ComponentProfile` whose package is `spec.package.addon.{id,of}`; the tenant selects it into a base via `Tenant.spec.apps[].addons` | the addon is a *catalogue-visible product* |
+| `app-store-api` | the app's own runtime API installs the extension (Nextcloud `occ app:install`) via `spec.hooks.postInstall` | the app owns its own registry |
 
 #### How an `addon-profile` is activated
 
 The tenant selects **profile names**; the operator resolves them to whatever the hosting app
 calls the thing (an Odoo module, a Nextcloud app id) through each addon's own
-`spec.customization.addon`. Nothing in gentian-os knows those app-native names — putting that
+`spec.package.addon` (`internal/customization/addons.go`). Nothing in gentian-os knows those app-native names — putting that
 knowledge in a reconciler would move an app fact into the platform, which is exactly the
 boundary this framework exists to hold.
 
@@ -502,24 +507,24 @@ rather than per-tenant addon *binaries*. The framework should make this explicit
 > from the addon reading tenant context at runtime, never from divergent addon sets.
 
 The namespace, not the profile, is the test: "one instance per tenant" is an intention, but
-"deployed into `tenant-acme`" is a fact the operator can check. Concretely, the operator rejects a
-`Customization` with `rung: L3` and `scope: tenant` unless the target `App` claim for that tenant
-resolves to a workload in the tenant's own namespace. The `odoo-cb-*` family passes (one Odoo per
-tenant, `databasePerTenant: true`); a future shared-runtime app would not.
+"deployed into `tenant-acme`" is a fact that can be checked. The `odoo-cb-*` family passes (one
+Odoo per tenant, `databasePerTenant: true`); a shared-runtime app would not.
 
 Sharing a runtime across tenants and then loading tenant-specific code into it is the single
-fastest way to turn a customization into a cross-tenant data leak, which is why this is a hard
-operator check and not a review-time convention.
+fastest way to turn a customization into a cross-tenant data leak. **The check is written and
+not yet applied**: `customization.ValidateNamespaceScoping` states the rule for a record with
+`rung: L3` and `scope: tenant`, and the controller that judges records does not call it, so
+today this is a review-time rule.
 
 **Obligations:** declare the addon repo + delivery in `spec.customization.extension`; pin the
-addon version alongside `spec.chart.version`; a `Customization` record (§5) is **required** from
+addon version alongside `spec.package.chart.version`; a `Customization` record (§5) is **required** from
 L2 upward; the addon must be tested against the pinned app version in CI.
 
 ### 2.5 L4 — Repackage
 
 The upstream **source and image are unchanged**, but Gentian now owns the *packaging*: a
 Gentian-authored Helm chart wrapping an upstream image, a `composition.yaml` with init containers
-or bootstrap Jobs, an entrypoint wrapper, a `postInstallJob` that calls the app's admin API,
+or bootstrap Jobs, an entrypoint wrapper, a `spec.hooks.postInstall` job that calls the app's admin API,
 sidecar injection, or a Kustomize post-render over an upstream chart.
 
 This is where most Gentian upstream apps already sit (`charts/odoo`, `charts/gentian-sidecar-*`,
@@ -632,7 +637,7 @@ spec:
 |---|---|
 | Signing and provenance for external artifacts | today every artifact is still built by Gentian CI |
 | Sandboxing of third-party L3 addons | current addons run with the app's own privileges; changing that is an isolation project |
-| Entitlement / commercial terms for paid customizations | interacts with the marketplace and revenue-split roadmap items |
+| Commercial terms for paid customizations | the platform gates no edition (§4.2); terms are between a tenant and a supplier |
 | Review SLAs and a delegated maintainer role | needs the governance model in §8.1 to be operating first |
 | Automated upstreaming of external contributions | needs the debt report (§8.3) to have real data |
 
@@ -870,14 +875,14 @@ Rung and scope are **independent**. Minimise both.
 
 | Scope | Affects | Authored in | Approved by |
 |---|---|---|---|
-| **S0 · Tenant** | one tenant's install | `gentian-deployments` (`Tenant.spec.apps[].config`) | cluster admin |
+| **S0 · Tenant** | one tenant's install | the tenant's manifest in the deployments repository (`Tenant.spec.apps[].config`) | cluster admin |
 | **S1 · Profile** | every tenant that installs this profile | `gentian-apps` (`profiles/<n>/`, `apps/<n>/`, addon repo) | catalogue maintainer |
 | **S2 · Platform** | every tenant, every app | `gentian-os` (kernel, operator, compositions, policy) | platform team |
 
 **The S2 gate is the existing platform boundary rule and does not change:** a customization may
 enter `gentian-os` *only* if it is generic across apps. App-specific behaviour at S2 scope is
 forbidden regardless of rung — no `case "myapp"` in a reconciler, ever. If many apps need the same
-thing, extend the `AppProfile` contract generically; if one app needs it, it belongs in
+thing, extend the `ComponentProfile` contract generically; if one app needs it, it belongs in
 `gentian-apps` at whatever rung fits.
 
 **The cost matrix.** Cells are (rung × scope); the diagonal to the bottom-right is where platforms
@@ -892,18 +897,21 @@ die.
 
 ---
 
-## 4. `AppProfile.spec.customization` — the per-app ladder declaration
+## 4. `ComponentProfile.spec.customization` — the per-app ladder declaration
 
-This is the core new API surface, and it is what makes the framework *app-specific* rather than
-generic advice. It is a **generic** block — it describes capabilities in app-neutral terms, so it
-does not violate the "no per-app fields" rule.
+This is what makes the framework *app-specific* rather than generic advice. It is a **generic**
+block — it describes capabilities in app-neutral terms, so it does not violate the "no per-app
+fields" rule. The types are in `api/v1alpha1/customization_surface_types.go`. The example shows
+the block alone; a profile's required fields (`classes`, `launch`, `trustTier`, `version`,
+`package`) are left out.
 
 ```yaml
 apiVersion: gentianos.io/v1alpha1
-kind: AppProfile
+kind: ComponentProfile
 metadata:
   name: odoo-cb-base
 spec:
+  # classes, launch, trustTier, version, package: ...
   customization:
     # Reachability grade — see §4.1. Derived, but pinned here for agents.
     grade: A
@@ -925,6 +933,8 @@ spec:
         path: /opt/odoo/web/static/branding
         format: files
         source: configMap
+        tenantEditable: true               # a tenant may supply files here (§2.2.1)
+        maxBytes: 262144                   # the default
 
     extension:                             # L3
       mechanism: odoo-addon
@@ -947,7 +957,7 @@ spec:
           auth: oidc-token-exchange
 
     repackage:                             # L4
-      chartOwnership: gentian-owned        # upstream | gentian-owned | vendored
+      chartOwnership: gentian-owned        # upstream | patched | gentian-owned | vendored
       compositionRef: app-odoo
 
     patch:                                 # L5
@@ -963,6 +973,11 @@ spec:
       owner: platform-erp
       cveWatch: true
 ```
+
+A base that takes addons also states how the selection is activated — `addonActivation`
+(`valuesPath`, `script`) and `addonValues[]` (`whenAddon`, `values`), §2.4. `rubricScore` records
+the score behind `grade` (§4.1). An addon states none of this: it is `spec.package.addon`, and
+the schema refuses `spec.customization.addon`.
 
 **Why L2 is never in `supportedRungs`.** Every other rung is a property of the app being
 customized: Odoo either has a drop-in dir or it does not, an addon system or not, a patchable
@@ -1025,7 +1040,7 @@ by making well-behaved upstreams cheap to package.
 
 ### 4.2 Bases, addons, editions and packages
 
-The catalogue shape L3 is delivered through. Referenced by the `AppProfile`,
+The catalogue shape L3 is delivered through. Referenced by the `ComponentProfile`,
 `AppPackage` and `Tenant` CRD field documentation.
 
 ```text
@@ -1035,7 +1050,7 @@ profiles/<family>/
   packages/   <family>-<package>        # not deployable — a UI preset
 ```
 
-An **addon** declares `spec.customization.addon.{id,of}` and is selected into an
+An **addon** declares `spec.package.addon.{id,of}` and is selected into an
 installed base, arriving in `Tenant.spec.apps[].addons`. It inherits the base's
 ladder — same image, same drop-in dirs, same plugin API — so it never restates
 `grade`, `rubricScore` or `supportedRungs`.
@@ -1057,12 +1072,11 @@ entry*, not who publishes it:
 | --- | --- |
 | `ce` | community edition, as the upstream organisation publishes it |
 | `pe` | private edition: somebody's own profile, in their own catalogue source, for their own tenants |
-| `me` | maintained edition — `ce` plus active Gentian maintenance; the editions Aluvian itself runs |
+| `me` | maintained edition — `ce` plus active Gentian maintenance |
 | `ee` | enterprise edition — commercially licensed and supported by its supplier |
 
 `ee` is deliberately not "the upstream's enterprise build" — a third party's
-proprietary distribution is equally an `ee`, and `spec.author` is what names the
-supplier. A supplier's name is never an edition. Editions are technically
+proprietary distribution is equally an `ee`. A supplier's name is never an edition. Editions are technically
 compatible with one another, and the OS gates none of them: an `ee` app or
 addon is installed and activated exactly like a `ce` one. Supply is controlled
 at the source — its chart and images arrive only where the tenant holds a
@@ -1078,7 +1092,7 @@ a cluster browsing its own catalogue sources lists exactly those two. `me` and
 `ee` exist because somebody maintains or licenses them, which is the App
 Store's business: a cluster counts them and sends the person to the store,
 because an entry whose whole value is a relationship with a supplier is not
-something a cluster can describe usefully (AD-14).
+something a cluster can describe usefully.
 
 An **edition shares a family name and nothing else** — `nextcloud-base-ee` may
 deploy a supplier's all-in-one chart from a credentialed registry where
@@ -1086,8 +1100,10 @@ deploy a supplier's all-in-one chart from a credentialed registry where
 be characterised on its own.
 
 **Naming is a hint, not a contract.** Two profiles may both be edition `ee` from
-different authors under unrelated names. `spec.edition` and `spec.author` are the
-authoritative pair; never infer either from a profile name.
+different authors under unrelated names. A profile carries neither an edition nor an author
+field: the edition is what the catalogue's index entry states for it
+([custom-catalogues.md](custom-catalogues.md)), and who supplies an entry is the store's to say.
+Never infer either from a profile name.
 
 A **package** is an `AppPackage`: cluster-scoped, no status, no reconciler, no
 workload. It names a family and a set of addons, and pre-selects them in the
@@ -1101,21 +1117,23 @@ bundle stays a preset rather than becoming an artifact.
 **Required for every customization at L2 and above.** Written **before** the code. Modelled on
 DEP-3 patch headers, generalised to the whole ladder.
 
-**`Customization` is a namespaced CRD** (decision §11.1). Records are authored in git — beside the
-artifact they describe, in `gentian-apps/profiles/<n>/customizations/<name>.yaml` or
-`gentian-deployments/tenants/<t>/customizations/<name>.yaml` — and synced to the cluster like any
-other catalogue object. Being a cluster object buys three things a file cannot:
+**`Customization` is a namespaced CRD** (decision §11.1). Records are authored in git, beside the
+artifact they describe: a profile's in `gentian-apps/profiles/<n>/customizations/<name>.yaml`,
+from where it reaches a cluster in the profile's bundle (below). Being a cluster object buys
+three things a file cannot:
 
-* the **Admin Console reads live records** (§8.3) instead of a CI-generated snapshot;
-* **admission enforces the §3 cost matrix** — an `L5` record at `scope: tenant` is rejected, and the
-  §2.4 namespace test runs against the real `App` claim;
+* the **admin console reads live records** (§8.3) instead of a CI-generated snapshot;
+* **the operator judges every record against the §3 cost matrix** — an `L5` record at
+  `scope: tenant` is marked `Invalid` (condition `Valid` false, with every violation listed).
+  Nothing refuses a record at admission;
 * `status` carries **derived state** — `reviewOverdue`, `upstreamStale`, `targetVersionDrift` — so
   the debt report is computed by the operator, not by a script guessing from YAML.
 
 Profiles and Compositions are cluster-scoped — there is no per-profile namespace. Profile-scoped
-records land in the **one namespace the cluster's catalogue is applied in** (the platform's
-provisioning namespace), a cluster-wide constant that is not derived from the profile name.
-Tenant-scoped records land in `tenant-<name>`.
+records land in the **one namespace the cluster's catalogue is applied in** (the provisioning
+namespace, `kernel-provisioning`), a cluster-wide constant that is not derived from the profile
+name. Tenant-scoped records belong in `tenant-<name>`; no route of the director writes one, so
+today such a record reaches a cluster only by a commit beside the tenant's manifest.
 
 **A profile-scoped record arrives in its profile's bundle.** A profile reaches a cluster one at a
 time, from a catalogue, when a tenant installs it, as one file under one digest
@@ -1210,7 +1228,7 @@ INPUT: capability request F, target app A, requesting scope S_req
    If F is actually two changes, split and run this procedure per change.
 
 2. LOAD THE APP'S LADDER
-   Read AppProfile(A).spec.customization.
+   Read ComponentProfile(A).spec.customization.
    If absent → assume {grade: "?", supportedRungs: [L0, L4]}
               and emit a task "characterise customization surface of A".
 
@@ -1258,13 +1276,13 @@ The single table an agent needs to know *where to type*.
 
 | Rung | Scope | Repository | Artifact |
 |---|---|---|---|
-| L0 | tenant | `gentian-deployments` | `Tenant.spec.apps[].config.extraValues` |
-| L0 | profile | `gentian-apps` | `profiles/<n>/profile.yaml` → `spec.extraValues` |
-| L1 | profile | `gentian-apps` | `profiles/<n>/dropins/` + composition ConfigMap |
-| L1 | tenant | `gentian-deployments` | `Tenant.spec.apps[].config.dropIns` (§2.2.1) — or the Admin Console customization tab |
+| L0 | tenant | deployments repository | the tenant's manifest: `Tenant.spec.apps[].config.extraValues` |
+| L0 | profile | `gentian-apps` | `profiles/<n>/profile.yaml` → `spec.package.extraValues` |
+| L1 | profile | `gentian-apps` | `profiles/<n>/dropins/` + the chart's mount of it |
+| L1 | tenant | deployments repository | the tenant's manifest: `Tenant.spec.apps[].config.dropIns` (§2.2.1) |
 | L2 | profile | `gentian-apps` | `apps/<new>/` (from template) + `contracts/<c>.yaml` + `profiles/<new>/` |
 | L3 | profile | addon repo (`odoo-modules`, …) | addon + pinned version in profile |
-| L4 | profile | `gentian-apps` | `charts/<app>/`, `profiles/<n>/composition.yaml`, `spec.postInstallJob` |
+| L4 | profile | `gentian-apps` | `charts/<app>/`, `profiles/<n>/composition.yaml`, `spec.hooks.postInstall` |
 | L5 | profile | build repo (`ocb`, …) | `patches/series` + DEP-3 headers + Dockerfile |
 | L6 | profile | fork repo | vendored source, `UPSTREAM-COMPARISON.md` |
 | any | platform | `gentian-os` | **only** if generic for all apps (§3) |
@@ -1272,7 +1290,7 @@ The single table an agent needs to know *where to type*.
 Note `profiles/<n>/` is a *bundle*, not a fixed depth: singletons sit at
 `profiles/xwiki/`, members of a multi-profile family at
 `profiles/odoo/odoo-cb-crm/`. Locate a bundle by its leaf directory name, which
-CI requires to equal the `AppProfile`'s `metadata.name` — never by counting path
+CI requires to equal the `ComponentProfile`'s `metadata.name` — never by counting path
 segments.
 
 ### 6.2 Why the artifact for each rung lives where it does
@@ -1324,7 +1342,7 @@ first-party Gentian app is born at **Grade A** and never forces a consumer to L5
 gentian-app-template/
 └── customization/
     ├── README.md              # the ladder, filled in for THIS app; the doc consumers read
-    ├── profile-block.yaml     # spec.customization block, ready to paste into the AppProfile
+    ├── profile-block.yaml     # spec.customization block, ready to paste into the ComponentProfile
     ├── dropins/
     │   ├── README.md          # declared paths + precedence + numbering convention
     │   └── 50-example.yaml
@@ -1441,15 +1459,18 @@ inherit their base profile's declaration rather than repeating it.
 | L6 | fork builds; CVE scan; `UPSTREAM-COMPARISON.md` regenerated |
 | all ≥L2 | a `Customization` record exists, parses, and has `reviewBy` in the future |
 
-Additionally, admission rejects (not merely warns):
+Additionally, the operator marks a record `Invalid` (it refuses none at admission) for:
 
-| Rejected | Rule |
+| Marked `Invalid` | Rule |
 |---|---|
 | `rung: L5\|L6` with `scope: tenant` | §3 cost matrix |
-| `rung: L3` + `scope: tenant` where the app does not run in that tenant's namespace | §2.4 namespace test |
+| a rung the target does not list in `supportedRungs` | §4 |
 | `rung >= L4` with `upstreamFirst.attempted: false` | P3 |
-| tenant drop-in naming an undeclared or non-`tenantEditable` entry | §2.2.1 |
-| a record whose `target.profile` does not resolve to an `AppProfile` | dangling debt |
+| a skipped rung with no `rungJustification` | §6 step 3 |
+| a record whose `target.profile` does not resolve to a `ComponentProfile` | dangling debt |
+
+A tenant drop-in naming an undeclared or non-`tenantEditable` entry is held on the Tenant
+(§2.2.1). The §2.4 namespace test for `rung: L3` with `scope: tenant` is not applied yet.
 
 ### 8.3 The customization debt report
 
@@ -1477,7 +1498,7 @@ ServiceNow and SAP shops build after the damage is done, and that Gentian can bu
 | "Our brand colours in the ERP" | Odoo (A) | **L1** | no L0 knob for asset files | `profiles/odoo-cb-base/dropins/50-branding/` |
 | "Approval workflow on invoices" | Odoo (A) | **L3** | must extend `account.move` and the purchase UI | `odoo-modules/gentian_invoice_approval` |
 | "Dashboard combining ERP + project data" | Odoo + OpenProject | **L2** | stands alone; two targets; neither should own it | new `gentian-apps/apps/insights` + contracts |
-| "Raise Collabora's document size limit" | Collabora (C) | **L0** | it is a documented value | `spec.extraValues` |
+| "Raise Collabora's document size limit" | Collabora (C) | **L0** | it is a documented value | `spec.package.extraValues` |
 | "Custom Collabora save hook" | Collabora (C) | **L2** | grade C — no L1/L3 surface exists | companion service on the WOPI contract |
 | "Tenant-specific SMTP sender name" | any | **L0/S0** | pure value, one tenant | `Tenant.spec.apps[].config.extraValues` |
 | "Propagate tenant header through OIDC logout" | upstream app (D) | **L5** | no extension point; must change request handling | build repo `patches/`, DEP-3, forwarded upstream |
@@ -1528,8 +1549,8 @@ Decided 2026-08-06. Each decision is implemented in the step named in §12.
 
 | # | Question | **Decision** | Consequence |
 |---|---|---|---|
-| 1 | `Customization` as CRD or plain YAML? | **CRD** (`gentianos.io/v1alpha1`, namespaced) | Admin Console reads records live; admission can enforce the §3 cost matrix; §5 records are cluster objects, not just files |
-| 2 | Is `spec.customization` reference data or contract? | **CRD block on `AppProfile`** | Machine-readable for agents and the App Store; §6 step 2 is executable |
+| 1 | `Customization` as CRD or plain YAML? | **CRD** (`gentianos.io/v1alpha1`, namespaced) | The admin console reads records live; the operator judges them against the §3 cost matrix; §5 records are cluster objects, not just files |
+| 2 | Is `spec.customization` reference data or contract? | **CRD block on `ComponentProfile`** | Machine-readable for agents and the App Store; §6 step 2 is executable |
 | 3 | Tenant-scoped L1 drop-ins | **Build them**, tenant-admin configurable | New `Tenant.spec.apps[].config.dropIns` + operator-rendered ConfigMap; see §2.2.1 |
 | 4 | Per-tenant L3 on shared runtimes | **Forbidden**, and stated in namespace terms | Per-tenant addons require the app to run in the tenant's own namespace; see §2.4 |
 | 5 | Third-party customization (tenants, suppliers, customers) | **In scope for the model, not yet for the process** | `Customization.spec.origin` carries authorship and repo ownership from day one; delegation processes deferred; see §2.9 |
@@ -1544,14 +1565,14 @@ Decided 2026-08-06. Each decision is implemented in the step named in §12.
 |---|---|---|---|
 | 1 | This document reviewed and agreed | `gentian-os` | **done** |
 | 2 | `customization.md` + grades for the existing catalogue apps | `gentian-apps` | **done** |
-| 3 | `spec.customization` on the `AppProfile` CRD + populated for those apps | `gentian-os`, `gentian-apps` | **done** |
+| 3 | `spec.customization` on the `ComponentProfile` CRD + populated for those apps | `gentian-os`, `gentian-apps` | **done** |
 | 4 | §6 procedure added to all `AGENTS.md` files | all | **done** |
 | 5 | `Customization` CRD + CI validator + debt report generator | `gentian-os`, `gentian-apps` | **done** |
 | 6 | `customization/` scaffolding + extension loader + slots in the template | `gentian-app-template` | **done** |
 | 7 | `values.schema.json` for Gentian-owned charts | `gentian-apps` | **done** |
 | 8 | L5 discipline retrofitted to `ocb` (DEP-3 headers, `series`, CI bump gate) | `ocb` | **done** |
 | 9 | Debt report surfaced in Admin Console | `gentian-ui` | **done** |
-| 10 | Tenant drop-in reconciler + Admin Console editor (§2.2.1) | `gentian-os`, `gentian-ui` | **done** |
+| 10 | Tenant drop-in reconciler (§2.2.1) | `gentian-os` | **done**; the editor for it in the admin console is not built |
 | 11 | L3 unified on one addon model: `addon-profile` delivery, addon resolver, activation, selection window (§4.2) | `gentian-os`, `gentian-apps` | **done** |
 | — | Automated grade rubric in CI | `gentian-apps` | roadmap 2.13 |
-| — | Third-party delegation process (signing, entitlement, review SLAs) | — | deferred, §2.9 |
+| — | Third-party delegation process (signing, review SLAs) | — | deferred, §2.9 |

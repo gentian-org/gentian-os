@@ -352,26 +352,6 @@ not the rules inside a companion's body.
 
 ---
 
-### 2.11 Who may open a mailbox with a sign-in token
-
-Only on a cluster whose `mail.serviceMode` is `system`, and only for a tenant with mailboxes on it (`spec.mail.mode` `selfhosted`, the default there) in a realm of its own. A mail program presents either an app password or a person's access token (XOAUTH2). For a token, four things have to hold, and each is checked by a different party:
-
-| Check | By | What makes it true |
-| --- | --- | --- |
-| The token names `gentian-dovecot` in its audience | Keycloak, when Dovecot introspects as `gentian-dovecot` | the realm's client scope `mailbox`, whose mapper adds that audience to an access token |
-| The token carries the scope `mailbox` | Dovecot (`scope = mailbox`) | the client asked for `mailbox` at that sign-in, and has the scope |
-| The client has the scope | Keycloak, at sign-in (`invalid_scope` otherwise) | the app's profile declares `requires.services.mail.imap.tokenSignIn`; the scope is an optional scope of that app's own client and of no other |
-| The mailbox is the person's | Dovecot | the user is the token's `email` claim, and the address the mail program gave has to equal it |
-
-So an app that declares it can open the mailbox of a person who signed in to it, with the token of the sign-in at which it asked for `mailbox`, for as long as that token is valid. It cannot open anybody else's, and its other tokens -- the ones it holds for its own session or relays to what it calls -- open none. An app that does not declare it cannot obtain such a token at all, and a token of another realm is introspected by a realm that does not know it.
-
-- **The declaration is a grant, so it is explicit.** `mail.imap: {}` alone means the app reads mail and is given the server's address; it does not make its tokens mailbox keys.
-- **Withdrawn with the declaration.** A profile that stops declaring it keeps its optional scopes without `mailbox`; tokens already issued stay valid until they expire.
-- **A token with the scope is a mailbox key wherever it travels.** An app should ask for `mailbox` in a sign-in of its own for mail and not relay that token.
-- **`gentian-dovecot` checks the audience like every other client.** The client attribute that exempts one client from the check is set nowhere (`TestNothingSwitchesTheIntrospectionAudienceCheckOff`).
-- **Not served:** the kernel realm, and so the platform tenant, has no `mailbox` scope; a cluster that relays its mail has no Dovecot. The declaration is accepted there and grants nothing.
-- **The network is not the gate.** A profile that declares `requires.services.mail` is opened `system-mail` (`kernel-access-<app>`), and Dovecot's IMAP ports admit every tenant's pods, and the proxy for everybody else (§2.8); the token is the check.
-
 ### 2.12 What the sign-in sidecar trusts, and what remains weak
 
 For an app that can do neither OIDC nor SAML, a program of the platform's stands beside it and
@@ -712,19 +692,42 @@ told it is the only thing there is.
 | A Service's endpoints are the app's own pods | **Not checked** |
 | The notice is sent again when it did not arrive, or when a session runs out | **Not done**: Keycloak does neither |
 
+### 2.16 Who may open a mailbox with a sign-in token
+
+Only on a cluster whose `mail.serviceMode` is `system`, and only for a tenant with mailboxes on it (`spec.mail.mode` `selfhosted`, the default there) in a realm of its own. A mail program presents either an app password or a person's access token (XOAUTH2). For a token, four things have to hold, and each is checked by a different party:
+
+| Check | By | What makes it true |
+| --- | --- | --- |
+| The token names `gentian-dovecot` in its audience | Keycloak, when Dovecot introspects as `gentian-dovecot` | the realm's client scope `mailbox`, whose mapper adds that audience to an access token |
+| The token carries the scope `mailbox` | Dovecot (`scope = mailbox`) | the client asked for `mailbox` at that sign-in, and has the scope |
+| The client has the scope | Keycloak, at sign-in (`invalid_scope` otherwise) | the app's profile declares `requires.services.mail.imap.tokenSignIn`; the scope is an optional scope of that app's own client and of no other |
+| The mailbox is the person's | Dovecot | the user is the token's `email` claim, and the address the mail program gave has to equal it |
+
+So an app that declares it can open the mailbox of a person who signed in to it, with the token of the sign-in at which it asked for `mailbox`, for as long as that token is valid. It cannot open anybody else's, and its other tokens -- the ones it holds for its own session or relays to what it calls -- open none. An app that does not declare it cannot obtain such a token at all, and a token of another realm is introspected by a realm that does not know it.
+
+- **The declaration is a grant, so it is explicit.** `mail.imap: {}` alone means the app reads mail and is given the server's address; it does not make its tokens mailbox keys.
+- **Withdrawn with the declaration.** A profile that stops declaring it keeps its optional scopes without `mailbox`; tokens already issued stay valid until they expire.
+- **A token with the scope is a mailbox key wherever it travels.** An app should ask for `mailbox` in a sign-in of its own for mail and not relay that token.
+- **`gentian-dovecot` checks the audience like every other client.** The client attribute that exempts one client from the check is set nowhere (`TestNothingSwitchesTheIntrospectionAudienceCheckOff`).
+- **Not served:** the kernel realm, and so the platform tenant, has no `mailbox` scope; a cluster that relays its mail has no Dovecot. The declaration is accepted there and grants nothing.
+- **The network is not the gate.** A profile that declares `requires.services.mail` is opened `system-mail` (`kernel-access-<app>`), and Dovecot's IMAP ports admit every tenant's pods, and the proxy for everybody else (§2.8); the token is the check.
+
+---
+
 ## 3. Architecture
 
 ### 3.0 Implementation status
 
-Read from `internal/`, `crossplane/`, `kernel/` and the console BFF. A row
-changes only when the code does.
+Read from `internal/`, `crossplane/`, `kernel/` and the administration
+console's backend (gentian-ui, `apps/admin-console`). A row changes only when
+the code does.
 
 | Control | Status | Where |
 | --- | --- | --- |
-| Keycloak per-tenant realms, kernel realm, OIDC for portal and apps | Implemented | Suze composition, `identity_reconciler.go` |
+| Keycloak per-tenant realms, kernel realm, OIDC for the desktops, the consoles and apps | Implemented | `suze.yaml` installs Keycloak; realms and clients come from `tenant-default.yaml` and `identity_reconciler.go` |
 | Keycloak group → OpenFGA tuple sync | Implemented, from events | Membership is stored as `group#member` tuples, a projection the **operator** writes from Keycloak's signed event-listener statements (`membership_listener.go`, `internal/membership`). The poll on a timer is gone from the code. The operator is the writer AD-12 names; the director writes nothing to the store. Not built: nothing reconciles the stored memberships toward Keycloak, and a change of a person's groups ends none of their sessions |
 | Keycloak's master administrator credential | **Held by the operator** | The operator reads the `keycloak-admin` Secret and hands it to the Jobs that configure realms, clients and groups (`identity_reconciler.go`, `internal/keycloak/shell_helpers.go`). The process that writes the rights store is therefore also the one that can change any identity. Narrowing it is **Target** |
-| `AppGrant` → tuples | Implemented | `app_grant_reconciler.go`; grants are structure and stay stored. The operator writes the store and the director only asks it (AD-12) |
+| `AppGrant` → tuples | **Not built** | A grant opens the network path of a contract and gives the consumer a key (§3.4). It does not reach the rights store: `app_grant_reconciler.go` records the object and writes no tuple, the model's `contract` type has no writer, and nothing asks about it |
 | Gateway ext-auth calling OpenFGA `Check` on every session route | Implemented | `internal/bouncer`, attached by `internal/controller/bouncer.go`; the session filter runs first and the bouncer refuses a request without a token it verified ([routing.md §4.1](routing.md)). Fails closed |
 | Session cookies: per host, encrypted, `SameSite=Lax`; frame policy naming the tenant's own desktop | Implemented | `zoneSecurityPolicySpec`, `componentFramers` ([routing.md §4.2, §4.3](routing.md)) |
 | Sign-out reaching the apps | **Implemented where an app can be told; otherwise bounded by the app** | Sign-out ends the realm session and the edge's cookies. The realm then tells an app inside the cluster: an app with its own OIDC client at the path its profile declares (`backchannelLogout`), at an address the platform builds from the entry's own Service (`app-default.yaml`); an app behind the sign-in sidecar through the sidecar's `/sso/logout` (`signin_sidecar.go`). Shown end to end for Nextcloud (`nextcloud-base-ce`), XWiki, Docmost and OpenProject. Not told, or told to no effect: Activepieces (an hour at most), Open WebUI, Element, Mathesar, Odoo, and `nextcloud-base-od` until it is shown — their sessions last as long as the app keeps them, though the front door refuses the person's next request. The realm tells once and not when a session only runs out (§2.15, [iam.md §1.12](iam.md)) |
@@ -742,30 +745,30 @@ changes only when the code does.
 | Publishing an entry: approval by the tenant's perimeter approver, of what an installed app declares | Implemented | The director lists every perimeter entry an installed app declares and refuses an approval of anything else, or with a main-address setting that is not the entry's (`internal/director/api/exposure_requests.go`, `internal/addresses`; [routing.md §5](routing.md)) |
 | A website on the cluster's main address | Implemented; the cookie finding is open | §2.10: single-tenancy only, two people say so, the approver acknowledges the rule. A script there can still disturb sign-in on the other addresses |
 | Address names the platform keeps | Implemented | `internal/hostnames`, asked by the director and the operator (§2.11) |
-| Default profiles the installer places | **Unverified** | Fetched by address at install, with no digest or signature, and written with no origin (§2.11). A decision is open |
+| Default profiles the installer places | Implemented at a stated digest; **the default Component is not pinned** | Written only when the file hashes to the digest its catalogue's index lists, or to a pin, with its bundle and origin (§2.11). The index is not signed, and the operator makes no comparison at rollout for the unpinned Component it creates for a `defaultForTenants` profile. Whether to pin it is an open decision |
 | Mail: one proxy faces the internet, the mail servers do not | Implemented; proven in local containers, not on a cluster | `kernel/services/mail-edge`, in `system-mail-dmz`: PROXY protocol, TLS passed through, limits per client address (§2.8). Egress from `system-mail` is open |
-| A mailbox opened with a sign-in token | Implemented | Only for an app that declares `requires.services.mail.imap.tokenSignIn`, by the scope `mailbox` (§2.11, the section on mailboxes) |
+| A mailbox opened with a sign-in token | Implemented | Only for an app that declares `requires.services.mail.imap.tokenSignIn`, by the scope `mailbox` (§2.16) |
 | Sign-in sidecar | Implemented, with the weaknesses listed | Only from a cluster catalogue's bundle pinned by digest, never in the kernel realm (§2.12). It can become anybody in its app |
 | The rights check for a component (`requires.services.rights`) | Implemented | A key per component for one question at the bouncer -- may this person use that app of my tenant -- instead of the store's key (`rights_check.go`, `internal/bouncer/check.go`). Platform-trust profiles only |
 | A removed person's mailbox | Implemented; proven in local containers, not on a cluster | Whoever removes the person chooses archive or delete; no default, and the registrar refuses a removal without the choice. The registrar writes the choice down (`MailboxRemoval`, the one kind it may write in the cluster) and has no access to `system-mail`. The operator acts only on an address of the tenant's mail domain that no person of any realm on that domain holds, after the address's mail passwords are gone ([mail.md §5c](mail.md)). With the recipient policy `catchall`, mail to the address is still accepted afterwards |
 | A tenant's backup and deletion | Implemented | A bundle (format 3) holds what a deletion destroys, mailboxes included, and a deletion destroys the mailboxes. Rights recorded as granted are not written into a tenant made new for the restore (`TenantRestore.spec.intoNewTenant`); they are named instead ([data-lifecycle.md](data-lifecycle.md)) |
-| Approval path for profile-declared egress | **Target** | `security.egress` reaches the NetworkPolicy uninspected; `PlatformSecurityPolicy` allowlists MAC waivers only (gap G27) |
+| Approval path for profile-declared egress | Implemented | `requires.privileges.egress` is a request. A rule reaches the NetworkPolicy only once it was granted by name on the install (`internal/security/privilege.go`, `GrantedEgressRules`). The tenant's administrator approves it (`can_approve_privilege`) and the director writes the grant as a commit (`internal/director/api/privileges.go`). The other two kinds are less far: a pod-security waiver takes effect when the cluster's allowlist names it (`PlatformSecurityPolicy`, `mac_waiver_reconciler.go`), whether or not the security officer granted it on the install, and a requested cluster role is recorded when granted and created by nothing |
 | Pod-security admission (privileged, host ns, non-root, hostPath, caps, priv-esc) | Implemented | `kernel/security/kyverno/policies/` |
 | Gateway rate limit | **Partial**: sign-in posts only | Envoy's local limit per client address on the identity provider's sign-in pages and on a sign-in sidecar's answer path (`edge_rate_limit.go`, §2.14). Routes behind a session, the token endpoint and WebSocket duration: **Target** |
 | Service mesh, SPIFFE/SPIRE, workload identity | **Target**, with one exception | The operator's app-lifecycle listener admits its two callers, the director and the usher, by ServiceAccount: each presents a projected token for the audience `gentian-os-operator` and the operator asks the API server whose it is (`internal/applifecycle/auth.go`). Every other call between platform services still rests on a shared key or on the person's token |
 | One credential per process at the rights store | **Target** | OpenFGA has one preshared key. The operator, the director, the bouncer, the usher, the custodian and the registrar all present it, and it can write |
-| Agent identities, RFC 8693 exchange, `agent`/`task` types | **Target** | model v0 has no such types |
+| Agent identities, tokens on behalf of a person for an agent, `agent`/`task` types | **Target** | the model (`internal/director/authz/model.json`) has no such types |
 | Human-identified secret writes (token exchange, no service token) | Implemented | `internal/custodian/` |
 | Human-identified configuration writes | **Target** | the director verifies the person and commits; the operator's lifecycle API admits only the director's ServiceAccount to its commands and still trusts the `X-Gentian-Actor` name it passes |
 | OpenBao policy per tenant | Implemented | `tenant-default.yaml` |
 | OpenBao policy per (tenant, app) | **Target** | `app-default.yaml` composes none |
-| Console admin-action audit | Implemented | BFF `audit_log.py` |
+| Record of administrative changes | **Partial** | A change to declared state is a commit the director writes, naming the person, the relation and the object that allowed it; the administration console lists them (`/admin/changes`). A change to a person is recorded by the registrar with who asked and what allowed it (`internal/registrar/record`). A sign-in, a refused request and a secret read are recorded nowhere |
 | Decision log, request-id correlation | **Target** | — |
 | Commit signing and verification | Implemented, where the deployments repository names the keys | The director signs every commit (`internal/director/gitops/signing.go`); the installer signs its own with the break-glass key, found by its recorded id (`scripts/lib/signing.sh`). Argo CD verifies through the AppProject's `sourceIntegrity` and its keyring (step `B-10`). A repository without key ids renders no policy, and the director then commits unsigned and says so |
 | Images named by release | **Partial** | No image under `kernel/`, `charts/` or `crossplane/` may name `latest`, and the model gateway's is held to tag and digest (`make lint-image-pins`, §2.9). Other images are pinned by tag; the Keycloak event listener's follows a branch tag |
 | Image signature verification | **Target** | — |
 | What the installer downloads | **Partial** | The OpenBao CLI is fetched from the release's address and held to a checksum (`make test-openbao-cli-download`). The default profiles are held to the digest their catalogue's index lists, or to a pin (`make test-default-profile-digest`); the index itself is unsigned (above) |
-| Rotation rolling app workloads (Reloader) | Partial | annotation on the operator Deployment and a few kernel services; no composition adds it, so no tenant app is rolled (gap G13) |
+| Rotation rolling app workloads (Reloader) | Partial | annotation on the operator Deployment and a few kernel services (Keycloak, Redis, Dovecot). No composition adds it to a tenant app; an app is rolled only where its profile sets the annotation in its own chart values, as some catalogue profiles do (gap G13) |
 | Admission guard against literal secrets in `Release.set` | **Target** | — |
 
 Keycloak runs with its release's default features and none added; what that
@@ -779,21 +782,21 @@ on every Keycloak upgrade.
 
 | Component | Role | License |
 |---|---|---|
-| **Keycloak** | Authentication authority + token issuer (*who you are*). **Per-tenant realms** (not Organizations-as-isolation); kernel realm brokers login; service accounts for agents; RFC 8693 Token Exchange; SAML/OIDC brokering. See [iam.md](iam.md), [admin-console.md](admin-console.md). | Apache 2.0 |
-| **OpenFGA** | ReBAC authorization PDP (*what you may do*). Relationship tuples for humans/agents/apps/assets; Conditions + contextual tuples for ABAC; the derived-ceiling schema. | Apache 2.0 |
+| **Keycloak** | Authentication authority + token issuer (*who you are*). **Per-tenant realms** (not Organizations-as-isolation); kernel realm brokers login; SAML/OIDC brokering; token exchange where §3.0 lists it. Service accounts for agents are target. See [iam.md](iam.md), [admin-console.md](admin-console.md). | Apache 2.0 |
+| **OpenFGA** | ReBAC authorization PDP (*what you may do*). Today the model holds people, groups, the cluster, tenants, apps and revoked sessions. Agents, assets, Conditions, contextual tuples and the derived-ceiling schema are target. | Apache 2.0 |
 | **Director** | Turns an authorised request into a signed commit to the deployments repository. It asks OpenFGA before each one and writes nothing there. Keycloak decides no permission; OpenFGA changes no identity. | Implemented (`cmd/director`) |
-| **Operator, as the store's writer** | The authorization store is written by the operator and by nothing else on purpose: role-to-group assignments from the Cluster claim, tenants and apps from what Argo CD applied, grants from the CRs, and membership as `group#member` tuples from Keycloak's signed event-listener statements -- a projection, never edited in place. The design named the director for this (AD-2, AD-12); the code does not, so that the process holding the push credential holds no reason to write a relation. What enforces "on purpose" is weak: OpenFGA has one preshared key, every process that asks the store presents it, and it can write. | Implemented (`authz_projection_reconciler.go`, `membership_listener.go`, `app_grant_reconciler.go`); per-process store credentials are **Target** |
-| **Provisioning bridge** | Reconciles `IntegrationBinding` credentials and `AppGrant` into the graph. It no longer polls Keycloak for group membership: that arrives as events (row above). The operator still holds Keycloak's master administrator credential, for the Jobs that configure realms. | **Partial** |
+| **Operator, as the store's writer** | The authorization store is written by the operator and by nothing else on purpose: role-to-group assignments from the Cluster claim, tenants and apps from what Argo CD applied, and membership as `group#member` tuples from Keycloak's signed event-listener statements -- a projection, never edited in place. The design named the director for this (AD-2, AD-12); the code does not, so that the process holding the push credential holds no reason to write a relation. What enforces "on purpose" is weak: OpenFGA has one preshared key, every process that asks the store presents it, and it can write. | Implemented (`authz_projection_reconciler.go`, `membership_listener.go`); per-process store credentials are **Target** |
+| **Provisioning bridge** | The operator makes an `IntegrationBinding` for each pair of installed apps that share a contract and turns an `AppGrant` into the network path and the keys of §3.4. Neither reaches the graph. It no longer polls Keycloak for group membership: that arrives as events (row above). The operator still holds Keycloak's master administrator credential, for the Jobs that configure realms. | **Partial** |
 | **MAC backbone** | K8s namespaces per tenant, NetworkPolicy default-deny egress in those namespaces, Kyverno pod-security admission (implemented); the same default-deny in the platform tiers, service mesh + SPIFFE/SPIRE (target). | Apache 2.0 / OSS |
 | **PEP** | Named enforcement points — Envoy Gateway ext-auth, the director, the custodian, the MCP gateway — calling OpenFGA `Check`, ideally over the OpenID **AuthZEN** Authorization API so PDPs stay swappable. The bouncer behind the Gateway, the director, the custodian, the usher and the registrar call `Check` today (§3.0), over OpenFGA's own API; AuthZEN and the MCP gateway are target. | OSS |
-| **ITAM source of truth (optional)** | NetBox (best license fit) / GLPI / Snipe-IT feeding device & asset objects into the graph. | Apache 2.0 / GPL / AGPL |
+| **ITAM source of truth (optional)** | NetBox (best license fit) / GLPI / Snipe-IT feeding device & asset objects into the graph. Target: nothing is built. | Apache 2.0 / GPL / AGPL |
 
 ### 3.2 Design rationale
 
 For a greenfield, cloud-only sovereign OS:
 
 - **Keycloak-native identity.** Keycloak owns identities per tenant realm, backed by its own Postgres, and is the only place membership is changed. OpenFGA holds a projection of it, fed by Keycloak's event listener, to compute *may* — authority is separated, not copies (principle 2).
-- **OpenFGA ReBAC** replaces coarse group-only RBAC. One relationship graph models humans, agents, apps, and assets — no role explosion.
+- **OpenFGA ReBAC** replaces coarse group-only RBAC. One relationship graph is meant to model humans, agents, apps, and assets — no role explosion. Today it holds people, groups, the cluster, tenants and apps (§3.0).
 - **Layered isolation** (§2) — MAC backbone, identity, and authorization are independent enforcement planes.
 
 ### 3.3 Reference architecture
@@ -805,13 +808,13 @@ flowchart TD
     Users(("Humans /<br>Agents login"))
     
     subgraph Identity ["Authentication"]
-        Keycloak["KEYCLOAK (IdP / AuthN)<br>realms/orgs, clients, service accounts"]
+        Keycloak["KEYCLOAK (IdP / AuthN)<br>realms, clients, service accounts"]
     end
     
-    Director["OPERATOR (writes the store; the director only asks it)<br>membership projection from Keycloak events<br>+ structure: installs, grants<br>+ Integration Binding + ITAM conn."]
+    Director["OPERATOR (writes the store; the director only asks it)<br>membership projection from Keycloak events<br>+ structure: roles, tenants, installs<br>+ Integration Binding + ITAM conn."]
     
     AgentsWorkloads["Agents / Workloads"]
-    Apps["Apps / API Gateway<br>(Kong/Envoy/app) ◄── PEP"]
+    Apps["Front door (Envoy Gateway + bouncer),<br>platform services, apps ◄── PEP"]
     
     OpenFGA["OPENFGA (ReBAC PDP)<br>user:* agent:* app:* group:* tenant:*<br>document/db:* device:* task:* contract:*<br>Conditions (TTL / ABAC) · derived-ceiling"]
     
@@ -835,112 +838,117 @@ flowchart TD
     ITAM -.->|"device/asset + contract-consumer edges"| OpenFGA
 ```
 
-**Decision flow (target):** (1) principal authenticates to Keycloak → OIDC token (agents via client-credentials or Token Exchange carrying `act`). (2) Keycloak's event listener pushes signed membership changes to the operator, which writes them as `group#member` tuples — a projection, never edited in place; the operator also writes structure (roles, tenants, installs, grants) from the objects Argo CD applied from the director's commits, so a relation follows a commit only once it has been applied; `IntegrationBinding` reconciles cross-app credentials. (3) PEP receives request + token, calls OpenFGA `Check` (over AuthZEN), passing runtime facts — a task's TTL, `acting_for`, device posture — as contextual tuples. Memberships are already in the graph and no group travels in a token for a platform decision. (4) OpenFGA traverses the graph (principal → group/org → resource/device, plus task-scoped delegation with TTL Conditions, plus derived-ceiling) → allow/deny. (5) Independently, the MAC backbone enforces tenant isolation and egress *regardless* of the authZ result. (6) Sensitive ops use consistent reads; the Watch API streams tuple changes to an audit log. Today (1) runs for people, (2) runs as written, and (5) runs for tenant namespaces and, for the platform's namespaces, as far as §3.0 says. (3) and (4) run at the front door and at the platform's own services, with the relation and the object and no contextual tuples; agents, tasks, AuthZEN and (6) are target.
+The diagram shows the target. Agents, SPIFFE, AuthZEN, contextual tuples and the ITAM feed are not built; §3.0 says what is.
+
+**Decision flow (target):** (1) principal authenticates to Keycloak → OIDC token (agents via client-credentials or Token Exchange carrying `act`). (2) Keycloak's event listener pushes signed membership changes to the operator, which writes them as `group#member` tuples — a projection, never edited in place; the operator also writes structure (roles, tenants, installs) from the objects Argo CD applied from the director's commits, so a relation follows a commit only once it has been applied; `IntegrationBinding` reconciles cross-app credentials. (3) PEP receives request + token, calls OpenFGA `Check` (over AuthZEN), passing runtime facts — a task's TTL, `acting_for`, device posture — as contextual tuples. Memberships are already in the graph and no group travels in a token for a platform decision. (4) OpenFGA traverses the graph (principal → group/org → resource/device, plus task-scoped delegation with TTL Conditions, plus derived-ceiling) → allow/deny. (5) Independently, the MAC backbone enforces tenant isolation and egress *regardless* of the authZ result. (6) Sensitive ops use consistent reads; the Watch API streams tuple changes to an audit log. Today (1) runs for people, (2) runs as written, and (5) runs for tenant namespaces and, for the platform's namespaces, as far as §3.0 says. (3) and (4) run at the front door and at the platform's own services, with the relation and the object and no contextual tuples; agents, tasks, AuthZEN and (6) are target.
 
 ### 3.4 Application permissions — catalogue contracts and grants
 
-Cross-app and kernel access in Gentian is declared in **`AppProfile`**, wired by **`IntegrationBinding`**, and constrained by **`AppGrant`** (tenant-approved ReBAC subset). This mirrors Android's manifest (`<uses-permission>` = intent) vs. the separate platform/user grant — **the app declares; it never grants itself access to another tenant or app.**
+What an app needs from the platform and from other apps is declared in its **`ComponentProfile`**. A declaration is a request and grants nothing. Access to another app is wired by an **`IntegrationBinding`** and limited by an **`AppGrant`**. This mirrors Android's manifest (`<uses-permission>` = intent) vs. the separate platform/user grant — **the app declares; it never grants itself access to another tenant or app.**
 
-Full CRD field reference and deployment flow: [app-catalogue.md](app-catalogue.md).
-
-This section describes the CRDs as implemented. The cleanup replaces them:
-one kind, `ComponentProfile`, for system services, apps and agents (AD-4);
-`kernelRequirements`, `optionalIntegrations` and `security` folded into
-`requires` and `integrations`, so a profile cannot grant itself egress any
-more than it can grant itself a pod-security waiver (AD-5); `ingress`,
-`browserProxy` and the public surfaces folded into `expose[]`, each entry
-carrying a mandatory `authMode` and a `gateway` or `perimeter` surface
-(AD-6). The shape below is what the code has today, not the target —
-[target-component-structure.md](../plans/target-component-structure.md) is the target.
+Field reference and deployment flow: [app-catalogue.md](app-catalogue.md).
 
 #### Terminology — manifest language vs CRD fields
 
-This document and older drafts used *consumes* / *publishes*. The **implemented** `AppProfile` CRD uses different field names:
-
-| Concept (this doc) | `AppProfile` CRD field | Type |
+| Concept | `ComponentProfile` field | Type |
 |---|---|---|
-| Contracts the app **provides** to peers | `spec.provides[]` | `{ name, protocol? }` |
-| Contracts the app **may consume** from peers | `spec.optionalIntegrations[]` | `{ contract, provider?, capabilities? }` |
-| Kernel services (OIDC, Postgres, S3, …) | `spec.kernelRequirements` | Separate from integration contracts |
+| Contracts the app **provides** to other apps | `spec.provides[]` | `{ name, protocol? }` |
+| Contracts the app **may consume** from other apps | `spec.integrations[]` | `{ contract, provider?, capabilities? }` |
+| Platform services (identity, database, object storage, cache, mail, model gateway, …) | `spec.requires.services` | Separate from contracts |
+| What goes beyond the default posture (pod-security waiver, egress, cluster roles) | `spec.requires.privileges` | Requests, answered per install (§3.0) |
+| Where the chart takes what was provided | `spec.package.valueMapping` | Chart value keys per service |
 
-Contract **names** (e.g. `file-store`, `project-management`) are shared vocabulary. Definitions live under `gentian-apps/contracts/` (when present) and are referenced by name only in profiles — the profile does not embed the full contract schema.
+A contract is a name (`file-store`, `project-management`) two profiles agree on. Nothing in the cluster holds a contract's definition or checks a call against one.
 
 #### Three layers — declaration, wiring, authorization
 
-| Layer | CRD / object | Scope | Author | Status |
+| Layer | Object | Scope | Written by | Status |
 |---|---|---|---|---|
-| **Declaration** | `AppProfile` | Cluster (one per catalogue entry) | Catalogue maintainer (`gentian-apps/profiles/`) | **Implemented** |
-| **Wiring** | `IntegrationBinding` | Namespace (per tenant, per provider↔consumer pair) | gentian-os operator (auto when peers match) | **Implemented** |
-| **Grant (ReBAC)** | `AppGrant` | Per tenant install | Tenant admin at install | **Partial** (CRD + OpenFGA tuple sync; a granted contract opens the network path between the two apps and an ungranted one opens nothing; no PEP reads the tuples on an app-to-app call; install-time UI pending) |
+| **Declaration** | `ComponentProfile` | Cluster (one per catalogue entry) | The catalogue's maintainer; it reaches the cluster in a bundle fetched from a catalogue | **Implemented** |
+| **Wiring** | `IntegrationBinding` | Tenant namespace, one per consumer and contract | The operator, when the consumer and a provider are both in `Tenant.spec.apps` | **Implemented** |
+| **Grant** | `AppGrant` | Tenant namespace, one per consuming app | The director, as a commit, for a person who holds `can_grant` on the tenant; and the operator (below) | **Partial** |
 
 Do not conflate them:
 
-- **`kernelRequirements`** — what the **platform kernel** must provision (OIDC client, database, mail, …). Validated at admission; secrets injected via `valueMapping` + OpenBao. Not a cross-app contract.
-- **`provides` / `optionalIntegrations`** — what the app **offers to or may use from other catalogue apps**. Optional until peer apps are installed.
-- **`IntegrationBinding`** — the **runtime wire** when both provider and consumer are present in `Tenant.spec.apps`: credentials in OpenBao, OIDC token exchange, capability list. Owned by the `Tenant`; garbage-collected on delete.
+- **`requires.services`** — what the platform provides before the app runs (an OIDC client, a database, a mailbox, …). The credentials are written to OpenBao and reach the chart through `package.valueMapping` (§8). Not a contract between apps.
+- **`provides` / `integrations`** — what the app offers to, or may use from, other apps of the same tenant. An absent provider is normal.
+- **`IntegrationBinding`** — the record that a consumer and a provider of one contract are both installed, with the capabilities the consumer's profile asks for.
 
-#### 1. Declaration — `AppProfile` (developer-authored, static)
+#### 1. Declaration — `ComponentProfile` (developer-authored, static)
 
-`AppProfile` is **cluster-scoped** — one YAML per app type in the catalogue, shared across all tenants. It is the *upper bound* of what the app can request, not an authorization decision.
+`ComponentProfile` is **cluster-scoped** — one object per catalogue entry, shared by every tenant that installs it. It is the *upper bound* of what the app can ask for, not an authorization decision.
 
 ```yaml
 apiVersion: gentianos.io/v1alpha1
-kind: AppProfile
+kind: ComponentProfile
 metadata:
-  name: demo-app                    # cluster-scoped catalogue id
+  name: demo-app                     # cluster-scoped
 spec:
-  displayName: "Demo App"
+  classes: [app]
+  launch: tile
+  trustTier: certified
+  version: "1.0.0"
 
-  # Kernel — platform-provisioned services (NOT integration contracts)
-  kernelRequirements:
-    identity:
+  package:
+    chart:
+      repository: oci://registry.example/charts
+      name: demo-app
+      version: "1.0.0"
+    valueMapping:                    # where what was provided goes in the chart's values
       oidc:
-        clientId: catalogue-test-client          # must match a pack key in a synced OIDCPackCatalog CR
-        accessType: CONFIDENTIAL
-    database:
-      engine: postgresql
-      databasePerTenant: true
+        issuerKey: "oidc.issuer"
+        clientIdKey: "oidc.clientId"
+        clientSecretKey: "oidc.clientSecret"
+      database:
+        hostKey: "database.host"
+        nameKey: "database.name"
+        userKey: "database.user"
+        passwordKey: "database.password"
 
-  # Integration contracts this app PROVIDES to other apps
-  provides:
-    - name: project-management         # kebab-case; matches contract definition name
+  requires:
+    services:                        # platform services, not contracts
+      identity:
+        oidc:
+          clientId: demo-app
+          accessType: CONFIDENTIAL
+      database:
+        engine: postgresql
+        databasePerTenant: true
+
+  provides:                          # contracts this app serves to other apps
+    - name: project-management
       protocol: http-json
 
-  # Integration contracts this app MAY CONSUME when a provider is installed
-  optionalIntegrations:
+  integrations:                      # contracts this app may consume, if a provider is installed
     - contract: file-store
-      provider: file-store-app              # expected provider profile name (optional hint)
+      provider: file-store-app       # optional: the provider's profile name
       capabilities: [webdav:read, webdav:write]
-    - contract: central-navigation
-      provider: portal
-      capabilities: [navigation:register]
 
-  chart:
-    repository: oci://registry.example/charts
-    name: demo-app
-    version: "1.0.0"
-
-  valueMapping:                        # maps kernel outputs → Helm keys (Pattern A secrets)
-    oidc:
-      issuerKey: "oidc.issuer"
-      clientIdKey: "oidc.clientId"
-      clientSecretKey: "oidc.clientSecret"
-    # … database, s3, smtp, cache …
+  expose:
+    - name: web
+      surface: gateway
+      authMode: oidc
+      subDomain: demo
+      backend:
+        service: demo-app
+        port: 8080
+      tile:
+        displayName: "Demo App"
+        logo: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciLz4=
+        relation: can_launch
 ```
 
-**`provides`** entries identify contract names the app implements as a **provider**. **`optionalIntegrations`** entries identify contract names the app can use as a **consumer**, with optional `capabilities` (the requested capability surface, not yet a grant).
-
-Tenant admins select apps by **profile name** in `Tenant.spec.apps` — they do not edit `AppProfile`.
+A tenant's administrator installs an app by its profile name (an entry in `Tenant.spec.apps`, written by the director) and cannot edit the profile.
 
 #### 2. Wiring — `IntegrationBinding` (operator-authored, per tenant)
 
-When the gentian-os operator reconciles a `Tenant` and finds both a **provider** (profile with `spec.provides` containing the contract) and a **consumer** (profile with matching `spec.optionalIntegrations[].contract`) in `spec.apps`, it creates an **`IntegrationBinding`** in the tenant namespace:
+For each `spec.integrations[]` entry of an installed app the operator looks for a provider among the tenant's other installed apps: the profile the entry names in `provider`, or else any whose `spec.provides` carries the contract. Where it finds one it makes an **`IntegrationBinding`** in the tenant's namespace and removes it when either app goes:
 
 ```yaml
 apiVersion: gentianos.io/v1alpha1
 kind: IntegrationBinding
 metadata:
-  name: demo-file-store
+  name: demo--consumer-app--file-store     # <tenant>--<consumer>--<contract>
   namespace: tenant-demo
 spec:
   contract: file-store
@@ -952,55 +960,54 @@ spec:
     namespace: tenant-demo
   capabilities: [webdav:read, webdav:write]
   auth:
-    method: oidc-token-exchange
+    method: api-key
     vaultPath: gentian-os/tenants/demo/contracts/file-store
-status:
-  state: Ready
 ```
 
-This object **provisions credentials and auth method** between two installed apps. It is topology + secret wiring — not user-level ReBAC. Apps receive injected values via Helm/`valueMapping`; they must not implement their own cross-app grant logic (see [app-catalogue.md](app-catalogue.md) §4).
+With the binding the operator writes a generated password to `vaultPath`, once per tenant and contract. A consumer whose profile maps the contract under `package.valueMapping.integrations` gets it, with an endpoint and a user name where the binding's reconciler knows them (`calendar` and `contacts` only), as chart values. No profile of the catalogue maps one today, and this delivery does not wait for a grant. The binding is topology and secret wiring, not a per-person permission.
 
 #### 3. Grant — `AppGrant` (tenant-authored, per install)
 
-The **`AppGrant`** CRD is implemented (`gentianos.io/v1alpha1`). The operator syncs
-grant tuples to OpenFGA via [`app_grant_reconciler.go`](../../internal/controller/app_grant_reconciler.go).
-Install-time UI for tenant admins to narrow capabilities at install is still evolving;
-until then grants may be authored as YAML in the tenant namespace.
-
-Example:
+An **`AppGrant`** names, for one consuming app, the capabilities of each contract it may use. The director writes it as a commit (`PUT /v1/tenants/{t}/grants/{app}`, relation `can_grant`).
 
 ```yaml
 apiVersion: gentianos.io/v1alpha1
 kind: AppGrant
 metadata:
+  name: demo-app
   namespace: tenant-demo
 spec:
   app: demo-app
   consume:
     - contract: file-store
-      granted: [webdav:read]             # webdav:write withheld vs optionalIntegrations
-  allowConsumers:                        # publish side — who may call this app's provides
+      granted: [webdav:read]             # webdav:write withheld
+  allowConsumers:                        # the provider's side; read by nothing today
     - app: crm-app
       contract: project-management
       scope: [tasks:read]
 ```
 
-**Publishing is an authorization surface too.** A provided contract becomes a **resource object** in the ReBAC graph; a consumption grant becomes a **relationship tuple**. `AppProfile.spec.provides` declares the node; `AppGrant.allowConsumers` creates the edge:
+What a grant does today (`tenant_network_policy.go`, `internal/kernel/netpolicy`, `contract_keys.go`):
 
-```
-contract:demo/project-management#consumer@app:crm-app
-```
+- **The network path.** A tenant's namespace is closed in both directions. For a binding whose consumer was granted at least one capability, two NetworkPolicies let the consumer's pods reach the provider's and the provider's admit them. Without a grant neither exists.
+- **A key per consumer.** The consumer gets a Secret `contract-key-<consumer>-<contract>` with a random key, and the provider a Secret `contract-callers-<provider>` with the SHA-256 of each granted consumer's key and its name, so a provider can tell which of its consumers is calling. Both go when the grant goes. Mounting the Secret, sending the key and checking it are the two apps' own work; the platform checks no call.
 
-"May CRM read OpenProject tasks?" is then a single OpenFGA `Check`; the tenant controls the edge. **Revocation is not one tuple delete, and saying so overstates it.** Nothing sits on an app-to-app call until workloads carry identity (§2.4, G8), and by the time a grant exists its credential is in OpenBao and injected into the consumer's values. Revoking therefore means the director deletes the binding's OpenBao path and re-rolls the consumer; the tuple delete stops the *next* bind. The `contract` type exists so the consent is recorded and bounded, not so that traffic is intercepted.
+What it does not do:
+
+- **Capabilities are not enforced.** Any granted capability opens the whole path to the provider's pods. The list is written on the policy as a label and nowhere else.
+- **Nothing reaches the rights store.** The model has a `contract` type; nothing writes it and no enforcement point asks about a call between two apps (§3.0).
+- **The operator grants by itself.** On each reconcile of a tenant the operator writes an `AppGrant` for every consumer that has a binding, carrying every capability the consumer's profile declares (`ensureAppGrants`), under the name the director's commit uses. A declared integration is therefore granted in full as soon as both apps are installed, and a narrower grant an administrator set is overwritten by the operator's on its next reconcile.
+
+Revoking a grant removes the network path and both key Secrets in one reconcile. It does not change the shared password at `vaultPath`, which stays in the consumer's values until the app is rolled.
 
 #### 4. Runtime authorization — computed at the PEP (per request)
 
-**Today (Stage 1 Suze path):** OIDC authentication via **Suze** Keycloak (per-tenant realms + kernel broker), tenant MAC isolation, `IntegrationBinding` wiring, and **group entitlements** (`gentian:tenant:<t>:app:<profile>`) for portal visibility. **App administrators** use a separate cross-app group (`gentian:tenant:<t>:app-admins`) reconciled into each app's declared `AppProfile.spec.provisioning.privilegedRole` (see [app-profile-guide.md](../../../gentian-apps/docs/app-profile-guide.md) §6h). User/group administration is the [Gentian Admin Console](admin-console.md). The console carries an OpenFGA client, but no route calls `Check` yet; catalogue apps carry **PEP stubs** that pass through. Grants reach the graph and are not yet read by any enforcement point.
+**Today.** A person signs in at their tenant's realm. The front door asks the rights store whether that person may use the app (`can_use` on `app:<tenant>/<profile>`) on every request of a session route (§3.0). The right comes from the app's Keycloak group, `gentian:tenant:<t>:app:<profile>`, whose members the operator projects into the store. **App administrators** are the members of `gentian:tenant:<t>:app-admins`; the operator gives them the role each app's profile names in `spec.hooks.provisioning.privilegedRole` (see [app-profile-guide.md](https://github.com/gentian-org/gentian-apps/blob/main/docs/app-profile-guide.md) §6h). People and groups are administered in the [administration console](admin-console.md). Between two apps there is the network path and the key of step 3, and no check by the platform.
 
-**Target (Stage 2+):**
+**Target:**
 
 ```
-effective access = declared (AppProfile)
+effective access = declared (ComponentProfile)
                  ∩ wired (IntegrationBinding exists + credentials valid)
                  ∩ granted (AppGrant subset)
                  ∩ acting-user ceiling (ReBAC)
@@ -1010,6 +1017,8 @@ effective access = declared (AppProfile)
 The most restrictive layer wins (§2.1).
 
 ### 3.5 Agentic identity
+
+Design only: none of this section is built (§3.0).
 
 - Each agent is a **distinct first-class identity** — a dedicated Keycloak client/service account and an `agent:` object in OpenFGA — never a shared human credential.
 - Tokens are short-lived: client-credentials for autonomous agents; **RFC 8693 Token Exchange** with `act` / `may_act` for on-behalf-of a user.
@@ -1021,16 +1030,20 @@ The most restrictive layer wins (§2.1).
 
 ### 3.6 Physical assets & ITAM
 
-Model devices as plain **resource objects** now: `type device` with relations `owner`, `assigned_user`, `operator`, `maintainer`, inheriting org scope (`device:printer-3f#can_print@user:alice`; agents the same way via `#operator@agent:print-bot`). Evolve toward full ITAM only when inventory grows: add **NetBox** (Apache 2.0, best license fit) / **GLPI** / **Snipe-IT** as the asset source of truth, projected into OpenFGA tuples by the director, on the same path as every other write. Keep this layer thin.
+Design only: the model has no `device` type and nothing feeds one.
+
+Model devices as plain **resource objects**: `type device` with relations `owner`, `assigned_user`, `operator`, `maintainer`, inheriting org scope (`device:printer-3f#can_print@user:alice`; agents the same way via `#operator@agent:print-bot`). Evolve toward full ITAM only when inventory grows: add **NetBox** (Apache 2.0, best license fit) / **GLPI** / **Snipe-IT** as the asset source of truth, projected into OpenFGA tuples by the operator, the store's one writer. Keep this layer thin.
 
 ### 3.7 Automation (n8n-like workflows)
+
+Design only. An automation app installed today is one app with one identity and its own credential store; the platform confines it as it does any app (namespace, default-deny network, granted egress) and does nothing below.
 
 An automation platform is a textbook **confused deputy**: a central engine holding many services' credentials and combining them in flows. Dropped in unmodified it becomes the god-mode lateral-movement engine this architecture exists to prevent. The fix is to decompose it along the same seams as everything else — **never one principal, never a central credential vault.**
 
 | n8n concept | Maps to | Enforcement |
 |---|---|---|
-| The n8n **platform** | Catalogue `AppProfile` + tenant `App` install (§3.4) | `kernelRequirements` + MAC-confined namespace + **default-deny egress** allowlisted to declared connector endpoints |
-| Cross-app **connectors** | `optionalIntegrations` → `IntegrationBinding` | Operator-wired credentials; per-step token exchange — not a shared vault |
+| The n8n **platform** | A `ComponentProfile` and a tenant's install of it (§3.4) | `requires.services` + MAC-confined namespace + **default-deny egress**, opened only by granted `requires.privileges.egress` |
+| Cross-app **connectors** | `integrations` → `IntegrationBinding` | Operator-wired credentials; per-step token exchange — not a shared vault |
 | A **workflow** | First-class principal / agent instance (§3.5) — *one identity per workflow*, the "each app is its own UID" port | Own `workflow:` (or `agent:`) identity; no shared vault |
 | A **workflow execution** | `task:` object with TTL Condition | `user → owns → workflow → executes_as → task(ttl)`; revocation = delete `acting_for` |
 | **Credentials** | JIT short-lived scoped tokens | Requested per-step from Keycloak via **RFC 8693** token exchange — no stored long-lived secrets |
@@ -1048,55 +1061,84 @@ An automation platform is a textbook **confused deputy**: a central engine holdi
 
 ```mermaid
 flowchart TD
-    OpenBao["OpenBao (KV v2)<br>single source of truth"]
+    OpenBao["OpenBao (KV v2)<br>where credentials are kept"]
     ESO["External Secrets Operator<br>sync to K8s API"]
-    K8sSecret["Kubernetes Secret<br>referenced by chart `existingSecret`"]
-    HelmRelease["Helm Release<br>deployed by ArgoCD or provider-helm"]
-    
+    K8sSecret["Kubernetes Secret<br>in the workload's namespace"]
+    HelmRelease["Helm release<br>provider-helm for apps, Argo CD for kernel services"]
+
     OpenBao -->|read| ESO
     ESO -->|writes| K8sSecret
     K8sSecret --> HelmRelease
 ```
 
-All secrets flow through OpenBao. The platform never puts secrets in
-Git, in CR specs, or in ConfigMaps.
+The credentials of the platform's services and of apps are kept in OpenBao and
+reach a workload as a Kubernetes Secret that ESO writes. No secret is put in
+Git, in a CR spec or in a ConfigMap.
+
+Some secrets are Kubernetes Secrets that never pass through OpenBao: the
+installer's copy of the master password and of the kernel credentials derived
+from it, in `kernel-provisioning`, from which the `Cluster` Composition makes
+the OpenBao paths (§7); the signing key of Keycloak's event listener, with its
+public half in `kernel-control`; the keys of a granted contract (§3.4);
+and TLS keys, which cert-manager holds.
 
 ## 5. Path Layout
 
+All under the KV mount `secret`.
+
 ```
 gentian-os/
-├── kernel/                           # seeded once, read-only to apps
-│   ├── identity/                     #   oidc_issuer, admin creds
-│   ├── database/                     #   root creds per engine
-│   ├── storage/                      #   S3 admin creds
-│   ├── mail/                         #   MTA/MDA admin creds
-│   ├── cache/                        #   Redis/Memcached admin creds
-│   ├── dns/                          #   Cloudflare API token (kernel + tenant DNS-01)
-│   └── messaging/                    #   reserved for future IPC bus
+├── kernel/                           # the platform's own; no tenant in the path
+│   ├── internal/master-password      #   value, salt (§6)
+│   ├── database/                     #   postgresql, mariadb, cnpg, portal-shell
+│   ├── cache/redis
+│   ├── storage/                      #   minio, registry
+│   ├── identity/keycloak-bootstrap   #   Keycloak's bootstrap administrator
+│   ├── authz/openfga                 #   the rights store's preshared key
+│   ├── oidc/openbao                  #   OpenBao's own sign-in client
+│   ├── mail/                         #   postfix, dovecot, smtp, relay
+│   ├── dns/{provider}                #   DNS-01 credential (cloudflare, route53, …)
+│   ├── edge/cf-tunnel
+│   ├── repositories/{name}           #   deployments and source repositories
+│   ├── signing/director              #   the director's commit-signing key
+│   ├── backup/                       #   recipients, destination, identity
+│   ├── llm, llm-providers            #   model gateway and its upstream keys
+│   ├── licence-report
+│   └── argocd/github-webhook
 │
 └── tenants/
-    └── {tenant-name}/
+    └── {tenant}/
         ├── apps/
-        │   └── {app-name}/
-        │       ├── oidc              #   client_id, client_secret
-        │       ├── database          #   user, password, database name
+        │   └── {app}/                #   an extension of an app: {app}-{extension}
+        │       ├── oidc              #   issuer, client_id, client_secret
+        │       ├── database          #   host, user, password, database name
         │       ├── s3                #   access_key, secret_key, bucket
-        │       ├── smtp              #   user, password
-        │       ├── imap              #   host, port, credentials
-        │       └── cache             #   host, port, password
+        │       ├── cache             #   host, port, password
+        │       ├── smtp              #   host, user, password
+        │       ├── imap              #   host, port
+        │       ├── llm               #   base URL and key at the model gateway
+        │       └── internal/{name}   #   a secret the profile asks to have generated
         ├── repositories/
         │   └── {repository-name}     #   username, password of a declared repository
         ├── contracts/
-        │   └── {contract-name}/      #   endpoint, auth, shared credentials
-        └── mail/
-            ├── dkim                  #   per-tenant DKIM private key
-            └── smtp                  #   per-tenant SMTP credentials
+        │   └── {contract-name}       #   shared credential of a binding (§3.4)
+        └── backup/                   #   destination, identity
 ```
 
-OpenBao policies are generated per tenant (`<tenant>-tenant-policy`,
-composed by `tenant-default`): no tenant can read another tenant's
-secrets. Per-`(tenant, app)` policies, so that no app can read a sibling
-app's paths, are a target — the layout above is shaped for them.
+The path helpers are in `internal/kernel/secrets/paths.go`.
+
+Who may read what:
+
+- **A policy per tenant**, `<tenant>-tenant-policy` (`tenant-default.yaml`),
+  covers `gentian-os/tenants/<tenant>/*` and nothing of another tenant.
+- **ESO** reads through one `ClusterSecretStore`, `openbao`, whose policy
+  `eso-read` (`cluster-default.yaml`) covers every tenant's `apps/`,
+  `repositories/`, `contracts/` and `backup/` and all of `gentian-os/kernel/*`,
+  the master password included. Only the backup identities are denied to it.
+  What keeps a secret to its namespace is therefore which `ExternalSecret` the
+  Compositions write, not the store.
+- Per-`(tenant, app)` policies, so that no app can read a sibling app's paths,
+  are a target — the layout above is shaped for them.
 
 ### 5.1 Repository pull credentials
 
@@ -1140,264 +1182,265 @@ What this does not give:
 
 ## 6. Secret Generation Mode
 
-The platform supports two credential generation strategies, selected
-by setting `SECRET_MODE` in
-`gentian-deployments/clusters/<cluster>/kernel/cluster-settings.env`
-before the initial cluster install:
+`secretMode` on the `Cluster` claim, in the deployments repository, selects how
+the **kernel's** credentials are generated. It is read at the first install.
 
-| Mode | `cluster-settings.env` value | Description |
+| Mode | Claim value | Kernel credentials are |
 | --- | --- | --- |
-| **Deterministic** (default) | `SECRET_MODE=derived` | All credentials derived from a single master password via HKDF-SHA256. No backup required for recovery. |
-| **Random** | `SECRET_MODE=random` | Each credential generated with `openssl rand -hex 32` at provision time. Recovery requires OpenBao backup. Supports independent per-credential rotation. |
+| **Deterministic** (default) | `secretMode: derived` | HMAC-SHA256 of the master password and a per-cluster salt. A rebuild with both yields the same values. |
+| **Random** | `secretMode: random` | `openssl rand -hex 32`, generated once and stored. Recovery means restoring OpenBao. |
+
+No person's password is derived or generated. The platform administrator and
+each tenant's administrator set their own through a single-use activation link
+([iam.md §1.4](iam.md)). The one administrator credential among the kernel's is
+Keycloak's own bootstrap administrator (`identity/keycloak-bootstrap`), which
+the operator uses (§3.0).
 
 ### 6.1 Deterministic mode (`derived`)
 
-Kernel secrets and per-app init credentials are derived from a single
-**master password** using HKDF-SHA256:
+The installer derives each kernel credential in shell (`_derive` in
+`scripts/lib/bootstrap.sh`, the same function in
+`scripts/bootstrap/seed-openbao.sh`):
 
 ```bash
-derive() {
-  echo -n "${context}:${purpose}" \
-    | openssl dgst -sha256 -hmac "${MASTER_PASSWORD}" \
-    | awk '{print $2}'    # 64-char hex — no sha1sum step
+_derive() {   # <context> <purpose>
+  echo -n "${1}:${2}" \
+    | openssl dgst -sha256 -hmac "${MASTER_PASSWORD}${DERIVATION_SALT}" \
+    | awk '{print $2}'    # 64 hex characters
 }
 ```
 
+The salt is 16 random bytes generated at the first install and stored beside
+the master password.
+
 Properties:
 
-1. **One secret to protect** instead of hundreds.
-2. **Idempotent re-seeding** — rerunning the seeder produces identical
-   credentials.
-3. **Disaster recovery** — if OpenBao is lost, all credentials can be
-   regenerated from the master password without backup restoration.
+1. **One secret to protect** instead of hundreds — with the salt.
+2. **Idempotent re-seeding** — rerunning the installer produces identical
+   credentials, and an existing path is never overwritten (§7).
+3. **Disaster recovery** — if OpenBao is lost, the kernel credentials can be
+   regenerated from the master password **and the salt**. The salt lives only
+   in OpenBao and in the recovery kit (`./install.sh --export-recovery-kit`),
+   so the master password alone reproduces nothing.
 
-The master password itself is written to
-`gentian-os/kernel/internal/master-password` in OpenBao by `seed-openbao.sh`
-so that Composition init Jobs can derive per-app credentials at
-app-install time without requiring the operator to be present.
+The master password and the salt are written to
+`gentian-os/kernel/internal/master-password` (steps `B-07-crossplane-secrets`
+and `B-08-seed-secrets`), and to the Secret `gentian-os-master-password` in
+`kernel-provisioning`, which the `Cluster` claim refers to.
 
-> **Target — this path is being removed.** A secret that every app-install
-> Job can read is the shared God credential §2.4 forbids: any init Job, in any
-> tenant, can derive *every* credential on the cluster, kernel identity
-> included, and the per-tenant OpenBao policies in §5 cannot contain it
-> because the derivation happens client-side from one input. Deriving is also
-> not a Job's business. **The operator derives and writes.** It is already the
-> master password's one reader — it loads it at start and owns the deriver —
-> and it already provisions every requirement. It derives the one credential
-> an install needs, writes it to that app's own OpenBao path, and the Job
-> receives it through its own `ExternalSecret` like any other secret: exactly
-> that credential and nothing else. The custodian is deliberately
-> *not* the place: its defining property is that it holds no credential of its
-> own and only exchanges a human caller's token, and serving workloads from the
-> master password would end that. The master password keeps one reader, and
-> can move to a KMS or HSM as §6 wants without rewriting the install path.
+**Per-app credentials are derived by the operator.** It reads the master
+password and the salt once at start and derives the one credential a
+requirement needs — HKDF-SHA256 with the credential's own OpenBao path as
+salt (`internal/kernel/secrets`, `Deriver`, `Seeder`) — and writes it to that
+app's path. An install Job of the platform's Compositions receives its
+credential through its own `ExternalSecret` and never sees the master
+password. An app uninstalled and installed again gets the same credentials.
 
-> **Security note:** the `sha1sum` pipe that appeared in earlier
-> versions of `seed-openbao.sh` has been removed. Piping HKDF-SHA256
-> binary output through SHA-1 weakened the construction: an attacker
-> with one known derived credential could run an offline dictionary
-> attack against the master password at SHA-1 speed. The corrected
-> implementation uses the HKDF-SHA256 hex output directly (64 chars).
-> This is a backward-incompatible change; all derived passwords changed
-> when the fix was applied.
+What still reaches the master password, and should not:
+
+- ESO's policy reads all of `gentian-os/kernel/*` (§5), so the store ESO uses
+  can read this path too.
+- The catalogue's Element profile brings a Composition of its own whose
+  database Job reads the master password and derives in shell.
+
+Narrowing both, and moving the master password to a KMS or HSM, are target.
 
 ### 6.2 Random mode (`random`)
 
-Each credential is generated independently:
+Each kernel credential is generated independently:
 
 ```bash
-generate() {
-  openssl rand -hex 32
-}
+openssl rand -hex 32
 ```
 
 Properties:
 
-1. **Independent rotation** — a single app's credential can be rotated
-   without affecting any other service.
-2. **Smaller blast radius** — a leaked credential does not expose the
-   master secret.
-3. **Requires backup** — if OpenBao is lost and no backup exists,
+1. **Independent rotation** — one kernel credential can be changed without
+   affecting another.
+2. **Requires backup** — if OpenBao is lost and no backup exists, the
    credentials cannot be recovered.
 
-This mode is the correct choice for deployments with a reliable OpenBao
-backup strategy or where SOC 2 / ISO 27001 compliance is a requirement.
+The mode does not reach per-app credentials. The master password is stored in
+OpenBao in this mode as well, and the operator derives every app's credentials
+from it exactly as under `derived` (§6.3).
 
 ### 6.3 Scope of each mode
 
-Both modes apply to the same set of credentials:
-
-- **Kernel credentials** — seeded once by `seed-openbao.sh` at cluster
-  install into `gentian-os/kernel/*`.
-- **Per-app credentials** — written by Composition init Jobs at
-  app-install time into `gentian-os/tenants/<tenant>/apps/<app>/*`.
-  Init Jobs read `SECRET_MODE` from a well-known ConfigMap and choose
-  the derivation path accordingly.
-
-App-level credentials are **not** pre-computed at cluster install time.
-They are created on demand when a tenant first installs an app. The
-closed list of per-app credentials previously hardcoded in
-`seed-openbao.sh` and `install.sh` is replaced by this on-demand
-provisioning.
+- **Kernel credentials** — written at cluster install into
+  `gentian-os/kernel/*`, derived or random as the mode says. Credentials a
+  person supplies (a DNS token, a mail relay's password, a registry login) are
+  stored as given, by the installer or, once the cluster runs, by the custodian.
+- **Per-app credentials** — created by the operator when a tenant installs an
+  app, in `gentian-os/tenants/<tenant>/apps/<app>/*`, and **derived from the
+  master password in both modes**: the operator does not read `secretMode`. It
+  generates random values only when it finds no master password at start.
 
 ## 7. Write-Once Protection
 
-Crossplane manages every kernel KV path with:
+Nothing the platform generates overwrites a credential that is already there.
 
-```yaml
-managementPolicies: ["Observe", "Create"]
-```
+- **Kernel paths the `Cluster` Composition makes** (`database/postgresql`,
+  `database/mariadb`, `cache/redis`, `storage/minio`,
+  `identity/keycloak-bootstrap`, `authz/openfga`, `mail/postfix`,
+  `mail/dovecot`, `oidc/openbao`) are managed with
 
-The platform creates the secret on first reconcile and **never
-overwrites a live credential**. Updates require an explicit human
-intervention (delete then re-create, or set `["Observe", "Create",
-"Update"]` temporarily).
+  ```yaml
+  managementPolicies: ["Observe", "Create"]
+  ```
 
-This protects against the most dangerous Terraform-style anti-pattern,
-where state drift causes unintended credential resets that lock out
-running apps.
+  so Crossplane creates the path on first reconcile and observes it afterwards.
+  The installer adds keys a later release introduced to an existing path, and
+  only the missing ones.
+- **Kernel paths the installer seeds** are written only where the path does not
+  exist (`kv_put_once`). Credentials a person supplies are written as given on
+  each run.
+- **Per-app paths** are written by the operator with OpenBao's check-and-set
+  (`cas=0`, `PutOnce`), which refuses a second write.
+
+Changing a credential is therefore a deliberate act in OpenBao (§9). This
+protects against the state-drift reset that locks out running apps.
 
 ## 8. Two Secret Delivery Patterns
 
-Not all upstream Helm charts support `existingSecret`. The platform
-uses two delivery patterns:
+Both begin with an `ExternalSecret` that ESO turns into a Kubernetes Secret.
 
-| Pattern | Mechanism | When to use |
+| Pattern | Mechanism | Used by |
 |---|---|---|
-| **A** (preferred) | ESO syncs OpenBao → K8s Secret; chart references via `existingSecret` | Charts with `existingSecret` support |
-| **B** (fallback) | `provider-helm` reads from K8s Secret via `valuesFrom: secretKeyRef` | Charts without `existingSecret` support |
+| **A** | The chart is told the Secret's name (`existingSecret` or its equivalent) and reads it itself | Kernel services whose charts support it |
+| **B** | provider-helm reads single keys of the Secret into chart values (`set[].valueFrom.secretKeyRef`) | Every app installed from a profile: `app-default` writes the Secret `<app>-sensitive-values` and maps its keys to the value names in the profile's `package.valueMapping` |
 
-Both patterns keep secrets out of Git and CR specs. Pattern B retains
-ArgoCD visibility (the Helm release is a normal MR) while still
-preventing plaintext leakage. The long-term goal is to contribute
-`existingSecret` support upstream where it is missing, so every chart
-moves to Pattern A — but this is an optimisation, not a requirement.
+Both keep secrets out of Git and CR specs. With B the value ends up in the
+Helm release's own stored values, which is a Secret in the app's namespace.
 
 A Kyverno (or `validatingAdmissionPolicy`) admission policy that rejects
 any `Release` MR putting a literal secret value into `set:` instead of
-`valuesFrom:` / `valueFrom:` is the intended structural guard rail. It is
+`valueFrom:` is the intended structural guard rail. It is
 not yet in `kernel/security/kyverno/policies/` (target).
 
 ## 9. Credential Rotation and Pod Restart
 
-Rotation is **passive**: the platform rotates the value in OpenBao,
-ESO syncs it into the K8s Secret, and **Stakater Reloader** rolls any
-workload annotated with `reloader.stakater.com/auto: "true"` whose
-referenced Secret has changed.
+There is no rotation command and no schedule. A credential is changed by
+writing the new value in OpenBao; ESO copies it into the Kubernetes Secret
+within its refresh interval (one hour for an app's Secret), and **Stakater
+Reloader** rolls a workload annotated with `reloader.stakater.com/auto: "true"`
+whose Secret changed.
 
-ArgoCD is not a sync trigger here — it watches manifests, not data.
-Reloader bridges the gap so rotation happens without a human running
-`kubectl rollout`. Today only the operator Deployment carries the
-annotation; `app-default` does not add it to tenant Releases, so app
-rotation still needs a manual roll (target: annotate every Release).
+The operator Deployment and a few kernel services carry the annotation.
+`app-default` adds it to no tenant Release, so an app is rolled only where its
+profile sets the annotation in its own chart values; otherwise it needs a
+manual roll (target: annotate every Release). The service the credential
+belongs to — a database role, a Keycloak client — has to be given the new
+value as well; nothing does that for a changed path.
 
 ### Rotation in `random` mode
 
-Annotation-driven rotation on the Tenant CR is **not implemented** (see
-[roadmap.md](../roadmap.md)). Until then, rotate by updating OpenBao and
-rolling affected pods (Reloader where annotated).
-
-This satisfies SOC 2 Type 1. Scheduled automatic rotation (SOC 2
-Type 2) is tracked in [roadmap.md](../roadmap.md).
+One kernel credential can be changed on its own, by hand as above.
+Rotation driven by an annotation or a schedule is not built
+([roadmap.md](../roadmap.md)).
 
 ### Rotation in `derived` mode
 
-Independent per-app rotation is not supported in `derived` mode:
-all credentials share the same master password as their only entropy
-source. Rotating one requires changing the master password, which
-rotates every credential simultaneously. For deployments where
-rotation is a compliance requirement, switch to `random` mode.
+A changed value in OpenBao holds, because nothing overwrites it (§7), but it
+is no longer what the master password reproduces: a rebuild from the master
+password and the salt returns the old one. Changing the master password
+changes nothing on a running cluster for the same reason. Where a credential
+must be rotated and survive a rebuild, use `random` mode and a backup of
+OpenBao. Per-app credentials are derived in both modes (§6.3), so the same
+holds for them everywhere.
 
 ## 10. Secret Flow Sequence
 
 ```mermaid
 sequenceDiagram
-    participant Seed as Seeder (one-shot)
+    participant Inst as Installer
     participant XP as Crossplane
-    participant Op as Operators
+    participant Op as Operator
     participant OB as OpenBao
     participant ESO as ESO
-    participant AC as ArgoCD
+    participant PH as provider-helm
     participant Pod as Workload
 
-    Seed->>OB: write kernel/* (HKDF-derived from master password)
-    Note over XP: Tenant CR applied
-    XP->>Op: create operator CRs (DB, OIDC, bucket, …)
-    Op->>OB: store provisioned credentials
-    XP->>ESO: create ExternalSecret CRs
-    ESO->>OB: read tenant/* paths
-    ESO->>AC: K8s Secret materialised
-    AC->>Pod: deploy chart (existingSecret reference)
-    Note over Pod: rotation
-    XP->>OB: update credential
-    ESO->>AC: K8s Secret data changes
-    Note over Pod: Stakater Reloader rolls Pod
+    Inst->>XP: Secrets in kernel-provisioning (master password, kernel credentials)
+    XP->>OB: create kernel/* paths once (Observe, Create)
+    Inst->>OB: seed the remaining kernel/* paths
+    Note over Op: a tenant installs an app
+    Op->>OB: derive and write tenants/{t}/apps/{app}/* once
+    XP->>ESO: ExternalSecret from the app's Composition
+    ESO->>OB: read the app's paths
+    ESO->>PH: Secret {app}-sensitive-values
+    PH->>Pod: Helm release with the values
+    Note over Pod: a value is changed in OpenBao
+    ESO->>PH: Secret data changes
+    Note over Pod: Reloader rolls the workload, where annotated
 ```
 
 ## 11. What Never Touches Git
 
-- Master password (lives in operator-controlled secret store, e.g.,
-  cloud KMS-protected file or external HSM).
+- The master password and its salt. On the cluster they are in OpenBao and in
+  one Secret in `kernel-provisioning`; off it, in the recovery kit.
 - Any value under `gentian-os/kernel/*` or
   `gentian-os/tenants/*/**`.
 - Any TLS private key.
-- The Cloudflare API token.
+- The DNS provider's API token.
 
-Everything else (CR specs, AppProfiles, Compositions, manifests) is
+Everything else (claims, profiles, Compositions, manifests) is
 plaintext-safe and committed to Git.
 
 ### 11.1 Matrix service accounts (Element / UVS)
 
-Tenant **users** authenticate via OIDC only (`id.<kernel>/realms/<tenant>`).
-Synapse may still allow **local password login** for internal Matrix service
-accounts (e.g. `@uvs` for the User Verification Service bootstrap job). Those
-passwords live in OpenBao (`matrix_uvs_password`) and are not human credentials.
-Do not set `password_config.enabled: false` on Synapse unless the UVS bootstrap
-path is replaced — see [app-profile-guide.md](../../../gentian-apps/docs/app-profile-guide.md) §7b.
+Tenant **users** sign in to Element over OIDC only, at their tenant's realm
+(`id.<cluster domain>/auth/realms/<tenant>`). Nothing in this repository or in
+the catalogue's Element profile creates a Matrix service account or stores a
+password for one. An add-on that needs a local Synapse account for a service
+brings the account and its secret itself, declared under the profile's
+`secrets`, and must not be a person's credential.
 
 ## 12. TLS and certificates
 
-Gentian OS terminates TLS at the edge (Envoy Gateway listeners) using cert-manager DNS-01
-wildcards. Kernel hosts (`portal.<kernel>`, `id.<kernel>`) and each tenant app
-zone (`*.<tenant>.<kernel>`) receive separate certificates. See
-[multi-tenancy.md](multi-tenancy.md) §3 for DNS-01 layout and ACME rate-limit
-guidance.
+Gentian OS terminates TLS at the edge (Envoy Gateway listeners) with
+certificates from cert-manager. The `Cluster` claim's
+`certificates.issuerMode` names the issuer: `acme-dns01` (the default, and the
+one that can issue wildcards), `acme-http01`, `private-ca` or `self-signed`.
+The kernel's hosts (`platform.<cluster domain>`, `id.<cluster domain>`) are
+covered by the kernel wildcard, `wildcard-kernel-tls`; each tenant zone
+receives a certificate of its own. See
+[multi-tenancy.md](multi-tenancy.md) §3 for the DNS-01 layout and ACME
+rate-limit guidance.
 
 ### 12.1 Development (ACME staging)
 
-Set `ACME_ENV=staging` in `install.env` before install. The platform provisions
-Let's Encrypt **staging** `ClusterIssuer`s and sets `ACME_STAGING: "true"` on
-the `gentian-kernel-services` ConfigMap in `gentian-system`. Staging
-certificates are **not** trusted by browsers or by default system CA bundles.
+Set `certificates.acmeEnv: staging` on the `Cluster` claim before the install.
+The installer applies the Let's Encrypt **staging** `ClusterIssuer`s (step
+`A-09-cluster-issuers`) and writes `ACME_STAGING: "true"` to the
+`gentian-kernel-services` ConfigMap in `kernel-control` (step
+`B-01-bootstrap-apps`). Staging certificates are **not** trusted by browsers
+or by default system CA bundles.
 
-**In-cluster OIDC clients** (apps that call `https://id.<kernel-domain>/…`
-from inside the cluster — notably **Synapse** and the **Jitsi Keycloak
-adapter**) need extra configuration on staging clusters:
+An app that calls `https://id.<cluster domain>/…` from inside the cluster
+therefore has to be given the issuer's chain. The same mechanism serves a
+cluster whose issuer is `self-signed` or `private-ca`.
 
 | Mechanism | Purpose | Limitation |
 |---|---|---|
-| `gentian-staging-ca-tls` secret | PEM bundle (Mozilla CAs + LE staging issuer chain) replicated into each `tenant-*` namespace by the operator | Works for `curl`, Python `requests`, and similar clients that honour `SSL_CERT_FILE` / `--cacert` |
-| `gentian-staging-ca-tls` → `node-extra-ca.crt` | LE staging issuer chain only (intermediate through root, via AIA) | **`NODE_EXTRA_CA_CERTS` for Node.js** workloads that must trust the staging CA. Node appends this file to the default Mozilla store; do not point it at `ca.crt` (duplicate Mozilla CAs break verification) |
-| `app-default` / catalogue `compositionRef` composition mounts | Mount `gentian-staging-ca-tls` (`ca.crt` + `truststore.jks`); set `REQUESTS_CA_BUNDLE` / `SSL_CERT_FILE` via `extraEnvVars` **and** merge the same keys into `values.environment` for charts that only render env from that map (e.g. **OpenProject**); append `javax.net.ssl.trustStore*` to `javaOpts` when the profile declares OIDC or existing `javaOpts` | **Insufficient for Synapse** — OIDC uses in-cluster `KEYCLOAK_INTERNAL_URL` (HTTP) plus `use_insecure_ssl_client_just_for_testing_do_not_use`; do not add Synapse `extraEnvVars` (chart already sets `SSL_CERT_DIR` and duplicates break Helm upgrades). **Required for Java OIDC apps** (e.g. XWiki). **Required for Ruby OIDC apps** (OpenProject). |
-| `use_insecure_ssl_client_just_for_testing_do_not_use: true` | Injected into Synapse `additionalConfiguration` when `ACME_STAGING=true` | Synapse-supported dev flag for outbound HTTPS (token/userinfo calls). **Insufficient alone** — also set `discover: false`, explicit https OIDC endpoints, and `user_profile_method: userinfo_endpoint` to skip startup JWKS fetch. **Staging only.** |
-| Catalogue composition (e.g. Element/Synapse) `additionalConfiguration.oidc_providers` | `discover: false` with public `https://id.<kernel>/realms/<tenant>/…` **authorization_endpoint** (browser) and in-cluster `http://…keycloak…/realms/<tenant>/…` **token/userinfo/jwks** via `KEYCLOAK_INTERNAL_URL` from `gentian-kernel-services`; `user_profile_method: userinfo_endpoint`; public `issuer`/client credentials via Helm `set[]` | Avoids Twisted HTTPS to the Envoy hairpin during OIDC code exchange (login-time failure shows as Element **“Invalid username or password”** even when Synapse starts). Chart-generated `homeserver.oidc` is stripped so only one `oidc_providers` block is emitted. |
+| Secret `gentian-trust-anchor-tls`, key `ca.crt` | Mozilla's CA bundle plus the issuer chain of the kernel wildcard. The operator builds it in `kernel-edge` and copies it into each tenant namespace (`internal/kernel/trustanchor`) | For clients that honour `SSL_CERT_FILE` or `--cacert` |
+| Same Secret, key `node-extra-ca.crt` | The issuer chain only, for Node.js through `NODE_EXTRA_CA_CERTS` | The platform does not set that variable: a profile that needs it sets it in its own chart values. Do not point it at `ca.crt` (duplicate Mozilla CAs break verification) |
+| Same Secret, key `truststore.jks` | A Java truststore of the same bundle | Its password is a fixed default |
+| `app-default` | Where `ACME_STAGING` is `true` or the cluster names a trust anchor, mounts the Secret at `/opt/gentian-trust-anchor` in every app installed from a profile, sets `REQUESTS_CA_BUNDLE`, `SSL_CERT_FILE` and `DENO_CERT` (as `extraEnvVars` and in `values.environment`), and appends `javax.net.ssl.trustStore*` to `javaOpts` when the profile declares an OIDC client or already has `javaOpts` | A chart that takes none of these values is not reached |
 
-**Synapse startup failure (staging):** if the Element Synapse chart is in
-`CrashLoopBackOff` with `Error while initialising OIDC provider 'oidc'` and a
-timeout fetching JWKS or `/.well-known/openid-configuration`, the usual cause
-is Twisted HTTPS to `id.<kernel-domain>` on a staging/gateway cluster — not a
-wrong issuer URL. `skip_verification` only skips *metadata validation* after a
-successful HTTPS fetch; it does not disable TLS certificate checks. Catalogue
-compositions for Element/Synapse (via `spec.compositionRef`)
-disable discovery, set explicit https endpoints,
-`user_profile_method: userinfo_endpoint` (skip startup JWKS load), and
-`use_insecure_ssl_client_just_for_testing_do_not_use` for runtime token calls.
+An app whose runtime honours none of these needs its own answer, in its own
+profile. The catalogue's Element profile is one: its Composition sets
+Synapse's OIDC provider with discovery off, the browser's
+`authorization_endpoint` on the public identity host, and the token and
+userinfo endpoints on Keycloak's in-cluster address (`KEYCLOAK_INTERNAL_URL`
+from `gentian-kernel-services`), so Synapse never opens TLS to the edge. It
+does so on every cluster, not only on staging, and also sets Synapse's
+`use_insecure_ssl_client_just_for_testing_do_not_use` on the provider.
 
-Bootstrap / refresh staging trust:
+Re-issue and refresh the trust bundle:
 
 ```bash
-./install.sh --only A-06-cluster-issuers,C-01-wildcard-cert   # recreates gentian-staging-ca-tls
-# operator reconcile replicates the secret into tenant namespaces
+./install.sh --only A-09-cluster-issuers,C-03-wildcard-cert
+# the operator rebuilds gentian-trust-anchor-tls and copies it into tenant namespaces
 ```
 
 ### 12.2 Production
@@ -1405,43 +1448,44 @@ Bootstrap / refresh staging trust:
 Production clusters **must** use Let's Encrypt **production** issuers (or another
 publicly trusted CA at both ingress and origin). Concretely:
 
-1. Set `ACME_ENV=production` (or omit staging) in `install.env` and use
-   production `ClusterIssuer` manifests only.
-2. Ensure `gentian-kernel-services` has `ACME_STAGING: "false"` (default when
-   the configured issuer name does not contain `staging`).
-3. **Do not** rely on `gentian-staging-ca-tls`, `use_insecure_ssl_client_just_for_testing_do_not_use`, or other staging-only workarounds — compositions gate these on `ACME_STAGING=true` and omit them in production.
-4. Verify `https://id.<kernel-domain>/realms/<tenant>/.well-known/openid-configuration`
-   presents a chain trusted by standard clients before rolling Element or other
-   OIDC-dependent apps.
+1. Leave `certificates.acmeEnv` at `production`, its default.
+2. Check that `gentian-kernel-services` in `kernel-control` has
+   `ACME_STAGING: "false"`.
+3. **Do not** rely on `gentian-trust-anchor-tls` or on an insecure client flag:
+   `app-default` mounts the bundle only where the cluster is on staging or
+   names a trust anchor of its own.
+4. Verify `https://id.<cluster domain>/auth/realms/<tenant>/.well-known/openid-configuration`
+   presents a chain trusted by standard clients before rolling apps that sign
+   in over OIDC.
 5. Prefer stable DNS-01 credentials and avoid reinstall loops that re-issue many
    wildcards per week (see [multi-tenancy.md](multi-tenancy.md) rate-limit table).
 
-With production certificates, Synapse and other in-cluster OIDC clients trust
-`id.<kernel-domain>` through the normal system CA store; no custom CA mount or
-insecure client flag is required.
+With production certificates an in-cluster OIDC client trusts
+`id.<cluster domain>` through the normal system CA store; no custom CA mount
+is required.
 
 ### 12.3 Cloudflare tunnel / orange-cloud
 
 When traffic is proxied at Cloudflare, **edge TLS** and **origin TLS** are
 independent. Origin certificates from cert-manager still matter for in-cluster
-and direct-origin callers (including Synapse → Keycloak). Enable **Total TLS**
+and direct-origin callers. Enable **Total TLS**
 (or equivalent) at the edge so multi-label tenant hostnames
-(`chat.demo.<kernel>`) receive edge certificates — the kernel wildcard alone is
+(`chat.demo.<cluster domain>`) receive edge certificates — the kernel wildcard alone is
 not sufficient. See [multi-tenancy.md](multi-tenancy.md) §3.
 
 
 ## 13. Licensing & sovereignty summary
 
-- **Apache 2.0 (ideal):** Keycloak, OpenFGA, SpiceDB, Ory core, OPA, NetBox, Cilium, SPIRE.
-- **AGPL-3.0 (copyleft — disclose service-side modifications):** Zitadel v3+, Permify, Snipe-IT.
-- **GPL:** GLPI.
-- **Recommendation:** the Keycloak + OpenFGA core is fully Apache 2.0, so a *modified* IdP/authZ engine can be shipped and operated without a copyleft obligation on the modifications. Both are self-hosted, which keeps the identity layer independent of any vendor. Zitadel remains the strong sovereignty-branded alternative if native multi-tenancy outweighs the AGPL constraint and you don't need to *consume* upstream SAML.
+- **In use, Apache 2.0:** Keycloak, OpenFGA, Kyverno, Envoy Gateway, Crossplane, Argo CD, cert-manager, External Secrets Operator.
+- **In use, MPL 2.0:** OpenBao.
+- **Considered, not used:** SpiceDB, Ory, OPA, NetBox, Cilium, SPIRE (Apache 2.0); Zitadel v3+, Permify, Snipe-IT (AGPL-3.0, copyleft — disclose service-side modifications); GLPI (GPL).
+- **Recommendation:** the Keycloak + OpenFGA core is fully Apache 2.0, so a *modified* IdP/authZ engine can be shipped and operated without a copyleft obligation on the modifications. Both are self-hosted, which keeps the identity layer independent of any vendor. Zitadel remains the alternative if native multi-tenancy outweighs the AGPL constraint and you don't need to *consume* upstream SAML.
 
 ---
 
 ## 14. Open questions / caveats
 
-- **Dual-write consistency:** syncing identities into a separate graph introduces a consistency window (the Zanzibar zookie problem). Use event-driven sync with reconciliation; consistent reads for sensitive checks.
+- **Dual-write consistency:** membership lives in Keycloak and is projected into OpenFGA from events, which leaves a window and, if an event is lost, a difference nothing repairs: no reconciliation of the stored memberships is built (§3.0). Consistent reads for sensitive checks are target.
 - **Agent-identity standards are in flux (2025–2026):** ID-JAG, the IETF agent-auth draft, OIDC-A, NIST guidance are early. Architect for OAuth/OIDC/SPIFFE primitives, not any single proprietary agent framework.
-- **ReBAC schemas need extension for advanced delegation** (runtime sessions, agent-to-agent, workflow-scoped authority) — active research. Build `agent`/`session`/`task` as explicit graph types now to adopt overlays later.
-- **Operational cost:** Keycloak (JVM) + OpenFGA + MAC backbone + mesh is more moving parts than a single binary. Budget DevOps capacity; SPIRE adds further weight when adopted.
+- **ReBAC schemas need extension for advanced delegation** (runtime sessions, agent-to-agent, workflow-scoped authority) — active research. The model has no `agent` or `task` type yet (§3.5).
+- **Operational cost:** Keycloak (JVM) + OpenFGA + OpenBao + the MAC backbone is more moving parts than a single binary. Budget DevOps capacity; a mesh and SPIRE add further weight if adopted.

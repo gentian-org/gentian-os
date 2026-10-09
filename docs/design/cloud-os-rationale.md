@@ -46,7 +46,7 @@ A cloud-native equivalent would do the same for organisations:
 
 > Click "install Nextcloud" — and the platform allocates a database,
 > registers an OIDC client, mints S3 credentials, configures DKIM for
-> the tenant's domain, wires Nextcloud into the SSO portal, and exposes
+> the tenant's domain, puts Nextcloud on the tenant's desktop behind single sign-on, and exposes
 > its files to other installed apps via a standard contract.
 
 This is what Gentian OS is.
@@ -104,7 +104,7 @@ To be precise about what Gentian OS is *not*:
 - **Not a Kubernetes distribution.** It runs on any conformant K8s.
 - **Not a SaaS product.** It is the platform someone could build a
   SaaS on top of, or run for their own organisation.
-- **Not a fork of any upstream app.** AppProfiles wrap upstream Helm
+- **Not a fork of any upstream app.** Profiles wrap upstream Helm
   charts as published; if patches are required, the goal is upstream
   contribution.
 

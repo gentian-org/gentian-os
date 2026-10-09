@@ -72,7 +72,7 @@ during.
 kubectl get nodes -o wide          > /tmp/pre-migration-nodes.txt
 kubectl get pods -A -o wide        > /tmp/pre-migration-pods.txt
 kubectl get pvc -A                 > /tmp/pre-migration-pvc.txt
-kubectl get applications -n argocd > /tmp/pre-migration-apps.txt
+kubectl get applications -n kernel-gitops > /tmp/pre-migration-apps.txt
 ```
 
 Note which Argo applications are already `OutOfSync` and which ExternalSecrets are
@@ -195,11 +195,14 @@ Three rules decide the order:
 | `openbao-transit` before `openbao-0` | The primary unseals through transit; transit must be up and unsealed first |
 | CNPG Postgres last | It needs §5.3's manual step, and it is what everything else depends on |
 
-Between the two Envoy drains, wait for the moved replica explicitly:
+Between the two Envoy drains, wait for the moved replica explicitly, for each of
+the two Gateways (`perimeter` and `authenticated`):
 
 ```bash
-kubectl wait --for=condition=Ready pod -n envoy-gateway-system \
-  -l gateway.envoyproxy.io/owning-gateway-name=kernel-public-gateway --timeout=300s
+kubectl wait --for=condition=Ready pod -n kernel-edge \
+  -l gateway.envoyproxy.io/owning-gateway-name=perimeter --timeout=300s
+kubectl wait --for=condition=Ready pod -n kernel-edge \
+  -l gateway.envoyproxy.io/owning-gateway-name=authenticated --timeout=300s
 ```
 
 ### 5.2 OpenBao unseals itself
@@ -209,8 +212,8 @@ unseals it from the `openbao-transit-unseal` Secret, and `openbao-0` then unseal
 through transit. Verify after each moves:
 
 ```bash
-kubectl -n openbao exec openbao-transit-0 -- bao status | grep -E 'Sealed|Initialized'
-kubectl -n openbao exec openbao-0 -- bao status -tls-skip-verify | grep -E 'Sealed|Initialized'
+kubectl -n kernel-seal exec openbao-transit-0 -- bao status | grep -E 'Sealed|Initialized'
+kubectl -n kernel-secrets exec openbao-0 -- bao status -tls-skip-verify | grep -E 'Sealed|Initialized'
 ```
 
 Both must report `Sealed false`. If the primary is sealed, transit was not ready when
@@ -218,16 +221,19 @@ it started; restarting the primary is enough.
 
 ### 5.3 CNPG Postgres needs a manual delete
 
-The kernel Postgres cluster runs `instances: 1`, so its `postgres-primary`
-PodDisruptionBudget permits **zero** disruptions and `kubectl drain` blocks
-indefinitely. CNPG cannot help: it logs *"Primary is running on an unschedulable
+There are two CloudNativePG clusters: `kernel-postgres` in `kernel-data`
+(Keycloak, OpenFGA and the kernel's own services) and `postgres` in
+`system-postgresql` (the apps' databases). A cluster that serves models has a
+third, `litellm-db` in `system-llm`. Each runs `instances: 1`, so its
+`<cluster>-primary` PodDisruptionBudget permits **zero** disruptions and
+`kubectl drain` blocks indefinitely. CNPG cannot help: it logs *"Primary is running on an unschedulable
 node, will try switching over"* and then *"there are no valid candidates"*, because
 there is no replica.
 
 Let the drain move everything else, then in another terminal:
 
 ```bash
-kubectl delete pod <postgres-pod> -n platform-kernel
+kubectl delete pod <postgres-pod> -n <its namespace>     # kernel-data, system-postgresql
 ```
 
 A direct delete bypasses the PDB — PDBs guard the Eviction API, not deletion. CNPG
@@ -235,15 +241,15 @@ recreates the pod on an uncordoned node and reattaches the PVC.
 
 **Expect several minutes.** `terminationGracePeriodSeconds` is 1800, and Postgres
 completes a graceful shutdown — including archiving its final WAL segment — before
-exiting. The kernel database is unavailable throughout, so dependent services log
+exiting. The database is unavailable throughout, so dependent services log
 connection errors; this is expected, not a fault. Do not force-delete unless the
 grace deadline actually passes.
 
 Confirm afterwards:
 
 ```bash
-kubectl get cluster.postgresql.cnpg.io -n platform-kernel postgres \
-  -o jsonpath='{.status.phase}{"  ready="}{.status.readyInstances}{"\n"}'
+kubectl get cluster.postgresql.cnpg.io -A \
+  -o custom-columns='NS:.metadata.namespace,NAME:.metadata.name,PHASE:.status.phase,READY:.status.readyInstances'
 ```
 
 A zero-downtime alternative is to raise `instances` to 2 in git, let the replica sync,
@@ -300,11 +306,11 @@ The old pool is the rollback path. Keep it until the platform is proven.
 ```bash
 kubectl get pods -A --no-headers | grep -vE "Running|Completed"   # expect empty
 kubectl get pvc -A                                               # all Bound
-kubectl get applications -n argocd | grep -v Synced               # compare to §2's baseline
+kubectl get applications -n kernel-gitops | grep -v Synced        # compare to §2's baseline
 kubectl get svc -A --field-selector spec.type=LoadBalancer        # external IPs unchanged
 ```
 
-Then exercise the platform: log in to the portal (Keycloak), open an app that uses
+Then exercise the platform: sign in to a tenant's desktop (Keycloak), open an app that uses
 both Postgres and MinIO, and send a test mail.
 
 Confirm the old nodes are genuinely empty — only DaemonSets should remain:

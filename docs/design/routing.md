@@ -67,7 +67,7 @@ unset hostname means "serve whatever this certificate covers", and the
 certificate alone defines the listener's reach. A hostname would instead act as a
 second, narrower filter, and the two disagree whenever a browser coalesces
 requests: over HTTP/2 a browser reuses one connection for every hostname the
-presented certificate covers, so a request for `portal.<kernelDomain>` may arrive
+presented certificate covers, so a request for `platform.<kernelDomain>` may arrive
 on a connection opened with SNI `<kernelDomain>`. A listener scoped to a subset
 of its own certificate answers such a request from the wrong route table, with a
 404.

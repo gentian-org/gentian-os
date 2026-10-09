@@ -1,6 +1,38 @@
 # LLM Serving Integration Design
 
-This document details the architecture for integrating Large Language Model (LLM) serving capabilities into Gentian OS. 
+This document details the architecture for integrating Large Language Model (LLM) serving capabilities into Gentian OS.
+
+## What is built
+
+§1–§4 are the original design and its first-stage plan. What runs today differs:
+
+*   **The model gateway** is LiteLLM (`litellm-proxy`), with its own PostgreSQL
+    (`litellm-db`) and Redis (`redis-llm`), in the namespace `system-llm`, which
+    exists only where the Cluster claim sets `spec.llm.enabled`
+    (`kernel/services/llm/manifests`, delivered by the `gentian-llm`
+    ApplicationSet). On a cluster without GPUs the same chart runs a mock
+    model server (`vllm-inference`).
+*   **No request passes the edge.** The gateway has no public address unless the
+    console is switched on (§5, "Operator access"). There is no Envoy AI
+    Gateway, no token validation in front of the gateway and no per-model
+    check in OpenFGA: an app presents its key to LiteLLM, and that is the
+    whole check.
+*   **A component gets access by declaring it** (`requires.services.llm` in its
+    `ComponentProfile`). The operator then generates a key for that tenant and
+    component, registers it at the gateway, writes the Secret
+    `llm-credentials-<component>` (`OPENAI_API_BASE`, `OPENAI_API_BASE_URL`,
+    `OPENAI_API_KEY`) in the tenant's namespace, and opens the component's
+    network path to the gateway's port
+    (`internal/controller/model_access_reconciler.go`, `internal/modelgateway`).
+    A component that does not declare it gets none of these.
+*   **One LiteLLM team per tenant**, created by the tenant reconciler
+    (`internal/controller/litellm_team.go`). The operator sets no budget and no
+    rate limit on a team or a key.
+*   **Not built on the current namespace layout:** installing real vLLM
+    instances from `spec.llm.instances` (the chart `kernel/services/llm/chart`
+    exists, still names the former shared namespace, and nothing applies it),
+    and registering the claim's models — vLLM instances or `spec.llm.providers`
+    — at the gateway. LocalAI was never added.
 
 ---
 
@@ -143,8 +175,8 @@ Stage 1 focuses on establishing the core loop: running a single-GPU server, secu
 
 A cluster does not have to serve its own weights. `spec.llm.providers` on the
 Cluster claim declares external, OpenAI-compatible endpoints, and they route
-through the same LiteLLM gateway as the vLLM instances — so the virtual keys,
-per-tenant Teams and token budgets apply to them unchanged. It is independent of
+through the same LiteLLM gateway as the vLLM instances — so the keys and
+per-tenant teams apply to them unchanged. It is independent of
 `gpuAcceleration`: a CPU-only cluster with no `instances` is the case these
 exist for.
 
@@ -168,20 +200,20 @@ Each `models` entry becomes one LiteLLM registration named
 deliberate: upstream ids collide across providers, and a tenant reading a model
 list should be able to see who serves what.
 
-**The claim is the only way in.** `scripts/lib/llm-lib.sh`
-(`ensure_litellm_provider_models`, run by D-05 and again by E-02) reconciles
-LiteLLM's registry against the claim: an entry added here is registered, an entry
-removed is deregistered, and a model typed into LiteLLM's Admin Console is
-deleted by the next run. Registrations it owns are marked
-`model_info.gentian_managed`, so models registered by hand and by the vLLM sync
-are left alone rather than swept up.
+**The claim is meant to be the only way in**: an entry added is registered, an
+entry removed is deregistered, and a model typed into LiteLLM's console is
+removed again. Nothing reconciles the gateway's model list against the claim at
+present — the installer functions that did were removed with the former step
+set and have no successor yet — so the claim's `providers` are accepted and
+their credential is delivered to the gateway's namespace, but no model is
+registered from them.
 
 ### The API key is a credential, the product id is not
 
 Each provider has its own `llm-provider-<name>` credential declaring one field,
 and they all share the OpenBao path `gentian-os/kernel/llm-providers` (see
 [`credentials.yaml`](../../credentials.yaml)); `apiKeyProperty` on the claim names
-which property to read. Supply the token in the portal's **Admin Console** under
+which property to read. Supply the token in the **administration console** under
 that credential — the write happens as your own OpenBao token, merge-patches the
 path so it cannot clobber another provider's key, and tells the ExternalSecret to
 resync immediately rather than at the end of its refresh interval.
@@ -195,9 +227,8 @@ whose property is missing is reported rather than registered as a model that
 answers 401.
 
 > These credentials declare `validate: noop`, so the console stores the token
-> without probing it — the validator enum has no generic bearer-token check. A
-> wrong or unscoped token is caught by the reconcile's own per-provider probe at
-> install time, not by the form.
+> without probing it — the validator enum has no generic bearer-token check.
+> Nothing else probes it either, as long as nothing registers the models.
 
 The product id in `apiBase` is not secret: it selects which product is billed and
 it is part of the endpoint, so it belongs on the claim where it can be reviewed.
@@ -207,19 +238,17 @@ authenticates and then refuses every AI endpoint.
 
 ### Where a provider can be reached from
 
-Only from the kernel. `platform-kernel` has no NetworkPolicy, so LiteLLM reaches
-the internet; a tenant namespace is held to `10.0.0.0/8:443` by
-`tenant-isolation`, so a tenant app configured to call a provider directly gets a
-timeout its UI usually renders as an empty model list. That asymmetry is the
-design — the gateway is what holds the credential and the budget — and it is why
-the reconcile probes each provider from inside `platform-kernel` before
-registering anything, reporting unreachable, refused (401/403), wrong `apiBase`
-(404) and missing-credential apart, because each has a different fix.
+Only from the gateway. The policies on `system-llm` restrict who may connect to
+its pods and say nothing about egress, so LiteLLM reaches the internet; a tenant
+namespace is denied egress by default (`tenant-isolation`), so a tenant app
+configured to call a provider directly gets a timeout its UI usually renders as
+an empty model list. That asymmetry is the design: the gateway is what holds the
+credential.
 
-> Adding an egress NetworkPolicy to `platform-kernel` to "allow 443" would be a
+> Adding an egress NetworkPolicy to `system-llm` to "allow 443" would be a
 > regression, not a hardening: the namespace has no egress policy today, and the
-> first one switches every pod there to deny-by-default, breaking LiteLLM's DNS,
-> Postgres and Redis unless all of it is enumerated in the same policy.
+> first one switches the selected pods to deny-by-default, breaking LiteLLM's
+> DNS, Postgres and Redis unless all of it is enumerated in the same policy.
 
 ### Operator access
 
@@ -238,8 +267,8 @@ Off, the default, there is no route and no published host for
 the gateway is reached from inside the cluster only, by the apps and desktops
 that declared it and by the operator. Nothing the platform does needs the
 console. Models come from the claim, an app's key and a tenant's team are
-registered by the operator, and a provider's token is entered in the portal's
-Admin Console.
+registered by the operator, and a provider's token is entered in the
+administration console.
 
 On, `llm.<kernelDomain>` is routed to the gateway behind the kernel sign-in for
 accounts that may configure the cluster (`can_configure`;

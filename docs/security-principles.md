@@ -20,8 +20,8 @@ tokens; workloads hold audience-bound service-account tokens (SPIFFE when
 needed); agents hold RFC 8693 exchanged tokens carrying `act`. A component
 that accepts `X-Whoever: alice` has no identity, it has an opinion.
 
-*Pattern:* the custodian — forwards the caller's token, never parses
-it, lets the issuer's verdict stand.
+*Pattern:* the custodian — it is handed the caller's token, verifies it
+against the issuer's keys, and takes the caller's name from nothing else.
 
 ## 2. Three questions, three answerers, no overlap
 
@@ -37,15 +37,18 @@ separates is authority, not copies.
 
 ## 3. Few, named policy-enforcement points; everything else consumes a verdict
 
-The gateway (browser and API traffic), the **publishing proxy** (everything
-anonymous or protocol-authenticated, in a DMZ namespace), the director
-(configuration writes), the custodian (secret writes), the MCP
-gateway (agent tool calls). The proxy is one of these because it decides:
-`none`, `basic` and `signature` are verified there and nowhere else, and it
-is the only component both kinds of perimeter entry pass through. Being a PEP
-obliges it: it **strips every inbound identity header** before forwarding and
-sets only its own, which is the condition rule 1 attaches to trusting a
-header at all.
+The gateway with its bouncer (browser and API traffic behind a session), the
+**publishing proxy** (everything published without sign-in, in a DMZ
+namespace), the director (configuration writes), the custodian (secret
+writes), the registrar (people and groups), and the MCP gateway (agent tool
+calls; not built). The proxy is one of these because it decides what is
+published: only an approved entry's declared paths pass, and every
+perimeter entry passes through it. It verifies no caller — `authMode: none`
+forwards for anyone, `authMode: app` hands the caller's own credential to the
+app to check, and `basic`, `bearer`, `jwt` and `signature` are refused on a
+perimeter entry because nothing verifies them yet. Being a PEP obliges it: it
+**strips every inbound identity header** before forwarding and sets none,
+which is the condition rule 1 attaches to trusting a header at all.
 A request that reaches a workload without passing a named PEP is a bug.
 Apps never decide platform questions; they receive the decision as identity
 headers or an exchanged token.
@@ -59,7 +62,7 @@ principle 3 as a licence for a bypassable one.
 
 ## 4. The authorization vocabulary grows with the API, not with use cases
 
-One OpenFGA type per CRD kind (`cluster`, `tenant`, `app`, `document`, …), one relation per verb a PEP exposes. A new kind ships with its
+One OpenFGA type per kind a PEP decides about (`cluster`, `tenant`, `app`, `contract`, …), one relation per verb a PEP exposes. A new kind ships with its
 type and a case in `authz/model/*/tests.fga.yaml`, or it does not ship. Group
 membership is in the graph only as a projection of Keycloak, written by the
 operator from Keycloak's events and reconciled toward Keycloak, never edited

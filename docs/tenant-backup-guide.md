@@ -1,8 +1,8 @@
 # Backing Up and Recovering Your Workspace
 
 **For:** tenant administrators
-**You will need:** the Admin Console, and your cluster administrator for two of
-the steps below
+**You will need:** the administration console, and your cluster administrator
+for two of the steps below
 
 A backup captures your whole workspace — your apps' databases, the files they
 store, and your member accounts — into a single encrypted bundle. This guide
@@ -20,12 +20,13 @@ Two things are worth knowing before you start, because they surprise people:
 
 ## 1. Before your first backup
 
-**Ask your cluster administrator: "is a backup key configured for this
-cluster?"**
+**If you want to use the platform's key, ask your cluster administrator: "is a
+backup key configured for this cluster?"**
 
-Nothing can be backed up until one is. The platform refuses to write your data
-to storage unencrypted, so with no key configured your first backup will simply
-fail — which looks like a broken feature rather than a missing setting.
+The platform refuses to write your data to storage unencrypted. A backup
+protected with a key or a passphrase of your own (§2) needs nothing from the
+cluster; one protected with the platform's key fails until the cluster has
+one — which looks like a broken feature rather than a missing setting.
 
 They can check, and set one up, with the following. *(This section is for them,
 not you — forward it.)*
@@ -35,7 +36,7 @@ not you — forward it.)*
 > Check whether the operator has a recipient:
 >
 > ```bash
-> kubectl -n gentian-system get deploy gentian-os -o \
+> kubectl -n kernel-control get deploy gentian-os -o \
 >   jsonpath='{range .spec.template.spec.containers[0].env[?(@.name=="BACKUP_AGE_RECIPIENTS")]}{.value}{"\n"}{end}'
 > ```
 >
@@ -72,8 +73,8 @@ not you — forward it.)*
 
 ## 2. Taking a backup
 
-Open **Admin Console → Backup**, give it a name, choose how it should be
-protected, and start it.
+Open the administration console's **Export** screen, give the backup a name,
+choose who can read it, and start it.
 
 ### Choosing the encryption
 
@@ -81,12 +82,14 @@ This is the one decision that matters, and it is not reversible after the fact.
 
 | Choice | Who can read the bundle | Choose it when |
 |---|---|---|
-| **Platform key** | you, and whoever holds the cluster's backup key — normally your provider | this is a routine backup and you would like help restoring it |
-| **My passphrase** | only you | the backup must not be readable by the platform or its operators |
+| **The platform's key** | you, and whoever holds the cluster's backup key — normally your provider | this is a routine backup and you would like help restoring it |
+| **A key of your workspace** — a new one, the one it already has, or one you paste | whoever holds the private key | the backup must not be readable by the platform or its operators |
+| **My passphrase** | only you | the same, and you would rather remember a passphrase than keep a key file |
 
-**Platform key** is the sensible default. Your cluster administrator can restore
-it for you, which matters on the day you need it, because that day is rarely one
-where you feel like following a procedure.
+With **the platform's key** your cluster administrator can restore the backup
+for you, which matters on the day you need it, because that day is rarely one
+where you feel like following a procedure. With a key of your own, see
+[§8](#8-regular-backups) for how to make and keep one.
 
 **My passphrase** means exactly what it says. Nobody else can open the bundle —
 not your provider, not support, not anyone who later gains access to the
@@ -115,7 +118,7 @@ What your users see depends on the app:
 - Apps without one are stopped and restarted. To a user that looks like the app
   being briefly unavailable.
 
-The Backup tab shows which app is being captured and, once each is finished,
+The Export screen shows which app is being captured and, once each is finished,
 **how long it was paused**. That number is the honest cost of a backup, and it
 is worth watching on your first run so you know what to expect.
 
@@ -130,7 +133,7 @@ Only one backup runs at a time per workspace. If you start a second, it waits.
 
 ## 4. Checking that it worked
 
-A backup is finished when the Backup tab shows **Ready**. Until then it is
+A backup is finished when the Export screen shows **Ready**. Until then it is
 still working, however long that takes on a large workspace.
 
 Worth checking on the entry:
@@ -143,7 +146,7 @@ Worth checking on the entry:
 
 If a backup shows **Failed**, the reason is on the entry. The most common one on
 a first attempt is that no backup key is configured — see [§1](#1-before-your-first-backup).
-A failed backup is safe to delete from the Backup tab; whatever partial data it
+A failed backup is safe to delete from the list; whatever partial data it
 wrote is removed with it. Deleting a **Ready** backup removes its stored bundle
 permanently — there is no undo, so treat it like shredding the only copy.
 
@@ -157,12 +160,9 @@ permanently — there is no undo, so treat it like shredding the only copy.
 
 ## 5. Where the bundle lives
 
-In the platform's object storage, not on your computer. The Backup tab shows its
-location.
-
-There is no download button yet. A workspace-sized bundle is not really a
-browser download, and serving one safely needs work that has not been done —
-so for now, getting a copy is a request to your cluster administrator.
+In the platform's object storage. The Export screen shows its location, and
+**Download** on a finished backup saves it to your computer as one
+`.gentian` file.
 
 Inside the bundle, one file — `bundle-info.json` — is deliberately left
 unencrypted. It says whose backup this is, when it was taken, how it was
@@ -174,12 +174,12 @@ including the index of what was captured, is encrypted.
 ## 6. Recovering your data
 
 **Restoring is a cluster-administrator operation today.** There is no button in
-the Admin Console. This is deliberate for now: a restore replaces live data with
+the administration console. This is deliberate for now: a restore replaces live data with
 what the backup recorded, and everything written since is lost.
 
 ### What to tell your cluster administrator
 
-1. **Which backup** — the name from the Backup tab.
+1. **Which backup** — its name on the Export screen.
 2. **Which apps**, if you only want some of them restored.
 3. **The passphrase**, if you chose your own for a manual backup, or **the
    private key** (`AGE-SECRET-KEY-…`) if your schedule encrypts to a key only
@@ -189,8 +189,9 @@ what the backup recorded, and everything written since is lost.
 
 **Your members will not be able to sign in until their passwords are reset.**
 Backups do not contain passwords — they are not stored in a form that can be
-copied — so accounts come back without them. After a restore, use
-**Admin Console → Members** to send each member a password reset.
+copied — so accounts come back without them. After a restore, use the
+administration console's **Members** screen to send each member a password
+reset.
 
 Plan for this. It is the part that catches people out: the data is all there,
 and the workspace looks broken because nobody can get in.
@@ -247,16 +248,18 @@ first, so the current state is recoverable too.
 
 ## 8. Regular backups
 
-Backups on a schedule are set in **Admin Console → Backup settings**, per
-workspace, by your workspace administrator — or by your cluster administrator on
-your behalf. Set one up: a nightly backup you never think about is worth
-considerably more than a manual one you take when you remember.
+The administration console takes one backup, now. Backups on a schedule, where
+they are stored and how long they are kept are a backup policy
+(`BackupPolicy`), which your cluster administrator sets for the cluster or for
+your workspace ([commands.md](commands.md) §13–§14), or which the Operations
+Console manages where that app is installed. Ask for one: a nightly backup you
+never think about is worth considerably more than a manual one you take when
+you remember.
 
 ### Which key a schedule uses
 
 A schedule cannot use a passphrase — there is nobody to type one at three in the
-morning — so the choice is which key it encrypts to, in **Admin Console → Backup
-settings → Who can read the backups**.
+morning — so the choice is which key it encrypts to.
 
 | Choice | Who can read the bundles | Choose it when |
 |---|---|---|
@@ -278,11 +281,12 @@ Get a key pair one of two ways:
 
   The private key never reaches the platform at all.
 
-- **Ask the console to generate one**, with *Generate a key for me*. The private
+- **Ask the console to generate one**, with *Generate backup key*. The private
   key is shown once and stored nowhere, but it was made on the server, so it is
   only as private as the server is.
 
-Paste the **public** key — the line starting `age1` — into the form. Keep the
+Give the **public** key — the line starting `age1` — to whoever sets the
+schedule, or paste it into the Export screen for a single backup. Keep the
 private key, the line starting `AGE-SECRET-KEY-`, offline; a copy on the cluster
 you would be restoring *from* is no copy at all.
 
@@ -323,11 +327,11 @@ Two things worth asking your administrator to confirm:
 ## Common questions
 
 **Can I back up a single app?**
-The Admin Console captures the whole workspace. A single-app restore is possible
+The administration console captures the whole workspace. A single-app restore is possible
 — mention it when you ask.
 
 **How long does it take?**
-It depends on how much data you have. The first one tells you; the Backup tab
+It depends on how much data you have. The first one tells you; the Export screen
 records how long each app was paused, which is the part your users notice.
 
 **Can I take a backup during working hours?**

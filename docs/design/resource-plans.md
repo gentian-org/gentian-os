@@ -300,8 +300,8 @@ default):
 | `actual` | `metrics.k8s.io`, when installed | Advisory: is the plan the right size? |
 | `plan`, `productSku` | Resolved from the catalogue | The label a stretch is priced under |
 
-Rows land in **that tenant's own `{tenant}_shell` database**, beside the portal's
-audit events and notifications. A tenant's consumption is tenant data: it goes
+Rows land in **that tenant's own `{tenant}_shell` database**, the desktop's,
+beside its notifications. A tenant's consumption is tenant data: it goes
 where the rest of that tenant's data goes, it leaves with the tenant, and the
 `TenantExport` that already captures the shell database captures it too. The cost
 is that a cluster-wide roll-up opens one connection per tenant — the honest price
@@ -372,16 +372,18 @@ moved *to* — because a gap is honest and a wrong price is not.
 
 One set of rules, one writer. The plan catalogue, the downgrade guard and the
 entitlement ceiling live in the operator, which answers them for a tenant; the
-director relays those answers to whoever may view the tenant, validates a choice
-against them, and makes the one write. Nothing reimplements either half.
+usher relays those answers to whoever may view the tenant, and the director
+validates a choice against them and makes the one write. Nothing reimplements
+the rules.
 
 | Surface | How it reaches them |
 |---|---|
-| **Admin Console → Resources** | console API → director, as the caller |
-| **`kubectl gentian resources`** | port-forward → the operator's reads; no write |
-| **Anything else** | the director's endpoints, with a person's token |
+| **Administration console → Resources** | console API → usher (reads) and director (the write), as the caller |
+| **`kubectl gentian resources`** | port-forward → usher for `plans`, `show`, `report`; director for `set`; with the token of `kubectl gentian login` |
+| **Anything else** | the same endpoints, with a person's token |
 
-The director, guarded by the tenant relation named:
+The reads are the usher's and the write is the director's, each guarded by the
+relation named:
 
 ```
 GET  /v1/tenants/{t}/resources          can_view      plan, ceiling, committed, live
@@ -393,7 +395,8 @@ GET  /v1/clusters/{c}/resources         can_audit     every tenant's state, for 
 ```
 
 The operator's app-lifecycle API keeps the reads (`GET .../resources`,
-`/plans`, `/usage`, `/report`), which is what the director relays. It has no
+`/plans`, `/usage`, `/report`), which is what the usher relays and the director
+validates against. It has no
 `PUT`. Each plan it lists that the tenant may not move to carries `blocked`, the
 reason in words, and `blockedBy` — `fit`, `entitlement` or `self-service` — which
 is what the director turns into a status:
@@ -409,7 +412,7 @@ is what the director turns into a status:
 Whether the caller chooses for themselves — a tenant administrator, held to
 the self-service catalogue — or for the cluster is decided by the director from
 `can_configure` on the cluster, and asserted by no screen. The console adds
-nothing: it forwards the caller's own token and hands back what the director
+nothing: it forwards the caller's own token and hands back what it was
 answered, including a refusal.
 
 ### 7.1 Console
@@ -456,7 +459,7 @@ usage.ActualSource
 Adopting Prometheus later is a change of source, not a restart of the record —
 the series already collected stays, and neither the API nor the UI changes.
 
-Install with `scripts/steps/A-11-metrics-server.sh` and set
+Install with `scripts/steps/A-07-metrics-server.sh` and set
 `usage.metricsServer.enabled=true`. Without it the Resources tab shows ceilings
 and committed usage, and says the live comparison is unavailable rather than
 drawing an empty series that reads as "this tenant used nothing".
@@ -476,11 +479,11 @@ Operator chart (`charts/gentian-os/values.yaml`):
 | `usage.plans.enabled` | `true` | Ship the plan catalogue |
 | `usage.plans.catalogue` | five node tiers | The priced plans themselves |
 
-Director (the same chart):
+Director and usher (the same chart):
 
 | Value | Effect |
 |---|---|
-| `director.appLifecycleURL` | The operator's app-lifecycle API, which the director reads a tenant's resources from and validates a plan choice against. Empty derives it from the release's own lifecycle Service. Without it the director registers no resources routes, and the console's Resources screen says so rather than showing a cluster with no plans. |
+| `director.appLifecycleURL`, `usher.appLifecycleURL` | The operator's app-lifecycle API, which the usher reads a tenant's resources from and the director validates a plan choice against. Empty derives it from the release's own lifecycle Service. |
 
 ---
 
@@ -488,26 +491,24 @@ Director (the same chart):
 
 ```bash
 # Catalogue, and what one tenant may pick
-kubectl gentian resources plans
 kubectl gentian resources plans --tenant corp
 
 # A tenant's ceiling and what is under it
-kubectl gentian resources show corp
+kubectl gentian resources show --tenant corp
 
 # Move a tenant: through the director, as yourself. Refused if it does not fit.
-curl -X PUT -H "Authorization: Bearer $TOKEN" -d '{"plan":"nodes-2"}' \
-  https://<director>/v1/tenants/corp/resources
-# (or the administration console's Resources screen, which does exactly this)
+kubectl gentian resources set --tenant corp --plan nodes-2
+# (or the administration console's Resources screen, which does the same)
 
 # What a month resolves to for invoicing
-kubectl gentian resources report corp --from 2026-01-01T00:00:00Z --to 2026-02-01T00:00:00Z
+kubectl gentian resources report --tenant corp --from 2026-01-01T00:00:00Z --to 2026-02-01T00:00:00Z
 
 # The ceiling on what a tenant may choose for itself
 kubectl annotate tenant corp gentianos.io/max-resource-tier=20 --overwrite
 ```
 
 **Sampler not recording:** it writes to each tenant's `{tenant}_shell` database
-through the `portal-shell-<tenant>` Secret in `platform-kernel`. A tenant without
+through the `desktop-database` Secret in the tenant's namespace. A tenant without
 that Secret is skipped and logged; the others are unaffected.
 
 **Plan shows as `custom`:** the tenant's quotas match no plan. Either the tenant

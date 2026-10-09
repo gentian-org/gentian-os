@@ -47,44 +47,38 @@ contract apps participate in, owned by the OS.
 
 ## 2. Contracts, MCP and Automation Hooks
 
-The platform has four layers of inter-app contracts, each serving a
-different consumer but sharing the same `AppProfile` declaration
-surface:
+A `ComponentProfile` declares what a component needs and offers in one place.
+Two of the four layers are built; two are design only:
 
-| Layer | Purpose | Consumer | Interaction model |
+| Layer | Purpose | Consumer | State |
 |---|---|---|---|
-| **Kernel requirements** (`spec.kernelRequirements`) | Identity, storage, mail, DB | Provisioned by the platform | Platform → app |
-| **App contracts** (`spec.provides` / `optionalIntegrations`) | App-to-app integration (e.g., OpenProject ↔ Nextcloud) | Other apps | Machine-to-machine, stable APIs |
-| **MCP capabilities** (`spec.mcp`) | Agent-readable operations (`searchTasks`, `createIssue`) | AI agents, shell assistant | Agent-initiated, pull (request/response) |
-| **Automation hooks** (`spec.automationHooks`) | Event-driven workflow triggers and actions | Workflow engines (ActivePieces, future n8n, …) | Event-driven, push (webhooks / CloudEvents) |
+| **Service requirements** (`spec.requires.services`) | Identity, database, storage, cache, mail, model gateway | Fulfilled by the platform | Built |
+| **App contracts** (`spec.provides` / `spec.integrations`) | App-to-app integration (e.g., OpenProject ↔ Nextcloud), granted per tenant with an `AppGrant` and wired as an `IntegrationBinding` | Other apps | Built |
+| **MCP** (`spec.requires.services.mcp`) | Agent-readable operations | AI agents, the desktop's assistant | The declaration exists; nothing acts on it (§3) |
+| **Automation hooks** | Event-driven workflow triggers and actions | Workflow engines (ActivePieces, future n8n, …) | Not built; no such field (§5) |
 
-A single `AppProfile` declares all four. Contracts are
-machine-to-machine via stable APIs; MCP is agent-to-machine via a
-discoverable, semantic interface; automation hooks bridge the
-event-driven workflow world into the same contract system.
+Contracts are machine-to-machine via stable APIs; MCP is agent-to-machine via a
+discoverable interface; automation hooks would bring event-driven workflows
+into the same contract system.
 
 ## 3. MCP as a Kernel Requirement
 
-Apps declare their MCP surface in `AppProfile.spec.mcp`:
+An app declares that it serves MCP in its `ComponentProfile`:
 
 ```yaml
 spec:
-  mcp:
-    endpoint: /mcp                # path on the app's main service
-    auth: oidc                    # uses kernel identity, no separate creds
-    capabilities:
-      - name: searchTasks
-        description: Search tasks by query
-        scope: read
-      - name: createIssue
-        description: Create new issue
-        scope: write
-      - name: updateStatus
-        description: Update task status
-        scope: write
+  requires:
+    services:
+      mcp:
+        enabled: true
+        endpoint: /mcp              # path on the app's main service
+        auth: oidc                  # oidc | none
 ```
 
-When the Composition reconciles the app, it also:
+That is all that exists. The operator accepts the declaration and does nothing
+with it: there is no MCP registry, no list of capabilities with scopes in the
+profile, and no `mcpcapabilities` resource. The design is that, when an app is
+installed, the platform:
 
 1. Registers the app's MCP endpoint with the **MCP registry**
    (a kernel service exposing the catalogue of all live MCP
@@ -93,8 +87,8 @@ When the Composition reconciles the app, it also:
    through MCP reaches an app as one particular person is not settled here:
    no app is handed a person's token (AD-13), and the identity provider is
    not configured to exchange one.
-3. Publishes the capability list under the tenant's namespace,
-   discoverable via `kubectl get mcpcapabilities -n tenant-{name}`.
+3. Publishes the capability list (name, description, and a `read` / `write` /
+   `admin` scope each) under the tenant's namespace.
 
 Apps without MCP support simply omit the `mcp:` block; the platform
 treats them as agent-opaque but still useful.
@@ -119,17 +113,22 @@ kernel's (see Scope).
 
 ## 5. Automation Hooks (`spec.automationHooks`)
 
+**Design only.** `ComponentProfile` has no `automationHooks` field, and the
+operator creates no binding, connection or webhook registration from one.
+`IntegrationBinding` exists for app contracts (§2) only. The rest of this
+section is the design.
+
 MCP (§3) is pull-based: an AI agent decides when to call an app.
 Workflow automation engines need the inverse — **push-based event
 delivery** ("when X happens, trigger Y"). The `automationHooks`
-block on `AppProfile` bridges this gap without coupling to any
+block on `ComponentProfile` would bridge this gap without coupling to any
 specific workflow engine.
 
 ### 5.1 Why a separate block (not MCP)
 
 MCP and workflow automation serve genuinely different roles:
 
-| | MCP (`spec.mcp`) | Automation Hooks (`spec.automationHooks`) |
+| | MCP (`requires.services.mcp`) | Automation Hooks (`spec.automationHooks`) |
 |---|---|---|
 | **Consumer** | AI agents / LLMs | Workflow engines (ActivePieces, …) |
 | **Interaction** | Agent-initiated, pull (request/response) | Event-driven, push (webhooks / CloudEvents) |
@@ -139,8 +138,8 @@ MCP and workflow automation serve genuinely different roles:
 
 The **metadata** overlaps: both describe "what can this app do?" with
 names, descriptions, scopes, and endpoints. The **consumption
-protocols** differ. `automationHooks` lives alongside `mcp` on the
-same `AppProfile`; a future unification merges them into a single
+protocols** differ. `automationHooks` would live alongside `mcp` on the
+same `ComponentProfile`; a future unification merges them into a single
 `spec.capabilities` block with per-capability delivery modes (§5.6).
 
 ### 5.2 Schema
@@ -174,7 +173,7 @@ spec:
 
 ### 5.3 Shared metadata with MCP
 
-`automationHooks.actions` and `mcp.capabilities` use the **same field
+`automationHooks.actions` and the MCP capability list (§3) use the **same field
 names** so one can be derived from the other:
 
 | Field | MCP capability | Automation action | Automation event |
@@ -214,12 +213,11 @@ sequenceDiagram
     Note over AP: User sees OpenProject triggers/actions<br/>ready to use — no manual setup
 ```
 
-The workflow engine's `AppProfile` declares the consumer side:
+The workflow engine's `ComponentProfile` declares the consumer side:
 
 ```yaml
-# profiles/activepieces/profile.yaml
 spec:
-  optionalIntegrations:
+  integrations:
     - contract: automation
       capabilities:
         - webhook:subscribe      # can register webhook URLs with apps
@@ -238,9 +236,8 @@ spec:
   registrations are namespace-scoped. A workflow engine can only
   reach apps in its own tenant.
 - **Internal service URLs.** The operator wires connections to
-  `http://{service}.tenant-{t}.svc.cluster.local:{port}` (§2 of
-  [app-profile-guide.md](../../../gentian-apps/docs/app-profile-guide.md)),
-  not public hostnames.
+  `http://{service}.tenant-{t}.svc.cluster.local:{port}`, not public
+  hostnames.
 
 ### 5.5 Cross-app workflow examples
 
@@ -287,17 +284,12 @@ spec:
       registrationEndpoint: /api/v3/webhooks
 ```
 
-This collapses `mcp.capabilities` and `automationHooks` into one
+This collapses the MCP capability list and `automationHooks` into one
 declaration with multiple delivery modes per capability. The
 operator provisions each mode independently (MCP registry
 registration, webhook subscription, NATS subject binding). The
 consumer (AI agent or workflow engine) sees only the modes it
 understands.
-
-**Migration path:** `spec.mcp` and `spec.automationHooks` remain
-supported as aliases. A future CRD version introduces
-`spec.capabilities`; a conversion webhook merges the two blocks
-automatically.
 
 The unification depends on:
 
@@ -308,11 +300,12 @@ The unification depends on:
 
 ## 6. AI-Assisted Platform Operations
 
-The same MCP fabric powers operator-side automation:
+None of this is built. The same MCP fabric is meant to serve operator-side
+automation:
 
-- **AppProfile generation:** an agent reads a Helm chart's
-  `values.yaml`, infers the kernel requirements (does it need OIDC?
-  S3? mail?), and proposes an `AppProfile` — a human reviews and
+- **Profile generation:** an agent reads a Helm chart's
+  `values.yaml`, infers the service requirements (does it need OIDC?
+  S3? mail?), and proposes a `ComponentProfile` — a human reviews and
   commits to `gentian-apps`. For building new first-party apps, agents should
   follow [gentian-apps/docs/custom-app-guide.md](../../../gentian-apps/docs/custom-app-guide.md)
   and [gentian-apps/AGENTS.md](../../../gentian-apps/AGENTS.md).
@@ -336,20 +329,25 @@ identity and RBAC model as any human operator.
 
 ## 7. Planned Capabilities
 
-MCP registry, shell AI assistant, workflow agents, and AppProfile generator
+MCP registry, the assistant's tools, workflow agents, and profile generator
 milestones are tracked in [roadmap.md](../roadmap.md).
 
 Automation hooks milestones:
 
 | Phase | Scope | Depends on |
 |---|---|---|
-| **Phase 1** | ActivePieces AppProfile (PostgreSQL, Redis, SAML SSO, portal tile). Manual connection config in the AP UI. | SAML identity path on `kernelRequirements` |
-| **Phase 2** | `automationHooks` schema on `AppProfile` CRD. Existing apps (OpenProject, Nextcloud, XWiki) declare hooks. Operator generates `IntegrationBinding` when a workflow engine is co-installed. | Generic operator work (not app-specific) |
+| **Phase 1** | ActivePieces profile (PostgreSQL, Redis, SAML SSO, desktop tile). Manual connection config in the AP UI. | SAML sign-in (`requires.services.identity.saml`) |
+| **Phase 2** | `automationHooks` schema on the `ComponentProfile` CRD. Existing apps (OpenProject, Nextcloud, XWiki) declare hooks. Operator generates `IntegrationBinding` when a workflow engine is co-installed. | Generic operator work (not app-specific) |
 | **Phase 3** | Auto-provisioned connections. Operator calls workflow engine admin API to inject connections for bound apps. Ship `@gentian/activepieces-piece`. | OIDC token exchange ([roadmap.md](../roadmap.md) §1.14) |
 | **Phase 4** | CloudEvents / NATS delivery mode. Workflow engine subscribes via NATS instead of webhook registration. | NATS deployment ([roadmap.md](../roadmap.md) §2.3) |
 | **Phase 5** | Unified `spec.capabilities` block. MCP + automationHooks merge with per-capability `deliveryModes`. | MCP registry ([roadmap.md](../roadmap.md) §4.1) + Phase 4 |
 
 ## 8. Security Model
+
+The rights check in the first point is built. The other points describe the
+design for MCP and automation hooks, neither of which is built: there is no
+capability scope to validate, no log of MCP calls, and no rate limit per
+capability.
 
 - **No agent or workflow has privileges the calling user lacks.** For a
   component that acts for a person who is away, the rights check is how it
@@ -386,7 +384,7 @@ Automation hooks milestones:
 
 ## 10. LLM Serving: Admin Console & vLLM Operations
 
-The LLM serving stack (Stage 1 of [llms.md](llms.md)) has its own
+The model gateway ([llms.md](llms.md)) has its own
 platform-admin console, separate from the tenant-facing MCP/agent
 surface described above (§4). This section is operational notes for
 the cluster admin, not an architecture doc — see
@@ -417,29 +415,23 @@ shared-kernel stage of the tenant's reconcile. Nothing has to be re-run after
 adding a tenant, and a cluster without LiteLLM simply has no team to create —
 the step is non-fatal and retries on the next reconcile.
 
-**Re-enabling tenant-level access:** the app-catalogue `litellm` tile
-(reverse-proxied through `gentian-portal-api` at
-`llm-admin.<tenant>.<domain>`) is disabled in `gentian-deployments`
-tenant manifests. Re-add `- profile: litellm` to a tenant's `apps:` list
-once per-tenant LLM access (auth model, budgets, model allowlists) is
-designed.
+Tenant administrators have no console of the shared gateway.
 
 ### 10.2 Configuring vLLM
 
 **Chat UIs (Open WebUI included) cannot install or reconfigure vLLM —
 this isolation is structural, not a permission we grant/deny.** Open
 WebUI (and any tenant app) only ever talks to vLLM indirectly, through
-the shared LiteLLM endpoint with a scoped virtual key the operator
-injects (`injectLLMCredentials`, `app_reconciler.go`) — it calls
+the shared LiteLLM endpoint with a key of its own that the operator
+delivers (`model_access_reconciler.go`) — it calls
 `/v1/chat/completions`, nothing that touches how vLLM itself is
 deployed or configured. Open WebUI's own "Admin Settings" panel lets
 its local admin manage *that instance's* connections/model list/users,
 but that's configuring the client, not the server — it has no path to
 vLLM's CLI flags, GPU allocation, or Deployment spec. Reconfiguring
 vLLM always requires `kubectl`/GitOps access to the cluster, which only
-the platform admin has. So: keep Open WebUI open to every tenant user
-as today, and use the CLI/GitOps flow below for actual vLLM
-configuration — no separate access-control mechanism is needed.
+the platform admin has, so no separate access-control mechanism is
+needed.
 
 vLLM has no live reconfiguration API for core serving parameters
 (model, quantization, parallelism, context length) — these are set via
@@ -461,115 +453,42 @@ guide in
 | `--quantization awq` / `--dtype fp8` | AWQ: ~2x throughput, <2% accuracy loss. FP8: one-flag win on H100/Blackwell, no quantization step |
 | `--enable-prefix-caching` | Reuse KV-cache across requests sharing a prompt prefix |
 | `--enable-chunked-prefill` | Better latency/throughput mixing for concurrent long+short requests |
-| `--enable-auto-tool-choice` / `--tool-call-parser <parser>` | Required for `tool_choice="auto"` (Open WebUI's native tool support, agentic clients) — omitted by default, so tool-calling requests 400 clearly instead of silently misparsing. `<parser>` is model-family-specific (`hermes` for Qwen2/Qwen2.5/Hermes-family, `mistral` for Mistral, `llama3_json` for Llama 3) — set via `VLLM_<ID>_TOOL_CALL_PARSER` |
+| `--enable-auto-tool-choice` / `--tool-call-parser <parser>` | Required for `tool_choice="auto"` (Open WebUI's native tool support, agentic clients) — omitted by default, so tool-calling requests 400 clearly instead of silently misparsing. `<parser>` is model-family-specific (`hermes` for Qwen2/Qwen2.5/Hermes-family, `mistral` for Mistral, `llama3_json` for Llama 3) — the instance's `toolCallParser` |
 
-**In gentian-os today:** there are two kinds of backend, selected by
-`GPU_ACCELERATION` in `install.env`/cluster-settings —
-`kernel/services/llm/manifests/templates/vllm-mock.yaml` (a single fake
-OpenAI-compatible server, `GPU_ACCELERATION=false`, the default), synced by the
-`gentian-infra-llm` ApplicationSet, and
-`kernel/services/llm/chart/templates/vllm.yaml` (real vLLM,
-`GPU_ACCELERATION=true`), which is a Helm chart rendered from the Cluster claim
-by the installer because Argo CD cannot project a claim into Helm values. Unlike the
-mock, the real backend is a **template rendered once per instance**:
-one gentian-os cluster can run several named vLLM instances
-concurrently (e.g. a small always-on chat model plus a larger
-on-demand one), each with its own `vllm-<id>-inference`
-Deployment/Service/PVC (`<id>` is the instance's ID, lowercased,
-underscores turned into hyphens) so they never collide — and one
-shared LiteLLM proxy sits in front of however many instances exist
-(`llm-services.yaml`; see below). Each instance requests one
-`nvidia.com/gpu` (a time-sliced share, see §10.1's sibling note on
-`kernel/services/llm/chart/templates/gpu-sharing.yaml`) — see the
-utilization-budget note at the end
-of this section for what running several concurrently actually costs.
+**In gentian-os today:** the namespace `system-llm` runs the gateway and, with
+`spec.llm.gpuAcceleration` false (the default), a mock OpenAI-compatible
+server (`vllm-inference`, `kernel/services/llm/manifests/templates/vllm-mock.yaml`),
+both delivered by the `gentian-llm` ApplicationSet.
 
-Which model(s) to serve is cluster instance data, not a gentian-os
-default — `render_and_apply_vllm_gpu_manifest()` (`scripts/lib/llm-lib.sh`)
-reads `VLLM_INSTANCES` (a space-separated list of instance IDs) from
-the cluster's `cluster-settings.env` in `gentian-deployments`, and for
-each one renders the `.tmpl` from that instance's own
-`VLLM_<ID>_MODEL_ID`/`VLLM_<ID>_GPU_MEMORY_UTILIZATION`/
-`VLLM_<ID>_MAX_MODEL_LEN`/`VLLM_<ID>_MODEL_CACHE_SIZE`/
-`VLLM_<ID>_IMAGE_TAG`/`VLLM_<ID>_TOOL_CALL_PARSER` (falling back to
-`Qwen/Qwen2.5-7B-Instruct` / `0.85` / `8192` / `60Gi` / `latest` / unset
-(tool calling disabled) per-instance if unset — `Qwen/Qwen2.5-7B-Instruct`
-has no HF license gate, ~14GB FP16). Any
-instance previously deployed but no longer in `VLLM_INSTANCES` gets its
-Deployment+Service removed automatically (PVC kept — see the function's
-own comment for why); its corresponding LiteLLM registration is removed
-too (below).
+Real vLLM is **not installed on the current namespace layout.** The Cluster
+claim accepts `spec.llm.instances` (name, `modelId`, `gpuMemoryUtilization`,
+`maxModelLen`, `modelCacheSize`, `imageTag`, `toolCallParser`) and
+`spec.llm.gpuTimeSliceReplicas`, and the chart that renders one
+`vllm-<name>-inference` Deployment, Service and PVC per instance exists
+(`kernel/services/llm/chart`), but that chart still names the former shared
+namespace and no installer step or Composition applies it. Nothing registers an
+instance as a model at the gateway either ([llms.md](llms.md), "What is
+built").
 
-**To deploy your first model** (GPU_ACCELERATION already validated
-against real cluster GPU resources by `validate_config`, see
-`scripts/lib/common.sh`):
+What the chart is written for, once it is applied:
 
-1. Set `GPU_ACCELERATION=true` (and `LLM_SUPPORT=true`) in `install.env`
-   or the cluster's `cluster-settings.env`.
-2. Pick an instance ID (short, memorable, a valid identifier — letters/
-   digits/underscore) and add it to `VLLM_INSTANCES` in the cluster's
-   `cluster-settings.env` in `gentian-deployments`, e.g.
-   `VLLM_INSTANCES="qwen"`. Optional — pick a different model: set
-   `VLLM_QWEN_MODEL_ID` (any HuggingFace OpenAI-served model id; see
-   `cluster-settings.env.template` for the full per-instance `VLLM_<ID>_*`
-   list — memory utilization, context length, cache PVC size, image
-   tag). For a **gated** model (e.g. Llama), first accept its license on
-   HuggingFace, then create the token Secret it reads via
-   `HUGGING_FACE_HUB_TOKEN`:
-   `kubectl create secret generic vllm-hf-token -n platform-kernel --from-literal=token=<hf_...>`
-   (required for gated models, shared across every instance; worth
-   creating even for ungated ones too — unauthenticated HF Hub requests
-   are rate-limited, which can turn a multi-GB first download into a
-   race against the `startupProbe` deadline below).
-3. `./install.sh --step D-05-llm-serving` — applies the release; first startup pulls
-   weights into the PVC, which can take several minutes
-   (`startupProbe` allows up to ~20 min before giving up). If it's a
-   large model on a slow/unauthenticated HuggingFace connection, the
-   download alone can eat most of that budget — see the `HF_TOKEN`
-   note above; without it the startup probe can kill the pod mid-load
-   on the very first pull (weights are cached in the PVC after that,
-   so the next attempt is fast).
-4. Watch it come up: `kubectl get pods -n platform-kernel -w | grep vllm-<id>-inference`,
-   then `kubectl logs -n platform-kernel deploy/vllm-<id>-inference -f`
-   for download/load progress.
-5. That's it — no separate LiteLLM registration step. The same
-   `./install.sh --step D-05-llm-serving` run also calls `ensure_litellm_vllm_model()`
-   (`scripts/lib/llm-lib.sh`), which registers/updates every
-   `VLLM_INSTANCES` entry as a LiteLLM model, each keyed on its own
-   `api_base` (one Service per instance, never shared): a swap to a
-   different `VLLM_<ID>_MODEL_ID` deletes that instance's stale LiteLLM
-   entry and creates a fresh one, and removing an ID from
-   `VLLM_INSTANCES` entirely removes its LiteLLM entry too — the model
-   list always matches whatever's actually running. Confirm via
-   `https://llm.<KERNEL_DOMAIN>/v1/models` where the console is switched on
-   (`spec.llm.console.enabled`), or from inside the cluster (
-   `curl http://vllm-<id>-inference.platform-kernel.svc.cluster.local:8000/v1/models`
-   to check one instance directly).
-
-**Adding a second (or third) instance** is just adding another ID to
-`VLLM_INSTANCES` plus its own `VLLM_<ID>_*` block, then `./install.sh --update
---llm` — no manifest changes, no separate registration. The real
-constraint is GPU memory, not configuration: `--gpu-memory-utilization`
-is a fraction of *one physical card's* VRAM, and every instance
-scheduled onto the same GPU (time-sliced compute, shared memory pool —
-see `GPU_TIME_SLICE_REPLICAS`) draws from that same pool, so concurrent
-instances' utilization values need to sum to comfortably under 1.0, not
-each independently approach it. A single 24GB card comfortably fits one
-7B-class model at `0.85`; a second concurrent 7B-class instance
-realistically needs both models quantized (AWQ/FP8) to fit. On a
-multi-GPU-node cluster the scheduler can place different instances on
-entirely different physical cards — nothing in the vLLM chart
-pins an instance to a specific node beyond `nvidia.com/gpu.present`.
-
-There is no separate "vLLM CLI" for the admin to run against a live
-cluster beyond this — configuration changes are GitOps (edit
-`spec.llm.instances` on the Cluster claim, then
-`./install.sh --step D-05-llm-serving`), and *operational* checks against a running
-instance are plain HTTP: `GET /health`, `GET /v1/models`, `GET /metrics`
-(Prometheus), `GET /version`, or via the LiteLLM proxy sitting in front
-of it (`litellm --health`, or any OpenAI SDK pointed at
-`https://llm.<KERNEL_DOMAIN>/v1` with a virtual key, on a cluster whose claim
-switches the console on; the gateway has no public address otherwise).
+- **One GPU per instance.** Each instance requests one `nvidia.com/gpu`, a
+  time-sliced share where `gpuTimeSliceReplicas` is above 1
+  (`templates/gpu-sharing.yaml`). `--gpu-memory-utilization` is a fraction of
+  one physical card's memory, and instances sharing a card draw from the same
+  pool, so their values must sum to comfortably under 1.0. A 24GB card fits
+  one 7B-class model at `0.85`; a second needs both quantized.
+- **Gated models and the first download.** The Deployment reads
+  `HUGGING_FACE_HUB_TOKEN` from an optional Secret `vllm-hf-token` (key
+  `token`) in its namespace, shared by all instances. A gated model (e.g.
+  Llama) needs it. It is worth creating for ungated ones too: unauthenticated
+  Hugging Face requests are rate-limited, and a first download of several
+  gigabytes can outlast the `startupProbe` (about 20 minutes). Weights are
+  cached in the instance's PVC, so a second start is fast, and the PVC is kept
+  when an instance is removed.
+- **Changing a model** is a change to the claim and a new pod; operational
+  checks against a running instance are plain HTTP (`GET /health`,
+  `GET /v1/models`, `GET /metrics`, `GET /version`).
 
 **Further reading:**
 
