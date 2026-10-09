@@ -26,11 +26,11 @@ The steps, in the order you do them:
 | | Step | You are done when |
 |---|---|---|
 | — | [What you need](#what-you-need-before-you-start), and [on a machine that installed before](#on-a-machine-that-installed-before) | pre-flight passes |
-| 1–3 | Clone the deployments repository, write `install.env`, have the credentials ready | `./install.sh --validate` reports nothing |
+| 1–3 | Clone the deployments repository, write `install.env`, have the credentials ready | the two stage files are pushed and you hold the token and the master password |
 | 4 | `./install.sh` | it prints `Almost There: 1 step left` |
 | 5 | Handover: keep the kit, sign in | it prints `Install Complete` |
 | 6 | Check | [the cluster is ready for a tenant](#the-cluster-is-ready-for-a-tenant) |
-| 7 | Create the first tenant, open its App Store | the App Store lists apps |
+| 7 | Multi-tenancy: create the first tenant. Either mode: open the tenant's App Store | the App Store lists apps |
 | 8 | Only for a cluster that runs your own services from a private repository | your service answers at its public address |
 
 ---
@@ -109,8 +109,10 @@ until it is done.
     version skew on every call.
 - **These tools on your `PATH`:** `kubectl helm jq yq openssl curl git gpg
   crossplane python3 age age-keygen`. Pre-flight checks and names any that are
-  missing, and refuses to start without them. `bao` (the OpenBao CLI) installs
-  itself to `~/.local/bin`.
+  missing, and refuses to start without them. `bao` (the OpenBao CLI) is the
+  one tool the installer fetches itself when it is missing: to `~/.local/bin`,
+  for Linux and macOS on x86_64 and arm64, and only after the archive matches
+  the release's own checksum list. On any other machine install `bao` first.
 
   - `git` and `gpg` are needed before the cluster is touched: step 0 commits
     this cluster's definition to `gentian-deployments`, and every commit to
@@ -137,11 +139,13 @@ until it is done.
   | `platform.<domain>` | the platform admin's desktop |
   | `admin.platform.<domain>` | the platform admin's console |
   | `id.<domain>` | the identity provider, for every tenant |
-  | `*.<tenant>.<domain>` | one tenant: `desktop.`, `admin.`, `store.` and each app |
+  | `*.<tenant>.<domain>` | multi-tenancy, one tenant: `desktop.`, `admin.`, `store.` and each app |
+  | `desktop.<domain>`, `admin.<domain>`, `store.<domain>`, `<app>.<domain>` | single-tenancy: the one tenant for users, which has no label of its own (step 7) |
 
   With a DNS provider named in step 4 (Cloudflare by default) and its token
   supplied, the cluster publishes these records itself and the install waits
-  for them. Without one you maintain them: `<domain>`, `*.<domain>` and one
+  for them. Without one you maintain them: `<domain>`, `*.<domain>`,
+  `*.platform.<domain>` and, on a multi-tenancy cluster, one
   `*.<tenant>.<domain>` per tenant, pointing at the cluster.
 - **A token with write access to `gentian-deployments`.** The installer pushes
   this cluster's definition with it, and the director on the cluster pushes
@@ -151,7 +155,7 @@ until it is done.
 ### On a machine that installed before
 
 The installer renders the cluster from the files on this machine and reads
-back whatever an earlier install left. Four things carry over, and each of
+back whatever an earlier install left. Five things carry over, and each of
 them quietly gives you the earlier cluster instead of the one you mean:
 
 1. **This checkout.** Bring it to the commit you want to install, and
@@ -162,9 +166,18 @@ them quietly gives you the earlier cluster instead of the one you mean:
    make install-plugin
    ```
 2. **A pinned image in `install.env`.** A line `GENTIAN_OS_IMAGE_TAG=…` left
-   from an earlier run makes the cluster run that older build under today's
-   manifests. Delete the line (step 2).
-3. **The cluster's definition in the deployments repository.** If
+   from an earlier run is used as it stands: the cluster runs that older
+   build under today's manifests. The installer warns only when the value is
+   a tag that moves (`develop`), not when it is an old build. Delete the line
+   (step 2).
+3. **A list of default profiles in `install.env`.** A line
+   `GENTIAN_DEFAULT_PROFILES=…` (or `GENTIAN_STORE_CATALOGUE_URL=…`) is used
+   in place of the default too, an empty value included. One that names an
+   address that no longer serves is a warning (`could not be fetched;
+   skipped`), and the cluster then comes without the profile the default
+   would have brought. Delete the line; unset, step 0 fetches
+   `https://catalogue.aluvian.io/profiles/operations-console.yaml`.
+4. **The cluster's definition in the deployments repository.** If
    `clusters/<cluster-id>/` exists there, step 0 asks nothing and rewrites
    nothing: the domain, the tenancy mode, the catalogue and the store are the
    ones in `kernel/claims/cluster.yaml`, and every tenant directory under
@@ -183,10 +196,14 @@ them quietly gives you the earlier cluster instead of the one you mean:
        - name: gentian
          url: https://gentian-org.github.io/gentian-apps/develop   # without /develop when installing a release
    ```
-4. **The signing keys and the wildcard certificate** in `~/.gentian`. Keep
+5. **The signing keys and the wildcard certificate** in `~/.gentian`. Keep
    them: the keys are the ones the repository's history is signed with, and
    the certificate saves one of the five a week Let's Encrypt issues for a
-   set of names.
+   set of names. The installer looks the break-glass key up by the id the
+   repository records for this cluster (`signing/keys.env`). On a machine
+   whose keyring does not hold that key it warns, generates a new one and
+   replaces the recorded id; to keep the recorded key, stop there and run
+   `./install.sh --recover <kit>` first.
 
 ---
 
@@ -232,9 +249,11 @@ Edit it. These are the values that matter for a first install:
 | `GENTIAN_DEPLOYMENTS_REPO` / `_BRANCH` | Your deployments repository |
 | `GENTIAN_OS_BRANCH` | The gentian-os branch or release tag this checkout is on. The cluster follows it |
 
-Leave `GENTIAN_OS_IMAGE_TAG` unset. The installer then runs the build of
-exactly the commit you are installing from, and pre-flight says so if that
-build has not been published yet.
+Leave `GENTIAN_OS_IMAGE_TAG` and `GENTIAN_DEFAULT_PROFILES` unset, and remove
+either line if an earlier install left it
+([above](#on-a-machine-that-installed-before)). The installer then runs the
+build of exactly the commit you are installing from, and pre-flight says so
+if that build has not been published yet.
 
 Leave the rest at their defaults. The repository URLs, branches and auth modes
 below them are already filled in — they are defaults for a fork or a mirror, not
@@ -295,12 +314,12 @@ one. Every question shows its default; Enter takes it.
 | `certificates.issuerMode` | `acme-dns01` | The domain is not publicly resolvable (`self-signed`), or port 80 is reachable but you have no DNS API token (`acme-http01`) |
 | `certificates.acmeEnv` | `production` | Never needed for rebuilds — a purge keeps the issued wildcard in `~/.gentian/certs` and the next install reuses it (only `--purge --cluster-infra` deletes it). `staging` breaks the kernel sign-in, which does not trust its chain |
 | `certificates.dnsProvider` | `cloudflare` | The zone is hosted elsewhere |
-| `mail.serviceMode` | `external` | You want in-cluster Postfix/Dovecot (`system`, needs `static-ip`). The cluster then needs one more load-balancer address, for mail, with ports 25, 587 and 993 open to it from the internet and port 25 open outbound — see [mail.md §9b](docs/design/mail.md#9b-the-mail-edge) |
+| `mail.serviceMode` | `external` | You want the platform's own mail, in-cluster Postfix and Dovecot (`system`; refused with `networkMode: tunnel`, so it needs `static-ip`). The cluster then needs one more load-balancer address, for mail, with ports 25, 587 and 993 open to it from the internet and port 25 open outbound. The load balancer must hand on the sender's address, by forwarding packets or with the PROXY protocol — see [mail.md §9a](docs/design/mail.md#9a-what-a-kubernetes-cluster-needs-to-host-mail) and [§9b](docs/design/mail.md#9b-the-mail-edge). The mail edge is built, not yet run on a cluster |
 | `mail.host` | unset | `external` mode: the relay's hostname. Its credentials are a credential, supplied in step 5 — not asked here |
 | `platform` | detected from the nodes | Detection is wrong for your provider |
 | `storageClass` | the cluster default | The cluster has more than one StorageClass |
 | `tenancyMode` | `multi` | Who the cluster is for. `multi`: the platform tenant plus any number of user tenants, each at `desktop.<tenant>.<kernel-domain>`; the install creates none. `single`: the platform tenant plus exactly one user tenant, named `user`, on the cluster's own addresses (`desktop.<kernel-domain>`); the install creates it after the handover. The platform admin signs in at `platform.<kernel-domain>` either way. See step 7. |
-| First tenant | none | This cluster's users should have a tenant when the install ends: give its name, and the install creates it (step 7). With exactly one, the cluster's bare domain leads straight to its sign-in |
+| Second factor for the platform admin | `true` | The platform admin should activate the account without enrolling one |
 | `secretMode` | `derived` | You want independent random secrets rather than ones reproducible from the master password |
 | `backup.escrowIdentity` | `true` | The backup key should live in the recovery kit only, never in OpenBao |
 | `llm.enabled` | `false` | This cluster serves models; then `llm.gpuAcceleration` is asked too |
@@ -370,13 +389,19 @@ out of it.
 
 **Want to see the plan before anything runs?** Both of these change nothing —
 not the cluster, not the deployments repository (no commit, no push), not a
-file or a key on this machine — and report a missing definition instead of
-writing one. Where the install would act, they print a line beginning `Would`:
+file or a key on this machine. Where the install would act, they print a line
+beginning `Would`:
 
 ```bash
-./install.sh --validate      # is this configuration coherent? No cluster needed.
+./install.sh --validate      # is this configuration coherent, and does pre-flight pass?
 ./install.sh --dry-run       # what would the install do to THIS cluster?
 ```
+
+Both read the cluster, so it has to be reachable, and neither asks for a
+credential. Neither writes the cluster's definition: before the first
+install they stop at `clusters/<cluster-id>/kernel is incomplete`, which is
+then the expected answer. `./install.sh --explain` needs neither a cluster
+nor a definition.
 
 ## 5. Handover
 
@@ -535,11 +560,20 @@ always leads there.
 
 **On a single-tenancy cluster there is nothing to create.** A second tenant
 is refused, with a message that names the mode — in the console, by the CLI
-and by the cluster itself. The user admin installs apps for the tenant `user`
-exactly as described below for any tenant. A few host names are the
-platform's own there (`id`, `platform`, `www`, `argocd`, `headlamp`, `llm`,
-`mail`, `imap`, `mail-egress`, `corp`): an app that would answer on one of
-them is refused, and says so on its status.
+and by the cluster itself. The tenant needs no domain bound either: it is
+on the cluster's own domain already, so `tenants domain` is not part of this
+path. (The command is not refused there. Binding another domain moves the
+tenant off the cluster's addresses, and the main address is then not its
+own.) The user admin installs apps for the tenant `user` exactly as
+described below for any tenant: wherever an example says `--tenant acme`,
+it is `--tenant user`. A few host names are the platform's own there (`id`,
+`platform`, `www`, `argocd`, `headlamp`, `llm`, `mail`, `imap`,
+`mail-egress`, `corp`): an app that would answer on one of them is refused
+at install, with the reason, and a component that reaches the cluster
+another way says so on its status (`HostReserved`). As in every tenant on
+every cluster, an app cannot take `desktop`, `admin`, `store`, `console`,
+`auth`, `login`, `signin`, `sign-in`, `sso`, `account` or `accounts`
+either.
 
 **On a multi-tenancy cluster** the platform admin creates tenants through the
 director — in the admin console, or with the `gentian` CLI, which is a
@@ -642,6 +676,9 @@ cluster with no store at all.
 
 ### Installing apps with the CLI
 
+On a single-tenancy cluster the tenant is `user`: read `--tenant user` for
+`--tenant acme` below.
+
 ```bash
 kubectl gentian apps list --tenant acme --available           # what the tenant's catalogues offer
 kubectl gentian apps install nextcloud-base-ce --tenant acme  # the build the catalogue lists, pinned by digest
@@ -658,8 +695,13 @@ or for one tenant:
 
 ```bash
 kubectl gentian catalogues list
-kubectl gentian catalogues add acme https://acme.github.io/acme-catalogue --tenant acme
+kubectl gentian catalogues add acme https://acme.github.io/acme-catalogue                 # for every tenant
+kubectl gentian catalogues add acme https://acme.github.io/acme-catalogue --tenant acme   # for acme only
 ```
+
+A catalogue for the whole cluster can also be declared before the install,
+as one more entry under `spec.catalogue.sources` in `claims/cluster.yaml`
+(a `name` and an https `url`).
 
 [docs/custom-catalogues.md](docs/custom-catalogues.md) explains how to build
 one, step by step.
@@ -681,7 +723,9 @@ kubectl gentian tenants import acme-export-20261001.gentian --identity-file acme
 It declares the tenant from the bundle's own manifest, waits for the operator
 to provision it, restores the data, and says when people can sign in again
 (members need a password reset until bundles carry credentials; activate the
-administrator with `tenants activate-admin`).
+administrator with `tenants activate-admin`). On a single-tenancy cluster an
+import is refused unless the tenant it makes is named `user` (`--name user`)
+and the cluster has none.
 
 ## 8. A cluster that runs your own services from a private repository
 
@@ -714,8 +758,11 @@ differs is listed here, in the order you meet it.
    CD reports `authentication required` for the repository, that Secret is
    what is missing: check `GENTIAN_DEPLOYMENTS_AUTH` is not `none`, and run
    `./install.sh --only A-06` with the token.
-2. **Install and hand over** (steps 4 to 6), then create the tenant your
-   services run in (step 7): `kubectl gentian tenants create <tenant>`. Do
+2. **Install and hand over** (steps 4 to 6). On a multi-tenancy cluster,
+   then create the tenant your services run in (step 7):
+   `kubectl gentian tenants create <tenant>`. On a single-tenancy cluster
+   there is nothing to create: the tenant is `user`, step `E-04` made it
+   after the handover, and `<tenant>` below is `user`. Do
    not commit a tenant's manifest yourself beforehand: the cluster refuses
    every tenant until the platform admin has signed in, Argo CD gives up on
    it after about a quarter of an hour, and the director refuses to create a
@@ -759,15 +806,26 @@ differs is listed here, in the order you meet it.
    kubectl get component -A | grep <profile>        # Ready when it runs
    ```
 7. **Its public address.** An entry a profile exposes answers at
-   `<subDomain>.<the tenant's domain>`, and the tenant's domain is
+   `<subDomain>.<the tenant's domain>`. An entry that the public reaches
+   (`surface: perimeter` in the profile) is not reachable until the tenant's
+   approver has published it.
+
+   *On a single-tenancy cluster* the tenant's domain is the cluster's own:
+   installed on `example.com`, a service with `subDomain: api` answers at
+   `api.example.com` with nothing bound and no `tenants domain` command.
+   The wildcard record and certificate for `*.example.com` are the
+   cluster's. The names the platform keeps there cannot be a `subDomain`
+   (step 7). An entry a profile declares for the main address (`apex: true`)
+   is the cluster's website at `https://example.com/` and `www.`, approved
+   with `--acknowledge-main-address-rule` (below).
+
+   *On a multi-tenancy cluster* the tenant's domain is
    `<tenant>.<kernel-domain>` unless the tenant is bound to a domain of its
    own. A service that must answer at `api.example.com` therefore needs
    three things: the tenant bound to `example.com`; `*.example.com` pointing
    at this cluster; and the cluster's certificate issuer able to answer DNS
    challenges for that zone (the DNS token of step 3 covering it). A domain
-   on or under the cluster's own is refused. An entry that the public reaches
-   (`surface: perimeter` in the profile) is not reachable until the tenant's
-   approver has published it.
+   on or under the cluster's own is refused.
 
    Binding the domain is one command, for whoever may configure the
    cluster. It prints what moves and what has to be true first, and asks
@@ -778,10 +836,16 @@ differs is listed here, in the order you meet it.
    ```bash
    kubectl gentian tenants domain <tenant> example.com
    kubectl gentian tenants domain <tenant>      # what git declares, and how to see that the cluster took it in
+   kubectl gentian tenants domain <tenant> --remove   # back to its default address
    ```
 
    Publishing the entry is two commands, for whoever may publish in the
    tenant ([docs/app-customization.md](docs/app-customization.md) §2.10).
+   That is a member of the tenant's group `gentian:tenant:<tenant>:perimeter`
+   and nobody else: not the tenant's admin as such, and not the platform
+   admin. A new tenant has no such group. Its admin creates it in the admin
+   console (Groups, a group named `perimeter`) and adds whoever approves;
+   until then the approval is refused with 403.
    The first lists what the tenant's installed apps ask to have on the
    internet: each entry's address, its paths, whether anybody signs in, and
    whether it is approved. The second shows one entry again and approves it
@@ -791,6 +855,12 @@ differs is listed here, in the order you meet it.
    kubectl gentian exposures requests --tenant <tenant>
    kubectl gentian exposures approve <app> <entry> --tenant <tenant> [--expires <date>] [--reason "<why>"]
    ```
+
+   An entry for the cluster's main address is approved only on a
+   single-tenancy cluster, for the tenant `user`, and only with
+   `--acknowledge-main-address-rule` added: the command prints the
+   director's rule for a website there, and the flag says the rule is true
+   of this site. `--yes` does not stand in for it.
 
    An entry the list does not show cannot be approved: the director refuses
    an app that is not installed in the tenant and an entry its profile does
@@ -828,15 +898,18 @@ credentials through the environment instead of the prompt:
 | Cloudflare API token | `CF_API_TOKEN` |
 
 The kernel namespaces' NetworkPolicies are off unless
-`KERNEL_NETWORK_POLICIES=true`. Turn them on once an install has succeeded
+`KERNEL_NETWORK_POLICIES=true` is in `install.env`. Leave them off for the
+install and turn them on once it has succeeded, with
+`./install.sh --only A-01,B-01`. They restrict what may connect into a
+kernel namespace and nothing a pod connects out to
 ([install-reference.md §9](docs/install-reference.md)).
 
 Step 0's questions take their defaults unattended, and an environment value
 answers any of them without a question: `KERNEL_DOMAIN` (no default — must be
 set), `NETWORK_MODE`, `NODE_IP`, `CERT_ISSUER_MODE`, `ACME_ENV`,
 `DNS_PROVIDER`, `MAIL_SERVICE_MODE`, `EXTERNAL_SMTP_HOST`, `PLATFORM`,
-`STORAGE_CLASS`, `TENANCY_MODE`, `SECRET_MODE`, `BACKUP_ESCROW_IDENTITY`,
-`LLM_SUPPORT`, `GPU_ACCELERATION`. The handover wait is skipped, so the run
+`STORAGE_CLASS`, `TENANCY_MODE`, `SECRET_MODE`, `CLUSTER_ADMIN_REQUIRE_MFA`,
+`BACKUP_ESCROW_IDENTITY`, `LLM_SUPPORT`, `GPU_ACCELERATION`. The handover wait is skipped, so the run
 ends at `Almost There` and `--only E-03` finishes it once the platform admin
 has signed in. On a single-tenancy cluster (`TENANCY_MODE=single`) the user
 tenant is created after that sign-in and not before: `./install.sh --only
@@ -909,16 +982,20 @@ what is already done, so convergence and update are the same operation.
 
 ## Next steps
 
-- **Add more tenants** — repeat step 7. Day-to-day operations are in
-  [docs/commands.md](docs/commands.md).
+- **Add more tenants** (multi-tenancy) — repeat step 7. Day-to-day operations
+  are in [docs/commands.md](docs/commands.md).
 - **Configure mail** — [docs/design/mail.md](docs/design/mail.md). Mail between
   users of this cluster works once the cluster's own mail stack is deployed
   (`mail.serviceMode: system`). Mail to and from the internet arrives on the
-  load balancer of the mail edge in `system-mail-dmz` — ports 25, 587 and 993,
+  load balancer of the mail edge in `system-mail-dmz` — a proxy that passes
+  ports 25, 587 and 993 on to Postfix and Dovecot with TLS untouched,
   [§9b](docs/design/mail.md#9b-the-mail-edge) — and additionally needs the MX,
   SPF, DKIM, DMARC and PTR records described in
   [§10 DNS for real mail](docs/design/mail.md#10-dns-for-real-mail) — including
-  the Cloudflare rule that MX records must stay DNS-only, never proxied.
+  the Cloudflare rule that MX records must stay DNS-only, never proxied. With
+  a DNS provider the cluster publishes `mail.<kernel-domain>` and
+  `imap.<kernel-domain>` from that load balancer's address, and the MX, SPF,
+  DKIM and DMARC records; the PTR is set at your provider.
 - **Change this cluster's configuration** — edit `claims/cluster.yaml` in your
   deployments checkout and run `./install.sh`: step 0 commits the edit signed
   and pushes it, and the cluster reconciles.

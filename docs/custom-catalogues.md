@@ -19,6 +19,15 @@ fetches that one file, checks it, and commits it to the deployments repository u
 `clusters/<cluster>/catalogue/`. Argo CD applies it from there — the profile, and with it whatever
 else the file holds (§2).
 
+**One profile does not arrive that way: the installer's.** Step 0 of an install fetches the
+Operations Console's profile by address — `https://catalogue.aluvian.io/profiles/operations-console.yaml`,
+or what `GENTIAN_STORE_CATALOGUE_URL` or `GENTIAN_DEFAULT_PROFILES` name — and writes the file
+into the same directory. Nothing states a digest for it, the checks of §2 are not run on it, and
+it carries no record of where it came from, so the platform takes it for a profile of its own
+rather than a catalogue's and nothing compares it at rollout. A file that cannot be fetched is a
+warning, and `--disable-api-extensions` writes none. This departs from the rule above and is
+not settled: it is stated here as what the installer does, not as an exception that was agreed.
+
 A catalogue exists on a cluster in one of three ways:
 
 | Who sees it | Who adds it | Where it is declared |
@@ -190,13 +199,17 @@ How a catalogue is produced, with gentian-apps as the example:
    without a name, two profiles with the same name, a kind other than `ComponentProfile`, a
    companion of a kind that is not allowed or not named after its profile, a pack or an object
    two bundles both hold, a bundle over 180 KiB.
-3. The workflow `.github/workflows/apps-ci.yaml` runs the script with `--check` on every push, and
-   on `main` the job `publish-catalogue` runs it for real and publishes `dist/catalogue` to GitHub
-   Pages (`actions/configure-pages`, `actions/upload-pages-artifact`, `actions/deploy-pages`). The
-   repository's Pages source is set to "GitHub Actions".
+3. The workflow `.github/workflows/apps-ci.yaml` runs the script with `--check` on every push. On
+   a push to `main` or to `develop` it builds both catalogues into one site — `main`'s at the root,
+   `develop`'s under `develop/` — and the job `publish-catalogue` publishes that site to GitHub
+   Pages (`actions/configure-pages`, `actions/upload-pages-artifact`, `actions/deploy-pages`). A
+   repository has one Pages site, so every publication carries both. A push to `develop` is stopped
+   if the released catalogue it built differs from the one being served. The repository's Pages
+   source is set to "GitHub Actions", and its `github-pages` environment must let both branches
+   deploy.
 
-So the catalogue follows `main` of that repository, and each published file has a digest in the
-published index.
+So each address follows its branch of that repository, and each published file has a digest in
+the published index.
 
 ## 4. Your own catalogue, from an empty repository
 
@@ -269,6 +282,27 @@ another subDomain. ...
 A Component that reaches a cluster some other way is held with the condition `HostReserved` and the
 same sentence, and nothing of it is installed or routed. Stating `trustTier: platform` changes
 nothing. The list and the reasons: [design/routing.md §3.1](design/routing.md).
+
+**An entry behind sign-in gets no token of the page's.** On a `surface: gateway`, `authMode: oidc`
+entry the front door tells the app who is asking in headers. It replaces the `Authorization`
+header a page sent with its own token and removes that again before the app, with the session's
+cookies, so an app whose pages send its API a bearer token of their own does not receive it.
+Signing out at the front door tells no app; a session the app keeps itself ends when the app ends
+it.
+
+**An entry on the internet is a request, and the proxy checks no caller.** A `surface: perimeter`
+entry publishes nothing until the tenant's perimeter approver approves it (`kubectl gentian
+exposures requests|approve|list|withdraw --tenant <tenant>`). The proxy it is then served from
+verifies nothing for any `authMode` — `basic`, `bearer`, `jwt` and `signature` are the app's own
+to check — and removes `Authorization`, `Cookie` and the identity headers from every request.
+`apex: true` asks for the cluster's main address, for the user tenant of a single-tenancy cluster
+only, with the approver's acknowledgement. Limits, reserved paths and the rule for such a website:
+[app-customization.md §2.10](app-customization.md).
+
+**A contract with another app carries traffic only once it is granted.** `spec.integrations`
+(the consumer) and `spec.provides` (the provider) naming one contract ask for a relation; the
+network path between the two apps exists while the tenant's administrator has granted it to the
+consumer, and not before ([app-customization.md §2.3](app-customization.md)).
 
 **An app that creates databases of its own** (`spec.requires.services.database.allowDynamicDatabaseCreation`)
 has to name them the platform's way on MariaDB, where every tenant's databases are on one server:
@@ -344,11 +378,12 @@ cluster only when an install is moved to it.
 
 ### 4.2 Generate the index
 
-Take the build script from gentian-apps and run it:
+Take the build script from gentian-apps and run it. It is on that repository's `develop` branch,
+and not on its `main` yet:
 
 ```bash
 curl -fsSLo scripts/build-catalogue-source.py \
-  https://raw.githubusercontent.com/gentian-org/gentian-apps/main/scripts/build-catalogue-source.py
+  https://raw.githubusercontent.com/gentian-org/gentian-apps/develop/scripts/build-catalogue-source.py
 python3 scripts/build-catalogue-source.py --out dist/catalogue
 ```
 
@@ -661,7 +696,9 @@ that composes an app, is named `app-<profile>`, is not `app-default` and is on t
 
 An app or an add-on named without a build — `{"profile": …}` with no coordinate and digest — is
 installed only when its profile is already on the cluster. Otherwise the director refuses and says to
-give the coordinate and the digest.
+give the coordinate and the digest. The profile the installer placed (§1) is on the cluster with
+no digest ever stated for it, so an install that names it without one meets none of the checks
+above that start from a digest.
 
 ## 8. Private charts and images
 
@@ -693,6 +730,8 @@ they are done once by the tenant's administrator.
   catalogue; across catalogues nothing does.
 - **Nothing a bundle brought is removed automatically.** It is listed, and removed one object at a
   time by the cluster's administrator (§6).
+- **The installer's default profile is not pinned.** It is fetched by address at install and
+  committed unchecked (§1).
 - **No password-protected catalogues.** No credential is sent to a catalogue. Keep what is private in
   the registry (§8), not in the profile.
 - **No proxy.** The director connects to the catalogue directly.

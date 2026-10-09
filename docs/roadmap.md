@@ -665,13 +665,13 @@ does not exist yet that something cannot be the Composition.
 * **Target Domain**: Authorization
 * **Context**: OpenFGA is configured with preshared keys, and a preshared
   key is all or nothing: every holder may read and write every relation.
-  The bouncer, the usher, the custodian and the director only ever ask
-  questions, yet each holds a key that could rewrite the store, so the claim
+  The bouncer, the usher, the custodian, the director and the registrar only
+  ever ask questions, yet each holds a key that could rewrite the store, so the claim
   that only the operator writes rights rests on what their code does and not
   on what their credential allows. OpenFGA's per-client access control, which
   would let a key be limited to checks, is not a stable feature.
 * **Proposed Solution**: Once it is stable, give each process a credential
-  of its own, limited to what it does: check for the four readers, write for
+  of its own, limited to what it does: check for the five readers, write for
   the operator's projection alone.
 * **Backlog Items**:
   - `[ ]` Track OpenFGA's access control until it is released as stable.

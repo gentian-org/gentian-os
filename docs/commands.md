@@ -26,22 +26,31 @@ gtnctl tenants list    # same as kubectl gentian tenants list
 
 Use `gtnctl` at the terminal if you prefer a shorter command. All examples below
 use the canonical `kubectl gentian` form for consistency in docs and scripts.
+`kubectl gentian --help` prints every command; `kubectl gentian whoami`,
+`logout` and `version` complete the list below.
+
+The examples use a tenant named `demo`. On a single-tenancy cluster
+(`tenancyMode: single`) the one tenant for users is named `user`: read
+`--tenant user` for `--tenant demo`.
 
 ## 1. Install the OS (Cluster Admin)
 
-Run the shared installer from the OS repository:
+Run the installer from a checkout of the OS repository:
 
 ```bash
-bash gentian-os/install.sh
+./install.sh
 ```
 
-This installs kernel services, ArgoCD, OpenBao, the orchestrator, and supporting controllers.
+It installs the kernel services, Argo CD, OpenBao, the operator and the
+director. [GETTING-STARTED.md](../GETTING-STARTED.md) is the walkthrough and
+[install-reference.md](install-reference.md) the reference.
 
 ## 2. Verify Core Health
 
 ```bash
-kubectl get applications -n argocd
-kubectl get pods -n gentian-system
+./install.sh --status
+kubectl get applications -n kernel-gitops
+kubectl get pods -n kernel-control
 kubectl get tenants
 ```
 
@@ -66,9 +75,10 @@ The director commits `clusters/<cluster>/tenants/demo/` as you; Argo CD syncs
 it and the operator provisions the realm, namespaces, database and desktop.
 
 On a single-tenancy cluster (`tenancyMode: single`) there is exactly one tenant
-for users, named `user`, which the install creates; `tenants create` with any
-other name is refused with a message that names the mode, and `user` itself is
-refused only because it exists.
+for users, named `user`, which the install creates after the handover (step
+`E-04`); `tenants create` with any other name is refused with a message that
+names the mode, and `user` itself is refused only because it exists. Nothing
+in this section has to be run there. `tenants import` follows the same rule.
 
 A tenant's administrator — the **tenant admin**, `admin@<tenant domain>`; on a
 single-tenancy cluster the **user admin**, `user-admin@<kernel-domain>` — has
@@ -105,6 +115,7 @@ kubectl gentian tenants domain demo demo.example    # bind it
 kubectl gentian tenants domain demo --remove        # back to its default address
 ```
 
+The usage is `tenants domain <name> [<domain> | --remove] [--yes]`.
 Binding and removing are for whoever may configure the cluster. Each prints
 what moves and asks for a word typed out -- the domain to bind, the tenant's
 name to remove -- which `--yes` skips in a script. The director refuses a
@@ -128,11 +139,18 @@ The operator reports the outcome on the Tenant:
 kubectl get tenant demo -o jsonpath='{.status.conditions[?(@.type=="DomainBound")].message}'
 ```
 
+The user tenant of a single-tenancy cluster needs none of this: it is served
+on the cluster's own domain (`desktop.<kernel-domain>`, `admin.<kernel-domain>`,
+`<label>.<kernel-domain>`), and that domain cannot be bound. The command is
+not refused there; binding another domain moves the tenant off the cluster's
+addresses, and it can then hold no website at the cluster's main address.
+
 ## 4. Uninstall a Tenant
 
 ```bash
 kubectl gentian tenants retire demo           # keeps its data
 kubectl gentian tenants retire demo --purge   # deletes its data
+kubectl gentian tenants retire demo --purge --keep-bundles   # deletes its data, keeps its backup bundles
 ```
 
 or **Retire** in the console, which asks the same question. Both ask for the
@@ -143,7 +161,8 @@ the operator tears it down under the manifest's `deletionPolicy`, `Retain`
 unless edited, so the realm, databases and files stay. Purge first commits
 `deletionPolicy: Delete` (and the `gentianos.io/purge-requested` annotation),
 waits until the live Tenant carries it, then removes the directory; the tenant
-is listed as purging until then. Not `kubectl delete tenant`: git is what the
+is listed as purging until then. A purge deletes the tenant's mailboxes
+too, where the cluster runs its own mail. Not `kubectl delete tenant`: git is what the
 cluster reconciles towards, so deleting the object just brings it back. The
 platform tenant can be neither retired nor purged.
 
@@ -189,6 +208,7 @@ kubectl gentian catalogues list                        # everything the cluster 
 kubectl gentian catalogues list --tenant demo          # what demo installs from
 kubectl gentian catalogues add acme https://acme.github.io/acme-catalogue                 # for every tenant
 kubectl gentian catalogues add acme https://acme.github.io/acme-catalogue --tenant demo   # for demo only
+kubectl gentian catalogues remove acme                 # the cluster's
 kubectl gentian catalogues remove acme --tenant demo
 kubectl gentian tenants delegate-catalogues demo on    # demo's administrators may add their own
 kubectl gentian tenants delegate-catalogues demo off
@@ -207,7 +227,10 @@ Tenants whose administrators may add catalogues of their own: demo.
 With `--tenant`, `add` and `remove` are done as the cluster's administrator
 when the person is one, and otherwise as the tenant's administrator: that is
 refused unless the tenant is delegated, and removes only what the tenant
-added. An address must be a public https one; anything else is refused.
+added. Without `--tenant`, `add` and `remove` change the Cluster claim
+(`spec.catalogue.sources`), which is also where a catalogue for the whole
+cluster can be written before the install, as a `name` and a `url`. An
+address must be a public https one; anything else is refused.
 [custom-catalogues.md](custom-catalogues.md) says how to build and publish a
 catalogue.
 
@@ -312,6 +335,7 @@ with none. The listing is the director's reading of each source's index, the
 | `--digest` | the build to install instead of the one the listing states. The director fetches the bundle from the source and installs nothing unless it hashes to the digest sent |
 | The tenant has no catalogue | nothing can be installed by command; the cluster's administrator adds one (`kubectl gentian catalogues add`) |
 | The name is taken by a profile from another catalogue | nothing is installed, and the refusal says who has to rename ([custom-catalogues.md](custom-catalogues.md) §7) |
+| An entry of the profile would answer on a name the platform keeps | nothing is installed, and the refusal lists the names. In every tenant: `desktop`, `admin`, `store`, `console`, `platform`, `id`, `auth`, `login`, `signin`, `sign-in`, `sso`, `account`, `accounts`. For the user tenant of a single-tenancy cluster also `argocd`, `corp`, `headlamp`, `imap`, `llm`, `mail`, `mail-egress`, `www` |
 
 The director verifies the bundle against the digest before it commits, and
 the operator verifies it again at rollout
@@ -362,10 +386,8 @@ tenant as well as to install. Without the flag, access is given per person
 Inspect app reconciliation:
 
 ```bash
-kubectl get app xwiki -n tenant-demo
-kubectl get xapp -A | grep xwiki
+kubectl get component -A | grep xwiki     # Ready when it runs
 kubectl get pods -n tenant-demo | grep xwiki
-kubectl logs -n tenant-demo -l app.kubernetes.io/instance=xwiki --tail=50
 ```
 
 A cluster's stage (`dev`, `staging`, `prod`) is fixed at bootstrap via
@@ -404,7 +426,10 @@ app checks its callers itself. The platform checks nobody at a published
 address in either case: the proxy forwards the listed paths and drops
 cookies and tokens on the way in.
 
-`approve` is for whoever may publish in the tenant. It reads the entry from
+`approve` is for whoever may publish in the tenant: a member of the tenant's
+group `gentian:tenant:<tenant>:perimeter`. Nothing creates that group; the
+tenant's admin creates it in the admin console (a group named `perimeter`)
+and adds the approver, and without it the director answers 403. It reads the entry from
 the director and prints the address, the paths and who can reach it, then
 asks you to type `<app instance>/<entry>` (or pass `--yes`). Without
 `--expires` the entry stays until it is withdrawn; a date means the end of
@@ -417,9 +442,18 @@ an approval that asks for the main address for an entry not declared for it,
 or that does not ask for it for one that is; the command sends what the
 entry is, and prints the director's refusal as it came.
 
-An entry for the cluster's main address is approved only with
-`--acknowledge-main-address-rule`. The command first prints the director's
-rule for a website there in full. `--yes` does not acknowledge it.
+An entry for the cluster's main address (`apex: true` in the profile) is
+approved only with `--acknowledge-main-address-rule`. The command first
+prints the director's rule for a website there in full, and the name of
+whoever acknowledged it is recorded with the entry. `--yes` does not
+acknowledge it, and the flag is refused for an entry that is not for the
+main address. The director approves such an entry only for the user tenant
+of a single-tenancy cluster (`--tenant user`); the website then answers at
+`https://<kernel-domain>/` and `www.`.
+
+```bash
+kubectl gentian exposures approve <app instance> <entry> --tenant user --acknowledge-main-address-rule
+```
 
 `list` shows each entry with who published it, when it is reviewed and when
 it ends: `published` is in force, `review due` is in force and past its
@@ -444,9 +478,7 @@ List the catalogue, or what one tenant may pick:
 kubectl gentian resources plans --tenant corp
 ```
 
-With a tenant, each plan is marked `*` (current) or `x` (not selectable), and a
-blocked plan carries the reason — an entitlement it exceeds, or the resource it
-does not have room for.
+The tenant's current plan is marked `*`.
 
 Show a tenant's ceiling and what is committed under it:
 
@@ -457,7 +489,7 @@ kubectl gentian resources show --tenant corp
 Move a tenant to a plan — through the director, as yourself:
 
 ```bash
-kubectl gentian resources set --tenant corp --plan nodes-2      # --force: see below
+kubectl gentian resources set --tenant corp --plan nodes-2      # [--force]: see below
 ```
 
 A plan change carries who chose it and which decision allowed it. The
@@ -473,7 +505,7 @@ using:
 
 Kubernetes does not evict pods to fit a shrunken quota — it refuses the *next*
 create — so shrinking a tenant too far would otherwise appear to work and fail
-hours later at the next restart. `"force": true` overrides the guard; it is
+hours later at the next restart. `--force` overrides the guard; it is
 accepted only from someone who may configure the cluster, who has accepted
 that cost.
 
@@ -496,17 +528,15 @@ Cap what a tenant may choose for itself (absent means uncapped):
 kubectl annotate tenant corp gentianos.io/max-resource-tier=20 --overwrite
 ```
 
-The plugin reaches the operator's lifecycle API through a port-forward it
-establishes and tears down per invocation. Set `GENTIAN_OPERATOR_NAMESPACE` if
-the operator does not run in `gentian-system`, or `GENTIAN_LIFECYCLE_URL` to
-reach the API directly.
+`plans`, `show` and `report` are read from the usher and `set` is sent to
+the director, each through a port-forward the plugin establishes and tears
+down per invocation.
 
-Live consumption (as opposed to what is committed) needs metrics-server, which
-is optional:
+Live consumption (as opposed to what is committed) needs metrics-server,
+which the install brings with step `A-07-metrics-server`:
 
 ```bash
-bash scripts/steps/A-11-metrics-server.sh   # via the installer driver
-helm upgrade gentian-os ... --set usage.metricsServer.enabled=true
+./install.sh --only A-07
 ```
 
 ## 7. Administrator Accounts
@@ -534,7 +564,7 @@ own credential — which is also the way in when nobody can sign in.
 Keycloak master-realm admin (Suze stack):
 
 ```bash
-kubectl get secret keycloak-admin -n platform-kernel \
+kubectl get secret keycloak-admin -n kernel-authentication \
   -o jsonpath='{.data.password}' | base64 -d && echo
 ```
 
@@ -556,42 +586,47 @@ kubectl -n kernel-gitops port-forward svc/argocd-server 8080:443
 
 Given KERNEL_DOMAIN, the main URLs are:
 
-- Portal: https://portal.<KERNEL_DOMAIN>
-- Identity admin: https://id.<KERNEL_DOMAIN>
-
-ArgoCD URL depends on service exposure (NodePort/LoadBalancer/Ingress) in your cluster.
+- Platform admin's desktop: https://platform.<KERNEL_DOMAIN>
+- Platform admin's console: https://admin.platform.<KERNEL_DOMAIN>
+- Identity provider: https://id.<KERNEL_DOMAIN>
+- Argo CD and Headlamp: https://argocd.<KERNEL_DOMAIN>, https://headlamp.<KERNEL_DOMAIN>
+- A tenant, multi-tenancy: https://desktop.<tenant>.<KERNEL_DOMAIN>,
+  `admin.<tenant>.…`, `store.<tenant>.…`, `<app>.<tenant>.…`
+- The user tenant, single-tenancy: https://desktop.<KERNEL_DOMAIN>,
+  `admin.…`, `store.…`, `<app>.…`; https://<KERNEL_DOMAIN> leads to the desktop
+- A tenant bound to a domain of its own: https://desktop.<its domain>
 
 ## 9. Useful Troubleshooting Commands
 
 ```bash
 kubectl get events -A --sort-by=.lastTimestamp | tail -n 50
-kubectl logs -n gentian-system deploy/gentian-os -f
+kubectl logs -n kernel-control deploy/gentian-os -f
 kubectl get integrationbindings -A
-kubectl describe application -n argocd gentian-os
+kubectl describe application -n kernel-gitops gentian-os
 ```
 
-### Gateway API edge routing (`ROUTING_MODE=gateway`)
+### Gateway API edge routing
 
 ```bash
 # Platform Gateways and routes
 kubectl get gatewayclass gentian-envoy
 kubectl get gateway -A
 kubectl get httproute -A -l app.kubernetes.io/managed-by=gentian-os
-kubectl describe gateway kernel-public-gateway -n gentian-dev
+kubectl describe gateway authenticated -n kernel-edge    # and: perimeter
 
-# Envoy data plane
-kubectl get pods -n envoy-gateway-system
-kubectl get svc -n envoy-gateway-system -l gateway.envoyproxy.io/owning-gateway-name=kernel-public-gateway
+# Envoy Gateway and its data plane
+kubectl get pods -n kernel-edge
+kubectl get svc -n kernel-edge
 
 # Tenant edge status
 kubectl get tenant -o custom-columns=NAME:.metadata.name,GATEWAY:.status.conditions[?(@.type==\"GatewayReady\")].status,TUNNEL:.status.conditions[?(@.type==\"TunnelIngressReady\")].status
 
 # Envoy policies attached to routes
 kubectl get backendtrafficpolicy -n tenant-demo
-kubectl get backendtrafficpolicy -n gentian-dev -l app.kubernetes.io/managed-by=gentian-os
+kubectl get backendtrafficpolicy -n kernel-edge -l app.kubernetes.io/managed-by=gentian-os
 ```
 
-On `NETWORK_MODE=tunnel`, `Gateway.status.conditions[Programmed]` may be
+On `networkMode: tunnel`, `Gateway.status.conditions[Programmed]` may be
 `False` (`AddressNotAssigned`) while listener conditions are `Programmed=True`
 and traffic reaches Envoy via Cloudflare tunnel. Check `TunnelIngressReady` on
 the Tenant and external curl to the public hostname.
@@ -617,86 +652,76 @@ Standard apps (path A — e.g. Odoo) use `app-default` Client MRs only and do
 
 ## 10. Kernel Mail Stack (Dovecot + Postfix)
 
-**Two knobs:** `spec.mail.serviceMode` on the
-**Cluster claim** (`gentian-deployments/clusters/<cluster>/kernel/claims/cluster.yaml`)
-controls whether the kernel deploys Postfix/Dovecot into `platform-kernel` and how
-Postfix relays (`external` vs `kernel`). There is no `cluster-settings.env` any more —
-that file was replaced by the claim, which the installer reads directly and which
-`gentian-cluster-config` republishes to every Composition that needs it.
-**`Tenant.spec.mail.mode`** controls what the **operator** provisions per tenant. See
-[design/mail.md](design/mail.md) §0.
+**Two knobs:** `spec.mail.serviceMode` on the **Cluster claim**
+(`clusters/<cluster>/kernel/claims/cluster.yaml` in the deployments
+repository) says whether the cluster runs its own mail servers (`system`) or
+relays through a provider (`external`, the default).
+**`Tenant.spec.mail.mode`** controls what the **operator** provisions per
+tenant. See [design/mail.md](design/mail.md) §0.
 
-On a `dev`-stage cluster, in-cluster SMTP is
-`postfix-dev.platform-kernel.svc.cluster.local:587`.
+**Tunnel clusters:** `mail.serviceMode: system` is refused with
+`networkMode: tunnel`, at pre-flight. A tunnel carries HTTP and HTTPS only;
+use `external` there.
 
-**Tunnel clusters:** `MAIL_SERVICE_MODE=system` is rejected when `NETWORK_MODE=tunnel`.
-Cloudflare tunnel exposes HTTP/HTTPS only — use `MAIL_SERVICE_MODE=external` with
-`EXTERNAL_SMTP_HOST` / `SMTP_RELAY_*` for invitation mail.
+### What runs where under `system`
 
-### Enable kernel mail delivery
+No installer step deploys mail. The `gentian-mail` ApplicationSet exists only
+while the claim says `system`, and syncs three charts:
 
-Kernel mail mode deploys Dovecot alongside Postfix and configures Postfix
-to deliver locally via Dovecot LMTP instead of relaying to an external SMTP.
+| Application | Namespace | What it is |
+|---|---|---|
+| `postfix-<stage>` | `system-mail` | the mail server and DKIM signer; no load balancer |
+| `dovecot-<stage>` | `system-mail` | the mailbox store; no load balancer |
+| `mail-edge-<stage>` | `system-mail-dmz` | the mail edge: an HAProxy that takes ports 25, 587 and 993 on one load balancer and passes each connection on. It holds no mail, no user, no certificate and no key; TLS ends at the servers |
 
-**Step 1** — Edit the Cluster claim:
+The proxy hands the sender's address to Postfix and Dovecot in a
+PROXY-protocol header, on ports of their own (10025, 10587, 10993) that
+admit the proxy alone. The load balancer in front of it has to hand the
+sender's address on as well: by forwarding packets
+(`externalTrafficPolicy: Local`, which the Service sets), or, where it opens
+its own connection, with the PROXY protocol switched on at both ends
+(`loadBalancer.proxyProtocol` in `kernel/services/mail-edge`,
+[design/mail.md §9b](design/mail.md#9b-the-mail-edge)). The mail edge is
+built, not yet run on a cluster.
+
+### Switch a cluster to its own mail
 
 ```yaml
+# clusters/<cluster>/kernel/claims/cluster.yaml
 spec:
+  networkMode: static-ip
   mail:
-    serviceMode: kernel
+    serviceMode: system
 ```
 
-**Step 2** — Commit, let ArgoCD sync the claim, then re-run the driver so the mail
-step converges on it:
-
-```bash
-./install.sh --only D-04-mail
-```
-
-`--force` is not required either direction. `D-04-mail`'s `check()` inspects
-state when the desired mode is `kernel` (the Postfix ConfigMap), and always
-reports "runs every pass" when it is `external`, since `apply()`'s external
-branch is pure verification with no cluster mutation to gate on — cheap enough
-to run on every plain install too. There is no separate imperative ConfigMap
-patch or manual OpenBao re-seed step to run either way; `apply()` reads the
-resolved mode and reconciles Postfix/Dovecot from it.
+Edit the claim in the deployments checkout and run `./install.sh`: step 0
+commits the edit signed and pushes it, and the cluster reconciles.
 
 ### Check mail component health
 
-`D-04-mail` runs automated smoke checks on apply: Keycloak master-realm OIDC
-discovery and Dovecot IMAP/LMTP TCP. Re-run anytime:
-
 ```bash
-make verify-kernel-services
+kubectl get application -n kernel-gitops | grep -E 'postfix|dovecot|mail-edge'
+kubectl get pods -n system-mail
+kubectl get pods,svc -n system-mail-dmz          # the Service has the mail address under EXTERNAL-IP
+kubectl logs -n system-mail-dmz -l app.kubernetes.io/name=mail-edge --tail=20
+kubectl get dnsendpoint -n system-mail-dmz       # mail.<domain>, imap.<domain>, MX, SPF, DKIM, DMARC
+kubectl get tenant <tenant> -o jsonpath='{.status.conditions[?(@.type=="MailReady")]}'
 ```
 
-Set `VERIFY_KERNEL_SERVICES=0` to skip during `./install.sh`. Tune timeouts with
-`KEYCLOAK_VERIFY_TIMEOUT` / `DOVECOT_VERIFY_TIMEOUT` (seconds, default 300).
-
-```bash
-# Dovecot — deployed only when mail.serviceMode=kernel; absent otherwise
-kubectl get release dovecot-dev -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}'
-kubectl logs -n platform-kernel -l app.kubernetes.io/name=dovecot --tail=20
-
-# Postfix — always deployed, in both modes (design/mail.md §8)
-kubectl get release postfix-dev -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}'
-kubectl logs -n platform-kernel -l app.kubernetes.io/name=postfix --tail=20
-
-# ESO secrets synced
-kubectl get externalsecret -n platform-kernel dovecot-sensitive-values postfix-sensitive-values
-```
-
-`dovecot-<stage>` / `postfix-<stage>` above — substitute the cluster's actual stage
-(`dev`/`staging`/`prod`) for `-dev`.
+With a DNS provider the operator publishes `mail.<kernel-domain>` and
+`imap.<kernel-domain>` from the load balancer's address, and the MX, SPF,
+DKIM and DMARC records; it publishes no address record before the load
+balancer has one. The PTR of the address mail leaves from is set at the
+provider ([design/mail.md §10](design/mail.md#10-dns-for-real-mail)).
 
 ### Switch back to external relay mode
 
 ```yaml
-# gentian-deployments/clusters/<cluster>/kernel/claims/cluster.yaml
+# clusters/<cluster>/kernel/claims/cluster.yaml
 spec:
   mail:
     serviceMode: external
-    host: smtp.gmail.com
+    host: smtp.example.com
     port: 587
     ssl: false
     starttls: true
@@ -704,9 +729,8 @@ spec:
     # see the "smtp-relay" CredentialRequirement (credentials.yaml)
 ```
 
-```bash
-./install.sh --only D-04-mail --force
-```
+Run `./install.sh` as above, then supply the relay's credentials in the
+admin console's **Credentials** tab.
 
 
 ## 11. Tenant Backup (Export)
@@ -849,7 +873,7 @@ format 1 manifest names apps and kinds only and still restores
 adds `retained` on an app that was uninstalled with its data kept, the
 tenant's `mailboxes` where the cluster runs its own mail server, and
 `rights`: the entries of the rights store that follow from nothing else. A
-format 2 bundle still restores.
+format 2 bundle still restores. Format 3 is what an export writes now.
 
 #### When the bundle is on external storage
 
@@ -859,7 +883,7 @@ in the kernel namespace rather than the tenant's — so reading such a bundle
 means aliasing that endpoint first:
 
 ```bash
-ns=platform-kernel                       # not the tenant namespace
+ns=system-s3                             # not the tenant namespace
 sec=backup-destination-<tenant>          # from status.bundle.credentialSecret
 ak=$(kubectl get secret "$sec" -n "$ns" -o jsonpath='{.data.accessKey}'  | base64 -d)
 sk=$(kubectl get secret "$sec" -n "$ns" -o jsonpath='{.data.secretKey}' | base64 -d)
@@ -916,6 +940,15 @@ kubectl create secret generic backup-identity -n tenant-demo \
 ```
 
 Delete that Secret once the restore is done.
+
+`spec.intoNewTenant: true` says the tenant was made new for this bundle. An
+import (§12a) sets it; a restore into the tenant the bundle was taken of
+leaves it out. With it, the data of an app the bundle holds as uninstalled
+with its data kept is brought with stores made for it; without it such data
+is put back only where the tenant still holds it, so an app purged since
+stays purged. And the access rights the bundle records as granted are not
+granted but named in the restore's result. The same holds without the field
+when the bundle was taken of a tenant of another name or on another cluster.
 
 ### What it does, in order
 
@@ -1231,11 +1264,11 @@ finalizer, and deleting it hangs rather than resuming anything.
 ```bash
 # The export controller's own log. Silence since the last "paused app for
 # capture", while other controllers keep logging, is a stopped worker.
-kubectl -n gentian-system logs deploy/gentian-os | grep tenantexport | tail
+kubectl -n kernel-control logs deploy/gentian-os | grep tenantexport | tail
 
 # What a stopped worker usually is: a cache that cannot sync, because the
 # ServiceAccount may not list the type something read through it.
-kubectl -n gentian-system logs deploy/gentian-os | grep -i forbidden
+kubectl -n kernel-control logs deploy/gentian-os | grep -i forbidden
 ```
 
 A restart clears the wedge and the resume follows from it — the operator
@@ -1244,5 +1277,5 @@ a Forbidden, the missing rule is a marker and a `make gen-all` away, and the
 export will wedge again on the next attempt without it.
 
 ```bash
-kubectl -n gentian-system rollout restart deploy/gentian-os
+kubectl -n kernel-control rollout restart deploy/gentian-os
 ```

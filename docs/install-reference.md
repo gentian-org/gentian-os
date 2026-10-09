@@ -45,9 +45,9 @@ phase, so a new step only ever affects its own phase.
 |---|---|---|
 | **A** | `control-plane` | Namespaces, cert-manager, ESO, Crossplane, Envoy Gateway, Argo CD, metrics-server, image pre-warm, cluster issuers |
 | **B** | `secrets` | Kernel bootstrap Applications, transit seal and OpenBao, Crossplane providers and definitions, credential seeding, deployment signing keys |
-| **C** | `platform` | The Cluster claim, ApplicationSets, wildcard certificate, DNS, credential catalogue, repository hand-off |
-| **D** | `applications` | Operator and director, kernel realm and platform desktop, OpenBao OIDC, kernel Gateway |
-| **E** | `handover` | Recovery kit, revoke the bootstrap token |
+| **C** | `platform` | The Cluster claim, ApplicationSets, wildcard certificate, credential catalogue, repository hand-off |
+| **D** | `applications` | Operator and director, the kernel hostnames resolving, kernel realm and platform desktop, OpenBao OIDC, kernel Gateway |
+| **E** | `handover` | Recovery kit, revoke the bootstrap token; on a single-tenancy cluster, the user tenant after that |
 
 Before phase A there is a step 0: the cluster's definition in
 `gentian-deployments`. When it is absent the forward run asks for every setting
@@ -81,6 +81,12 @@ the deployments repository.
 ./install.sh --validate   # is the configuration coherent? changes nothing
 ```
 
+`--status`, `--dry-run` and `--validate` read the cluster, so it has to be
+reachable; `--validate` runs the pre-flight as well as checking the
+configuration and the step contracts. `--dry-run` and `--validate` do not
+write the cluster's definition, so before the first install they stop at
+`clusters/<cluster-id>/kernel is incomplete`.
+
 None of the four collects a credential. `--dry-run` runs the same preflight as
 an install except for that: no step's `check()` reads a credential, so it has
 everything it needs to print the plan. The install collects them; the preview
@@ -95,7 +101,7 @@ cluster. Under `--dry-run` and `--validate`:
 | The deployments checkout | fast-forwards it, completes the cluster's definition, commits what is uncommitted, pushes | reads it as it is. It asks the remote where its branch is (`git ls-remote`) without fetching, and says so if the checkout is behind |
 | The signing keys | generates the break-glass key if this cluster has none | generates nothing, imports nothing, and does not start `gpg` on a host with no keyring |
 | `~/.gentian` | writes `config`, the credential cache, the keyring | writes nothing |
-| `~/.local/bin` | fetches the OpenBao CLI when `bao` is missing | fetches nothing; says it would |
+| `~/.local/bin` | fetches the OpenBao CLI when `bao` is missing, and unpacks it only if the archive matches the release's checksum list | fetches nothing; says it would |
 
 Wherever an install would have acted, the run prints a line beginning
 `Would`: which uncommitted files it would commit and push, an edit it would
@@ -103,7 +109,16 @@ make to the claim, a file it would write. `--dry-run` also applies to
 `--uninstall` and `--purge`, where it previews the teardown and asks for no
 confirmation. It does not apply to `--verify-only`, `--activate-admin` or
 `--export-recovery-kit`, which have no preview: combined with one of them it
-is refused, rather than ignored.
+is refused, rather than ignored (`… has no preview`). The same holds for
+`--validate` with any of the three.
+
+On an install, the break-glass key is found by the id the deployments
+repository records for the cluster
+(`clusters/<cluster-id>/kernel/signing/keys.env`), not by its name. Only a
+first install, which has no record yet, looks it up by name, and only once
+the kernel domain is known. A host whose keyring does not hold the recorded
+key is told so before a new key is generated in its place; restore the
+recorded one with `./install.sh --recover <kit>` instead.
 
 This is held by a test that runs the installer in both modes with stand-ins
 for `git`, `gpg`, `kubectl`, `helm`, `curl` and `bao` that fail on anything
@@ -180,12 +195,13 @@ The template carries one line per setting; the reasoning is here.
 | `GENTIAN_STORE_URL` | The base address of the App Store API, written to `spec.catalogue.storeUrl` when step 0 scaffolds a new Cluster claim. Defaults to `https://store-service.aluvian.io`. It must not be an address a cluster's own App Store app could have — `store.<a domain a cluster is installed under>` — which is why the default is `store-service.…` and not `store.…`; a cluster whose claim names its own App Store host offers no App Store (`store-address-is-own-host`). |
 | `TENANCY_MODE` | `multi` (default) or `single`, for an unattended first run; step 0 asks otherwise. It is written to the Cluster claim (`spec.tenancyMode`), which owns it from then on. See *Tenancy modes* below. |
 | `GENTIAN_USER_TENANT_WAIT_SECS` | How long `E-04` waits for the user tenant of a single-tenancy cluster to be Ready. 900 by default. |
-| `KERNEL_NETWORK_POLICIES` | `true` or unset. **Off by default.** On, step `A-01` gives every kernel namespace the NetworkPolicies of `kernel/security/network-policies` -- ingress is refused unless listed ([design/security.md §2.13](design/security.md)) -- and `B-01` tells the operator, which then narrows what tenants and publishing proxies admit from the edge namespace. Anything else removes them. Turn it on after a successful install, and off again if a component then times out reaching another: §9. |
+| `KERNEL_NETWORK_POLICIES` | `true` or unset. **Off by default.** On, step `A-01` gives every kernel namespace the NetworkPolicies of `kernel/security/network-policies` -- ingress is refused unless listed, egress is not restricted ([design/security.md §2.13](design/security.md)) -- and `B-01` tells the operator, which then narrows what tenants and publishing proxies admit from the edge namespace. Anything else removes them. Turn it on after a successful install, and off again if a component then times out reaching another: §9. |
 | `STORE_NETWORK_POLICIES` | `true` (default) or `false`. The policies on the shared stores, the kernel's PostgreSQL, the mail servers and the model gateway ([design/security.md §2.7](design/security.md)). |
 | `INSTALL_CLUSTER_INFRA` | `0` when cert-manager, CloudNativePG and Reloader are managed elsewhere on this cluster. |
 | `GENTIAN_NO_LICENCE_REPORT` | `1` turns the licence report off, as `--no-licence-report` does; `0` turns it back on. Unset keeps what the cluster has. Off, nothing is sent and the App Store is not offered: no tenant gets the App Store app — [design/operations.md §6.2](design/operations.md). |
 | `GENTIAN_LICENCE_REPORT_URL` | Where the licence report goes, instead of the default address in `kernel/bootstrap/chart/values.yaml`. `https` only. |
-| `OPENBAO_CLI_VERSION` | Which `bao` to fetch when none is on `PATH`. Defaults to the pin in `versions.yaml`, which is where component versions are declared. |
+| `OPENBAO_CLI_VERSION` | Which `bao` to fetch when none is on `PATH`. Defaults to the pin in `versions.yaml`, which is where component versions are declared. The archive is fetched from the OpenBao release for Linux or macOS on x86_64 or arm64, compared with that release's checksum list, and installed to `~/.local/bin` only when it matches; on any other host install `bao` yourself. |
+| `GENTIAN_DEFAULT_PROFILES` | The profiles step 0 writes into `clusters/<cluster>/catalogue/`, on every install run: local files or https addresses, comma separated. Unset, it is one profile, the Operations Console's, from `https://catalogue.aluvian.io/profiles/operations-console.yaml` (`GENTIAN_STORE_CATALOGUE_URL` replaces the address before `/profiles/`). Set, the value is used as it stands, and set empty writes none. One that cannot be fetched is a warning, not a failed install. `--disable-api-extensions` writes none. Remove a line an earlier install left here. |
 | `INFRA_CHART_REPO` / `_PRIVATE` | Where the infrastructure charts come from, and whether that registry needs a credential. Install-time rather than cluster state: it decides what the installer does before a cluster exists. |
 
 ### How Argo CD gets a repository's credential
@@ -316,7 +332,8 @@ Step 0 writes no user tenant when the definition already holds one, when it
 holds another tenant for users (a single-tenancy cluster carries exactly one,
 and which stays is yours to decide), or when `tenants/user` was there before
 and was removed (a retired tenant keeps its data, and the install does not
-bring it back; `kubectl gentian tenants create user` does). If the tenant is
+bring it back; `kubectl gentian tenants create user` does, and that is the
+one use `tenants create` has on a single-tenancy cluster). If the tenant is
 not Ready within the wait, the install warns, says how to check, and does not
 fail; `--status` reports `E-04` as outstanding until it is.
 
@@ -324,9 +341,25 @@ On a single-tenancy cluster these names directly under the cluster's domain
 are the platform's own, and a component or app of the user tenant that would
 answer on one is refused (`HostReserved` on its status): `id`, `platform`,
 `www`, `argocd`, `headlamp`, `llm`, `mail`, `imap`, `mail-egress`, `corp`.
-Under either tenancy mode the platform's own address names in a tenant
-(`desktop`, `admin`, `store`, and the names a sign-in page would have) are
-refused to apps the same way ([design/routing.md §3.1](design/routing.md)).
+Under either tenancy mode the platform's own address names in a tenant are
+refused to apps the same way: `desktop`, `admin`, `store`, `console`,
+`platform`, `id`, `auth`, `login`, `signin`, `sign-in`, `sso`, `account`,
+`accounts` ([design/routing.md §3.1](design/routing.md)). Both lists are
+matched exactly and with everything below a name (`x.admin`); the director
+refuses the install with the reason before anything is committed.
+
+The user tenant needs no domain bound: its domain is the cluster's.
+`kubectl gentian tenants domain user <domain>` is not refused on a
+single-tenancy cluster, though; the director applies the rules it applies to
+any tenant (a domain on or under the cluster's own is refused), and the
+tenant then moves off the cluster's addresses to that domain. It can then
+hold no website at the main address (`OwnDomain`).
+
+A website at the cluster's main address (`https://<kernel-domain>/` and
+`www.`) exists only here. A profile declares the entry (`apex: true`), and
+`kubectl gentian exposures approve <app> <entry> --tenant user
+--acknowledge-main-address-rule` publishes it; the director refuses that
+approval for any tenant but the user tenant of a single-tenancy cluster.
 
 The platform tenant's admin console is two labels under the cluster's domain,
 so it has a wildcard certificate of its own, `*.platform.<kernel-domain>`,
@@ -344,7 +377,13 @@ the manifests Argo CD syncs and the binary the kubelet pulls come from one
 commit. A release tag resolves to its version. Set it only to run something
 else — and a value that names a moving tag is warned about, because a
 Deployment on one never rolls by itself and a pod that restarts picks up
-whatever the tag meant at that second.
+whatever the tag meant at that second. A set value is otherwise used as it
+stands, so a line left in `install.env` by an earlier install pins the
+cluster to that older build without a warning: remove it.
+
+The model gateway's image (`llm.enabled`) is not a setting. It is one chart
+value, named by tag and digest, and `make lint` (`lint-image-pins`) fails on
+any image under `kernel/`, `charts/` or `crossplane/` tagged `latest`.
 
 Nothing advances the pin on its own. `./install.sh --only B-01`
 does, which is how a cluster following a branch takes a newer build; if the
@@ -397,8 +436,8 @@ The salt is generated at first install and stored in OpenBao beside the password
 > **and** the salt. The salt lives only in OpenBao, so a disaster that loses
 > OpenBao's storage also loses it, and the master password alone reproduces
 > nothing. `./install.sh --export-recovery-kit` captures both, plus the unseal
-> material and the cluster's identity, in one encrypted file — see step 8 of
-> [GETTING-STARTED.md](../GETTING-STARTED.md).
+> material and the cluster's identity, in one encrypted file — see *The
+> recovery kit* in [GETTING-STARTED.md](../GETTING-STARTED.md).
 
 Under `random` there is nothing to reproduce; recovery means restoring OpenBao.
 
@@ -513,7 +552,7 @@ App profiles are not part of this: they are fetched from a catalogue, which is
 a public https address (`GENTIAN_CATALOGUE_URL` for the default one). A
 catalogue on a private network is refused, so a cluster that cannot reach a
 public catalogue has profiles committed into `clusters/<cluster>/catalogue/` by
-hand, as step 0 does for `GENTIAN_DEFAULT_PROFILES`.
+hand, as step 0 does for `GENTIAN_DEFAULT_PROFILES` (§4).
 
 `versions.yaml` is the inventory of everything else the install pulls —
 Crossplane, cert-manager, External Secrets Operator, ArgoCD, Envoy Gateway and
@@ -531,7 +570,7 @@ whether it exists, who set it, and when.
 
 Lost credentials are rotated, not recovered.
 
-The installer's bootstrap token is revoked by the last step once an OIDC write
+The installer's bootstrap token is revoked by step `E-03` once an OIDC write
 path is configured. Until then that token is the only way to write a credential,
 so the step refuses to revoke it and says so.
 

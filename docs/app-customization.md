@@ -4,6 +4,12 @@
 **Companion to:** [design/app-catalogue.md](design/app-catalogue.md), [design/app-profiles.md](design/app-profiles.md),
 [design/multi-tenancy.md](design/multi-tenancy.md), [gentian-apps/docs/app-profile-guide.md](https://github.com/gentian-org/gentian-apps/blob/main/docs/app-profile-guide.md)
 
+**The kind is `ComponentProfile`.** Where this document still says `AppProfile`, that is the kind
+meant, and four of the old field names have moved: `spec.kernelRequirements` is
+`spec.requires.services`, `spec.valueMapping` and `spec.extraValues` are under `spec.package`,
+`spec.optionalIntegrations` is `spec.integrations`, and `spec.postInstallJob` is
+`spec.hooks.postInstall`. `spec.customization` is where it was.
+
 ---
 
 ## 0. Problem statement
@@ -61,15 +67,17 @@ Two fields, and neither names the cluster:
 
 ```yaml
 spec:
-  kernelRequirements:
-    mail:
-      smtp: {}                      # the need. It carries nothing.
-  valueMapping:
-    smtp:
-      hostKey: mail.smtp.host       # what THIS chart calls these values
-      portKey: mail.smtp.port
-      userKey: mail.smtp.name
-      passwordKey: mail.smtp.password
+  requires:
+    services:
+      mail:
+        smtp: {}                    # the need. It carries nothing.
+  package:
+    valueMapping:
+      smtp:
+        hostKey: mail.smtp.host     # what THIS chart calls these values
+        portKey: mail.smtp.port
+        userKey: mail.smtp.name
+        passwordKey: mail.smtp.password
 ```
 
 The requirement is empty on purpose. It once carried `auth` and `port`, which
@@ -287,17 +295,26 @@ Build **new code as a separate deployable** that talks to the target app only th
 *published* API. The target app is not modified in any way.
 
 This is the SAP "side-by-side extensibility" rung and the Nextcloud **ExApp** rung, and in Gentian
-it is already fully supported infrastructure: scaffold from `gentian-app-template`, publish an
-`AppProfile`, and wire it to the target with a **contract + `IntegrationBinding`**.
+it is already fully supported infrastructure: scaffold from `gentian-app-template`, publish a
+profile, and wire it to the target with a **contract**.
 
 ```yaml
 # gentian-apps/profiles/acme-approvals/profile.yaml
 spec:
-  optionalIntegrations:
-    - contract: erp-core            # provided by odoo-cb-base
+  integrations:
+    - contract: erp-core            # the target lists it under spec.provides
       provider: odoo-cb-base
       capabilities: [read, write]
 ```
+
+**Declaring a contract opens nothing.** Where both apps are installed in a tenant the operator
+writes an `IntegrationBinding`, and that is a request. The tenant's administrator grants it for the
+consumer (`PUT /v1/tenants/{t}/grants/{app}` at the director, `{"consume": [{"contract":
+"erp-core", "granted": ["read", "write"]}]}`). Only then are the two network policies written: the
+companion's pods may reach the target's, and the target's admit them. Withdrawing the grant takes
+both away. That is all the platform does for a contract today: the path is to the target's pods as
+a whole, the granted capabilities are recorded and not enforced, and the target is not told which
+app is calling. What a consumer may do there is the target's to check.
 
 **L2 vs L3 tie-breaker** — the one decision this ladder cannot make positionally:
 
@@ -610,33 +627,48 @@ expose:
 Declaring it publishes nothing. Once the app is installed the entry is a
 request: `kubectl gentian exposures requests --tenant <t>` lists it with the
 address it would be published at, its paths and who can reach it (the admin
-console shows the same under Apps → Details). The tenant's perimeter approver
+console shows the same under Apps → Details, and approves, reviews and
+withdraws there). The tenant's perimeter approver
 approves it with `kubectl gentian exposures approve <install> <name> --tenant
-<t>` (`PUT /v1/tenants/{t}/exposures/{install}/{name}`), with an owner and a
-review date. The director refuses an approval of an app that is not installed
+<t>` (`PUT /v1/tenants/{t}/exposures/{install}/{name}`). The approver is
+recorded as its owner, with a review date a year on at the latest;
+`--expires <date>` takes it down on a day, `--reason` is kept with it, and
+approving an approved entry again is its review. The director refuses an approval of an app that is not installed
 in the tenant, of an entry the profile does not declare with `surface:
 perimeter`, and one whose `apex` is not the entry's. The entry then answers at `<subDomain or component
-name>.<tenant's domain>`, from a proxy that passes no cookies either way and
-checks nobody: an `authMode` other than `none` says the app itself checks its
-callers. `exposures list` shows what a tenant has published, and `exposures
+name>.<tenant's domain>`, from a proxy that passes no cookies either way.
+`exposures list` shows what a tenant has published, and `exposures
 withdraw <install> <name> --tenant <t>` takes one down.
+
+**The proxy checks no caller, whatever `authMode` says.** `basic`, `bearer`,
+`jwt` and `signature` on a perimeter entry are not verified by the platform:
+no credential, no token, no signature. The word only tells the approver that
+the app says it checks its callers itself, and the app has to do so with what
+still reaches it -- the path, the query, the body or a header of its own --
+because `Authorization` and `Cookie` are removed on the way in (below).
 
 **Address names an app cannot take.** No entry of an app or an add-on, on
 either surface, may use one of the platform's names as its `subDomain` (or as
 the component's name, where it states none): `desktop`, `admin`, `store`,
 `console`, `platform`, `id`, `auth`, `login`, `signin`, `sign-in`, `sso`,
-`account`, `accounts` -- and on a single-tenancy cluster also `argocd`,
-`corp`, `headlamp`, `imap`, `llm`, `mail`, `mail-egress`, `www`. The install
-is refused (`422`, naming the entry and the label), and a Component that
-exists anyway is held with `HostReserved`
+`account`, `accounts`, or anything below one (`x.admin`). `desktop`, `admin`
+and `store` are taken by the platform's own component for each and by nothing
+else; the others by nothing at all. Where the tenant's domain is the cluster's
+own -- the user tenant of a single-tenancy cluster -- the kernel's addresses
+are refused as well: `argocd`, `corp`, `headlamp`, `imap`, `llm`, `mail`,
+`mail-egress`, `www`. The install is refused by the director (`422`, naming
+the entry and the label), and a Component that exists anyway is held by the
+operator with `HostReserved`; stating `trustTier: platform` changes nothing
 ([design/routing.md §3.1](design/routing.md)).
 
 "For the main address" is the same entry with `apex: true` (and no
 `subDomain`). It asks for the cluster's bare domain and needs all of this:
 
-- the cluster's tenancy mode is `single` and the tenant is its user tenant;
+- the cluster's tenancy mode is `single`, the tenant is its user tenant, and
+  that tenant is not on a domain of its own;
 - the approver sends `{"apex": true, "acknowledgeMainAddressRule": true}`
-  with the request -- an entry that says `apex` is not published at all
+  with the request (the CLI: `--acknowledge-main-address-rule`, which `--yes`
+  does not imply) -- an entry that says `apex` is not published at all
   without `apex`, and the director refuses `apex` without the acknowledgement
   (`400`, with the warning below);
 - no other surface holds the main address;
@@ -665,8 +697,10 @@ was asked stays published and is asked at its next review
 
 **What every published entry is held to.** Whatever a profile declares, the
 publishing proxy refuses a request whose path has more than one reading
-(`//`, dot segments, encoded slashes, `;`), a body over 10 MB, and more than
-20 requests a second from one client address (200 at once); it matches
+(`//`, dot segments, encoded slashes, `;`), the methods `TRACE`, `TRACK` and
+`CONNECT`, a body over 10 MB, and more than 20 requests a second from one
+client address (200 more at once, then `429`) or 100 at a time; it waits 60
+seconds for the app's answer. It matches
 `paths` by whole segments and `denyPaths` without regard to case, and it
 does not render a path with characters outside letters, digits and
 `/ . _ ~ -`. It removes every identity header, `Cookie` and `Authorization`
@@ -675,6 +709,20 @@ change any of this; the numbers are the cluster administrator's
 ([design/security.md §2.14](design/security.md)). An app that needs larger
 uploads or its caller's `Authorization` header on a public path cannot have
 them on a perimeter entry today.
+
+**What an entry behind sign-in is left with.** On a `surface: gateway` entry
+with `authMode: oidc` the app is told who is asking in the front door's
+headers, and nothing else of the session reaches it: the front door puts its
+own token in `Authorization`, replacing whatever the page sent, and takes it
+out again before the app, with the session's cookies. So an app whose pages
+call its own API with a bearer token of their own loses that token on such an
+entry; a profile has no field to keep it. `forwardToken: true` passes the
+front door's token on instead, and needs `trustTier: platform`. Signing out
+ends the session at the front door and at the realm, and tells no app: a
+session an app keeps itself lasts until the app ends it -- for an app behind
+the sign-in sidecar (§2.3a), an hour at most -- unless the app's own sign-in
+client declares a `backchannelLogoutUrl`, which is registered at the realm
+with the client.
 
 The component's `MainAddress` condition says whether it is there and, if not,
 why. A profile that should also work on a multi-tenancy cluster declares a
@@ -929,17 +977,19 @@ other catalogue object. Being a cluster object buys three things a file cannot:
 * `status` carries **derived state** — `reviewOverdue`, `upstreamStale`, `targetVersionDrift` — so
   the debt report is computed by the operator, not by a script guessing from YAML.
 
-`AppProfile` and `Composition` are cluster-scoped — there is no per-profile namespace. Profile-scoped
-records belong in the **fixed system namespace the kernel runs in** (`kernel.controlNamespace` of the
-cluster's configuration), a cluster-wide constant that is not derived from the profile name.
+Profiles and Compositions are cluster-scoped — there is no per-profile namespace. Profile-scoped
+records land in the **one namespace the cluster's catalogue is applied in** (the platform's
+provisioning namespace), a cluster-wide constant that is not derived from the profile name.
 Tenant-scoped records land in `tenant-<name>`.
 
-**A profile-scoped record does not arrive with its profile.** A profile reaches a cluster one at a
-time, from a catalogue, when a tenant installs it ([custom-catalogues.md](custom-catalogues.md)), and
-a catalogue serves `ComponentProfile`s only. The ApplicationSet that used to sync a whole profile
-directory — profile, `customizations/`, `composition.yaml` — from a `role: apps`, `type: git`
-repository is retired, so whatever a profile needs beside itself has to be put on the cluster
-separately.
+**A profile-scoped record arrives in its profile's bundle.** A profile reaches a cluster one at a
+time, from a catalogue, when a tenant installs it, as one file under one digest
+([custom-catalogues.md §2](custom-catalogues.md)). A record travels in that file as a companion:
+named `<profile>.<record>`, `spec.target.profile` its own profile, `spec.scope: profile`, and only
+from a catalogue of the whole cluster — a tenant's own catalogue brings profiles alone. The
+ApplicationSet that used to sync a whole profile directory — profile, `customizations/`,
+`composition.yaml` — from a `role: apps`, `type: git` repository is retired, and the director
+refuses to declare such a repository.
 
 ```yaml
 apiVersion: gentianos.io/v1alpha1
