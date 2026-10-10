@@ -740,7 +740,7 @@ validate_config() {
 
     _file_header "${INSTALL_CONFIG_FILE}" "Installer config checks (install.env)"
     _opt_from LETSENCRYPT_EMAIL  "the ACME account address — certManager.letsencryptEmail on the claim; defaults to admin@\${KERNEL_DOMAIN}" "${cluster_claim_file}"
-    _opt_from GENTIAN_DEPLOYMENTS_REPO    "defaults to https://git.example.domain/gentian-deployments" "${INSTALL_CONFIG_FILE}"
+    _req_from GENTIAN_DEPLOYMENTS_REPO    "the address of this cluster's deployments repository; no default" "${INSTALL_CONFIG_FILE}"
     _opt_from GENTIAN_DEPLOYMENTS_BRANCH  "defaults to 'main'" "${INSTALL_CONFIG_FILE}"
     _opt_from GENTIAN_DEPLOYMENTS_GIT_TOKEN "GitHub PAT for operator in-cluster git push" "the environment"
     _opt_from GENTIAN_DEPLOYMENTS_GIT_USERNAME "defaults to x-access-token for GitHub PATs" "the environment"
@@ -820,12 +820,12 @@ load_operator_config() {
 
 # =============================================================================
 # Prompt for the gentian-deployments repo URL/branch, cluster id and stage.
-# Defaults use example.domain placeholders — override via GENTIAN_*_REPO env vars.
+# The repository's address has no default: it is this cluster's own, and an
+# invented one is an install that runs until the first thing reads it.
 # Persist results to ~/.gentian/config (bash-sourceable) so the kubectl-gentian
 # plugin can locate the deployments repo when running `kubectl gentian apps install/uninstall`.
 # =============================================================================
 prompt_app_repos() {
-    local default_deploy_repo="https://git.example.domain/gentian-deployments"
     local default_deploy_branch="main"
     local default_deploy_cluster="default-cluster"
     local default_deploy_stage="${ENV:-dev}"
@@ -833,13 +833,19 @@ prompt_app_repos() {
 
     if [[ -z "${GENTIAN_DEPLOYMENTS_REPO:-}" ]]; then
         if [[ "${GENTIAN_NONINTERACTIVE:-0}" == "1" ]]; then
-            GENTIAN_DEPLOYMENTS_REPO="${default_deploy_repo}"
-        else
-            echo ""
-            info "Deployment repository (missing values only):"
-            read -rp "  gentian-deployments repo URL [${default_deploy_repo}]: " v
-            GENTIAN_DEPLOYMENTS_REPO="${v:-${default_deploy_repo}}"
+            error "GENTIAN_DEPLOYMENTS_REPO is not set and GENTIAN_NONINTERACTIVE=1; aborting."
+            error "  It is the address of the deployments repository this cluster is defined in"
+            error "  and Argo CD reads; there is no default. Set it in ${INSTALL_CONFIG_FILE:-install.env}"
+            error "  or export it, and run again."
+            exit 1
         fi
+        echo ""
+        info "Deployment repository (missing values only):"
+        v=""
+        while [[ -z "${v}" ]]; do
+            read -rp "  gentian-deployments repo URL: " v
+        done
+        GENTIAN_DEPLOYMENTS_REPO="${v}"
     fi
 
     if [[ -z "${GENTIAN_DEPLOYMENTS_BRANCH:-}" ]]; then
@@ -869,7 +875,6 @@ prompt_app_repos() {
         fi
     fi
 
-    : "${GENTIAN_DEPLOYMENTS_REPO:=${default_deploy_repo}}"
     : "${GENTIAN_DEPLOYMENTS_BRANCH:=${default_deploy_branch}}"
         : "${GENTIAN_DEPLOYMENTS_CLUSTER_ID:=${default_deploy_cluster}}"
         : "${GENTIAN_DEPLOYMENTS_STAGE:=${default_deploy_stage}}"
