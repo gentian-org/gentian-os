@@ -898,8 +898,9 @@ differs is listed here, in the order you meet it.
 
      Commit it in step 1, with the stage files. On a cluster that is already
      installed your commit is not signed by the cluster's keys and Argo CD
-     stops syncing the repository at it: run `./install.sh` after the push,
-     and step 0 puts a commit signed with the break-glass key on top
+     stops syncing the repository at it: run `./install.sh --only A-01` (or a
+     plain `./install.sh`) after the push, and step 0 puts a commit signed
+     with the break-glass key on top
      ([below](#a-commit-to-the-deployments-repository-is-not-synced)).
    - *A public https address*, without a login and without a redirect. The
      raw-file address of a private repository is not one. The profiles carry
@@ -1275,8 +1276,12 @@ key, or unsigned, sits at the head of the branch and stops every sync.
   break-glass key.
 - *A file anywhere else in the repository* — a stage profile, a catalogue
   directory (step 8): step 0 does not commit those. Commit and push it
-  yourself and run `./install.sh`: step 0 finds a head it does not trust and
-  puts an empty commit signed with the break-glass key on top.
+  yourself and run `./install.sh` (or `./install.sh --only A-01`: step 0 runs
+  before the first step of every install run): it finds a head it does not
+  trust and puts an empty commit signed with the break-glass key on top,
+  saying `Signed the head of the deployments repository (break-glass)`. The
+  same after every later change to such a file. `--dry-run` and `--validate`
+  sign nothing.
 
 On another machine, `./install.sh --recover <kit>` imports that key into
 `~/.gentian/gnupg` first.

@@ -570,6 +570,23 @@ python3 scripts/tools/build-catalogue-index.py catalogue/     # from a gentian-o
 git add catalogue && git commit -m "Catalogue: acme-notes 1.0.0" && git push
 ```
 
+**On a cluster that is already installed, that commit stops Argo CD.** Argo CD syncs the deployments
+repository only while its newest commit is signed by one of the cluster's two keys (the director's
+and the break-glass key, `clusters/<cluster>/kernel/signing/keys.env`). Your commit is signed by
+neither, and step 0 of the installer commits only the cluster's own directories, never a catalogue
+directory. After the push, on the machine the cluster was installed from, run
+
+```bash
+./install.sh --only A-01      # or a plain ./install.sh
+```
+
+Step 0 runs before the first step of every install run, whichever steps are selected: it finds a
+newest commit it does not trust and puts an empty commit signed with the break-glass key on top
+(`Signed the head of the deployments repository (break-glass)`). `--only A-01` keeps what follows
+to one step that is already satisfied. It needs the break-glass key in `~/.gentian/gnupg`; on
+another machine `./install.sh --recover <kit>` imports it first. `--dry-run` and `--validate` sign
+nothing. Every later change to the directory is the same: commit, push, run it again.
+
 Then the cluster's administrator declares the directory (§5). The declaration is the directory and
 nothing else:
 
