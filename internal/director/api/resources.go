@@ -321,7 +321,10 @@ func (s *Server) setTenantLocales(w http.ResponseWriter, r *http.Request, c call
 func (s *Server) setTenantSecurityPolicy(w http.ResponseWriter, r *http.Request, c call) {
 	var body gitops.SecurityPolicy
 	if err := decode(r, &body); err != nil {
-		s.fail(w, r, http.StatusBadRequest, "body must be a security policy")
+		// Said in full, because a caller that sends a password block was
+		// right to until this stopped taking one.
+		s.fail(w, r, http.StatusBadRequest,
+			`body must be {"session": {…}, "bruteForce": {…}}; the password policy is not set here but by the registrar's action set-password-policy`)
 		return
 	}
 	res, err := s.cfg.Repo.SetTenantSecurityPolicy(r.Context(), r.PathValue("t"), body, c.meta)

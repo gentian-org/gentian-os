@@ -368,8 +368,7 @@ func TestTheRealmPolicyIsCommittedAndReadBack(t *testing.T) {
 
 	before := h.tip(t)
 	code, body = h.do(t, "PUT", "/v1/tenants/demo/security-policy", tom,
-		`{"password":{"minLength":12,"requireDigits":true,"requireUppercase":true,"historyCount":3},`+
-			`"session":{"idleMinutes":30,"maxHours":8},`+
+		`{"session":{"idleMinutes":30,"maxHours":8},`+
 			`"bruteForce":{"enabled":true,"maxLoginFailures":5,"lockoutDurationSeconds":900}}`)
 	if code != http.StatusAccepted || body["commit"] != h.tip(t) || h.tip(t) == before {
 		t.Fatalf("write: %d %v", code, body)
@@ -378,14 +377,14 @@ func TestTheRealmPolicyIsCommittedAndReadBack(t *testing.T) {
 	// What landed is a patch a reviewer can read, applied after the
 	// components the tenant pulls in.
 	patch := dt.RemoteFile(t, h.remote, "clusters/"+dt.Cluster+"/tenants/demo/security-policy.yaml")
-	for _, want := range []string{"kind: Tenant", "security:", "minLength: 12", "requireDigits: true", "historyCount: 3", "idleMinutes: 30", "maxLoginFailures: 5"} {
+	for _, want := range []string{"kind: Tenant", "security:", "idleMinutes: 30", "maxHours: 8", "maxLoginFailures: 5"} {
 		if !strings.Contains(patch, want) {
 			t.Errorf("patch is missing %q:\n%s", want, patch)
 		}
 	}
 	// What was not asked for is absent, not zero: the realm keeps the
 	// composition's default rather than a zero written over it.
-	if strings.Contains(patch, "requireLowercase") || strings.Contains(patch, "maxAgeDays") {
+	if strings.Contains(patch, "rememberMe") || strings.Contains(patch, "password") {
 		t.Errorf("an unstated field was written:\n%s", patch)
 	}
 	kustomization := dt.RemoteFile(t, h.remote, "clusters/"+dt.Cluster+"/tenants/demo/kustomization.yaml")
@@ -396,9 +395,39 @@ func TestTheRealmPolicyIsCommittedAndReadBack(t *testing.T) {
 	// And it reads back as what was set.
 	_, body = h.do(t, "GET", "/v1/tenants/demo/security-policy", tom, "")
 	policy, _ := body["policy"].(map[string]any)
-	password, _ := policy["password"].(map[string]any)
-	if password["minLength"] != float64(12) || password["requireDigits"] != true {
+	session, _ := policy["session"].(map[string]any)
+	if session["idleMinutes"] != float64(30) || session["maxHours"] != float64(8) {
 		t.Fatalf("read back: %v", policy)
+	}
+}
+
+// How strong a password has to be is set in one place, the registrar's action
+// on the realm. The director takes no password block, writes none, and a
+// file that carried one from before loses it the next time it is written.
+func TestTheRealmPolicyCarriesNoPasswordBlock(t *testing.T) {
+	h, _ := startWithOperator(t)
+	tom := h.token(t, "tenant-demo", "tom")
+
+	before := h.tip(t)
+	code, body := h.do(t, "PUT", "/v1/tenants/demo/security-policy", tom,
+		`{"password":{"minLength":12},"session":{"idleMinutes":30}}`)
+	if code != http.StatusBadRequest || h.tip(t) != before {
+		t.Fatalf("a password block was taken: %d %v", code, body)
+	}
+	if msg, _ := body["error"].(string); !strings.Contains(msg, "set-password-policy") {
+		t.Fatalf("the refusal does not say where the password policy is set: %v", body)
+	}
+
+	if code, body := h.do(t, "PUT", "/v1/tenants/demo/security-policy", tom, `{"session":{"idleMinutes":30}}`); code != http.StatusAccepted {
+		t.Fatalf("write: %d %v", code, body)
+	}
+	patch := dt.RemoteFile(t, h.remote, "clusters/"+dt.Cluster+"/tenants/demo/security-policy.yaml")
+	if strings.Contains(patch, "password") || strings.Contains(patch, "minLength") {
+		t.Fatalf("the patch carries a password block:\n%s", patch)
+	}
+	_, body = h.do(t, "GET", "/v1/tenants/demo/security-policy", tom, "")
+	if policy, _ := body["policy"].(map[string]any); policy["password"] != nil {
+		t.Fatalf("the policy read back names a password block: %v", policy)
 	}
 }
 
@@ -410,11 +439,11 @@ func TestOnlyWhoeverMaySetPolicyChangesTheRealm(t *testing.T) {
 	if code, _ := h.do(t, "GET", "/v1/tenants/demo/security-policy", mia, ""); code != http.StatusOK {
 		t.Fatalf("a member could not read the policy: %d", code)
 	}
-	if code, _ := h.do(t, "PUT", "/v1/tenants/demo/security-policy", mia, `{"password":{"minLength":4}}`); code != http.StatusForbidden {
+	if code, _ := h.do(t, "PUT", "/v1/tenants/demo/security-policy", mia, `{"session":{"idleMinutes":1}}`); code != http.StatusForbidden {
 		t.Fatalf("a member set the realm policy: %d", code)
 	}
 	tina := h.token(t, "tenant-solo", "tina")
-	if code, _ := h.do(t, "PUT", "/v1/tenants/demo/security-policy", tina, `{"password":{"minLength":4}}`); code != http.StatusForbidden {
+	if code, _ := h.do(t, "PUT", "/v1/tenants/demo/security-policy", tina, `{"session":{"idleMinutes":1}}`); code != http.StatusForbidden {
 		t.Fatalf("a stranger set the realm policy: %d", code)
 	}
 	if h.tip(t) != before {
@@ -430,7 +459,7 @@ func TestTheChangeHistoryNamesWhatAllowedEachChange(t *testing.T) {
 	tom := h.token(t, "tenant-demo", "tom")
 
 	// A change made through the platform.
-	if code, _ := h.do(t, "PUT", "/v1/tenants/demo/security-policy", tom, `{"password":{"minLength":12}}`); code != http.StatusAccepted {
+	if code, _ := h.do(t, "PUT", "/v1/tenants/demo/security-policy", tom, `{"session":{"idleMinutes":30}}`); code != http.StatusAccepted {
 		t.Fatalf("setting up a change: %d", code)
 	}
 

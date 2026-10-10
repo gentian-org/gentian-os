@@ -655,9 +655,10 @@ func (s *Server) routes() {
 			s.guarded("GET /v1/clusters/{c}/changes", "can_audit", s.clusterObject, s.clusterChanges)
 		}
 
-		// The realm policy this tenant runs under: how strong a password
-		// has to be, how long a session lasts, what happens after repeated
-		// failures. Read from git, because git is where it is declared and
+		// The realm policy this tenant runs under: how long a session
+		// lasts and what happens after repeated failures. How strong a
+		// password has to be is the registrar's to set, on the realm, and
+		// is not written here. Read from git, because git is where it is declared and
 		// the composition is what applies it -- there is no Keycloak
 		// credential anywhere in this path, which is the point. Written
 		// under can_set_policy, like the backup policy beside it.

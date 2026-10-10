@@ -23,13 +23,16 @@ import (
 
 // A tenant's realm policy, as a commit.
 //
-// How strong a password has to be, how long a session lasts, what happens
-// after repeated failures. The console used to set these through Keycloak's
-// admin API with a credential the desktop held; they are declared state now,
-// so the thing that changes them is a commit and the thing that applies them
-// is the composition that owns the realm. Nothing holds a Keycloak credential
-// at any point, and a realm rebuilt from scratch comes back with the policy
-// it had, because the policy is in git rather than in the realm.
+// How long a session lasts and what happens after repeated failures. They
+// are declared state, so the thing that changes them is a commit and the
+// thing that applies them is the composition that owns the realm. Nothing in
+// this path holds a Keycloak credential, and a realm rebuilt from scratch
+// comes back with the policy it had, because the policy is in git rather
+// than in the realm.
+//
+// How strong a password has to be is not here. It is set in one place, the
+// registrar's action on the realm, and this writes no password block: a file
+// that carried one loses it the next time the policy is written.
 
 // SecurityPolicyFile is the patch a tenant's realm policy is written to.
 //
@@ -41,20 +44,8 @@ const SecurityPolicyFile = "security-policy.yaml"
 // SecurityPolicy is what a caller states, shaped like the CRD's own block
 // because the director commits it rather than interpreting it.
 type SecurityPolicy struct {
-	Password   *PasswordPolicy   `json:"password,omitempty"`
 	Session    *SessionPolicy    `json:"session,omitempty"`
 	BruteForce *BruteForcePolicy `json:"bruteForce,omitempty"`
-}
-
-// PasswordPolicy is how strong a password has to be.
-type PasswordPolicy struct {
-	MinLength           int32 `json:"minLength,omitempty"`
-	RequireDigits       bool  `json:"requireDigits,omitempty"`
-	RequireLowercase    bool  `json:"requireLowercase,omitempty"`
-	RequireUppercase    bool  `json:"requireUppercase,omitempty"`
-	RequireSpecialChars bool  `json:"requireSpecialChars,omitempty"`
-	HistoryCount        int32 `json:"historyCount,omitempty"`
-	MaxAgeDays          int32 `json:"maxAgeDays,omitempty"`
 }
 
 // SessionPolicy is how long a sign-in lasts.
@@ -133,16 +124,6 @@ func renderSecurityPolicy(tenant string, p SecurityPolicy) string {
 	b.WriteString("  name: " + tenant + "\n")
 	b.WriteString("spec:\n")
 	b.WriteString("  security:\n")
-	if pw := p.Password; pw != nil {
-		b.WriteString("    password:\n")
-		writeCount(&b, "      minLength", pw.MinLength)
-		writeBool(&b, "      requireDigits", pw.RequireDigits)
-		writeBool(&b, "      requireLowercase", pw.RequireLowercase)
-		writeBool(&b, "      requireUppercase", pw.RequireUppercase)
-		writeBool(&b, "      requireSpecialChars", pw.RequireSpecialChars)
-		writeCount(&b, "      historyCount", pw.HistoryCount)
-		writeCount(&b, "      maxAgeDays", pw.MaxAgeDays)
-	}
 	if s := p.Session; s != nil {
 		b.WriteString("    session:\n")
 		writeCount(&b, "      idleMinutes", s.IdleMinutes)
