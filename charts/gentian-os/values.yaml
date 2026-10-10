@@ -131,6 +131,12 @@ platformSecurityPolicy:
   # - profile: <app-profile-name>
   #   policy: gentian-require-non-root
   #   scope: <workload-scope>
+  # Which of the platform's cluster roles this cluster permits, per profile.
+  # It permits and does not grant: a role is bound only where it was also
+  # granted on the install.
+  allowedClusterRoles: []
+  # - profile: <app-profile-name>
+  #   role: <one of the roles in templates/profile-cluster-roles.yaml>
 
 # These three are set by the bootstrap chart from kernel/namespaces.yaml on
 # every install (kernel/bootstrap/chart/templates/gentian-os.yaml). The

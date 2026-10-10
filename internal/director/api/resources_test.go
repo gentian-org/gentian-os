@@ -581,8 +581,11 @@ func TestTheWaiverAllowlistIsReadWidelyAndChangedOnlyByBreakGlass(t *testing.T) 
 	// Declared nothing yet: an empty list, and nothing else. What asks for a
 	// waiver is the cluster's to say, and this process does not answer for
 	// the cluster.
-	if list, ok := body["allowedMacWaivers"].([]any); !ok || len(list) != 0 || len(body) != 1 {
+	if list, ok := body["allowedMacWaivers"].([]any); !ok || len(list) != 0 || len(body) != 2 {
 		t.Fatalf("the declared allowlist is not all that was answered: %v", body)
+	}
+	if list, ok := body["allowedClusterRoles"].([]any); !ok || len(list) != 0 {
+		t.Fatalf("the permitted cluster roles are not answered as an empty list: %v", body)
 	}
 
 	// A platform administrator is refused, and nothing moves.
@@ -590,6 +593,10 @@ func TestTheWaiverAllowlistIsReadWidelyAndChangedOnlyByBreakGlass(t *testing.T) 
 	if code, _ := h.do(t, "PUT", "/v1/clusters/"+dt.Cluster+"/platform-security", alice,
 		`{"allowedMacWaivers":[{"profile":"element","policy":"gentian-require-non-root","scope":"synapse"}]}`); code != http.StatusForbidden {
 		t.Fatalf("a platform administrator changed the admission posture without break-glass: %d", code)
+	}
+	if code, _ := h.do(t, "PUT", "/v1/clusters/"+dt.Cluster+"/platform-security", alice,
+		`{"allowedClusterRoles":[{"profile":"dashboard","role":"read-nodes"}]}`); code != http.StatusForbidden {
+		t.Fatalf("a platform administrator permitted a cluster role without break-glass: %d", code)
 	}
 	if h.tip(t) != before {
 		t.Fatal("a refused request moved the repository")

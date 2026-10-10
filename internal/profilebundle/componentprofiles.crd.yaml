@@ -2448,14 +2448,21 @@ spec:
                         description: |-
                           ClusterRoles the component's ServiceAccount needs. Cluster scope, and the
                           rarest: an app that needs the Kubernetes API is most of the way to being
-                          a controller.
+                          a controller. Each entry asks, by name, for one of the roles the
+                          platform defines; a profile never states the rules of a role.
                         items:
-                          description: ClusterRoleRequest asks for Kubernetes API
-                            access.
+                          description: |-
+                            ClusterRoleRequest asks for one of the cluster roles the platform defines.
+
+                            The role is bound to ServiceAccount, in the component's own namespace, when
+                            three things hold: Name is one of the platform's roles, the cluster's
+                            PlatformSecurityPolicy permits it for this profile, and it was granted on
+                            the install. Otherwise nothing is bound and the Component says why.
                           properties:
                             name:
-                              description: Name is what a PrivilegeGrant refers to.
-                                Unique within the profile.
+                              description: |-
+                                Name is the platform's name of the role, and what a PrivilegeGrant
+                                refers to (clusterRoles/<name>). Unique within the profile.
                               pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
                               type: string
                             reason:
@@ -2463,6 +2470,10 @@ spec:
                               minLength: 10
                               type: string
                             rules:
+                              description: |-
+                                Rules is not used. A profile used to state the rules of the role it
+                                wanted; no role is ever made from them. An entry that still carries
+                                rules stays installable, binds nothing, and the Component says so.
                               items:
                                 description: |-
                                   PolicyRule holds information that describes a policy rule, but does not contain information
@@ -2511,12 +2522,20 @@ spec:
                                 required:
                                 - verbs
                                 type: object
-                              minItems: 1
                               type: array
+                            serviceAccount:
+                              description: |-
+                                ServiceAccount is the ServiceAccount the component's chart runs its
+                                pods under, in the component's namespace. The role is bound to it and
+                                to nothing else. An entry without one binds nothing, and so does one
+                                that names "default", which every pod without an account of its own
+                                runs under.
+                              maxLength: 253
+                              pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                              type: string
                           required:
                           - name
                           - reason
-                          - rules
                           type: object
                         maxItems: 32
                         type: array

@@ -112,6 +112,8 @@ type Repository interface {
 	ClearAppGrant(ctx context.Context, tenant, app string, meta gitops.Meta) (gitops.Result, error)
 	PlatformSecurity(ctx context.Context) ([]gitops.MacWaiver, error)
 	SetPlatformSecurity(ctx context.Context, waivers []gitops.MacWaiver, meta gitops.Meta) (gitops.Result, error)
+	PlatformClusterRoles(ctx context.Context) ([]gitops.ClusterRoleAllowance, error)
+	SetPlatformClusterRoles(ctx context.Context, roles []gitops.ClusterRoleAllowance, meta gitops.Meta) (gitops.Result, error)
 	DeclareRepository(ctx context.Context, tenant, name string, d gitops.RepositoryDeclaration, meta gitops.Meta) (gitops.RepositoryResult, error)
 	RemoveRepository(ctx context.Context, tenant, name, confirm string, meta gitops.Meta) (gitops.Result, error)
 }

@@ -136,45 +136,92 @@ type MacWaiver struct {
 	Scope   string `json:"scope"`
 }
 
+// ClusterRoleAllowance permits one of the platform's cluster roles for one
+// profile on this cluster.
+type ClusterRoleAllowance struct {
+	Profile string `json:"profile"`
+	Role    string `json:"role"`
+}
+
+// platformSecurityDoc is the whole object, as the file holds it. The two
+// lists are written by two calls, and each carries the other across
+// unchanged: a call that rendered only its own list would empty the other.
+type platformSecurityDoc struct {
+	Spec struct {
+		AllowedMacWaivers   []MacWaiver            `json:"allowedMacWaivers"`
+		AllowedClusterRoles []ClusterRoleAllowance `json:"allowedClusterRoles"`
+	} `json:"spec"`
+}
+
+func (g *GitOps) platformSecurityDoc(ctx context.Context) (platformSecurityDoc, error) {
+	var doc platformSecurityDoc
+	_, err := g.readClaimsFile(ctx, PlatformSecurityFile, &doc)
+	return doc, err
+}
+
 // SetPlatformSecurity writes the cluster's waiver allowlist and commits it.
 //
 // An allowlist and not a request: a profile asks for a waiver in its own
-// catalogue entry, and this says which of those asks the cluster grants. The
-// operator intersects the two, so a waiver here for a profile that asks for
-// nothing grants nothing, and is harmless rather than dangerous.
+// catalogue entry, and this says which of those asks the cluster permits. The
+// operator intersects the two, and with the grant on the install, so a waiver
+// here for a profile that asks for nothing permits nothing, and is harmless
+// rather than dangerous.
 func (g *GitOps) SetPlatformSecurity(ctx context.Context, waivers []MacWaiver, meta Meta) (Result, error) {
 	for _, w := range waivers {
 		if strings.TrimSpace(w.Profile) == "" || strings.TrimSpace(w.Policy) == "" || strings.TrimSpace(w.Scope) == "" {
 			return Result{}, fmt.Errorf("%w: a waiver needs a profile, a policy and a scope", ErrInvalidName)
 		}
 	}
-	return g.writeClaimsFile(ctx, PlatformSecurityFile, renderPlatformSecurity(waivers),
+	doc, err := g.platformSecurityDoc(ctx)
+	if err != nil {
+		return Result{}, err
+	}
+	return g.writeClaimsFile(ctx, PlatformSecurityFile, renderPlatformSecurity(waivers, doc.Spec.AllowedClusterRoles),
 		"Set which MAC waivers this cluster permits", meta)
+}
+
+// SetPlatformClusterRoles writes which of the platform's cluster roles this
+// cluster permits, per profile, and commits it.
+//
+// It permits and does not grant, and it cannot name a role into being: the
+// operator binds a role only if the platform defines it, this permits it for
+// the profile, and it was granted on the install.
+func (g *GitOps) SetPlatformClusterRoles(ctx context.Context, roles []ClusterRoleAllowance, meta Meta) (Result, error) {
+	for _, r := range roles {
+		if !ValidName(r.Profile) || !ValidName(r.Role) {
+			return Result{}, fmt.Errorf("%w: a permitted cluster role needs a profile and a role, each a lower-case name", ErrInvalidName)
+		}
+	}
+	doc, err := g.platformSecurityDoc(ctx)
+	if err != nil {
+		return Result{}, err
+	}
+	return g.writeClaimsFile(ctx, PlatformSecurityFile, renderPlatformSecurity(doc.Spec.AllowedMacWaivers, roles),
+		"Set which cluster roles this cluster permits", meta)
 }
 
 // PlatformSecurity reads back what the cluster declares, so a screen shows
 // the list it is about to change rather than only the one in force.
 func (g *GitOps) PlatformSecurity(ctx context.Context) ([]MacWaiver, error) {
-	var doc struct {
-		Spec struct {
-			AllowedMacWaivers []MacWaiver `json:"allowedMacWaivers"`
-		} `json:"spec"`
-	}
-	found, err := g.readClaimsFile(ctx, PlatformSecurityFile, &doc)
-	if err != nil || !found {
-		return nil, err
-	}
-	return doc.Spec.AllowedMacWaivers, nil
+	doc, err := g.platformSecurityDoc(ctx)
+	return doc.Spec.AllowedMacWaivers, err
 }
 
-func renderPlatformSecurity(waivers []MacWaiver) string {
+// PlatformClusterRoles reads back which cluster roles the cluster permits.
+func (g *GitOps) PlatformClusterRoles(ctx context.Context) ([]ClusterRoleAllowance, error) {
+	doc, err := g.platformSecurityDoc(ctx)
+	return doc.Spec.AllowedClusterRoles, err
+}
+
+func renderPlatformSecurity(waivers []MacWaiver, roles []ClusterRoleAllowance) string {
 	var b strings.Builder
-	b.WriteString("# Managed by the director: which MAC waivers this cluster permits, set\n")
-	b.WriteString("# in the administration console by whoever the commit names.\n")
+	b.WriteString("# Managed by the director: which MAC waivers and which of the platform's\n")
+	b.WriteString("# cluster roles this cluster permits, set by whoever the commit names.\n")
 	b.WriteString("#\n")
-	b.WriteString("# An allowlist, not a request. A profile asks for a waiver in its own\n")
-	b.WriteString("# catalogue entry; the operator grants the intersection of the two, so\n")
-	b.WriteString("# an entry here for a profile that asks for nothing grants nothing.\n")
+	b.WriteString("# An allowlist, not a request and not a grant. A profile asks in its own\n")
+	b.WriteString("# catalogue entry; an entry here for a profile that asks for nothing\n")
+	b.WriteString("# permits nothing, and what is permitted takes effect only where it was\n")
+	b.WriteString("# also granted on the install.\n")
 	b.WriteString("apiVersion: gentianos.io/v1alpha1\n")
 	b.WriteString("kind: PlatformSecurityPolicy\n")
 	b.WriteString("metadata:\n")
@@ -183,13 +230,20 @@ func renderPlatformSecurity(waivers []MacWaiver) string {
 	if len(waivers) == 0 {
 		b.WriteString("  # Nothing escapes the default posture.\n")
 		b.WriteString("  allowedMacWaivers: []\n")
-		return b.String()
+	} else {
+		b.WriteString("  allowedMacWaivers:\n")
+		for _, w := range waivers {
+			b.WriteString("  - profile: " + quoteScalar(w.Profile) + "\n")
+			b.WriteString("    policy: " + quoteScalar(w.Policy) + "\n")
+			b.WriteString("    scope: " + quoteScalar(w.Scope) + "\n")
+		}
 	}
-	b.WriteString("  allowedMacWaivers:\n")
-	for _, w := range waivers {
-		b.WriteString("  - profile: " + quoteScalar(w.Profile) + "\n")
-		b.WriteString("    policy: " + quoteScalar(w.Policy) + "\n")
-		b.WriteString("    scope: " + quoteScalar(w.Scope) + "\n")
+	if len(roles) > 0 {
+		b.WriteString("  allowedClusterRoles:\n")
+		for _, r := range roles {
+			b.WriteString("  - profile: " + quoteScalar(r.Profile) + "\n")
+			b.WriteString("    role: " + quoteScalar(r.Role) + "\n")
+		}
 	}
 	return b.String()
 }

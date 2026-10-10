@@ -16,7 +16,6 @@ import (
 	"time"
 
 	networkingv1 "k8s.io/api/networking/v1"
-	rbacv1 "k8s.io/api/rbac/v1"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
@@ -191,23 +190,6 @@ func GrantedPodSecurityWaivers(profile *gentianov1alpha1.ComponentProfile, comp 
 		w := &profile.Spec.Requires.Privileges.PodSecurity[i]
 		if _, ok := granted[PrivilegeRef(PrivilegePodSecurity, w.Name)]; ok {
 			out = append(out, *w)
-		}
-	}
-	return out
-}
-
-// GrantedClusterRoleRules are the API-access rules a person granted, in the
-// profile's order.
-func GrantedClusterRoleRules(profile *gentianov1alpha1.ComponentProfile, comp *gentianov1alpha1.Component, now time.Time) []rbacv1.PolicyRule {
-	if profile == nil || profile.Spec.Requires == nil || profile.Spec.Requires.Privileges == nil {
-		return nil
-	}
-	granted := GrantedPrivileges(comp, now)
-	var out []rbacv1.PolicyRule
-	for i := range profile.Spec.Requires.Privileges.ClusterRoles {
-		c := &profile.Spec.Requires.Privileges.ClusterRoles[i]
-		if _, ok := granted[PrivilegeRef(PrivilegeClusterRoles, c.Name)]; ok {
-			out = append(out, c.Rules...)
 		}
 	}
 	return out

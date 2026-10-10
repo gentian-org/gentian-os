@@ -355,7 +355,8 @@ type PrivilegeRequest struct {
 
 	// ClusterRoles the component's ServiceAccount needs. Cluster scope, and the
 	// rarest: an app that needs the Kubernetes API is most of the way to being
-	// a controller.
+	// a controller. Each entry asks, by name, for one of the roles the
+	// platform defines; a profile never states the rules of a role.
 	// +optional
 	// +listType=map
 	// +listMapKey=name
@@ -391,13 +392,31 @@ type EgressRequest struct {
 	Reason string `json:"reason"`
 }
 
-// ClusterRoleRequest asks for Kubernetes API access.
+// ClusterRoleRequest asks for one of the cluster roles the platform defines.
+//
+// The role is bound to ServiceAccount, in the component's own namespace, when
+// three things hold: Name is one of the platform's roles, the cluster's
+// PlatformSecurityPolicy permits it for this profile, and it was granted on
+// the install. Otherwise nothing is bound and the Component says why.
 type ClusterRoleRequest struct {
-	// Name is what a PrivilegeGrant refers to. Unique within the profile.
+	// Name is the platform's name of the role, and what a PrivilegeGrant
+	// refers to (clusterRoles/<name>). Unique within the profile.
 	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
 	Name string `json:"name"`
-	// +kubebuilder:validation:MinItems=1
-	Rules []rbacv1.PolicyRule `json:"rules"`
+	// ServiceAccount is the ServiceAccount the component's chart runs its
+	// pods under, in the component's namespace. The role is bound to it and
+	// to nothing else. An entry without one binds nothing, and so does one
+	// that names "default", which every pod without an account of its own
+	// runs under.
+	// +optional
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$`
+	// +kubebuilder:validation:MaxLength=253
+	ServiceAccount string `json:"serviceAccount,omitempty"`
+	// Rules is not used. A profile used to state the rules of the role it
+	// wanted; no role is ever made from them. An entry that still carries
+	// rules stays installable, binds nothing, and the Component says so.
+	// +optional
+	Rules []rbacv1.PolicyRule `json:"rules,omitempty"`
 	// Reason is what the approver reads.
 	// +kubebuilder:validation:MinLength=10
 	Reason string `json:"reason"`

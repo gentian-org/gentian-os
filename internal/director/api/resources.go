@@ -409,19 +409,44 @@ func (s *Server) platformSecurity(w http.ResponseWriter, r *http.Request, _ call
 	if declared == nil {
 		declared = []gitops.MacWaiver{}
 	}
-	s.json(w, http.StatusOK, map[string]any{"allowedMacWaivers": declared})
+	roles, err := s.cfg.Repo.PlatformClusterRoles(r.Context())
+	if err != nil {
+		s.repoError(w, r, err)
+		return
+	}
+	if roles == nil {
+		roles = []gitops.ClusterRoleAllowance{}
+	}
+	s.json(w, http.StatusOK, map[string]any{"allowedMacWaivers": declared, "allowedClusterRoles": roles})
 }
 
 // setPlatformSecurity commits the allowlist.
+//
+// Two lists in one object. The list a body does not name is left as it is, so
+// a screen that edits waivers cannot empty the permitted cluster roles; a
+// body that names neither states the waivers as empty, as it always did.
 func (s *Server) setPlatformSecurity(w http.ResponseWriter, r *http.Request, c call) {
 	var body struct {
-		AllowedMacWaivers []gitops.MacWaiver `json:"allowedMacWaivers"`
+		AllowedMacWaivers   *[]gitops.MacWaiver            `json:"allowedMacWaivers"`
+		AllowedClusterRoles *[]gitops.ClusterRoleAllowance `json:"allowedClusterRoles"`
 	}
 	if err := decode(r, &body); err != nil {
-		s.fail(w, r, http.StatusBadRequest, `body must be {"allowedMacWaivers": [{"profile":…,"policy":…,"scope":…}]}`)
+		s.fail(w, r, http.StatusBadRequest,
+			`body must be {"allowedMacWaivers": [{"profile":…,"policy":…,"scope":…}], "allowedClusterRoles": [{"profile":…,"role":…}]}, either or both`)
 		return
 	}
-	res, err := s.cfg.Repo.SetPlatformSecurity(r.Context(), body.AllowedMacWaivers, c.meta)
+	var res gitops.Result
+	var err error
+	if body.AllowedMacWaivers != nil || body.AllowedClusterRoles == nil {
+		var waivers []gitops.MacWaiver
+		if body.AllowedMacWaivers != nil {
+			waivers = *body.AllowedMacWaivers
+		}
+		res, err = s.cfg.Repo.SetPlatformSecurity(r.Context(), waivers, c.meta)
+	}
+	if err == nil && body.AllowedClusterRoles != nil {
+		res, err = s.cfg.Repo.SetPlatformClusterRoles(r.Context(), *body.AllowedClusterRoles, c.meta)
+	}
 	if errors.Is(err, gitops.ErrInvalidName) {
 		s.fail(w, r, http.StatusBadRequest, err.Error())
 		return

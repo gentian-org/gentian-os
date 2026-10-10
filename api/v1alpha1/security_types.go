@@ -64,6 +64,21 @@ type AllowedMacWaiver struct {
 	Scope string `json:"scope"`
 }
 
+// AllowedClusterRole permits one of the platform's cluster roles for one
+// catalogue profile on this cluster.
+type AllowedClusterRole struct {
+	// Profile is the ComponentProfile metadata.name that may be bound to it.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	Profile string `json:"profile"`
+
+	// Role is the platform's name of the role, as a profile asks for it in
+	// requires.privileges.clusterRoles[].name.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	Role string `json:"role"`
+}
+
 // MacWaiverLabelKey returns the pod label key for an approved waiver.
 func MacWaiverLabelKey(policy string) string {
 	return "mac-waiver.gentianos.io/" + policy

@@ -87,6 +87,10 @@ type ComponentReconciler struct {
 	// WatchClusterClaim re-runs the components told where the store is when
 	// the Cluster claim changes. Off where the claim's kind is not installed.
 	WatchClusterClaim bool
+	// ClusterRoles is the set of cluster roles a profile may ask for. Nil is
+	// the platform's own (security.PlatformClusterRoles); a test names its
+	// own.
+	ClusterRoles security.ClusterRoleSet
 }
 
 // The markers are a free-floating block: controller-gen ignores a block that
@@ -176,6 +180,9 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 				return ctrl.Result{RequeueAfter: componentRequeue}, nil
 			}
 			if err := r.deleteZoneGrant(ctx, comp); err != nil {
+				return ctrl.Result{}, err
+			}
+			if err := r.deleteClusterRoles(ctx, comp); err != nil {
 				return ctrl.Result{}, err
 			}
 			controllerutil.RemoveFinalizer(comp, componentFinalizer)
@@ -336,6 +343,12 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// failure the mechanism exists to prevent. The reconciler stops before it
 	// has written anything -- no network policy, no release -- so a component
 	// waiting for an approval has no half-built footprint in the namespace.
+	// A cluster role is bound, and unbound, before the install is held or
+	// let through: a grant that was withdrawn or has run out holds the
+	// install below, and the binding it answered must not outlive it there.
+	if err := r.ensureClusterRoles(ctx, comp, profile); err != nil {
+		return ctrl.Result{}, err
+	}
 	comp.Status.PendingPrivileges = security.PendingPrivileges(profile, comp, time.Now())
 	if len(comp.Status.PendingPrivileges) > 0 {
 		return r.status(ctx, comp, metav1.ConditionFalse, "PrivilegesPending",
@@ -1758,6 +1771,12 @@ func (r *ComponentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		// for it -- are another object's and are told here.
 		Watches(&gentianov1alpha1.Tenant{}, componentsOnTheMainAddress(mgr.GetClient()),
 			builder.WithPredicates(mainAddressChanged()))
+	if len(r.clusterRoleSet()) > 0 {
+		// What the cluster permits is another object's: a role it stops
+		// permitting is unbound when the policy changes, not when something
+		// else next wakes the component.
+		b = b.Watches(&gentianov1alpha1.PlatformSecurityPolicy{}, componentsAskingForClusterRoles(mgr.GetClient()))
+	}
 	if r.WatchClusterClaim {
 		b = b.Watches(clusterClaimObject(), componentsToldTheStore(mgr.GetClient()),
 			builder.WithPredicates(storeAddressChanged()))

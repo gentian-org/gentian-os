@@ -44,6 +44,12 @@ type PlatformSecurityPolicySpec struct {
 	// A profile's requests outside this list are denied at deploy time.
 	// +optional
 	AllowedMacWaivers []AllowedMacWaiver `json:"allowedMacWaivers,omitempty"`
+
+	// AllowedClusterRoles lists, per profile, the platform's cluster roles
+	// this cluster permits. It permits and does not grant: a role is bound
+	// only where it is also granted on the install.
+	// +optional
+	AllowedClusterRoles []AllowedClusterRole `json:"allowedClusterRoles,omitempty"`
 }
 
 // PlatformSecurityPolicyStatus reports observed policy state.

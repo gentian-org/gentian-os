@@ -42,6 +42,20 @@ func LoadAllowedMacWaivers(ctx context.Context, c client.Client) ([]gentianov1al
 	return psp.Spec.AllowedMacWaivers, nil
 }
 
+// LoadAllowedClusterRoles reads which of the platform's cluster roles this
+// cluster permits, and for which profile. No policy permits none.
+func LoadAllowedClusterRoles(ctx context.Context, c client.Client) ([]gentianov1alpha1.AllowedClusterRole, error) {
+	psp := &gentianov1alpha1.PlatformSecurityPolicy{}
+	err := c.Get(ctx, types.NamespacedName{Name: gentianov1alpha1.PlatformSecurityPolicyName}, psp)
+	if apierrors.IsNotFound(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get PlatformSecurityPolicy: %w", err)
+	}
+	return psp.Spec.AllowedClusterRoles, nil
+}
+
 // SyncPlatformSecurityConfigMap writes the cluster allowlist for compositions.
 func SyncPlatformSecurityConfigMap(
 	ctx context.Context,

@@ -1,0 +1,43 @@
+{{- /*
+  The cluster roles a profile may ask for by name.
+
+  A profile never states the rules of a role: it names one of these in
+  requires.privileges.clusterRoles[].name. The operator binds it to the
+  ServiceAccount the profile names, in the component's own namespace, only
+  while the cluster's PlatformSecurityPolicy permits it for that profile
+  (spec.allowedClusterRoles) and a live grant for it is on the install.
+
+  The set is empty: no profile of the catalogue asks for a cluster role.
+
+  A role is added here, by the platform, in this repository -- never by a
+  catalogue and never by a tenant -- and each of these is part of adding one;
+  a test (internal/security/cluster_roles_test.go) fails when they disagree
+  or when a role is broader than a role of this set may be:
+
+    1. The ClusterRole below, named gentian-profile-role-<name> and labelled
+       gentianos.io/profile-cluster-role: <name>. Read verbs only (get, list,
+       watch), named resources, no Secrets, no wildcard, nothing of
+       rbac.authorization.k8s.io or admissionregistration.k8s.io, no
+       nodes/proxy, no impersonation.
+    2. The name, with what it allows in words, in PlatformClusterRoles
+       (internal/security/cluster_roles.go).
+    3. The operator's own permissions, as rbac markers in
+       internal/controller/component_cluster_roles.go, then `make gen-all`:
+       get, list and watch on clusterroles; get, list, watch, create and
+       delete on clusterrolebindings; and bind on clusterroles held to the
+       names of this set with resourceNames. The operator has none of them
+       while the set is empty.
+
+  Shape of an entry:
+
+    apiVersion: rbac.authorization.k8s.io/v1
+    kind: ClusterRole
+    metadata:
+      name: gentian-profile-role-read-nodes
+      labels:
+        gentianos.io/profile-cluster-role: read-nodes
+    rules:
+      - apiGroups: [""]
+        resources: ["nodes"]
+        verbs: ["get", "list", "watch"]
+*/ -}}
