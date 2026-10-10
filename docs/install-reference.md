@@ -538,9 +538,9 @@ off. After changing it, run the install again: the route follows the claim,
 the gateway's network rule follows the run ([llms.md](design/llms.md)).
 
 The models the gateway offers are the claim's, and changing them needs no run
-of the install — except that the credential of a provider the claim names for
-the first time appears in the administration console with the next run
-(`./install.sh --only C-04`), which is what creates it. `spec.llm.providers` names external OpenAI-compatible
+of the install: the cluster declares the credential of a provider the claim
+names, and it appears in the administration console once the claim is applied.
+`spec.llm.providers` names external OpenAI-compatible
 endpoints and their models, `spec.llm.instances` the models a cluster with
 GPUs serves itself:
 
@@ -551,7 +551,7 @@ spec:
     providers:
       - name: infomaniak
         apiBase: https://api.infomaniak.com/2/ai/<product-id>/openai/v1
-        apiKeyProperty: infomaniak_api_key   # a property of the llm-provider-infomaniak credential
+        apiKeyProperty: infomaniak_api_key   # always <name>_api_key: the provider's own token
         models:
           - name: gemma-4-31b                # offered as infomaniak/gemma-4-31b
             model: google/gemma-4-31B-it     # the id the provider expects

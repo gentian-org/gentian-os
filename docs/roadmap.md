@@ -1272,6 +1272,22 @@ mappers and flow, nor the broker client is made any more
   - `[ ]` Drill, under `random`: a tenant's bundle is restored into a new cluster, under the same name and under a new one.
   - `[ ]` Run the same three drills under `derived`, so that the two modes are compared on what each recovers.
 
+### 2.31 A Model's Health Is Read, Not Inferred (*)
+* **Target Domain**: Platform Infrastructure
+* **Context**: The administration console says whether a model can answer
+  from what is declared: a model the cluster serves itself is flagged because
+  the platform starts no instance, and a provider's model when its token is
+  missing ([llms.md §5](design/llms.md)). Nothing asks the gateway. A wrong
+  token, a provider that cannot be reached and an instance somebody runs by
+  hand are all shown wrongly or not at all.
+* **Proposed Solution**: One reader inside the cluster asks the gateway which
+  models answer and publishes the result where the usher reads live state; the
+  console shows it beside the declared fact.
+* **Backlog Items**:
+  - `[ ]` Decide which component asks: it needs a network path to the gateway in `system-llm` and a key of the gateway's that can list and probe models and do nothing else.
+  - `[ ]` Publish the answer as status the usher serves under `can_audit`, with the time it was read.
+  - `[ ]` Show it on the Models tab and in `kubectl gentian models list`, and keep the declared flag where no answer exists.
+
 ## 3. User Management & Shell UI
 
 ### 3.1 SCIM & Provisioning Bus Integration (*)

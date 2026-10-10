@@ -619,7 +619,7 @@ claim. [design/llms.md](design/llms.md) §5 has the rules.
 
 ```bash
 kubectl gentian models list                  # each model, and what the claim says of it
-kubectl gentian models show > models.json    # the settings: enabled, gpuAcceleration, instances, providers
+kubectl gentian models show > models.json    # the settings: enabled, gpuAcceleration, console, instances, providers
 kubectl gentian models set -f models.json    # make the claim declare exactly these
 ```
 
@@ -632,8 +632,16 @@ Model serving is on, GPU serving on.
 ```
 
 `set` sends the whole of the settings: a model the file does not name is
-removed from the gateway. A provider's token is never in the file; it is
-entered in the admin console under Credentials, as `llm-provider-<name>`.
+removed from the gateway. The director refuses a provider whose `apiBase` is
+not a public `https` address (no port but 443, no credentials, nothing inside
+the cluster or a private network), and one whose `apiKeyProperty` is not its
+own: `<name>_api_key`, with `-` as `_`. `console.enabled` serves the gateway's
+own console at `llm.<kernel domain>`, a public address; left out of the file,
+it stays as it is.
+
+A provider's token is never in the file; it is entered in the admin console
+under Credentials, as `llm-provider-<name>`, which the cluster declares for
+every provider on the claim once it has applied the commit.
 Whether it has been supplied is shown on the console's Models tab, not here.
 A model the cluster serves itself is always `NOT SERVED`: the platform starts
 no instance for it.

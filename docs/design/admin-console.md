@@ -49,7 +49,7 @@ service's answer from OpenFGA.
 | **Notifications** | Publish a notice to the tenant's people (§5) | director, usher (read) |
 | **Audit** | Changes to declared state, from git (§4.7) | director |
 | **Cluster settings**, **Platform security**, **Customization**, **Licence report** (platform administrator) | The Cluster claim's settings, permitted waivers, customization debt, the last licence report | director |
-| **Models** (platform administrator) | The models the model gateway offers, which are the Cluster claim's: providers and their models, the models the cluster serves itself, and the two switches. Each model is flagged when it cannot answer. No token is entered here (§6a) | director; custodian (read, for the token's state) |
+| **Models** (platform administrator) | The models the model gateway offers, which are the Cluster claim's: providers and their models, the models the cluster serves itself, the two serving switches, and the switch for the gateway's own console. Each model is flagged when it cannot answer. No token is entered here (§6a) | director; custodian (read, for the token's state) |
 | **Catalogues** | Hidden. The cluster renders no catalogue of its own; the screen is kept and not linked |
 
 **Nothing is installed from the console.** Apps come from the App Store app, a
@@ -292,9 +292,19 @@ The tab flags a model that cannot answer, without asking the gateway: a model
 the cluster would serve itself is "not served", because the platform starts no
 server for it; a provider's model is "token missing" or "no credential" when
 the custodian's list says so. A token that is there is shown as supplied, not
-as working. A provider's token is entered on the Credentials tab, under
-`llm-provider-<name>`; a provider the platform ships no credential requirement
-for has nowhere to enter one, and the tab says so.
+as working.
+
+A provider's token is entered on the Credentials tab, under
+`llm-provider-<name>`. The cluster declares that credential for every provider
+on the claim, so a new provider's appears there once the cluster has applied
+the commit. Which property of it holds the token follows from the provider's
+name; the tab shows it and does not ask for it. The director refuses a provider
+address that is not a public `https` address.
+
+The tab also switches the gateway's own console on and off
+(`llm.console.enabled`), with a warning that it opens a public address for the
+gateway's console and API. GPU time slicing is not on the tab: nothing reads
+the setting today.
 
 ---
 
@@ -323,7 +333,7 @@ a control that exists.
 | Realm-wide second-factor rule, WebAuthn | Not built (§4.4) |
 | Creating and removing accounts inside apps (SCIM or events) | Not built (§6) |
 | Group-scoped and mailed notices | Not built (§5) |
-| A model's health as the gateway sees it; a credential for a provider the platform ships none for | Not built (§6a; [llms.md](llms.md) §5) |
+| A model's health as the gateway sees it | Not built (§6a; [llms.md](llms.md) §5; [roadmap.md](../roadmap.md) §2.31) |
 | Making a backup key in the console | Not offered: the console must not hold a key. A person makes one with `age-keygen` and gives the console the public half ([tenant-backup-guide.md](../tenant-backup-guide.md)) |
 | Agents and delegation, access requests, break-glass workflow | Not built |
 | A tenant's own upstream identity provider, service-account registry, dynamic groups, guests with an end date, access certification | Not built |

@@ -164,6 +164,12 @@ been seen working on a cluster. Until it has, it is not done.
   the director's `GET` and `PUT /v1/clusters/{c}/models`, the commit of the
   claim, the gateway restarting with the new list after the sync, and the
   flags on models that cannot answer.
+- A provider's credential declared from the claim: the Cluster composition
+  composing `llm-provider-<name>` and its probe, taking over the one the
+  installer applied for a provider on a cluster installed before, and removing
+  them with the provider. The gateway leaving out a provider that names
+  another's token property.
+- The gateway's console switched on and off from the Models tab.
 
 Carried over from before, and still not shown:
 
@@ -203,7 +209,7 @@ Each is true of the code today.
 | 20 | **`backchannelLogoutUrl` remains in profiles outside this repository.** The schema refuses the field (`OIDCClientSpec`, `api/v1alpha1/profile_parts.go`): a bundle that still carries it is not admitted, and the app is not installed or updated from it, until the profile declares `backchannelLogout` (exposure and path) instead. The catalogue's released branch and some extension profiles still carry the old field | [app-customization.md](../app-customization.md) §2, [iam.md §1.12](../design/iam.md) |
 | 21 | **Removing a tenant's file reports "unchanged" and leaves the file when the tenant has no `kustomization.yaml`.** `writeTenantFileLocked` (`internal/director/gitops/backup.go`) decides that there is nothing to remove from the read error of the kustomization, not from that of the file. Unbinding a tenant's domain (`tenants domain <t> --remove`) in such a tenant directory answers `unchanged` and `domain.yaml` stays | `internal/director/gitops/backup.go` |
 | 22 | **The smoke check of a cluster's own mail cannot pass.** `make verify-kernel-services` (and `e2e-p5-keycloak-dovecot`) run `crossplane/tests/e2e/scripts/e2e-verify-kernel-services.sh`, which calls `verify_keycloak_installation`; that function was deleted from `scripts/lib/verify-kernel-services.sh`, so the script always counts one error. The Dovecot check it also calls now looks in `system-mail`, and has not been run | `scripts/lib/verify-kernel-services.sh` |
-| 23 | **A model the cluster serves itself is offered and not served.** Closed in the code on 2026-10-09 for what the claim declares, not yet shown on a cluster: the gateway's model list is its configuration file, written by its chart from `spec.llm.providers` and `spec.llm.instances` of the claim the LLM ApplicationSet hands it. What stays open: nothing starts the vLLM instance behind an entry of `instances` (`kernel/services/llm/chart` is delivered by no Application, has no NetworkPolicy, lacks the pod settings the admission baseline requires and defaults its image to `latest`), so such a model is listed and a call to it fails. The administration console's Models tab and `kubectl gentian models list` show every such model as not served, from that fact and not from the cluster. For a provider's model the tab compares `apiKeyProperty` with the custodian's list of credentials and flags a missing token or a missing credential; nothing on the cluster does, nothing probes the provider, and a wrong token still shows as a failing call. `credentials.yaml` declares one provider's credential, Infomaniak's, so a provider first named on the Models tab has nowhere to enter its token until its requirement is added there and the installer's step `C-04` has run | [llms.md §5, §6](../design/llms.md), [roadmap.md §2.28](../roadmap.md) |
+| 23 | **A model the cluster serves itself is offered and not served.** Closed in the code on 2026-10-09 for what the claim declares, not yet shown on a cluster: the gateway's model list is its configuration file, written by its chart from `spec.llm.providers` and `spec.llm.instances` of the claim the LLM ApplicationSet hands it. What stays open: nothing starts the vLLM instance behind an entry of `instances` (`kernel/services/llm/chart` is delivered by no Application, has no NetworkPolicy, lacks the pod settings the admission baseline requires and defaults its image to `latest`), so such a model is listed and a call to it fails. The administration console's Models tab and `kubectl gentian models list` show every such model as not served, from that fact and not from the cluster. For a provider's model the tab reads the custodian's list of credentials and flags a missing token; nothing on the cluster does, nothing probes the provider, and a wrong token still shows as a failing call. A provider's credential requirement is declared from the claim by the Cluster composition | [llms.md §5, §6](../design/llms.md), [roadmap.md §2.28](../roadmap.md) |
 | 24 | **A granted cluster role creates nothing.** A profile states a cluster role as rules of its own (`requires.privileges.clusterRoles[].rules`), the security officer can grant it on an install, and nothing creates a role or a binding (`GrantedClusterRoleRules` has no caller). Creating what the profile states would let a catalogue entry define cluster-wide rules; the platform has no set of roles defined beforehand that a grant could bind instead | [security.md §3.0](../design/security.md) |
 | 25 | **The password policy is not in git.** Since 2026-10-10 the registrar's action is the one way to set it and the director commits no password block. A realm that is rebuilt comes back without the policy. The Tenant still has `spec.security.password`, and the tenant Composition still writes it into the realm when a manifest carries it, which puts back what it says over what the registrar set; the director drops the block from `security-policy.yaml` the next time it writes that file. Whether the Composition also resets a policy it does not state has not been checked on a cluster | [admin-console.md §4.5](../design/admin-console.md) |
 | 26 | **Closed in the code on 2026-10-10, not yet shown on a cluster: the operator granted integrations by itself, and a waiver needed no grant.** The operator writes no `AppGrant` and cannot (its role has neither create nor patch); a binding reports what was granted. A pod-security waiver needs the allowlist and the grant on the install. Grants the operator wrote before stay in the cluster | [security.md §3.4](../design/security.md) |
@@ -323,57 +329,24 @@ Each is true of the code today.
     or that was written before it carried `secretMode`, reads as `derived`,
     which is what every cluster did before the operator read the mode
     (`ClusterSecretMode` in `internal/controller/cluster_config.go`).
-18. **What a cluster administrator may point a model provider at.** The
-    Models tab writes `spec.llm.providers` as the schema allows it: any
-    `https` address, and any property of the shared provider credential
-    (`gentian-os/kernel/llm-providers`) as the token. Somebody with
-    `can_configure` and no access to the vault can therefore have the gateway
-    send one provider's token to an address of their choosing, and can name an
-    address inside the cluster. Whether the director should hold a provider to
-    the property of its own credential, and refuse addresses that are not
-    public as it does for catalogues, is not decided.
-19. **How a provider that is new to the platform gets its credential.** Its
-    requirement has to be in `credentials.yaml` and reaches a cluster with the
-    installer. The Models tab shows the gap and does nothing about it. A way
-    to declare the requirement from the claim, or from the console, would
-    create an object the custodian trusts, in a kernel namespace.
-20. **Where a model's real health comes from.** Nothing reads whether a
-    model answers. Asking the gateway, or reading the instance's Deployment,
-    needs a reader with a path into `system-llm` that publishes its answer for
-    the usher; which component that is, and with which key, is not decided.
+18. **What a cluster administrator may point a model provider at.**
+    **Decided 2026-10-10**, and built: a public `https` address only, by the
+    rules for a catalogue's address, and a provider reads its own token
+    (`<name>_api_key`) and no other's. The director refuses anything else and
+    the gateway's chart offers no model of a provider that names another's
+    property ([llms.md §5](../design/llms.md)).
+19. **How a provider that is new to the platform gets its credential.**
+    **Decided 2026-10-10**, and built: the Cluster composition declares the
+    requirement `llm-provider-<name>` from the claim, with a fixed path and a
+    field computed from the name. `credentials.yaml` lists no provider.
+20. **Where a model's real health comes from.** **Decided 2026-10-10**: the
+    console keeps flagging from the declared fact; a real health status is on
+    the roadmap, item 2.31.
 21. **Whether the Models tab also carries the gateway's console switch and
-    GPU time slicing.** `llm.console.enabled` opens a public route and
-    `gpuTimeSliceReplicas` changes a ConfigMap shared by every GPU workload,
-    so neither is on the tab; both stay in the claim, edited in git.
-22. **What becomes of the grants the operator wrote.** Until 2026-10-10 the
-    operator wrote a full `AppGrant` for every declared integration. Those
-    objects are left in place and keep the path between the two apps open,
-    though no administrator granted them; a withdrawal through the director
-    removes a file that was never written, so it does not remove them, and
-    setting the grant is what replaces one. Whether they are removed, and
-    whether an install should grant anything by default, is open: as built,
-    an integration between two apps of the catalogue works only after the
-    tenant's administrator granted it.
-23. **How a cluster role is granted.** Defect 24: whether the platform
-    defines the roles a profile may ask for by name, and who maintains that
-    set.
-24. **Whether the Tenant keeps `spec.security.password`.** Defect 25: the
-    field and the Composition's use of it are what is left of the commit
-    path, and removing them changes the Tenant's schema.
-25. **Where a backup key is made.** The administration console no longer
-    offers to make one. The Operations Console shows the same choice and its
-    backend serves neither the route that would make a key nor the one that
-    reads or keeps the workspace's key, and no platform service makes one. A
-    person makes a key with `age-keygen` and pastes the public half.
-
-26. **What a purge does with the kernel's volumes.** **Decided 2026-10-10**:
-    the behaviour as built stands, and nothing is to change. A purge does
-    not drain the claims of any kernel namespace before the reverse pass:
-    the vault and the kernel's database stay up through it, and their claims
-    go with their namespaces. The volumes are deleted in the pass after it
-    (`purge_delete_volumes`, `scripts/lib/teardown.sh`), which takes the
-    volumes of the kernel and system namespaces by name and every tenant's
-    by prefix.
+    GPU time slicing.** **Decided 2026-10-10**: where reasonable. The console
+    switch is on the tab and in the director's route, with a warning. GPU
+    time slicing is not: `gpuTimeSliceReplicas` is read by nothing, so a
+    switch for it would change nothing (roadmap, item 2.28).
 
 ## 5. Known and deliberately not now
 

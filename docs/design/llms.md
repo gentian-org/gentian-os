@@ -239,7 +239,7 @@ Both ask the director, and the director is the only writer:
 
 | Route | Who may | What it does |
 |---|---|---|
-| `GET /v1/clusters/{c}/models` | `can_audit` on the cluster | The settings (`enabled`, `gpuAcceleration`, `instances`, `providers`) and each model under the gateway's name, with what the claim says of it |
+| `GET /v1/clusters/{c}/models` | `can_audit` on the cluster | The settings (`enabled`, `gpuAcceleration`, `console`, `instances`, `providers`) and each model under the gateway's name, with what the claim says of it |
 | `PUT /v1/clusters/{c}/models` | `can_configure` on the cluster | Replaces the settings in the claim, as one signed commit in the person's name |
 
 A tenant's administrator holds neither relation, and the routes exist under
@@ -252,21 +252,52 @@ gateway, whoever wrote it there. The director holds the body to the schema of
 `spec.llm` it was built with — names, `https` addresses, the modes — and also
 refuses an empty model id, text over more than one line, and two entries that
 would give the gateway one model name twice. A body with any other field is
-refused unread: the gateway's console switch (`llm.console.enabled`), GPU time
-slicing and a provider's token are not set here. The rest of the claim, its
+refused unread: GPU time slicing and a provider's token are not set here. The
+gateway's console switch (`console.enabled`, "Operator access" below) is part
+of the settings; a body that leaves it out leaves it as the claim has it.
+GPU time slicing (`gpuTimeSliceReplicas`) is not, because nothing reads it:
+the chart that would is delivered by nothing (§6). The rest of the claim, its
 comments included, stays as it was; a comment written inside the list of
 instances or of providers is lost when that list changes.
 
-Two things an administrator who has `can_configure` can do here, which follow
-from the claim being theirs to write: point a provider at any `https` address,
-and name any property of the shared provider credential as its token. The
-gateway then sends that token to that address.
+**A provider's address is a public one.** The gateway sends a provider's
+token and every prompt to the provider's address, so the director holds it to
+the rules it holds a catalogue's address to
+(`internal/director/catalogue/address.go`): `https`, no port but 443, no user
+name or password, no query, and a host that is not a name or an address inside
+the cluster or a private network. When an address is new to the claim the
+director also resolves its host and refuses it unless every address it
+resolves to is public. An address the claim already carries is not resolved
+again. The gateway, not the director, connects to the provider and resolves
+the name each time; nothing checks that connection, and `system-llm` has no
+egress policy.
 
-**A provider named for the first time has no credential to enter its token
-under.** The credential requirement of a provider is declared in this
-repository (`credentials.yaml`, one provider today) and reaches a cluster with
-the installer (below). The console says so on the provider's models and does
-nothing about it.
+**A provider reads its own token.** All providers' tokens are properties of
+one credential path, and a provider's is `<name>_api_key`, with `-` in the
+name as `_` (`infomaniak_api_key`). `apiKeyProperty` on the claim has to say
+exactly that. It is held in two places:
+
+- the director refuses a provider that names any other property;
+- the gateway's chart offers no model of such a provider
+  (`gateway-config.yaml`), so a claim edited by hand cannot make the gateway
+  send one provider's token to another provider's address either. The
+  director's `GET`, the console and `kubectl gentian models list` show its
+  models as not offered, with the reason.
+
+What stays the administrator's to do: whoever may configure the cluster may
+change the address of a provider, and the gateway then sends that provider's
+token to the new, public, address.
+
+**A provider's credential comes with the claim.** The Cluster composition
+declares, for every provider under `spec.llm.providers` of a cluster that
+serves models, the credential requirement `llm-provider-<name>` and its probe
+(`crossplane/compositions/cluster-default.yaml`). Naming a provider is enough
+for its token to have a place on the console's Credentials tab: no edit of
+`credentials.yaml`, no installer step. It appears once the cluster has applied
+the claim; a provider removed from the claim loses the requirement, and a
+token stored for it stays in OpenBao. A cluster gets this with the
+composition, which the installer applies: a cluster installed before it
+declares nothing from the claim until the installer has run once.
 
 ### Whether a model works
 
@@ -277,7 +308,8 @@ The console shows it per model, and asks neither the gateway nor any pod of
 |---|---|---|
 | An instance's, with `gpuAcceleration` true | **Not served** | The director, from one fact: the platform starts no vLLM instance (§6). Every such model is flagged, also one whose instance somebody runs by hand |
 | An instance's, with `gpuAcceleration` false; any model with `enabled` false | **Not offered** | The director, from the claim: the gateway does not list it |
-| A provider's, with no credential `llm-provider-<name>` on the cluster, or one that lacks the property `apiKeyProperty` names | **No credential** / **Property missing** | The custodian's list of credentials, which the console reads already |
+| A provider's, where the provider names a token property that is not its own | **Not offered** | The director, from the claim: the gateway's chart leaves such a provider out |
+| A provider's, with no credential `llm-provider-<name>` on the cluster yet, or one that lacks the provider's property | **No credential** / **Property missing** | The custodian's list of credentials, which the console reads already |
 | A provider's, whose credential is not satisfied | **Token missing** | The same list |
 | A provider's, whose token is there | **Token supplied** | The same list. Not "works": nothing probes the token or the address |
 
@@ -310,24 +342,26 @@ to.
 ### The API key is a credential, the product id is not
 
 Each provider has its own `llm-provider-<name>` credential declaring one field,
-and they all share the OpenBao path `gentian-os/kernel/llm-providers` (see
-[`credentials.yaml`](../../credentials.yaml)); `apiKeyProperty` on the claim names
-which property to read. Supply the token in the **administration console** under
-that credential — the write happens as your own OpenBao token, merge-patches the
-path so it cannot clobber another provider's key, and tells the ExternalSecret to
-resync immediately rather than at the end of its refresh interval.
+`<name>_api_key`, and they all share the OpenBao path
+`gentian-os/kernel/llm-providers`. Supply the token in the **administration
+console** under that credential — the write happens as your own OpenBao token,
+merge-patches the path so it cannot clobber another provider's key, and tells
+the ExternalSecret to resync immediately rather than at the end of its refresh
+interval.
 
 One requirement per provider rather than one with a field each, because
 `checkFields` requires every declared field in a single write: a combined
 credential would make the console demand every provider's token at once and
-refuse a single rotation. Adding a provider is two edits in git — a requirement
-there and an entry here. `credentials.yaml` is this repository's and declares
-one provider today, Infomaniak; another provider needs its requirement added
-there before its token can be entered in the console. The requirement of a
-provider reaches a cluster with the installer (`C-04`), and only for the
-providers its claim names at that run: after naming a provider for the first
-time, run `./install.sh --only C-04` for its credential to appear in the
-console.
+refuse a single rotation.
+
+The requirements are not listed in `credentials.yaml`. The Cluster composition
+declares them from the claim ("Changing the models", above), and what a claim
+can make of that is fixed in the composition: the name is
+`llm-provider-<name>`, the path is the one above, and the field is computed
+from the provider's name — the claim's `apiKeyProperty` is not read there. A
+claim cannot declare a requirement of any other name, on any other path, or
+with another provider's field. A requirement gives nobody a right to write:
+the custodian writes as the person, under that person's own OpenBao policy.
 
 **The token never leaves its Secret.** The ExternalSecret
 `llm-provider-credentials` (rendered when the claim names a provider) copies
@@ -340,8 +374,7 @@ database.
 **A model whose token is missing is listed and does not answer.** Until the
 token is supplied a call to such a model comes back as an authentication
 error from the gateway. The administration console flags it on the Models tab
-(above); nothing on the cluster compares the claim's `apiKeyProperty` with the
-credential requirements, and no status or alert reports the gap. When the token is
+(above); no status or alert on the cluster reports the gap. When the token is
 supplied, rotated or removed, the gateway's container restarts by itself to
 read it: a probe compares the mounted Secret with what the container started
 with. That takes up to a few minutes — the ExternalSecret's resync, the
@@ -404,6 +437,12 @@ consoles' (`tile_projection_reconciler.go`). Platform administrators only,
 because the routing and budgets there apply to every tenant. The models are
 still the claim's and the console cannot add one; it is for inspecting them,
 keys and spend. The host label `llm` stays reserved either way.
+
+The switch is in the claim, and on the Models tab of the administration
+console, with a warning beside it. Switched on from the console, the route
+appears as soon as the claim is applied and answers nothing until the
+installer's next run admits the edge to the gateway (third point below).
+Switched off, the route is gone as soon as the claim is applied.
 
 Three things to know before switching it on:
 
