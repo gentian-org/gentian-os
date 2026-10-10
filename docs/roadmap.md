@@ -848,6 +848,25 @@ mappers and flow, nor the broker client is made any more
   - `[ ]` Decide whether the cluster's registry credential may reach a tenant's namespace, and how ([open-items.md](plans/open-items.md) decision 29).
   - `[ ]` Run it on a cluster: an `ExternalSecret` in a tenant's namespace that names the kernel's store, or another tenant's, or a kernel path through its own, yields no Secret.
 
+### 1.41 A Restore Checks Who Made the Bundle (**)
+* **Target Domain**: Backup & Restore
+* **Context**: A bundle is encrypted and not signed. Encryption to a public
+  key says nothing of who encrypted, and a cluster's backup recipient is in
+  every bundle's `bundle-info.json`, so anyone can make a bundle a restore
+  opens. A restore of it replaces a tenant's data and sets the secrets of
+  the apps it restores to the values the bundle holds
+  ([security.md §6.4](design/security.md)). A restore is a confirmed act of
+  an administrator and writes an app's own paths only; nothing checks where
+  the bundle came from.
+* **Proposed Solution**: An export signs the manifest, with the digest of
+  every artefact in it, and a restore refuses a bundle whose signature is
+  not by a key the cluster was told to accept.
+* **Backlog Items**:
+  - `[ ]` Record each artefact's digest in the manifest, the secrets' included, and sign the manifest at export.
+  - `[ ]` Decide the signing key, where its private half is kept, and how another cluster's key is accepted for an import.
+  - `[ ]` Have a restore verify the signature and each digest before it changes anything, and say so in its result.
+  - `[ ]` Decide what happens to bundles written before signing: refused, or restored with an explicit setting.
+
 ## 2. Platform, Infrastructure & Lifecycle
 
 ### 2.1 Keycloak Provider & Crossplane Consolidation (*)

@@ -440,7 +440,8 @@ Three properties:
    master password (HKDF-SHA256 in `internal/kernel/secrets` for an app's),
    so the same password and salt reproduce them; `random` makes them
    independent of it and leaves OpenBao holding the only copy. An app's own
-   secrets are derived in both modes.
+   secrets follow the mode too, and travel in the tenant's bundle with the
+   data that was written with them.
 2. **No person's password is derived.** An administrator account has no
    password until its holder sets one through a single-use activation link.
 3. **Seeding is write-once.** The operator writes a credential where the path

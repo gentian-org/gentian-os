@@ -337,10 +337,11 @@ spec:
                     the kernel's and each app's. derived computes it from the
                     master password and the salt, so a rebuild yields the same
                     values. random draws each one once and keeps it in OpenBao
-                    only, so OpenBao has to be backed up: neither a rebuild nor
-                    a tenant's backup brings it back. An app's own secrets are
-                    derived in both modes. Chosen at the first install; a later
-                    change leaves every existing credential as it is.
+                    only, so OpenBao has to be backed up: a rebuild does not
+                    bring it back. A tenant's backup carries its apps' own
+                    secrets, in both modes, and no other credential. Chosen at
+                    the first install; a later change leaves every existing
+                    credential as it is.
                   enum:
                     - derived
                     - random

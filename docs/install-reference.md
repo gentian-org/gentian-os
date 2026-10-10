@@ -640,12 +640,13 @@ It depends on the cluster's `secretMode`, a field on the `Cluster` claim:
 | `random` | Drawn at random once, then stored in OpenBao | **No.** The master password leads to none of them |
 
 This covers the kernel's credentials, which the installer makes, and each
-app's, which the operator makes when the app is installed. Three are computed
-from the master password under `random` as well: an app's own secrets
-(`spec.appSecrets`), which its restored data is readable only with; the key
-Keycloak's event listener signs with; and the kernel realm's own mail login
-on a cluster that runs its own mail server
-([security.md §6.3](design/security.md)). The installer reads
+app's, which the operator makes when the app is installed. Two kernel
+credentials are computed from the master password under `random` as well:
+the key Keycloak's event listener signs with, and the kernel realm's own
+mail login on a cluster that runs its own mail server
+([security.md §6.3](design/security.md)). An app's own secrets follow the
+mode, and travel in the tenant's backup with the data that was written with
+them ([security.md §6.4](design/security.md)). The installer reads
 the claim; the operator reads the same field from the `gentian-cluster-config`
 ConfigMap the `Cluster` Composition writes.
 
@@ -672,8 +673,9 @@ What you have to keep, by mode:
 > recovery kit* in [GETTING-STARTED.md](../GETTING-STARTED.md).
 
 Under `random` there is nothing to reproduce; recovery means restoring OpenBao.
-The platform does not snapshot OpenBao, and neither a tenant's backup nor the
-recovery kit holds a generated credential, so that snapshot is yours to take.
+The platform does not snapshot OpenBao, and the recovery kit holds no
+generated credential; a tenant's backup holds its apps' own secrets and no
+other. So that snapshot is yours to take.
 A tenant's backup, restore and import are the same in both modes. What
 differs is the loss of OpenBao's storage on a cluster that keeps running:
 `derived` writes the same values again, `random` writes new ones that the
@@ -709,9 +711,15 @@ custody, because it makes the first kit irreplaceable.
 
 Escrow is read by the `cluster-admin` policy and explicitly denied to `eso-read`,
 so the key cannot be turned into a Kubernetes Secret by anything that can write
-an `ExternalSecret`. It means "a cluster administrator can read it", not "the
-cluster can read it"; `make test-policy-openbao` asserts both halves against a
-real OpenBao.
+an `ExternalSecret`. The operator can read it too: its policy,
+`operator-write`, reads and writes all of `gentian-os/*`, this path included,
+so whoever takes the operator's identity at OpenBao holds the key. Escrow
+therefore means "a cluster administrator and the operator can read it, and
+nothing that goes through External Secrets can". A bundle holds a tenant's
+data and its apps' own secrets, so the escrowed key opens both to a platform
+administrator, whose policy is otherwise refused every tenant's paths.
+`make test-policy-openbao` asserts against a real OpenBao that `cluster-admin`
+reads the path and `eso-read` does not.
 
 It also has a second effect worth knowing: with escrow on, a later
 `--export-recovery-kit` reads the identity back and the new kit carries it. With

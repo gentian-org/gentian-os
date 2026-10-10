@@ -174,7 +174,8 @@ which is a wrapper over:
 #    kernel's service credentials and each app's reproduce their original
 #    values from the master password and salt the kit carries. With
 #    `secretMode: random` they are generated anew: the kit does not hold
-#    them. An app's own secrets are derived in both modes.
+#    them. An app's own secrets come back with each tenant's bundle, in
+#    both modes.
 ./install.sh --recover /path/to/gentian-recovery-kit-<cluster>.age
 ```
 

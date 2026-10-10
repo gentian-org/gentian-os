@@ -66,9 +66,10 @@ For full-cluster DR ([recovery-playbook.md](../recovery-playbook.md) §1):
 With `secretMode: derived` (the default) the kernel's service credentials and
 each app's are derived from the master password and salt, so they come back
 with their original values; with `secretMode: random` they are generated anew
-(`scripts/lib/bootstrap.sh`, `internal/kernel/secrets`), all but an app's own
-secrets, which are derived in both modes so that the data a bundle brings
-back stays readable ([security.md §6](security.md)). People's and administrators' passwords are never
+(`scripts/lib/bootstrap.sh`, `internal/kernel/secrets`). An app's own
+secrets come back in both modes with the tenant's bundle, which carries them
+so that the data it brings back stays readable
+([security.md §6.4](security.md)). People's and administrators' passwords are never
 derived: a realm export carries none, and every member resets theirs after a
 restore.
 
@@ -570,8 +571,13 @@ made again where it is not; `mailboxes` (`kind: mailboxes`, `name` the mail
 domain, `path`); and `rights`, the entries of the rights store that follow
 from nothing else, as `granted` and `withdrawn` lists of `user`, `relation`,
 `object`, with the `cluster` they were read on. A format 2 bundle has none of
-them and restores as before. A manifest of a format newer than the platform
-reads is refused. A `postgresOwned` artefact is
+them and restores as before. **Format 4** adds to an app's `stores` an entry
+of `kind: secrets`, `name` the app, `path` `secrets/<app>.json`: the app's own
+secrets, a JSON document of `secrets` (name to value) and `extensions`
+(extension, then name to value), with no path in it. A format 3 bundle has
+none and restores as before, changing no stored secret
+([security.md §6.4](security.md)). A manifest of a format newer than the
+platform reads is refused. A `postgresOwned` artefact is
 a tar.gz holding `INDEX`, the database names one per line, and
 `<line number from 0>.pgc`, each one's custom-format dump. A `mailboxes`
 artefact is a tar.gz holding `INDEX`, the mailboxes one per line by the part
@@ -629,8 +635,10 @@ under the new tenant's names.
 [data-lifecycle.md](data-lifecycle.md) §5, and is said on every result
 (`status.notes`). The detail behind it:
 
-- **Stored credentials.** A profile's `spec.backup.boundSecrets` are not
-  carried either, and an export of such an app says so.
+- **Stored credentials**, but for each app's own secrets, which a bundle
+  carries and a restore sets ([security.md §6.4](security.md)). A profile's
+  `spec.backup.boundSecrets` are not carried, and an export of such an app
+  says so.
 - **Declared state.** App grants are declared in git and come from there;
   integration bindings are derived from the installed apps and their
   profiles; authorization tuples are projections, but for the ones a bundle
@@ -658,6 +666,7 @@ copied anywhere.
 | Realm export and import | the identity namespace (`kernel-authentication`) | `keycloak-admin` |
 | Bucket archive and load, the manifest, a bundle's removal | `system-s3` | `minio-admin`, and the bundle's own credential and key |
 | Volume archive and load | the tenant's namespace | the claim |
+| An app's own secrets, into the bundle and back | no Job: the operator itself | the vault, as the operator; the bundle's credential in `system-s3`; the key from the export's or the restore's own Secret |
 
 What a step needs besides is the credential the bundle is reached with and
 the key it is encrypted or opened with. Those exist beside the object store.

@@ -194,10 +194,10 @@ _kit_recipient() {
 #
 # Under kernel/, so the cluster-admin policy already reads it and no new grant
 # is needed for the person who would be restoring. eso-read denies this exact
-# path — see the Cluster composition — so escrow means "a cluster administrator
-# can read it", not "the cluster can read it". The distinction is the whole
-# point: a key ESO could materialise into a Secret would be readable by anything
-# that takes the cluster, which is the one thing escrow must not come to mean.
+# path — see the Cluster composition — so nothing that goes through External
+# Secrets can read it: a key ESO could materialise into a Secret would be
+# readable by anything able to write an ExternalSecret. The operator's own
+# policy, operator-write, covers gentian-os/* and so reads it as well.
 _KIT_BACKUP_ESCROW_PATH="gentian-os/kernel/backup/identity"
 
 # _kit_escrow_enabled — whether this cluster escrows the backup identity.

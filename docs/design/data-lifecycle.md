@@ -76,7 +76,8 @@ with it. *destroyed* = deleted with what it held. "—" = not touched.
 | MariaDB database and user, with any further database named `<database>_…` | made | copied | put back | made new, then filled | kept | destroyed | kept | destroyed |
 | Bucket, with its user and access rule | made | objects copied | bucket made if missing, objects put back | made new, then filled | kept | destroyed | kept | destroyed |
 | Cache user | made | not copied | — | made new | kept | removed; its keys stay | kept | removed; its keys stay |
-| Stored credentials (in the vault) | generated | never copied | — | generated new | kept | destroyed | kept | destroyed |
+| The app's own secrets (in the vault): what its profile has the platform generate, and its data is written with | generated | copied, encrypted by the operator | set to the bundle's values; the app is handed them and restarted | set to the bundle's values, at the new tenant's own paths | kept | destroyed | kept | destroyed |
+| Its other stored credentials (in the vault): a database's, a bucket's, a cache's, a sign-in client's, a model key | generated | never copied | — | generated new | kept | destroyed | kept | destroyed |
 | Access group and who is in it | made | copied, inside the realm | put back | put back under the new tenant's names | kept | destroyed | kept | destroyed |
 | Sign-in scope | made | not copied | — | made new | kept | destroyed | kept | destroyed |
 | Sign-in client | made | copied, inside the realm | put back | made new; the bundle's are not imported under another name | removed | — | removed, with the running app | destroyed |
@@ -171,11 +172,13 @@ refused. A backup and a restore say what they did not do: the result of a
 backup names what the bundle does not hold, and a step that fails fails the
 whole act with its reason.
 
-A bundle states its format in its manifest (`schemaVersion`), now 3. Format 3
-adds what a bundle did not hold before: the data of apps uninstalled with
+A bundle states its format in its manifest (`schemaVersion`), now 4. Format 3
+added what a bundle did not hold before: the data of apps uninstalled with
 their data kept, the mailboxes, and the access rights that follow from
-nothing else. A restore reads formats 1 to 3, puts back what the bundle
-holds, and refuses a format newer than its own.
+nothing else. Format 4 adds each app's own secrets. A restore reads formats 1
+to 4, puts back what the bundle holds, and refuses a format newer than its
+own. A bundle older than format 4 holds no secrets: a restore of one changes
+no stored secret, and says so.
 
 **Import = create + restore.** The director first makes sure the cluster
 has the definition of every app the bundle's tenant lists: already there at
@@ -233,8 +236,26 @@ them.
 
 ## 5. What a backup does not contain, and what to redo
 
-A bundle deliberately holds no password and no stored credential. It would
-otherwise put every secret of a tenant into a file that leaves the cluster.
+A bundle holds no person's password, and of the stored credentials one kind
+only: each app's own secrets, the ones its profile has the platform generate
+and its data is encrypted or signed with. Without them the data a bundle
+brings back is unreadable wherever they are made anew. They are in the
+bundle as `secrets/<app>.json.age`, encrypted by the operator itself with the
+key of the rest of the bundle, and in no other place: not in the manifest,
+not in `bundle-info.json`, not in a Job ([security.md §6.4](security.md)).
+Every other stored credential stays out: it would put every secret of a
+tenant into a file that leaves the cluster, and none of them is needed to
+read restored data.
+
+Whoever can open a bundle reads these secrets with the data: the holder of
+the key it was encrypted to. For the cluster's backup key that is the holder
+of the recovery kit and, where the key is also kept in OpenBao
+(`spec.backup.escrowIdentity`, the default), a platform administrator.
+
+A bundle is not signed. A restore cannot tell who made the bundle it is
+given, and sets the secrets of the apps it restores to the values that
+bundle holds. Restore only a bundle whose origin you know
+([security.md §6.4](security.md)).
 
 After a **restore**:
 
@@ -246,13 +267,14 @@ After a **restore**:
 After an **import**, also:
 
 - [ ] Re-enter *every* credential a person had typed in. The new tenant has
-      fresh, generated credentials and none of the old ones.
-- [ ] On another cluster: data an app encrypted with a secret the platform
-      generated cannot be read, unless that cluster was built from the first
-      one's recovery kit and the tenant has the same name. That holds with
-      `secretMode: random` too: an app's own secrets are computed from the
-      master password in both modes, because no bundle carries them
-      ([security.md §6.3](security.md)).
+      fresh, generated credentials and, but for its apps' own secrets, none
+      of the old ones.
+- [ ] Data an app encrypted with a secret the platform generated came with
+      that secret, also on another cluster and under another name. Two
+      cases are left to check: a bundle older than format 4 holds no
+      secrets, and the result says so; and an app whose definition on this
+      cluster does not declare a secret the bundle holds does not get it,
+      and the result names it.
 - [ ] Set again what each app may use (app grants) and each tenant catalogue.
 - [ ] The cache did not come. Mailboxes came only if both clusters run their
       own mail server; the result says when they did not.
@@ -261,7 +283,8 @@ After an **import**, also:
       names (addresses, database names it chose itself).
 - [ ] Point DNS at the new cluster.
 
-Never in a bundle: passwords, stored credentials, cache content, the access
+Never in a bundle: passwords, stored credentials other than the apps' own
+secrets, cache content, the access
 rights that are derived, the running apps themselves, the apps' definitions.
 
 ## 6. Where it can fail, and what you see

@@ -1002,7 +1002,10 @@ format 1 manifest names apps and kinds only and still restores
 adds `retained` on an app that was uninstalled with its data kept, the
 tenant's `mailboxes` where the cluster runs its own mail server, and
 `rights`: the entries of the rights store that follow from nothing else. A
-format 2 bundle still restores. Format 3 is what an export writes now.
+format 2 bundle still restores. Format 4 (`schemaVersion: 4`) adds, among an
+app's `stores`, an entry of `kind: secrets` at `secrets/<app>.json`: the
+app's own secrets, encrypted like every artefact. A format 3 bundle has none
+and still restores. Format 4 is what an export writes now.
 
 #### When the bundle is on external storage
 
@@ -1117,12 +1120,15 @@ reset from **Admin Console → Members**.
 
 ### After a restore, credentials somebody entered are missing
 
-A bundle holds no stored credential. The platform's own were made for the
-tenant when it was provisioned and are unchanged; anything a person typed in —
-a repository's password, an SMTP relay's, an API key — is not in the bundle and
-has to be entered again. Data an app sealed with a secret the platform
-generated for it reads only on the cluster the bundle was taken on, or one
-built from its recovery kit.
+Of the stored credentials a bundle holds each app's own secrets and no
+other. The platform's other credentials were made for the tenant when it was
+provisioned and are unchanged; anything a person typed in — a repository's
+password, an SMTP relay's, an API key — is not in the bundle and has to be
+entered again. Data an app sealed with a secret the platform generated for it
+reads wherever the restore set that secret from the bundle; `status.notes`
+says for each app whether it did. A bundle older than format 4 holds no
+secrets, and such data then reads only where the app's secrets are the ones
+it was written with.
 
 ## 12a. Tenant Import
 

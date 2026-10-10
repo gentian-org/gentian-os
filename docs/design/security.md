@@ -779,7 +779,7 @@ the code does.
 | Sign-in sidecar | Implemented, with the weaknesses listed | Only from a cluster catalogue's bundle pinned by digest, never in the kernel realm (§2.12). It can become anybody in its app |
 | The rights check for a component (`requires.services.rights`) | Implemented | A key per component for one question at the bouncer -- may this person use that app of my tenant -- instead of the store's key (`rights_check.go`, `internal/bouncer/check.go`). Platform-trust profiles only |
 | A removed person's mailbox | Implemented; proven in local containers, not on a cluster | Whoever removes the person chooses archive or delete; no default, and the registrar refuses a removal without the choice. The registrar writes the choice down (`MailboxRemoval`, the one kind it may write in the cluster) and has no access to `system-mail`. The operator acts only on an address of the tenant's mail domain that no person of any realm on that domain holds, after the address's mail passwords are gone ([mail.md §5c](mail.md)). Mail to the address is refused at `RCPT` (550, unknown recipient) while the record stands and nobody holds the address; a deleted mailbox's record is removed after 30 days, and the recipient policy decides again from then |
-| A tenant's backup and deletion | Implemented | A bundle (format 3) holds what a deletion destroys, mailboxes included, and a deletion destroys the mailboxes. Rights recorded as granted are not written into a tenant made new for the restore (`TenantRestore.spec.intoNewTenant`); they are named instead ([data-lifecycle.md](data-lifecycle.md)) |
+| A tenant's backup and deletion | Implemented | A bundle (format 4) holds what a deletion destroys, mailboxes included, and a deletion destroys the mailboxes. It holds each app's own secrets, encrypted by the operator, and a restore sets them at the app's own paths; a bundle is not signed (§6.4). Rights recorded as granted are not written into a tenant made new for the restore (`TenantRestore.spec.intoNewTenant`); they are named instead ([data-lifecycle.md](data-lifecycle.md)) |
 | Approval path for profile-declared egress | Implemented | `requires.privileges.egress` is a request. A rule reaches the NetworkPolicy only once it was granted by name on the install (`internal/security/privilege.go`, `GrantedEgressRules`). The tenant's administrator approves it (`can_approve_privilege`) and the director writes the grant as a commit (`internal/director/api/privileges.go`). A pod-security waiver takes effect only where the cluster's allowlist names it (`PlatformSecurityPolicy`) and the security officer granted it on the install (`mac_waiver_reconciler.go`): either alone waives nothing, and the tenant's `MacWaiversReady` condition says which of the two is missing. A grant that is withdrawn or has expired takes the namespace label away at the tenant's next reconcile; nothing reconciles at the moment of expiry. A cluster role is asked for by name, from a set the platform defines, and is bound only where the platform has it, the allowlist permits it for the profile and it was granted on the install (§3.4a). The set is empty, so no role is bound on any cluster today |
 | Pod-security admission (privileged, host ns, non-root, hostPath, caps, priv-esc) | Implemented | `kernel/security/kyverno/policies/` |
 | What ESO reads for a tenant's namespace | Implemented; shown by rendering and against a local OpenBao, not on a cluster | A store, a role and a policy per tenant (`tenant-default.yaml`): that tenant's app, repository and contract credentials, no kernel path, no other tenant's. The kernel's store is usable from kernel and system namespaces and from the platform tenant's, which is the open part (§5). No admission rule on `ExternalSecret`, `SecretStore` or `ClusterSecretStore`: **Target** |
@@ -1306,8 +1306,8 @@ What this does not give:
 
 `secretMode` on the `Cluster` claim, in the deployments repository, selects how
 the platform makes a credential that nothing has stored yet: the kernel's
-credentials and each app's. Three are computed from the master password in
-both modes (§6.3).
+credentials and each app's. Two kernel credentials are computed from the
+master password in both modes (§6.3).
 
 | Mode | Claim value | A generated credential is |
 | --- | --- | --- |
@@ -1330,20 +1330,22 @@ rewrites `gentian-os/kernel/llm` on every run, and under `derived` it writes
 the derived keys over whatever was there, while the model gateway's database
 still has the old password.
 
-**Under `random`, OpenBao holds the only copy, and nothing backs OpenBao
-up.** A tenant's bundle holds no stored credential in either mode
-([data-lifecycle.md §5](data-lifecycle.md)), the recovery kit holds the
-master password and not what was drawn at random, and the platform takes no
-snapshot of OpenBao. What follows:
+**Under `random`, OpenBao holds the only copy of all but an app's own
+secrets, and nothing backs OpenBao up.** Of the stored credentials a
+tenant's bundle holds the apps' own secrets and no other, in both modes
+(§6.4), the recovery kit holds the master password and not what was drawn at
+random, and the platform takes no snapshot of OpenBao. What follows:
 
-- *A tenant's backup, restore and import work as under `derived`.* A restore
-  changes no stored credential and an import makes new ones, in both modes.
-  The one kind of credential an app's restored data depends on, the app's own
-  secrets, is derived in both modes for that reason (§6.3).
+- *A tenant's backup, restore and import work as under `derived`.* The one
+  kind of credential an app's restored data depends on, the app's own
+  secrets, is in the bundle and is set again by a restore and by an import
+  (§6.4). No other stored credential is changed by a restore, and an import
+  makes new ones, in both modes.
 - *A cluster rebuilt from the recovery kit* gets new kernel credentials and
   new credentials for every app, where `derived` arrives at the old ones.
   The rebuild makes every database, bucket and client anew with them, so
-  nothing is locked out.
+  nothing is locked out, and each tenant's bundle brings its apps' own
+  secrets with their data.
 - *OpenBao's storage lost on a cluster that keeps running* is the case
   `random` does not survive. Under `derived` the installer and the operator
   write the same values again, from the master password and the salt the
@@ -1351,7 +1353,8 @@ snapshot of OpenBao. What follows:
   running databases, buckets and sign-in clients were not created with, and
   every service and app is locked out of its own store until each credential
   is set by hand. A cluster that runs `random` has to snapshot OpenBao itself
-  and keep the unseal material from the recovery kit with the snapshot.
+  and keep the unseal material from the recovery kit with the snapshot
+  ([roadmap 2.30](../roadmap.md)).
 
 No person's password is derived or generated. The platform administrator and
 each tenant's administrator set their own through a single-use activation link
@@ -1435,14 +1438,15 @@ openssl rand -hex 32
 ```
 
 and by the operator from `crypto/rand`. The master password is still stored
-in OpenBao in this mode, and the operator still reads it at start; it is used
-only for the three credentials that stay derived (§6.3).
+in OpenBao in this mode, and the operator still reads it at start; the
+installer uses it for the two kernel credentials that stay derived (§6.3),
+and the operator for nothing.
 
 Properties:
 
 1. **Independent of the master password** — whoever learns the master
    password and the salt learns none of the credentials made at random. The
-   three that stay derived (§6.3) are the exception.
+   two kernel credentials that stay derived (§6.3) are the exception.
 2. **Independent of each other** — one credential can be changed without
    affecting another.
 3. **Made once** — the first value stored at a path stays the path's value
@@ -1496,21 +1500,19 @@ Properties:
   in its own database (it encrypts the sign-in tokens it keeps for a
   person, and those of connected tool servers, with this key unless given
   another) is no longer readable: people sign in again and connect such
-  servers again. A bundle carries no stored credential, so under `random`
-  the same holds for a tenant restored into a cluster that does not hold
-  the stored key.
+  servers again. A bundle carries the secrets a profile declares under
+  `secrets.generated` and not these keys (§6.4), so under `random` the same
+  holds for a tenant restored where the stored key is another: after a
+  purge, under another name, or on another cluster.
 
-Still derived under `random`, because making each random needs a decision
-that has not been taken:
+**An app's own secrets** (`spec.secrets.generated` of its profile and an
+extension's `appSecrets`, stored at `…/apps/<app>/internal/<name>`) follow
+the mode like the app's other credentials. An app encrypts and signs its
+data with them, so they travel with the data (§6.4).
 
-- **An app's own secrets** (`spec.appSecrets`, stored at
-  `…/apps/<app>/internal/<name>`). An app encrypts and signs its data with
-  them, and a bundle carries no stored credential. An app purged and installed
-  again, a tenant deleted and imported again under its name, and a cluster
-  rebuilt from the recovery kit all read the data a bundle brings back only
-  because the secret comes out the same. A random one would have to travel in
-  the bundle, and a bundle deliberately holds none
-  ([data-lifecycle.md §5](data-lifecycle.md)).
+Still derived under `random`, because each needs a place in OpenBao that
+nobody has chosen, and neither is part of a tenant's bundle:
+
 - **The key the Keycloak event listener signs with.** The installer computes
   the key pair from the master password on every run and writes the two
   halves to two Kubernetes Secrets; neither half is in OpenBao.
@@ -1524,6 +1526,84 @@ secrets of Argo CD, Headlamp and the model gateway's console at
 from there or from the Kubernetes Secret each is mounted from before it draws
 a new one. Under `derived` they are computed on every run and are in no vault
 path.
+
+### 6.4 An app's own secrets in a tenant's bundle
+
+An app's data is readable only with the secrets it was written with. Made
+again they are other values wherever the mode is `random`, and under
+`derived` wherever the tenant's name or the cluster's master password is
+another. So a bundle carries them, in both modes, and a restore sets them.
+
+**What a bundle holds.** Per app, every secret its profile declares that the
+vault holds: one artefact, `secrets/<app>.json.age`, a document of names and
+values (`bundle.AppSecrets`). No other stored credential is in a bundle: a
+database's password, a bucket's keys, a cache's password, a sign-in client's
+secret, a model gateway key and a contract's password are made again where
+the bundle is restored, and no stored data depends on them. A key a profile
+declares under `secrets.derived` (§6.3) is not in a bundle either, although
+an app may encrypt with it: whether it travels like the generated ones is
+not decided. A credential a
+person typed in is not in a bundle either.
+
+**How it is protected.** The operator reads the values from OpenBao,
+encrypts them itself with age, to the recipients or the passphrase the rest
+of the bundle is encrypted with, and uploads the result
+(`internal/backup/secrets.go`). The values are in no Job, no Secret, no
+ConfigMap, no status, not in the manifest and not in `bundle-info.json`: the
+manifest names the artefact and a status names the secrets, nothing more.
+
+**Who can read it.** Whoever holds the key the bundle was encrypted to, and
+nobody who only reads the backup storage:
+
+- *the cluster's backup key*: the holder of the recovery kit; and, with
+  `spec.backup.escrowIdentity` (the default), whoever reads
+  `gentian-os/kernel/backup/identity` in OpenBao. That is the platform
+  administrators' policy (`cluster-admin`), which is refused every tenant's
+  own paths: through a bundle and the escrowed key a platform administrator
+  can obtain a tenant's app secrets, as they can its data. It is also the
+  operator, whose policy reads all of `gentian-os/*`; the secrets operator
+  is denied the path.
+- *a key or passphrase the requester named*: the requester. They asked for a
+  bundle only they can open, and it holds the secrets too.
+
+**What a restore does.** Before an app's data is replaced, each secret the
+bundle holds for it is written to
+`gentian-os/tenants/<tenant restored into>/apps/<app>/internal/<name>`, where
+`<name>` is one the app's profile declares on this cluster. The path is
+built by the operator; the bundle supplies names and values and no path.
+Nothing is written for an app the restore does not restore, under a name the
+profile does not declare, or outside the tenant restored into; what the
+bundle holds besides is named in the result and not written. This holds for
+an import under another tenant's name as well.
+
+A value that differs from the stored one **replaces it**: the one exception
+to §7. The app's ExternalSecrets are then told to read again, the restore
+waits until the Secrets they fill hold the new values, the Helm releases
+that are handed one as a value are upgraded, and only then is the app paused
+and its data replaced; the app is restarted when the data is in. A secret
+that has not reached the app after ten minutes fails the restore of that app
+with its data untouched. Where the stored values are the bundle's already —
+a restore into the tenant the bundle was taken of, nothing purged — nothing
+is written and nothing restarted on their account.
+
+An app that was uninstalled with its data kept has its secrets set the same
+way, with nothing to hand them to: its next install finds them.
+
+A bundle of format 3 or older holds no secrets and restores as before: no
+stored secret is changed, and the result says that what an app encrypted is
+readable only where its secrets are the ones the data was written with.
+
+**A bundle is not signed.** age encrypts to a public key and says nothing of
+who encrypted. Anyone who knows a cluster's backup recipient, which is in
+every bundle's `bundle-info.json`, can make a bundle that a restore opens. A
+restore of it replaces the tenant's data, as it always could, and now also
+sets the secrets of the apps it restores to values its author chose — a
+session-signing key, for one, which outlasts the next restore of good data.
+A restore is run by a tenant's or the cluster's administrator, names the
+tenant it confirms (`confirmTenant`), and writes only the paths above;
+checking a bundle's origin is on the roadmap
+([1.41](../roadmap.md)). Until then, restore only bundles whose origin is
+known.
 
 ## 7. Write-Once Protection
 
@@ -1552,6 +1632,11 @@ Nothing the platform generates overwrites a credential that is already there.
 
 Changing a credential is therefore a deliberate act in OpenBao (§9). This
 protects against the state-drift reset that locks out running apps.
+
+One act of the platform replaces a stored value: a restore sets an app's own
+secrets to the ones its bundle holds (§6.4, `ReplaceAppSecret`). It is asked
+for, confirmed with the tenant's name, and reaches the app's own secrets
+only.
 
 ## 8. Two Secret Delivery Patterns
 
@@ -1598,8 +1683,7 @@ is no longer what the master password reproduces: a rebuild from the master
 password and the salt returns the old one. Changing the master password
 changes nothing on a running cluster for the same reason. Where a credential
 must be rotated and survive a rebuild, use `random` mode and a backup of
-OpenBao. Per-app credentials are derived in both modes (§6.3), so the same
-holds for them everywhere.
+OpenBao. An app's credentials follow the mode as the kernel's do (§6.3).
 
 ## 10. Secret Flow Sequence
 

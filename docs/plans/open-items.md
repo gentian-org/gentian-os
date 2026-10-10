@@ -138,6 +138,13 @@ been seen working on a cluster. Until it has, it is not done.
   from nothing else.
 - A restore into a new tenant (`TenantRestore.spec.intoNewTenant`), and an
   import that gives the tenant its own names.
+- Backup bundles of schema version 4: each app's own secrets in the bundle,
+  set again by a restore and by an import at the app's own paths, the app
+  handed them and restarted; and an app's own secrets drawn at random under
+  `secretMode: random`. The operator's part is proven in local containers,
+  against MinIO and OpenBao. That External Secrets fills the app's Secret
+  again when told to, and that the Helm provider upgrades a release whose
+  value changed, is played by the tests and has not been seen.
 - A tenant's deletion removing its mailboxes, and failing loudly.
 - A removed person's mailbox archived or deleted, as whoever removes the
   person chooses at that moment; archived mailboxes in backups, listed, and
@@ -280,41 +287,29 @@ Each is true of the code today.
     the tenant administrators'.
 12. **Open WebUI ending a session at a sign-out.** **Decided 2026-10-09**:
     not built now; on the roadmap, item 2.27.
-13. **Three credentials that stay derived under `secretMode: random`.** The
-    mode now reaches what the operator makes for an app, and the installer
-    keeps what it made. Three are still computed from the master password in
-    both modes ([security.md §6.3](../design/security.md)). **Decided
-    2026-10-10** for an app's own secrets (`spec.appSecrets`): a bundle
-    carries the secrets that cannot be made again where it is restored, only
-    in a part that is encrypted to the backup key, and the app's secrets then
-    follow the mode. Not built. A bundle is encrypted in every mode
-    (`internal/backup/encrypt.go`), so the condition can be met; what is
-    still to be decided before it is built:
-    - *A restore into another tenant.* An import makes the new tenant's apps
-      first, each with secrets of its own, so the bundle's secrets would
-      replace stored ones. A right granted in one tenant is not carried into
-      another by a file (`TenantRestore.spec.intoNewTenant`); whether a
-      secret is, and to which paths, is open.
-    - *A restore replaces a stored value.* The same holds for an app purged
-      and installed again in the same tenant: the first value stored at a
-      path would no longer be the path's value (security.md §7).
-    - *A bundle says nothing of who wrote it.* Anyone who knows the
-      cluster's public key can encrypt to it. Today a made-up bundle
-      replaces data; with secrets it would also set values in OpenBao.
-    - *A bundle encrypted to a requester's own key or passphrase.* It is not
-      encrypted to the backup key, so it would carry no secret, and under
-      `random` would not bring an app's encrypted data back readable.
-    - *Who can open a bundle.* With `spec.backup.escrowIdentity` (the
-      default) the backup key is in OpenBao, where the cluster
-      administrators' policy reads it and is refused a tenant's paths; the
-      bundles would give that policy the tenant's app secrets.
-    - *Which secrets.* A profile names its secrets and does not say which of
-      them stored data depends on; all of an app's would travel, or a
-      profile gets a field for it.
-    The key Keycloak's event listener signs with, and the kernel realm's own
-    mail login on a cluster that runs its own mail server, stay derived:
-    each needs a place in OpenBao that nobody has chosen, and neither is
-    part of a tenant's bundle.
+13. **Credentials that stay derived under `secretMode: random`.** **Decided
+    2026-10-10** and built for an app's own secrets: a tenant's bundle
+    carries them, encrypted by the operator, a restore sets them, and they
+    follow the mode ([security.md §6.4](../design/security.md)). Decided
+    with it: a restore into another tenant writes them at that tenant's own
+    paths for the app, under the names its profile declares, and nowhere
+    else; a restore replaces the stored value, and the app is restarted
+    with it; a bundle encrypted to a requester's own key or passphrase
+    carries them too; a platform administrator who reads the escrowed backup
+    key can obtain them through a bundle, which is accepted and stated; all
+    of an app's declared secrets travel, in `derived` mode as well; and a
+    bundle is not signed for now, with its check on the roadmap, item 1.41.
+    Shown in tests and against an object store and a vault in local
+    containers; not run on a cluster (§2). Two kernel credentials are still
+    computed from the master password in both modes: the key Keycloak's
+    event listener signs with, and the kernel realm's own mail login on a
+    cluster that runs its own mail server. Each needs a place in OpenBao
+    that nobody has chosen, and neither is part of a tenant's bundle.
+    Open: a key a profile declares under `secrets.derived` is kept in the
+    vault and follows the mode since 2026-10-10, an app may encrypt with it,
+    and a bundle does not carry it. Whether it travels like the generated
+    secrets, to `…/apps/<app>/derived/<key>` of the tenant restored into, is
+    to be decided.
 14. **Whether a change of `secretMode` on an installed cluster is refused.**
     Today it converts nothing and existing credentials stay, with one
     exception: back from `random` to `derived`, the installer writes derived
