@@ -120,7 +120,7 @@ Licence-header templates used by `controller-gen` and `golangci-lint`
 | `providers/` | `Provider` and `Function` packages, their `ProviderConfig`s, the RBAC they need, and `activation.yaml` — the provider resource types a cluster creates. |
 | `tests/unit/render/` | Golden-file tests: each case is `xr.yaml` + a `composition.yaml` **copy** of the deployed Composition + `functions.yaml` + `expected.yaml`, run by `make test-unit-render`. A copy, not a symlink, so `check-render-fixtures.sh` has something to compare — a stale copy keeps a golden test green against a Composition nobody runs. |
 | `tests/unit/schema/` | `valid/` fixtures that must pass and `invalid/` fixtures that must be rejected by `crossplane beta validate` against `xrds/`. |
-| `tests/e2e/scripts/` | Staged live-cluster scripts P0–P4 plus the kernel-service smoke check. |
+| `tests/e2e/scripts/` | The kernel-service smoke check (`make verify-kernel-services`). |
 | `functions/` | Reserved for in-repo composition functions; empty today (only pipeline functions from upstream packages are used). |
 
 ### `charts/`

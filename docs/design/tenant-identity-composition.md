@@ -65,5 +65,4 @@ The Jobs' shell scripts are built in Go (`internal/controller/identity_reconcile
 ## Testing
 
 - Unit: `go test ./internal/controller/...`; rendered Compositions under `crossplane/tests/unit/render/`
-- E2E tenant: `make e2e-p3` (shadow), `make e2e-p4` (cutover)
 - Manual: `kubectl get jobs -n kernel-authentication -l gentianos.io/tenant=<name>`

@@ -871,28 +871,13 @@ install_kernel_wildcard() {
         fi
         sleep 5
     done
-    local app_ns="gentian-${ENV:-dev}"
     if ! kernel_wildcard_current; then
         warn "wildcard-kernel-tls not yet issued (LE rate-limited or still pending)."
         warn "Re-run install.sh or manually copy the secret once the Certificate is Ready."
         return
     fi
     save_kernel_wildcard
-    # Remove stale fallback Certificate CR if present from a prior install.
-    if kubectl get certificate wildcard-dev-tls -n "${app_ns}" &>/dev/null; then
-        kubectl delete certificate wildcard-dev-tls -n "${app_ns}"
-        success "Deleted fallback wildcard-dev-tls Certificate CR from ${app_ns}."
-    fi
     propagate_kernel_wildcard
-
-    # ACME staging: trust bundle for in-cluster OIDC clients.
-    if [[ "${ACME_ENV:-production}" == "staging" ]]; then
-        local staging_ca_script="${SCRIPT_DIR}/scripts/bootstrap/create-trust-anchor-secret.sh"
-        if [[ -x "${staging_ca_script}" ]]; then
-            info "Creating gentian-trust-anchor-tls in ${app_ns} (ACME staging)..."
-            "${staging_ca_script}" "${app_ns}" || warn "gentian-trust-anchor-tls creation failed (tenant apps may not trust id.${KERNEL_DOMAIN})."
-        fi
-    fi
 }
 
 # =============================================================================

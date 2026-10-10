@@ -765,36 +765,7 @@ install-tools:
 	@echo "crossplane: $$(crossplane version 2>&1 | head -1)"
 	@echo "kubeconform: $$(kubeconform -v)"
 
-## P0 — Install Crossplane core on the dev cluster and verify it is Ready
-e2e-p0:
-	@crossplane/tests/e2e/scripts/p0-crossplane-install.sh
-
-## P0 rollback — uninstall Crossplane core from the dev cluster
-e2e-p0-clean:
-	@echo "Uninstalling Crossplane core..."
-	helm uninstall crossplane -n crossplane-system 2>/dev/null || true
-	kubectl delete ns crossplane-system --ignore-not-found=true
-	kubectl delete clusterrole crossplane crossplane-admin crossplane-edit crossplane-view crossplane-browse --ignore-not-found=true
-	kubectl delete clusterrolebinding crossplane crossplane-admin crossplane-edit crossplane-view crossplane-browse --ignore-not-found=true
-	@echo "Done."
-
-## P1 — Kernel provisioning via Cluster XR (dev cluster)
-e2e-p1:
-	@crossplane/tests/e2e/scripts/p1-kernel-dev.sh
-
-## P2 — Pattern B kernel Helm Releases (dev cluster)
-e2e-p2:
-	@crossplane/tests/e2e/scripts/p2-pattern-b.sh
-
-## P3 — Tenant shadow deployment (Crossplane graph verification)
-e2e-p3:
-	@crossplane/tests/e2e/scripts/p3-tenant-shadow.sh
-
-## P4 — Cutover verification for an existing tenant
-e2e-p4:
-	@crossplane/tests/e2e/scripts/p4-tenant-cutover.sh
-
-## P5 — Keycloak + Dovecot install smoke (requires Stage 1 install on cluster)
+## Keycloak + Dovecot install smoke (requires an installed cluster)
 e2e-p5-keycloak-dovecot:
 	@crossplane/tests/e2e/scripts/e2e-verify-kernel-services.sh
 

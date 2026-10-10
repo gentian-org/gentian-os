@@ -56,8 +56,8 @@ type Bundle struct {
 	NodeExtraCA []byte
 }
 
-// BuildBundle returns trust bundles for ACME staging clusters. CACrt matches
-// scripts/bootstrap/create-trust-anchor-secret.sh (system CAs + LE staging chain via AIA).
+// BuildBundle returns trust bundles for ACME staging clusters. CACrt is the
+// system CAs plus the LE staging chain, walked via AIA.
 // NodeExtraCA contains only the staging issuer chain for Node.js clients.
 func BuildBundle(ctx context.Context, leafPEM []byte) (*Bundle, error) {
 	if len(leafPEM) == 0 {

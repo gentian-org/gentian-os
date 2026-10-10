@@ -58,7 +58,7 @@ the catalogue.
 | Keycloak, `keycloak-idp` config (theme, SMTP ExternalSecret), realm script | `platform-kernel` | `kernel-authentication` | Suze claim `idpNamespace`; apart from OpenFGA because it has a public route and different credential holders |
 | Keycloak event listener (SPI provider pushing signed membership events to the operator) | — | `kernel-authentication` | new; the operator is its only receiver; holds only its signing key. **Changed 2026-10-09** from "to the director": the operator writes the authorization store (AD-12) |
 | OpenFGA | `platform-kernel` | `kernel-authorization` | reachable from enforcement points only |
-| gentian-os operator, custodian, `job-gc` CronJob | `gentian-system` | `kernel-control` | the director joins here |
+| gentian-os operator, custodian | `gentian-system` | `kernel-control` | the director joins here |
 | Director API endpoint | — | `kernel-control`, route on the kernel gateway, bearer only | its callers are on the cluster or are the command line; the store outside the cluster never calls it (AD-3) |
 | `kernel-admin` admin credentials | `platform-kernel` | `kernel-control` | |
 | `kernel-admin` `portal-shell` database | `platform-kernel` | `kernel-data` | |

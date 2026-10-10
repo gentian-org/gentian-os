@@ -27,9 +27,9 @@
 # A line that is only a comment is not read: saying what a name used to be is
 # what comments here are for. Documentation is not read either.
 #
-# What is left is NOT_RUN or ALLOWED below, each entry with its reason. An
-# entry that no longer matches anything fails too, so neither list can outlive
-# what it excuses.
+# What is left is ALLOWED below, each entry with its reason. An entry that no
+# longer matches anything fails too, so the list cannot outlive what it
+# excuses.
 # =============================================================================
 
 import re
@@ -91,36 +91,11 @@ SKIPPED_FILES = {
     "scripts/lint/lint-retired-namespaces.py",
 }
 
-# Files nothing renders, applies or calls, kept until they are removed. Each
-# describes the layout before this one, and correcting the names in a file
-# that goes nowhere would only make it look current.
-NOT_RUN = {
-    "kernel/services/kernel-admin/": "a chart no ApplicationSet deploys; each engine's chart carries its own admin Secret now",
-    "kernel/services/infra-postgresql/": "a chart no ApplicationSet deploys; the kernel's database is kernel/data/kernel-postgres",
-    "kernel/argocd/": "an install reference and repository manifests no step applies; A-06 installs Argo CD",
-    "kernel/services/_globals/openbao-tls-cert.yaml": "the vault's certificate is the bootstrap chart's vault-tls.yaml",
-    "kernel/manifests/job-gc/": "a CronJob nothing deploys; where it runs and which namespaces it may delete from is not decided",
-    "scripts/bootstrap/install-argocd.sh": "no caller; A-06 installs Argo CD",
-    "crossplane/tests/e2e/scripts/p": "by-hand procedures written for the previous layout, run by neither CI nor the installer",
-}
-
 # path, or path prefix ending in "/" or "-" -> [(text the line contains, why
 # the old name is the point there)]
 ALLOWED = {
     "scripts/lint/lint-namespace-layout.sh": [
         ("old='", "the names that lint refuses"),
-    ],
-    "Makefile": [
-        ("helm uninstall crossplane -n crossplane-system", "e2e-p0-clean undoes what the by-hand p0 procedure installed"),
-        ("kubectl delete ns crossplane-system", "e2e-p0-clean undoes what the by-hand p0 procedure installed"),
-    ],
-    # The installer's own copy of the staging trust anchor, written to a
-    # namespace nothing creates; the operator writes the one that is read.
-    "scripts/lib/certs.sh": [
-        ('app_ns="gentian-${ENV:-dev}"', "which namespace the installer's copy belongs in is not decided"),
-    ],
-    "scripts/bootstrap/create-trust-anchor-secret.sh": [
-        ("${SERVICES_NAMESPACE:-gentian-${ENV}}", "which namespace the installer's copy belongs in is not decided"),
     ],
 }
 
@@ -164,7 +139,6 @@ def main():
         # A render fixture's composition.yaml is a link to the Composition.
         if path.is_symlink() or not path.is_file():
             continue
-        not_run = next((p for p in NOT_RUN if name.startswith(p)), None)
         try:
             lines = path.read_text().split("\n")
         except UnicodeDecodeError:
@@ -174,9 +148,6 @@ def main():
             if i in in_comment or COMMENT.match(line):
                 continue
             if not any(p.search(line) for p in PATTERNS):
-                continue
-            if not_run:
-                used.add(not_run)
                 continue
             excused = False
             for key in allowed_keys(name):
@@ -193,7 +164,7 @@ def main():
         for name, entries in ALLOWED.items()
         for n, (text, _why) in enumerate(entries)
         if (name, n) not in used
-    ] + [f"{prefix} (NOT_RUN)" for prefix in NOT_RUN if prefix not in used]
+    ]
 
     for hit in hits:
         print(f"FAIL - a retired namespace name: {hit}", file=sys.stderr)

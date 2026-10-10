@@ -259,7 +259,7 @@ func TestWhatIsRefused(t *testing.T) {
 	policies := load(t).Policies()
 	certManager := at("kernel-edge", map[string]string{"app.kubernetes.io/name": "cert-manager"})
 	argocd := at("kernel-gitops", map[string]string{"app.kubernetes.io/name": "argocd-repo-server"})
-	jobGC := at("kernel-control", map[string]string{"gentianos.io/component": "job-gc"})
+	otherPod := at("kernel-control", map[string]string{"gentianos.io/component": "something-else"})
 	for _, f := range []struct {
 		what string
 		src  pod
@@ -290,9 +290,9 @@ func TestWhatIsRefused(t *testing.T) {
 		{"Keycloak reaches the vault", at("kernel-authentication", keycloakPod), at("kernel-secrets", openbaoPod), 8200},
 		{"OpenFGA reaches the vault", at("kernel-authorization", openfgaPod), at("kernel-secrets", openbaoPod), 8200},
 		{"the director reaches the vault", at("kernel-control", chart("director")), at("kernel-secrets", openbaoPod), 8200},
-		{"another pod of the control namespace reaches the vault", jobGC, at("kernel-secrets", openbaoPod), 8200},
-		{"another pod of the control namespace asks OpenFGA", jobGC, at("kernel-authorization", openfgaPod), 8080},
-		{"another pod of the control namespace reaches the custodian", jobGC, at("kernel-control", chart("custodian")), 9444},
+		{"another pod of the control namespace reaches the vault", otherPod, at("kernel-secrets", openbaoPod), 8200},
+		{"another pod of the control namespace asks OpenFGA", otherPod, at("kernel-authorization", openfgaPod), 8080},
+		{"another pod of the control namespace reaches the custodian", otherPod, at("kernel-control", chart("custodian")), 9444},
 		{"a pod outside the layout reaches Keycloak", at("default", map[string]string{"app": "x"}), at("kernel-authentication", keycloakPod), 8080},
 		{"a pod outside the layout reaches the director", at("default", map[string]string{"app": "x"}), at("kernel-control", chart("director")), 8080},
 		{"a system namespace's pod reaches the director", at("system-s3", map[string]string{"app": "minio"}), at("kernel-control", chart("director")), 8080},
