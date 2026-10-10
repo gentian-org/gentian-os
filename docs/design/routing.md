@@ -355,9 +355,11 @@ silently — names simply never resolved.
 What a tunnel actually lacks is not a writer but a **target**. external-dns
 publishes what a Gateway resolves to, and a tunnelled Gateway has no address:
 traffic arrives through `cloudflared`, not a LoadBalancer. So the ingress
-declares what its hostnames must point at, the operator stamps that on the
-kernel Gateway, and external-dns does the rest exactly as on a static-ip
-cluster:
+declares what its hostnames must point at, and the operator writes every routed
+hostname -- the kernel's and each tenant's -- as a `DNSEndpoint` with that
+target, which external-dns publishes. On a tunnel cluster that is external-dns's
+only source (`crd`): it does not read the Gateway there, although the operator
+stamps the same two values on it:
 
 ```
 external-dns.alpha.kubernetes.io/target            = <uuid>.cfargotunnel.com
@@ -388,12 +390,22 @@ token whenever this cluster's ingress is `cf-tunnel`.
 Cloudflare's shape. inlets or frp would be their own entry in `edgeIngress`,
 not another value of one "tunnel" setting.
 
-Note what the DNS token is **not** used for any more: the operator does not
-write records, so that credential belongs to external-dns and cert-manager. The
-operator holds only the ingress token.
+The operator does not write records. It rewrites the tunnel's ingress rules,
+and **as installed it does that with the DNS token**: the installer stores the
+ingress token at its own path and nothing hands it to the operator. It is given
+to the operator only where the cluster's values set
+`cloudflare.tunnelAPITokenSecretRef` (`name` and `openbaoPath`); unset, the
+operator falls back to the DNS token, which then needs the cloudflared
+permission as well.
 
-The zone id and tunnel CNAME are resolved from the token and the running
-`cloudflared`, not asked for.
+The zone id is resolved from the DNS token. The tunnel's id is read from the
+Secret `cloudflared` runs with -- `cf-tunnel` (key `token`) or
+`tunnel-credentials` (key `<tunnel-id>.json`) in the namespace `default` -- and
+from nowhere else. Nothing in the platform creates the tunnel or runs
+`cloudflared`: the owner does, in the cluster, before the install, and the
+pre-flight stops a tunnel install that finds neither Secret. The tunnel's
+CNAME is seeded only together with the Cloudflare DNS credential, so a tunnel
+cluster needs `dnsProvider: cloudflare` and its token.
 
 Each token is probed against what it will actually be used for, before either
 is written:

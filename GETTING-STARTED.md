@@ -151,13 +151,29 @@ until it is done.
   question of step 4. The installer sets up neither:
 
   - `tunnel` (the default) is a Cloudflare Tunnel. Create the tunnel in your
-    Cloudflare account and run `cloudflared` for it in the cluster before the
-    install. Step `B-08` reads the tunnel's id from a Secret in the namespace
-    `default`: `cf-tunnel` (key `token`, the tunnel's token) or
-    `tunnel-credentials` (key `<tunnel-id>.json`). It warns `Could not resolve
-    Cloudflare Tunnel ID` when it finds neither. The operator then writes the
-    tunnel's routes itself, with the tunnel token of step 3. A tunnel carries
-    HTTP and HTTPS only, so mail goes out through a relay.
+    Cloudflare account and run `cloudflared` for it **in the cluster** before
+    the install: the platform does neither, and the tunnel's routes point at a
+    Service name only a pod in the cluster can resolve. The installer needs
+    the tunnel's id and has one source for it, the Secret `cloudflared` runs
+    with, in the namespace `default`:
+
+    ```bash
+    kubectl create secret generic cf-tunnel -n default \
+        --from-literal=token=<the tunnel's token>
+    # or, for a tunnel run from a credentials file:
+    kubectl create secret generic tunnel-credentials -n default \
+        --from-file=<tunnel-id>.json=<the tunnel's credentials file>
+    ```
+
+    The pre-flight stops the install when it finds neither, with these two
+    commands. Step `B-08` stores `<tunnel-id>.cfargotunnel.com` with the
+    Cloudflare DNS credential, so a tunnel cluster needs Cloudflare as its DNS
+    provider (`acme-dns01`, `cloudflare`). The operator then writes the
+    tunnel's routes itself and publishes every hostname as a record pointing at
+    the tunnel, through external-dns, which is installed on a tunnel cluster
+    too. (The comment step 0 writes into the claim says external-dns is off
+    there; it is not, and `certificates.externalDns` is read by nothing.)
+    A tunnel carries HTTP and HTTPS only, so mail goes out through a relay.
   - `static-ip` needs a fixed address that DNS points at and something that
     answers a `LoadBalancer` Service with it: MetalLB on your own machines
     (on MicroK8s the add-on `metallb`, given that address), or the cloud's
@@ -353,7 +369,7 @@ one. Every question shows its default; Enter takes it.
 | `certificates.issuerMode` | `acme-dns01` | The domain is not publicly resolvable (`self-signed`), or port 80 is reachable but you have no DNS API token (`acme-http01`) |
 | `certificates.acmeEnv` | `production` | Never needed for rebuilds — a purge keeps the issued wildcard in `~/.gentian/certs` and the next install reuses it (only `--purge --cluster-infra` deletes it). `staging` breaks the kernel sign-in, which does not trust its chain |
 | `certificates.dnsProvider` | `cloudflare` | The zone is hosted elsewhere |
-| `mail.serviceMode` | `external` | You want the platform's own mail, in-cluster Postfix and Dovecot (`system`; refused with `networkMode: tunnel`, so it needs `static-ip`). The cluster then needs one more load-balancer address, for mail, with ports 25, 587 and 993 open to it from the internet and port 25 open outbound. The load balancer must hand on the sender's address, by forwarding packets or with the PROXY protocol — see [mail.md §9a](docs/design/mail.md#9a-what-a-kubernetes-cluster-needs-to-host-mail) and [§9b](docs/design/mail.md#9b-the-mail-edge). The mail edge is built, not yet run on a cluster. Not asked on a tunnel cluster, which is always `external`. After step 0, set `mail.egressHost` in the claim to the name outbound mail leaves from; without it the SPF record names the inbound address |
+| `mail.serviceMode` | `external` | You want the platform's own mail, in-cluster Postfix and Dovecot (`system`; refused with `networkMode: tunnel`, so it needs `static-ip`). The cluster then needs one more load-balancer address, for mail, with ports 25, 587 and 993 open to it from the internet and port 25 open outbound. Step 0 does not ask for that address and nothing in the claim names it: the mail edge is a `LoadBalancer` Service of its own (`mail-edge-<stage>`) and cannot share the HTTPS edge's address, so the pool your load balancer hands out from (MetalLB's `IPAddressPool`, which you create) needs at least two addresses. The HTTPS edge takes `nodeIp`, or `addressRef` if you add that to the claim; mail gets whichever other address the load balancer assigns, and the operator publishes `mail.<domain>`, `imap.<domain>` and the MX, SPF, DKIM and DMARC records from it. The reverse (PTR) record of that address is yours to set at the provider. The load balancer must hand on the sender's address, by forwarding packets or with the PROXY protocol — see [mail.md §9a](docs/design/mail.md#9a-what-a-kubernetes-cluster-needs-to-host-mail) and [§9b](docs/design/mail.md#9b-the-mail-edge). The mail edge is built, not yet run on a cluster. Not asked on a tunnel cluster, which is always `external`. After step 0, set `mail.egressHost` in the claim to the name outbound mail leaves from; without it the SPF record names the inbound address |
 | `mail.host` | unset | `external` mode: the relay's hostname, for example `smtp.example.com`. Its user name and password are a credential, supplied in step 5 — not asked here |
 | `platform` | detected from the nodes | Detection is wrong for your provider |
 | `storageClass` | the cluster default | The cluster has more than one StorageClass |
