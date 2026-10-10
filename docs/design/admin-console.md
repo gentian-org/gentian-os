@@ -43,7 +43,7 @@ service's answer from OpenFGA.
 | **Apps** | The tenant's installed apps. Per app: state, who has access and whether it is for everyone, integrations, what it asked of the platform and what was approved, public addresses and their approval, uninstall, purge. Uninstall keeps the app's data; purge destroys the data of an app that is no longer installed ([store-contract.md](store-contract.md) §8) | director, usher |
 | **Resources** | Plan, ceiling, usage history (§4.8) | usher (read), director (write) |
 | **Export** | Take one export now, list and download what exists | usher (read), director |
-| **Security** | The realm's password, session and lockout policy (§4.5) | registrar (password), director (session, lockout) |
+| **Security** | The realm's password, session and lockout policy (§4.5) | director |
 | **Integrations** | What the tenant's apps consume from each other, and the grants | director |
 | **Credentials** | Repository credentials, backup identity | custodian, director |
 | **Notifications** | Publish a notice to the tenant's people (§5) | director, usher (read) |
@@ -166,19 +166,18 @@ configured.
 | **Session** | Idle time, maximum length, remember-me |
 | **Lockout** | On or off, failures allowed, lockout duration |
 
-Session and lockout are declared state: the director commits them as
+The policy is declared state: the director commits it as
 `security-policy.yaml` beside the tenant's manifest (`can_set_policy`), and the
-tenant Composition writes them into the realm. Nothing in this path holds a
-Keycloak credential, and a realm rebuilt from scratch comes back with them.
+tenant Composition writes it into the realm. Nothing in this path holds a
+Keycloak credential, and a realm rebuilt from scratch comes back with its policy.
 
-The password policy is set in one place: the registrar's action
-`set-password-policy` on the realm (`can_set_policy`), with the caller's own
-token. It is in force at once and is not in git, so a realm rebuilt from
-scratch comes back without it. The screen reads the realm's policy, shows the
-parts it has a control for, and names the clauses it has none for; saving
-keeps those, and keeps a clause the form did not change as the realm has it.
-A caller who may not read the realm's policy is shown the rest of the screen
-and cannot change the password part. The director takes no password block.
+This is the one way to set it. The console relays the signed-in person's call
+to the director and holds no right of its own; the registrar has no action for
+the password policy and its Keycloak client holds no role over realm settings.
+The Composition always declares the realm's password policy: a tenant that
+states no password rules has an empty one, which is Keycloak's own default, so
+rules taken out of git are taken out of the realm, and a policy set by hand at
+Keycloak is replaced by what git says.
 
 ### 4.6 Sessions
 

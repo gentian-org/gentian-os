@@ -1032,17 +1032,16 @@ refused; and no image other than the director's holds a Keycloak credential.
 **What is built.** The credential, provisioned per realm by the operator's
 Keycloak platform reconciler and handed to the director as a mounted Secret
 with a key per realm — re-read rather than read once, because a tenant's realm
-appears after the director started. Five `realm-management` roles and the list
-is the security statement: `view-users`, `query-users`, `query-groups`,
-`manage-users`, and `manage-realm` for the password policy, which has no
-narrower role. The confinement is in the type: a realm arrives only through
+appears after the director started. Four `realm-management` roles and the list
+is the security statement: `view-users`, `query-users`, `query-groups` and
+`manage-users`. (`manage-realm` was a fifth, for the password policy; the
+policy is a commit by the director, and the role is no longer granted.) The confinement is in the type: a realm arrives only through
 `Client.Realm`, which refuses one there is no credential for, and every admin
 URL is built from that value, so a handler cannot spell a realm into a call. A
 tenant sharing the kernel realm gets the group subtree as a second boundary,
 because there the credential is no longer one.
 
-The routes are `can_manage_users` throughout and `can_set_policy` for the
-password policy, and every write is an action under `/actions/` rather than a
+The routes are `can_manage_users` throughout, and every write is an action under `/actions/` rather than a
 PUT. The console's People screen reads and writes them; Keycloak's own console
 stays at the bottom of it as the detail view.
 
