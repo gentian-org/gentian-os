@@ -22,6 +22,9 @@
 # them, in a sandbox HOME against throwaway local git repositories. No
 # cluster, no network.
 # =============================================================================
+# Every check is a string handed to the library's shell, so what it names is
+# expanded there.
+# shellcheck disable=SC2016
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.." || exit 1
 REPO="$(pwd)"
@@ -159,7 +162,7 @@ second="$(grep -nE '\$\{(GENTIAN_OS_BRANCH|GENTIAN_UI_BRANCH|PORTAL_IMAGE_TAG):-
 if [[ -z "${second}" ]]; then ok "no step or library carries a default of its own for any of the three"; else bad "no step or library carries a default of its own for any of the three" "${second}"; fi
 
 # --- the deployments repository ----------------------------------------------
-rm -rf "${SANDBOX}/home"; mkdir -p "${SANDBOX}/home"
+rm -rf "${SANDBOX:?}/home"; mkdir -p "${SANDBOX}/home"
 out="$(run GENTIAN_NONINTERACTIVE=1 -- 'prompt_app_repos; echo "rc=$?"')"
 has "unattended and no GENTIAN_DEPLOYMENTS_REPO: the run stops and says what to set" "${out}" "GENTIAN_DEPLOYMENTS_REPO is not set and GENTIAN_NONINTERACTIVE=1" "rc="
 if [[ ! -e "${SANDBOX}/home/.gentian" ]]; then ok "and nothing was written under ~/.gentian"; else bad "and nothing was written under ~/.gentian"; fi
