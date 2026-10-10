@@ -77,7 +77,7 @@ func TestMembersJSON_SkipsEntriesWithoutAnID(t *testing.T) {
 }
 
 // The whole point of this mechanism: everything app-specific arrives from the
-// AppProfile. If the platform ever has to know an app by name to provision it,
+// ComponentProfile. If the platform ever has to know an app by name to provision it,
 // this is where that would first show up.
 func TestSyncJob_TakesEverythingAppSpecificFromTheProfile(t *testing.T) {
 	t.Parallel()

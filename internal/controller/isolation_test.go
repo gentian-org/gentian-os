@@ -251,16 +251,16 @@ func TestDeletion_EndToEnd_WithApps(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	pgProfile := newFullAppProfile("del-pgapp", gentianov1alpha1.DatabaseEnginePostgreSQL, true, true, false)
-	mariaProfile := newFullAppProfile("del-mariaapp", gentianov1alpha1.DatabaseEngineMariaDB, true, false, true)
+	pgProfile := newFullComponentProfile("del-pgapp", gentianov1alpha1.DatabaseEnginePostgreSQL, true, true, false)
+	mariaProfile := newFullComponentProfile("del-mariaapp", gentianov1alpha1.DatabaseEngineMariaDB, true, false, true)
 
 	if err := testClient.Create(ctx, pgProfile); err != nil {
-		t.Fatalf("create pg AppProfile: %v", err)
+		t.Fatalf("create pg ComponentProfile: %v", err)
 	}
 	t.Cleanup(func() { _ = testClient.Delete(ctx, pgProfile) })
 
 	if err := testClient.Create(ctx, mariaProfile); err != nil {
-		t.Fatalf("create maria AppProfile: %v", err)
+		t.Fatalf("create maria ComponentProfile: %v", err)
 	}
 	t.Cleanup(func() { _ = testClient.Delete(ctx, mariaProfile) })
 
@@ -369,7 +369,7 @@ func TestDeletion_Retain_KeepsDataRevokesAccess(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	profile := newFullAppProfile("ret-app", gentianov1alpha1.DatabaseEnginePostgreSQL, true, true, false)
+	profile := newFullComponentProfile("ret-app", gentianov1alpha1.DatabaseEnginePostgreSQL, true, true, false)
 	if err := testClient.Create(ctx, profile); err != nil {
 		t.Fatalf("create ComponentProfile: %v", err)
 	}
@@ -483,8 +483,8 @@ func waitForRetainShellTeardown(t *testing.T, ctx context.Context, nsName string
 // Helpers
 // ---------------------------------------------------------------------------
 
-// newFullAppProfile builds an AppProfile with multiple kernel requirements.
-func newFullAppProfile(name string, dbEngine gentianov1alpha1.DatabaseEngine, needsS3, needsRedis, needsMemcached bool) *gentianov1alpha1.ComponentProfile {
+// newFullComponentProfile builds a ComponentProfile with multiple kernel requirements.
+func newFullComponentProfile(name string, dbEngine gentianov1alpha1.DatabaseEngine, needsS3, needsRedis, needsMemcached bool) *gentianov1alpha1.ComponentProfile {
 	kr := &gentianov1alpha1.ServiceRequirements{
 		Database: &gentianov1alpha1.DatabaseRequirement{
 			Engine:            dbEngine,

@@ -29,9 +29,9 @@ import (
 	"github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
-// ----- AppProfile tests -----
+// ----- ComponentProfile tests -----
 
-func TestAppProfile_DeepCopy(t *testing.T) {
+func TestComponentProfile_DeepCopy(t *testing.T) {
 	qty := resource.MustParse("5Gi")
 
 	original := &v1alpha1.ComponentProfile{
@@ -121,7 +121,7 @@ func TestAppProfile_DeepCopy(t *testing.T) {
 // This replaces a test that set the field and then asserted the field equalled
 // what it had just been set to, while its failure message claimed the default
 // was argocd. It asserted nothing and documented something untrue.
-func TestAppProfile_UnsetDeploymentMethodDeploysWorkload(t *testing.T) {
+func TestComponentProfile_UnsetDeploymentMethodDeploysWorkload(t *testing.T) {
 	unset := &v1alpha1.ComponentProfile{}
 	if unset.IsAPI() {
 		t.Error("an unset deploymentMethod must not read as an ApiProfile")
@@ -139,7 +139,7 @@ func TestAppProfile_UnsetDeploymentMethodDeploysWorkload(t *testing.T) {
 	}
 }
 
-func TestAppProfile_ExtraValues_RoundTrip(t *testing.T) {
+func TestComponentProfile_ExtraValues_RoundTrip(t *testing.T) {
 	raw := `{"smtp":{"port":587},"someNested":{"key":"value"}}`
 	ap := &v1alpha1.ComponentProfile{
 		Spec: v1alpha1.ComponentProfileSpec{

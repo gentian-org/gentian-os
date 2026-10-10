@@ -24,7 +24,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/layout"
 )
 
-// newMariaDBProfile creates a minimal AppProfile that requires a MariaDB database.
+// newMariaDBProfile creates a minimal ComponentProfile that requires a MariaDB database.
 func newMariaDBProfile(name string) *gentianov1alpha1.ComponentProfile {
 	return &gentianov1alpha1.ComponentProfile{
 		ObjectMeta: metav1.ObjectMeta{Name: name},

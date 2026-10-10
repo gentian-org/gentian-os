@@ -140,7 +140,7 @@ func (r *TenantReconciler) ensureMacWaivers(ctx context.Context, tenant *gentian
 	ungranted := []string{}
 
 	for _, app := range tenant.Spec.Apps {
-		profileName, err := catalogue.ResolveTenantAppProfile(ctx, r.Client, app)
+		profileName, err := catalogue.ResolveTenantComponentProfile(ctx, r.Client, app)
 		if err != nil {
 			return ctrl.Result{}, err
 		}

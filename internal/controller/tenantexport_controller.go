@@ -1147,7 +1147,7 @@ func (r *TenantExportReconciler) manifestUnitWith(
 // appsWithBoundSecrets names the captured apps whose profile declares bound
 // secrets.
 func (r *TenantExportReconciler) appsWithBoundSecrets(ctx context.Context, export *gentianov1alpha1.TenantExport) []string {
-	profiles, err := loadAppProfileIndex(ctx, r.Client)
+	profiles, err := loadComponentProfileIndex(ctx, r.Client)
 	if err != nil {
 		return nil
 	}

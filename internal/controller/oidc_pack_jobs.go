@@ -56,7 +56,7 @@ func (r *TenantReconciler) collectOIDCAppConfigs(ctx context.Context, tenant *ge
 			if errors.IsNotFound(err) {
 				continue
 			}
-			return nil, fmt.Errorf("get AppProfile %s: %w", app.Profile, err)
+			return nil, fmt.Errorf("get ComponentProfile %s: %w", app.Profile, err)
 		}
 		if profile.Services() != nil &&
 			profile.Services().Identity != nil &&
@@ -129,7 +129,7 @@ func (r *TenantReconciler) cleanupOrphanedClientJobs(ctx context.Context, tenant
 func (r *TenantReconciler) resolveOIDCAppConfig(ctx context.Context, tenant *gentianov1alpha1.Tenant, profileName string) (oidcAppConfig, error) {
 	profile := &gentianov1alpha1.ComponentProfile{}
 	if err := r.Get(ctx, types.NamespacedName{Name: profileName}, profile); err != nil {
-		return oidcAppConfig{}, fmt.Errorf("get AppProfile %s: %w", profileName, err)
+		return oidcAppConfig{}, fmt.Errorf("get ComponentProfile %s: %w", profileName, err)
 	}
 	oidcSpec := profile.Services().Identity.OIDC
 	clientID := oidcSpec.ClientID
@@ -162,7 +162,7 @@ func (r *TenantReconciler) resolveOIDCAppConfig(ctx context.Context, tenant *gen
 func (r *TenantReconciler) resolveSidecarOIDCAppConfig(ctx context.Context, tenant *gentianov1alpha1.Tenant, parentProfile string, sidecar gentianov1alpha1.AppSidecarSpec) (oidcAppConfig, error) {
 	owner := &gentianov1alpha1.ComponentProfile{}
 	if err := r.Get(ctx, types.NamespacedName{Name: parentProfile}, owner); err != nil {
-		return oidcAppConfig{}, fmt.Errorf("get parent AppProfile %s: %w", parentProfile, err)
+		return oidcAppConfig{}, fmt.Errorf("get parent ComponentProfile %s: %w", parentProfile, err)
 	}
 	profileName := gentianov1alpha1.SidecarAppName(parentProfile, sidecar.Name)
 	oidcSpec := sidecar.ServiceRequirements.Identity.OIDC
@@ -205,7 +205,7 @@ func (r *TenantReconciler) getOIDCOwnerProfile(ctx context.Context, cfg oidcAppC
 	}
 	profile := &gentianov1alpha1.ComponentProfile{}
 	if err := r.Get(ctx, types.NamespacedName{Name: ownerName}, profile); err != nil {
-		return nil, fmt.Errorf("get AppProfile %s: %w", ownerName, err)
+		return nil, fmt.Errorf("get ComponentProfile %s: %w", ownerName, err)
 	}
 	return profile, nil
 }
@@ -223,14 +223,14 @@ func (r *TenantReconciler) resolveOIDCRedirectURIs(
 	if profile != nil {
 		defaults, err := gentianov1alpha1.ProfileOIDCDefaultRedirectURIs(profile)
 		if err != nil {
-			return nil, fmt.Errorf("parse %s on AppProfile %s: %w", gentianov1alpha1.AnnotationProfileOIDCDefaultRedirectURIs, profileName, err)
+			return nil, fmt.Errorf("parse %s on ComponentProfile %s: %w", gentianov1alpha1.AnnotationProfileOIDCDefaultRedirectURIs, profileName, err)
 		}
 		if len(defaults) > 0 {
 			return substituteTenantDomainInURIs(tenant, defaults, r.KernelDomain, r.TenancyMode), nil
 		}
 	}
 	// Sidecar OIDC redirect URIs must be declared on the ComponentProfile or in the pack spec.
-	return nil, fmt.Errorf("AppProfile %s: no OIDC redirect URIs in pack spec and no %s annotation",
+	return nil, fmt.Errorf("ComponentProfile %s: no OIDC redirect URIs in pack spec and no %s annotation",
 		profileName, gentianov1alpha1.AnnotationProfileOIDCDefaultRedirectURIs)
 }
 
@@ -303,7 +303,7 @@ func (r *TenantReconciler) collectSAMLAppConfigs(ctx context.Context, tenant *ge
 			if errors.IsNotFound(err) {
 				continue
 			}
-			return nil, fmt.Errorf("get AppProfile %s: %w", app.Profile, err)
+			return nil, fmt.Errorf("get ComponentProfile %s: %w", app.Profile, err)
 		}
 		if profile.Services() != nil &&
 			profile.Services().Identity != nil &&

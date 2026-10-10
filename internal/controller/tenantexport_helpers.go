@@ -314,7 +314,7 @@ func resolveProfile(
 		return nil, fmt.Errorf("app %q is not installed for tenant %q", appName, tenant.Name)
 	}
 
-	index, err := loadAppProfileIndex(ctx, c)
+	index, err := loadComponentProfileIndex(ctx, c)
 	if err != nil {
 		return nil, err
 	}

@@ -625,7 +625,7 @@ func (r *TenantReconciler) removeDefaultComponent(ctx context.Context, tenant *g
 func (r *TenantReconciler) ensureAppComponents(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
 	wanted := map[string]struct{}{}
 	for _, app := range tenant.Spec.Apps {
-		profileName, err := catalogue.ResolveTenantAppProfile(ctx, r.Client, app)
+		profileName, err := catalogue.ResolveTenantComponentProfile(ctx, r.Client, app)
 		if err != nil {
 			return err
 		}

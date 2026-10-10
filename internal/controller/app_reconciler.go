@@ -103,7 +103,7 @@ func (r *TenantReconciler) reconcileTenantApps(ctx context.Context, tenant *gent
 		return ctrl.Result{}, nil
 	}
 
-	profileIndex, err := loadAppProfileIndex(ctx, r.Client)
+	profileIndex, err := loadComponentProfileIndex(ctx, r.Client)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -111,14 +111,14 @@ func (r *TenantReconciler) reconcileTenantApps(ctx context.Context, tenant *gent
 	allReady := true
 
 	for _, app := range tenant.Spec.Apps {
-		profileName, err := catalogue.ResolveTenantAppProfile(ctx, r.Client, app)
+		profileName, err := catalogue.ResolveTenantComponentProfile(ctx, r.Client, app)
 		if err != nil {
 			return ctrl.Result{}, err
 		}
 		profile, ok := appProfileFromIndex(profileIndex, profileName)
 		if !ok {
 			r.setCondition(tenant, conditionAppsReady, metav1.ConditionFalse, "ProfileNotFound",
-				fmt.Sprintf("AppProfile %q not found", profileName))
+				fmt.Sprintf("ComponentProfile %q not found", profileName))
 			return ctrl.Result{}, nil
 		}
 
@@ -326,7 +326,7 @@ func (r *TenantReconciler) deleteAppDeployment(ctx context.Context, tenant *gent
 func (r *TenantReconciler) cleanupOrphanedAppWorkload(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
 	desired := make(map[string]struct{}, len(tenant.Spec.Apps))
 	for _, app := range tenant.Spec.Apps {
-		profileName, err := catalogue.ResolveTenantAppProfile(ctx, r.Client, app)
+		profileName, err := catalogue.ResolveTenantComponentProfile(ctx, r.Client, app)
 		if err != nil {
 			return err
 		}

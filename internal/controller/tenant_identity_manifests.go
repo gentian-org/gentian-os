@@ -440,7 +440,7 @@ func (r *TenantReconciler) collectGentianGroupsJSON(ctx context.Context, tenant 
 
 	// 2. Add groups for all tenant apps, and for the addons activated inside them
 	for _, app := range tenant.Spec.Apps {
-		profileName, err := catalogue.ResolveTenantAppProfile(ctx, r.Client, app)
+		profileName, err := catalogue.ResolveTenantComponentProfile(ctx, r.Client, app)
 		if err != nil {
 			return "", err
 		}

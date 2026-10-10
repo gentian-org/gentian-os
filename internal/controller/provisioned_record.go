@@ -35,7 +35,7 @@ import (
 // and a failure here fails the pass, so no store is made that is not on
 // record first.
 func (r *TenantReconciler) recordProvisionedStores(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
-	profiles, err := loadAppProfileIndex(ctx, r.Client)
+	profiles, err := loadComponentProfileIndex(ctx, r.Client)
 	if err != nil {
 		return err
 	}

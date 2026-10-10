@@ -24,7 +24,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/kernel"
 )
 
-// newRedisProfile creates a minimal AppProfile that requires a Redis cache.
+// newRedisProfile creates a minimal ComponentProfile that requires a Redis cache.
 func newRedisProfile(name string) *gentianov1alpha1.ComponentProfile {
 	return &gentianov1alpha1.ComponentProfile{
 		ObjectMeta: metav1.ObjectMeta{Name: name},
@@ -45,7 +45,7 @@ func newRedisProfile(name string) *gentianov1alpha1.ComponentProfile {
 	}
 }
 
-// newMemcachedProfile creates a minimal AppProfile that requires a Memcached cache.
+// newMemcachedProfile creates a minimal ComponentProfile that requires a Memcached cache.
 func newMemcachedProfile(name string) *gentianov1alpha1.ComponentProfile {
 	return &gentianov1alpha1.ComponentProfile{
 		ObjectMeta: metav1.ObjectMeta{Name: name},
@@ -260,13 +260,13 @@ func TestCache_DeleteDeletePolicy_CreatesDeleteJobsAndDeletesApplication(t *test
 	t.Parallel()
 	redisProf := newRedisProfile("redis-app3")
 	if err := testClient.Create(context.Background(), redisProf); err != nil {
-		t.Fatalf("create Redis AppProfile: %v", err)
+		t.Fatalf("create Redis ComponentProfile: %v", err)
 	}
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), redisProf) })
 
 	mcProf := newMemcachedProfile("mc-app2")
 	if err := testClient.Create(context.Background(), mcProf); err != nil {
-		t.Fatalf("create Memcached AppProfile: %v", err)
+		t.Fatalf("create Memcached ComponentProfile: %v", err)
 	}
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), mcProf) })
 

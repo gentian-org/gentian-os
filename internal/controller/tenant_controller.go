@@ -385,16 +385,16 @@ func (r *TenantReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		return []reconcile.Request{{NamespacedName: types.NamespacedName{Name: tenantName}}}
 	}
 
-	// mapAppProfileToTenants maps a ComponentProfile change to reconcile requests for
+	// mapComponentProfileToTenants maps a ComponentProfile change to reconcile requests for
 	// every Tenant that references the profile in its spec.apps list.
 	//
-	// Resolution has to match catalogue.ResolveTenantAppProfile, which accepts
+	// Resolution has to match catalogue.ResolveTenantComponentProfile, which accepts
 	// EITHER spec.apps[].profile or spec.apps[].profileRef. Comparing only the
 	// literal profile name meant a Tenant selecting its app by catalogue identity
 	// got no event when its ComponentProfile was created or changed — so the profile it
 	// was waiting for could appear and nothing would notice, leaving the Tenant
 	// Degraded until an unrelated event happened to wake it.
-	mapAppProfileToTenants := func(ctx context.Context, obj client.Object) []reconcile.Request {
+	mapComponentProfileToTenants := func(ctx context.Context, obj client.Object) []reconcile.Request {
 		profileName := obj.GetName()
 		tenantList := &gentianov1alpha1.TenantList{}
 		if err := mgr.GetClient().List(ctx, tenantList); err != nil {
@@ -403,7 +403,7 @@ func (r *TenantReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		var requests []reconcile.Request
 		for _, t := range tenantList.Items {
 			for _, app := range t.Spec.Apps {
-				resolved, err := catalogue.ResolveTenantAppProfile(ctx, mgr.GetClient(), app)
+				resolved, err := catalogue.ResolveTenantComponentProfile(ctx, mgr.GetClient(), app)
 				if err != nil {
 					// An app that resolves to nothing cannot match. Skipped rather
 					// than dropping the whole Tenant, so one unresolvable entry does
@@ -539,7 +539,7 @@ func (r *TenantReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		).
 		Watches(
 			&gentianov1alpha1.ComponentProfile{},
-			handler.EnqueueRequestsFromMapFunc(mapAppProfileToTenants),
+			handler.EnqueueRequestsFromMapFunc(mapComponentProfileToTenants),
 		).
 		Watches(
 			xTenantObj,
@@ -649,14 +649,14 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 
 // validateTenantPrerequisites checks that all requested ComponentProfiles exist.
 func (r *TenantReconciler) validateTenantPrerequisites(ctx context.Context, tenant *gentianov1alpha1.Tenant) ([]string, error) {
-	profileIndex, err := loadAppProfileIndex(ctx, r.Client)
+	profileIndex, err := loadComponentProfileIndex(ctx, r.Client)
 	if err != nil {
 		return nil, err
 	}
 	missingMap := map[string]struct{}{}
 
 	for _, app := range tenant.Spec.Apps {
-		profileName, err := catalogue.ResolveTenantAppProfile(ctx, r.Client, app)
+		profileName, err := catalogue.ResolveTenantComponentProfile(ctx, r.Client, app)
 		if err != nil {
 			return nil, err
 		}
@@ -1265,9 +1265,9 @@ func (r *TenantReconciler) buildXTenant(ctx context.Context, tenant *gentianov1a
 		spec["security"] = security
 	}
 
-	profileIndex, err := loadAppProfileIndex(ctx, r.Client)
+	profileIndex, err := loadComponentProfileIndex(ctx, r.Client)
 	if err != nil {
-		return nil, fmt.Errorf("load AppProfile index: %w", err)
+		return nil, fmt.Errorf("load ComponentProfile index: %w", err)
 	}
 
 	apps := make([]interface{}, 0, len(tenant.Spec.Apps))
@@ -1287,7 +1287,7 @@ func (r *TenantReconciler) buildXTenant(ctx context.Context, tenant *gentianov1a
 				entry["variant"] = strings.TrimPrefix(variant, "app-")
 			}
 		} else {
-			log.FromContext(ctx).Info("AppProfile not found in index in buildXTenant", "profile", app.Profile)
+			log.FromContext(ctx).Info("ComponentProfile not found in index in buildXTenant", "profile", app.Profile)
 		}
 		if app.Config != nil {
 			cfg := map[string]interface{}{}

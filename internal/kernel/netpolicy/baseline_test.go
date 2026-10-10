@@ -20,7 +20,7 @@ import (
 )
 
 // The operator provisions into running tenant apps over their own admin APIs
-// (AppProfile.spec.provisioning.privilegedRole). It runs in OperatorNamespace,
+// (ComponentProfile.spec.provisioning.privilegedRole). It runs in OperatorNamespace,
 // so dropping that peer silently breaks every such provisioner with a
 // connection timeout rather than a clear error.
 func TestBaselineNetworkPolicy_AllowsKernelAndOperatorIngress(t *testing.T) {

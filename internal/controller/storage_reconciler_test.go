@@ -203,7 +203,7 @@ func TestStorage_DeleteDeletePolicy_CreatesDeleteJobs(t *testing.T) {
 	t.Parallel()
 	s3Prof := newS3Profile("s3-app3")
 	if err := testClient.Create(context.Background(), s3Prof); err != nil {
-		t.Fatalf("create S3 AppProfile: %v", err)
+		t.Fatalf("create S3 ComponentProfile: %v", err)
 	}
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), s3Prof) })
 

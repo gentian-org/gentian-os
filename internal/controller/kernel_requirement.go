@@ -46,7 +46,7 @@ func (r *TenantReconciler) collectKernelApps(
 	setupJobPrefix func(tenantName string) string,
 	recorded func(backup.Provisioned) bool,
 ) ([]string, error) {
-	profileIndex, err := loadAppProfileIndex(ctx, r.Client)
+	profileIndex, err := loadComponentProfileIndex(ctx, r.Client)
 	if err != nil {
 		return nil, err
 	}

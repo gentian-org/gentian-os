@@ -103,7 +103,7 @@ func (r *TenantExportReconciler) retainedApps(ctx context.Context, tenant *genti
 	if err != nil {
 		return nil, err
 	}
-	index, err := loadAppProfileIndex(ctx, r.Client)
+	index, err := loadComponentProfileIndex(ctx, r.Client)
 	if err != nil {
 		return nil, err
 	}

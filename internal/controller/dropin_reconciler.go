@@ -105,9 +105,9 @@ func (r *TenantReconciler) buildTenantDropIns(
 		return specs, nil
 	}
 
-	profileIndex, err := loadAppProfileIndex(ctx, r.Client)
+	profileIndex, err := loadComponentProfileIndex(ctx, r.Client)
 	if err != nil {
-		return nil, fmt.Errorf("load AppProfile index: %w", err)
+		return nil, fmt.Errorf("load ComponentProfile index: %w", err)
 	}
 
 	for _, app := range tenant.Spec.Apps {
@@ -116,7 +116,7 @@ func (r *TenantReconciler) buildTenantDropIns(
 		}
 		profile, exists := appProfileFromIndex(profileIndex, app.Profile)
 		if !exists {
-			return nil, fmt.Errorf("app %q: AppProfile not found", app.Profile)
+			return nil, fmt.Errorf("app %q: ComponentProfile not found", app.Profile)
 		}
 
 		for _, tenantDropIn := range app.Config.DropIns {

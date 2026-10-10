@@ -25,7 +25,7 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
-func TestTenantValidatorHandleNilDecoder_DeniesMissingAppProfile(t *testing.T) {
+func TestTenantValidatorHandleNilDecoder_DeniesMissingComponentProfile(t *testing.T) {
 	scheme := runtime.NewScheme()
 	if err := gentianov1alpha1.AddToScheme(scheme); err != nil {
 		t.Fatalf("add scheme: %v", err)
@@ -66,7 +66,7 @@ func TestTenantValidatorHandleNilDecoder_DeniesMissingAppProfile(t *testing.T) {
 		t.Fatalf("expected denial result message")
 	}
 
-	if !strings.Contains(resp.Result.Message, "AppProfile \"missing-profile-app\" not found") {
+	if !strings.Contains(resp.Result.Message, "ComponentProfile \"missing-profile-app\" not found") {
 		t.Fatalf("unexpected denial message: %q", resp.Result.Message)
 	}
 }

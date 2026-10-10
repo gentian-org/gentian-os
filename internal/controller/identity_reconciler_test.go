@@ -26,7 +26,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/layout"
 )
 
-// newOIDCProfile creates a minimal AppProfile that requires OIDC.
+// newOIDCProfile creates a minimal ComponentProfile that requires OIDC.
 func newOIDCProfile(name string) *gentianov1alpha1.ComponentProfile {
 	return &gentianov1alpha1.ComponentProfile{
 		ObjectMeta: metav1.ObjectMeta{Name: name},

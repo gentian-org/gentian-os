@@ -1574,7 +1574,7 @@ func (r *TenantReconciler) seedPerAppMailSecrets(ctx context.Context, tenant *ge
 			if errors.IsNotFound(err) {
 				continue
 			}
-			return fmt.Errorf("get AppProfile %s: %w", app.Profile, err)
+			return fmt.Errorf("get ComponentProfile %s: %w", app.Profile, err)
 		}
 		if profile.Services() == nil || profile.Services().Mail == nil {
 			continue

@@ -52,7 +52,7 @@ func (r *TenantExportReconciler) storeOnlyRights(ctx context.Context, tenant *ge
 	}
 	var installed []authz.InstalledApp
 	for _, app := range tenant.Spec.Apps {
-		profile, err := catalogue.ResolveTenantAppProfile(ctx, r.Client, app)
+		profile, err := catalogue.ResolveTenantComponentProfile(ctx, r.Client, app)
 		if err != nil {
 			// As the projection does: an install whose profile cannot be
 			// named has no object in the store.

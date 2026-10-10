@@ -27,7 +27,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/layout"
 )
 
-// newPostgresProfile creates a minimal AppProfile that requires a PostgreSQL database.
+// newPostgresProfile creates a minimal ComponentProfile that requires a PostgreSQL database.
 func newPostgresProfile(name string) *gentianov1alpha1.ComponentProfile {
 	return &gentianov1alpha1.ComponentProfile{
 		ObjectMeta: metav1.ObjectMeta{Name: name},

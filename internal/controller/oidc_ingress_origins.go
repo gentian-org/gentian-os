@@ -48,7 +48,7 @@ func collectOIDCIngressSubdomainsByTenant(
 		// discovered later by a login that fails on a host nobody allowed.
 		for _, app := range tenant.Spec.Apps {
 			for _, profileName := range append([]string{app.Profile}, app.Addons...) {
-				profile, err := cachedAppProfile(ctx, c, profileCache, profileName)
+				profile, err := cachedComponentProfile(ctx, c, profileCache, profileName)
 				if err != nil {
 					return nil, err
 				}
@@ -75,7 +75,7 @@ func collectOIDCIngressSubdomainsByTenant(
 	return result, nil
 }
 
-func cachedAppProfile(
+func cachedComponentProfile(
 	ctx context.Context,
 	c client.Client,
 	cache map[string]*gentianov1alpha1.ComponentProfile,
@@ -93,7 +93,7 @@ func cachedAppProfile(
 			cache[name] = nil
 			return nil, nil
 		}
-		return nil, fmt.Errorf("get AppProfile %s: %w", name, err)
+		return nil, fmt.Errorf("get ComponentProfile %s: %w", name, err)
 	}
 	cache[name] = profile
 	return profile, nil

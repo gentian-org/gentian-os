@@ -33,7 +33,7 @@ func (r *TenantReconciler) buildDataPlaneJobs(ctx context.Context, tenant *genti
 	if err != nil {
 		return nil, err
 	}
-	pgProfileIndex, err := loadAppProfileIndex(ctx, r.Client)
+	pgProfileIndex, err := loadComponentProfileIndex(ctx, r.Client)
 	if err != nil {
 		return nil, err
 	}

@@ -81,7 +81,7 @@ func (r *TenantReconciler) ensureAppPrivileges(ctx context.Context, tenant *gent
 	syncFailed := false
 	syncPending := false
 	for _, app := range tenant.Spec.Apps {
-		profileName, err := catalogue.ResolveTenantAppProfile(ctx, r.Client, app)
+		profileName, err := catalogue.ResolveTenantComponentProfile(ctx, r.Client, app)
 		if err != nil {
 			return ctrl.Result{}, err
 		}
@@ -90,7 +90,7 @@ func (r *TenantReconciler) ensureAppPrivileges(ctx context.Context, tenant *gent
 			if errors.IsNotFound(err) {
 				continue
 			}
-			return ctrl.Result{}, fmt.Errorf("get AppProfile %s: %w", profileName, err)
+			return ctrl.Result{}, fmt.Errorf("get ComponentProfile %s: %w", profileName, err)
 		}
 		role := profilePrivilegedRole(profile)
 		if role == nil {

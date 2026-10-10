@@ -19,7 +19,7 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
-// ResolveTenantAppProfile returns the ComponentProfile name for a tenant app
+// ResolveTenantComponentProfile returns the ComponentProfile name for a tenant app
 // entry.
 //
 // A name, or a profileRef naming one. Resolving a profileRef by IDENTITY —
@@ -31,7 +31,7 @@ import (
 // A profileRef that carries an identity is therefore refused rather than
 // silently matching nothing: an install that quietly resolved to no profile
 // would look like an app that never arrived.
-func ResolveTenantAppProfile(ctx context.Context, c client.Client, app gentianov1alpha1.TenantApp) (string, error) {
+func ResolveTenantComponentProfile(ctx context.Context, c client.Client, app gentianov1alpha1.TenantApp) (string, error) {
 	if app.Profile != "" {
 		return app.Profile, nil
 	}

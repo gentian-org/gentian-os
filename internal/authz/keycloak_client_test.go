@@ -73,7 +73,7 @@ func TestEnsureGroup_MergesAttributesInsteadOfReplacingThem(t *testing.T) {
 
 	// A group already carrying an administrator's hand-set roles and the App
 	// Store's default-grant marker. EnsureGroup is called with only the keys an
-	// AppProfile declares, which is what the tenant identity path passes.
+	// ComponentProfile declares, which is what the tenant identity path passes.
 	var putBody map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {

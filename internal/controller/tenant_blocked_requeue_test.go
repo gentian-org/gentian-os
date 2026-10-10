@@ -25,7 +25,7 @@ import (
 
 // A blocked stage has to schedule its own retry.
 //
-// Preflight blocks when a requested AppProfile does not exist — a precondition the
+// Preflight blocks when a requested ComponentProfile does not exist — a precondition the
 // Tenant does not watch, since the profile is published by the app catalogue. With
 // an empty Result nothing was scheduled, so the Tenant stayed Degraded until some
 // unrelated event happened to wake it, which for a missing profile could be never.

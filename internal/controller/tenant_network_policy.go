@@ -99,7 +99,7 @@ func (r *TenantReconciler) ensureNetworkPolicies(ctx context.Context, tenant *ge
 			if errors.IsNotFound(err) {
 				continue
 			}
-			return fmt.Errorf("get AppProfile %s for network policy: %w", app.Profile, err)
+			return fmt.Errorf("get ComponentProfile %s for network policy: %w", app.Profile, err)
 		}
 		profiles[app.Profile] = profile
 	}

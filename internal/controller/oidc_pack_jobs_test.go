@@ -21,7 +21,7 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
-func TestCollectOIDCAppConfigs_IncludesSidecarWithoutAppProfile(t *testing.T) {
+func TestCollectOIDCAppConfigs_IncludesSidecarWithoutComponentProfile(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = gentianov1alpha1.AddToScheme(scheme)
 

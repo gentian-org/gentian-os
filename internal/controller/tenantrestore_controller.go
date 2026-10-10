@@ -898,7 +898,7 @@ func (r *TenantRestoreReconciler) plan(
 		return nil, refuseRestore("BundleUnusable", "the bundle's manifest could not be read, so what the bundle holds is not known: %v. Nothing was changed", err)
 	}
 
-	profiles, err := loadAppProfileIndex(ctx, r.Client)
+	profiles, err := loadComponentProfileIndex(ctx, r.Client)
 	if err != nil {
 		return nil, err
 	}

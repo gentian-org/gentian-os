@@ -502,7 +502,7 @@ func (g *GitOps) InstallFrom(
 		}
 		lines := strings.Split(text, "\n")
 		if _, _, _, installed := appEntryExtent(lines, profile); !installed {
-			out, ok := insertAppProfile(text, profile, digest, catalogue, forEveryone)
+			out, ok := insertComponentProfile(text, profile, digest, catalogue, forEveryone)
 			if !ok {
 				return "", "", false, errors.New("failed to update apps list")
 			}
@@ -618,7 +618,7 @@ func (g *GitOps) Uninstall(ctx context.Context, tenant, profile string, meta Met
 // it, as a new tenant's manifest has it.
 var emptyAppsList = regexp.MustCompile(`^  apps:\s*\[\s*\]\s*$`)
 
-func insertAppProfile(text, profile, digest, catalogue string, defaultGrant bool) (string, bool) {
+func insertComponentProfile(text, profile, digest, catalogue string, defaultGrant bool) (string, bool) {
 	entry := []string{"  - profile: " + profile}
 	if digest != "" {
 		entry = append(entry, "    digest: "+digest)

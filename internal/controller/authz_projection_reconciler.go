@@ -176,7 +176,7 @@ func (r *AuthzProjectionReconciler) installedApps(ctx context.Context) (map[stri
 			continue
 		}
 		for _, app := range tenant.Spec.Apps {
-			profile, err := catalogue.ResolveTenantAppProfile(ctx, r.Client, app)
+			profile, err := catalogue.ResolveTenantComponentProfile(ctx, r.Client, app)
 			if err != nil {
 				log.FromContext(ctx).Info("installed app not projected: its profile cannot be named",
 					"tenant", tenant.Name, "error", err.Error())

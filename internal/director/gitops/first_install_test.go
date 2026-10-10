@@ -25,7 +25,7 @@ func TestFirstInstallIntoANewTenantsManifest(t *testing.T) {
 	if !strings.Contains(text, "apps: []") {
 		t.Fatalf("the template no longer writes an empty list; this test needs the form it does write:\n%s", text)
 	}
-	out, ok := insertAppProfile(text, "mathesar-ce", "sha256:"+strings.Repeat("a", 64), "", false)
+	out, ok := insertComponentProfile(text, "mathesar-ce", "sha256:"+strings.Repeat("a", 64), "", false)
 	if !ok {
 		t.Fatal("not inserted")
 	}
@@ -57,7 +57,7 @@ func TestFirstInstallForEveryoneIntoANewTenantsManifest(t *testing.T) {
 	if !strings.Contains(text, "apps: []") {
 		t.Fatalf("the template no longer writes an empty list; this test needs the form it does write:\n%s", text)
 	}
-	out, ok := insertAppProfile(text, "mathesar-ce", "sha256:"+strings.Repeat("a", 64), "main", true)
+	out, ok := insertComponentProfile(text, "mathesar-ce", "sha256:"+strings.Repeat("a", 64), "main", true)
 	if !ok {
 		t.Fatal("not inserted")
 	}

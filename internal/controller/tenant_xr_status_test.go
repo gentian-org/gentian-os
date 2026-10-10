@@ -99,7 +99,7 @@ func TestXTenantReadyConditionMissing(t *testing.T) {
 //
 // The absent case is the one that mattered. Finalize decided the phase from
 // whether any stage had asked to be requeued, so a Tenant that reconciled
-// before its AppProfiles resolved — running the data-plane stage with nothing
+// before its ComponentProfiles resolved — running the data-plane stage with nothing
 // yet to do, and asking for no requeue — reported Ready while carrying none of
 // these conditions at all. A check for "no False condition" would have called
 // it Ready too.

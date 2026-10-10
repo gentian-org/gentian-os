@@ -22,7 +22,7 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
-// newProviderProfile builds an AppProfile that provides the given contract.
+// newProviderProfile builds a ComponentProfile that provides the given contract.
 func newProviderProfile(name, contract string) *gentianov1alpha1.ComponentProfile {
 	return &gentianov1alpha1.ComponentProfile{
 		ObjectMeta: metav1.ObjectMeta{Name: name},
@@ -41,7 +41,7 @@ func newProviderProfile(name, contract string) *gentianov1alpha1.ComponentProfil
 	}
 }
 
-// newConsumerProfile builds an AppProfile that optionally integrates with the given contract.
+// newConsumerProfile builds a ComponentProfile that optionally integrates with the given contract.
 func newConsumerProfile(name, contract, provider string) *gentianov1alpha1.ComponentProfile {
 	return &gentianov1alpha1.ComponentProfile{
 		ObjectMeta: metav1.ObjectMeta{Name: name},
@@ -120,13 +120,13 @@ func TestBindings_ProviderPresent(t *testing.T) {
 	t.Parallel()
 	providerProfile := newProviderProfile("bind-provider-app", "file-store")
 	if err := testClient.Create(context.Background(), providerProfile); err != nil {
-		t.Fatalf("create provider AppProfile: %v", err)
+		t.Fatalf("create provider ComponentProfile: %v", err)
 	}
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), providerProfile) })
 
 	consumerProfile := newConsumerProfile("bind-consumer-app", "file-store", "bind-provider-app")
 	if err := testClient.Create(context.Background(), consumerProfile); err != nil {
-		t.Fatalf("create consumer AppProfile: %v", err)
+		t.Fatalf("create consumer ComponentProfile: %v", err)
 	}
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), consumerProfile) })
 
@@ -174,7 +174,7 @@ func TestBindings_ProviderAbsent(t *testing.T) {
 	t.Parallel()
 	consumerProfile := newConsumerProfile("bind-consumer-only", "file-store", "bind-provider-missing")
 	if err := testClient.Create(context.Background(), consumerProfile); err != nil {
-		t.Fatalf("create consumer AppProfile: %v", err)
+		t.Fatalf("create consumer ComponentProfile: %v", err)
 	}
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), consumerProfile) })
 
@@ -222,13 +222,13 @@ func TestBindings_GarbageCollectOnProviderRemoval(t *testing.T) {
 	t.Parallel()
 	providerProfile := newProviderProfile("bind-gc-provider", "file-store")
 	if err := testClient.Create(context.Background(), providerProfile); err != nil {
-		t.Fatalf("create provider AppProfile: %v", err)
+		t.Fatalf("create provider ComponentProfile: %v", err)
 	}
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), providerProfile) })
 
 	consumerProfile := newConsumerProfile("bind-gc-consumer", "file-store", "bind-gc-provider")
 	if err := testClient.Create(context.Background(), consumerProfile); err != nil {
-		t.Fatalf("create consumer AppProfile: %v", err)
+		t.Fatalf("create consumer ComponentProfile: %v", err)
 	}
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), consumerProfile) })
 

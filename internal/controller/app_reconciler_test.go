@@ -34,9 +34,9 @@ var appClaimTestGVK = schema.GroupVersionKind{
 	Kind:    "App",
 }
 
-// newAppProfile builds an AppProfile with the crossplane DeploymentMethod and
+// newComponentProfile builds a ComponentProfile with the crossplane DeploymentMethod and
 // optional ValueMapping.
-func newAppProfile(name string, vm *gentianov1alpha1.ValueMapping) *gentianov1alpha1.ComponentProfile {
+func newComponentProfile(name string, vm *gentianov1alpha1.ValueMapping) *gentianov1alpha1.ComponentProfile {
 	return &gentianov1alpha1.ComponentProfile{
 		ObjectMeta: metav1.ObjectMeta{Name: name},
 		Spec: gentianov1alpha1.ComponentProfileSpec{
@@ -94,7 +94,7 @@ func TestApps_NoApps(t *testing.T) {
 // domain) and labels.
 func TestApps_CreatesAppClaim(t *testing.T) {
 	t.Parallel()
-	profile := newAppProfile("my-app", nil)
+	profile := newComponentProfile("my-app", nil)
 	if err := testClient.Create(context.Background(), profile); err != nil {
 		t.Fatalf("create ComponentProfile: %v", err)
 	}
@@ -155,9 +155,9 @@ func TestApps_MultipleApps(t *testing.T) {
 	t.Parallel()
 	appNames := []string{"alpha", "beta", "gamma"}
 	for _, name := range appNames {
-		profile := newAppProfile(name, nil)
+		profile := newComponentProfile(name, nil)
 		if err := testClient.Create(context.Background(), profile); err != nil {
-			t.Fatalf("create AppProfile %s: %v", name, err)
+			t.Fatalf("create ComponentProfile %s: %v", name, err)
 		}
 		n := name
 		t.Cleanup(func() {
@@ -199,7 +199,7 @@ func TestApps_MultipleApps(t *testing.T) {
 // App claims from the tenant namespace.
 func TestApps_DeleteRemovesAppClaims(t *testing.T) {
 	t.Parallel()
-	profile := newAppProfile("del-app", nil)
+	profile := newComponentProfile("del-app", nil)
 	if err := testClient.Create(context.Background(), profile); err != nil {
 		t.Fatalf("create ComponentProfile: %v", err)
 	}
@@ -250,14 +250,14 @@ func TestApps_DeleteRemovesAppClaims(t *testing.T) {
 // leaving other apps' claims intact.
 func TestApps_RemoveAppCleansUpClaim(t *testing.T) {
 	t.Parallel()
-	profileA := newAppProfile("rm-keep-app", nil)
-	profileB := newAppProfile("rm-remove-app", nil)
+	profileA := newComponentProfile("rm-keep-app", nil)
+	profileB := newComponentProfile("rm-remove-app", nil)
 	if err := testClient.Create(context.Background(), profileA); err != nil {
-		t.Fatalf("create AppProfile rm-keep-app: %v", err)
+		t.Fatalf("create ComponentProfile rm-keep-app: %v", err)
 	}
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), profileA) })
 	if err := testClient.Create(context.Background(), profileB); err != nil {
-		t.Fatalf("create AppProfile rm-remove-app: %v", err)
+		t.Fatalf("create ComponentProfile rm-remove-app: %v", err)
 	}
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), profileB) })
 
@@ -328,7 +328,7 @@ func TestApps_RemoveAppCleansUpClaim(t *testing.T) {
 // lack the gentianos.io/app label.
 func TestApps_OrphanCleanupSkipsCRsWithoutAppLabel(t *testing.T) {
 	t.Parallel()
-	profile := newAppProfile("only-app", nil)
+	profile := newComponentProfile("only-app", nil)
 	if err := testClient.Create(context.Background(), profile); err != nil {
 		t.Fatalf("create ComponentProfile: %v", err)
 	}
@@ -409,7 +409,7 @@ func TestApps_OrphanCleanupSkipsCRsWithoutAppLabel(t *testing.T) {
 // apps removed from spec.apps are deleted during app reconciliation.
 func TestApps_CleanupOrphanedAppWorkload(t *testing.T) {
 	t.Parallel()
-	profile := newAppProfile("orphan-wl-app", nil)
+	profile := newComponentProfile("orphan-wl-app", nil)
 	if err := testClient.Create(context.Background(), profile); err != nil {
 		t.Fatalf("create ComponentProfile: %v", err)
 	}
@@ -514,7 +514,7 @@ func TestApps_CleanupOrphanedAppWorkload(t *testing.T) {
 // without ownerReferences are removed when the owning Job is already gone.
 func TestApps_CleanupOrphanedAppWorkloadOwnerlessJobPod(t *testing.T) {
 	t.Parallel()
-	profile := newAppProfile("orphan-wl-app2", nil)
+	profile := newComponentProfile("orphan-wl-app2", nil)
 	if err := testClient.Create(context.Background(), profile); err != nil {
 		t.Fatalf("create ComponentProfile: %v", err)
 	}

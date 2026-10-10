@@ -266,7 +266,7 @@ func (r *TenantReconciler) reconcileTenantStagePreflight(ctx context.Context, st
 		r.setCondition(tenant, conditionAppsReady, metav1.ConditionFalse, "ProfileNotFound",
 			fmt.Sprintf("ComponentProfile(s) not found: %s", strings.Join(missingProfiles, ", ")))
 		r.setCondition(tenant, conditionIdentityReady, metav1.ConditionFalse, "PrerequisitesFailed",
-			"Identity provisioning blocked because one or more requested AppProfiles are missing")
+			"Identity provisioning blocked because one or more requested ComponentProfiles are missing")
 		tenant.Status.Phase = gentianov1alpha1.TenantPhaseDegraded
 		state.blocked = true
 		r.updateBlockedStatus(ctx, tenant)
@@ -420,7 +420,7 @@ func (r *TenantReconciler) reconcileTenantStageAppsAndEdge(ctx context.Context, 
 	// declared it -- and its removal from the ones that did not. After both
 	// kinds of Component exist: each holds its release, or runs without the
 	// gateway, until this has delivered its key.
-	profiles, err := loadAppProfileIndex(ctx, r.Client)
+	profiles, err := loadComponentProfileIndex(ctx, r.Client)
 	if err != nil {
 		return ctrl.Result{}, err
 	}

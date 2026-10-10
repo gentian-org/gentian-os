@@ -90,7 +90,7 @@ func TestHandoverGate_DeniesCreateBeforeProof(t *testing.T) {
 	msg := resp.Result.Message
 	// The message has to carry all three things an operator needs: which tenant,
 	// what to do about it, and the way out. A denial missing any of them gets
-	// answered by disabling the webhook, which takes the AppProfile and tenancy
+	// answered by disabling the webhook, which takes the ComponentProfile and tenancy
 	// checks with it.
 	for _, want := range []string{"acme", "sign in", HandoverOverrideAnnotation} {
 		if !strings.Contains(msg, want) {

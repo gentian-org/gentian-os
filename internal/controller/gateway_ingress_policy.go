@@ -93,7 +93,7 @@ func anyIntentNeedsEscapedSlashesKeepUnchanged(intents []ingressIntent) bool {
 }
 
 func collectTenantIngressIntents(ctx context.Context, c client.Client, tenant *gentianov1alpha1.Tenant) ([]ingressIntent, error) {
-	profileIndex, err := loadAppProfileIndex(ctx, c)
+	profileIndex, err := loadComponentProfileIndex(ctx, c)
 	if err != nil {
 		return nil, err
 	}
