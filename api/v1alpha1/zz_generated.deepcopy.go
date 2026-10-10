@@ -420,6 +420,11 @@ func (in *AppSecretsStatus) DeepCopyInto(out *AppSecretsStatus) {
 		*out = make([]string, len(*in))
 		copy(*out, *in)
 	}
+	if in.NotHeld != nil {
+		in, out := &in.NotHeld, &out.NotHeld
+		*out = make([]string, len(*in))
+		copy(*out, *in)
+	}
 	if in.Replaced != nil {
 		in, out := &in.Replaced, &out.Replaced
 		*out = make([]string, len(*in))

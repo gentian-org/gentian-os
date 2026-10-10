@@ -237,7 +237,8 @@ them.
 ## 5. What a backup does not contain, and what to redo
 
 A bundle holds no person's password, and of the stored credentials one kind
-only: each app's own secrets, the ones its profile has the platform generate
+only: each app's own secrets, the ones its profile has the platform make
+(generated secrets and declared keys)
 and its data is encrypted or signed with. Without them the data a bundle
 brings back is unreadable wherever they are made anew. They are in the
 bundle as `secrets/<app>.json.age`, encrypted by the operator itself with the

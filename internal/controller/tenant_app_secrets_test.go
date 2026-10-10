@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -1024,5 +1025,181 @@ func TestARestoreOfSecretsWithoutAVaultFails(t *testing.T) {
 	if got.Status.Phase != gentianov1alpha1.TenantExportPhaseFailed ||
 		!strings.Contains(conditionMessage(got.Status.Conditions, conditionExportComplete), "no vault to set them in") || len(w.jobs(t)) != 0 {
 		t.Errorf("phase %s: %s", got.Status.Phase, conditionMessage(got.Status.Conditions, conditionExportComplete))
+	}
+}
+
+// A key a profile declares under spec.secrets.derived is kept in the vault
+// like a generated secret, an app may encrypt with it, and it travels the
+// same way: in the app's secrets artefact, apart from the generated ones,
+// and set again by a restore at the app's own derived/ path in the tenant
+// restored into, under a key the profile declares there and no other. It
+// reaches the app in the Secret the operator writes itself
+// (llm-credentials-<app>), which the restore writes and waits for, with the
+// release that takes the key as a value.
+func TestADeclaredKeyTravelsAndIsSetLikeAGeneratedSecret(t *testing.T) {
+	w := newSecretsWorld(t, nil)
+	ctx := context.Background()
+	const keyPath = "gentian-os/tenants/demo/apps/wiki/derived/WIKI_SECRET_KEY"
+	tenant := planTenant("demo", "wiki", "drive")
+	profile := secretsProfile()
+	profile.Spec.Secrets.Derived = []gentianov1alpha1.DerivedSecretKey{{Key: "WIKI_SECRET_KEY"}}
+	stored := &gentianov1alpha1.ComponentProfile{}
+	if err := w.c.Get(ctx, types.NamespacedName{Name: "wiki"}, stored); err != nil {
+		t.Fatal(err)
+	}
+	stored.Spec.Secrets = profile.Spec.Secrets
+	if err := w.c.Update(ctx, stored); err != nil {
+		t.Fatal(err)
+	}
+	// As the tenant's reconcile delivers it: in the operator's own Secret.
+	deliver := func() string {
+		t.Helper()
+		value, err := w.seeder.SeedDerivedKey(ctx, "demo", "wiki", "WIKI_SECRET_KEY")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := w.r.Tenant.writeModelCredentials(ctx, tenant, "wiki", map[string]string{"WIKI_SECRET_KEY": value, "OPENAI_API_KEY": "sk-unrelated"}); err != nil {
+			t.Fatal(err)
+		}
+		return value
+	}
+	first := deliver()
+	release := &unstructured.Unstructured{Object: map[string]any{
+		"spec": map[string]any{"forProvider": map[string]any{"set": []any{
+			map[string]any{"name": "secretKey", "valueFrom": map[string]any{"secretKeyRef": map[string]any{
+				"name": "llm-credentials-wiki", "namespace": "tenant-demo", "key": "WIKI_SECRET_KEY"}}},
+		}}},
+		"status": map[string]any{"atProvider": map[string]any{"revision": int64(3)},
+			"conditions": []any{map[string]any{"type": "Ready", "status": "True"}}},
+	}}
+	release.SetGroupVersionKind(helmReleaseGVK)
+	release.SetName("demo-wiki-llm")
+	if err := w.c.Create(ctx, release); err != nil {
+		t.Fatal(err)
+	}
+	data := appEncrypt(t, first, "a token the wiki keeps for a person")
+
+	// Backed up: the key is in the artefact, in a section of its own.
+	entry := gentianov1alpha1.AppExportStatus{Name: "wiki", ChartVersion: "2.0.0",
+		Artefacts: []gentianov1alpha1.BundleArtefact{{Kind: bundle.ArtefactPostgres, Name: "demo_wiki", Path: backup.PostgresArtefact("demo_wiki")}}}
+	if err := w.er.withAppSecrets(ctx, w.export, tenant, "wiki", profile, passphraseEncryption, &entry); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(entry.Secrets.Names, []string{"derived:WIKI_SECRET_KEY", "encryption_key", "search/index_key", "session_key"}) {
+		t.Fatalf("captured %v", entry.Secrets.Names)
+	}
+	ref := *w.restore(t).Spec.Bundle
+	doc, err := w.bundles.AppSecrets(ctx, ref, "secrets/wiki.json", bundlestore.Key{Passphrase: "correct horse"})
+	if err != nil || !reflect.DeepEqual(doc.Derived, map[string]string{"WIKI_SECRET_KEY": first}) || doc.Secrets["WIKI_SECRET_KEY"] != "" {
+		t.Fatalf("the artefact's declared keys: %v, %v", err, len(doc.Derived))
+	}
+	// And one the profile here does not declare, with a name made to be a path.
+	doc.Derived["OTHER_KEY"] = "not-declared"
+	doc.Derived["../internal/encryption_key"] = "a-path"
+	cipher, err := backup.SealAppSecrets(passphraseEncryption, "correct horse", doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = w.bundles.PutArtefact(ctx, ref, "secrets/wiki.json", cipher)
+	w.export.Status.Apps = []gentianov1alpha1.AppExportStatus{entry}
+	m := w.er.buildManifest(w.export, planTenant("demo", "wiki"))
+	m.Identity, m.Shell = nil, nil
+	w.bundles.manifest = m
+	status, _ := json.Marshal(w.export.Status)
+	manifest, _ := json.Marshal(m)
+	if bytes.Contains(status, []byte(first)) || bytes.Contains(manifest, []byte(first)) || bytes.Contains(w.bundles.objects[ref.Bucket+"/"+ref.Prefix+"/secrets/wiki.json"], []byte(first)) {
+		t.Error("the key's value is in the clear in the status, the manifest or the artefact")
+	}
+
+	// Purged and installed again: another key, and the old data unreadable.
+	generated := w.vault.snapshot()
+	w.vault.purge("demo", "wiki")
+	if err := w.r.Tenant.seedAppSecrets(ctx, tenant, "wiki", profile); err != nil {
+		t.Fatal(err)
+	}
+	w.playSecretsOperator(t, true)
+	second := deliver()
+	if second == first {
+		t.Fatal("installed again, the key is the one it was")
+	}
+	if _, err := appDecrypt(second, data); err == nil {
+		t.Fatal("the app reads its old data with a new key")
+	}
+	w.vault.puts = nil
+
+	got, upgraded := w.runWithOperators(t)
+	if got.Status.Phase != gentianov1alpha1.TenantExportPhaseReady {
+		t.Fatalf("phase = %s: %+v", got.Status.Phase, got.Status.Conditions)
+	}
+	if plain, err := appDecrypt(w.vault.value(keyPath), data); err != nil || plain != "a token the wiki keeps for a person" {
+		t.Errorf("restored, the app cannot read what it encrypted with the key: %v", err)
+	}
+	secret := &corev1.Secret{}
+	if err := w.c.Get(ctx, types.NamespacedName{Name: "llm-credentials-wiki", Namespace: "tenant-demo"}, secret); err != nil {
+		t.Fatal(err)
+	}
+	if string(secret.Data["WIKI_SECRET_KEY"]) != first || string(secret.Data["OPENAI_API_KEY"]) != "sk-unrelated" {
+		t.Error("the app's Secret does not hold the restored key, or lost what else it held")
+	}
+	sort.Strings(upgraded)
+	if !reflect.DeepEqual(upgraded, []string{"demo-wiki", "demo-wiki-llm"}) || !w.restarted(t, "wiki") {
+		t.Errorf("upgraded %v, restarted %v", upgraded, w.restarted(t, "wiki"))
+	}
+	st := w.wikiStatus(t).Secrets
+	if !slices.Contains(st.Replaced, "derived:WIKI_SECRET_KEY") || !reflect.DeepEqual(st.NotDeclared, []string{"derived:../internal/encryption_key", "derived:OTHER_KEY"}) {
+		t.Errorf("status: replaced %v, not declared %v", st.Replaced, st.NotDeclared)
+	}
+	// The key's own path and the generated secrets' were written, nothing
+	// else; the generated ones hold what they held before the purge.
+	sort.Strings(w.vault.puts)
+	if !reflect.DeepEqual(w.vault.puts, []string{keyPath, wikiEncryption, wikiSession}) {
+		t.Errorf("paths written: %v", w.vault.puts)
+	}
+	if after := w.vault.snapshot(); !reflect.DeepEqual(after, generated) {
+		t.Errorf("the generated secrets are not the ones before the purge")
+	}
+	for p := range w.vault.data {
+		if strings.Contains(p, "OTHER_KEY") || strings.Contains(p, "..") {
+			t.Errorf("%s was written", p)
+		}
+	}
+	final, _ := json.Marshal(got.Status)
+	if bytes.Contains(final, []byte(first)) {
+		t.Error("the restore's status holds the key")
+	}
+}
+
+// A bundle whose secrets artefact was written before declared keys
+// travelled holds none. It restores as before: the key stays as it is, and
+// the result says so.
+func TestABundleWithoutDeclaredKeysLeavesThemAndSaysSo(t *testing.T) {
+	w := newSecretsWorld(t, nil)
+	ctx := context.Background()
+	w.bundles.manifest = w.backup(t, "demo") // the profile declared no key then
+	stored := &gentianov1alpha1.ComponentProfile{}
+	if err := w.c.Get(ctx, types.NamespacedName{Name: "wiki"}, stored); err != nil {
+		t.Fatal(err)
+	}
+	stored.Spec.Secrets.Derived = []gentianov1alpha1.DerivedSecretKey{{Key: "WIKI_SECRET_KEY"}}
+	if err := w.c.Update(ctx, stored); err != nil {
+		t.Fatal(err)
+	}
+	held, err := w.seeder.SeedDerivedKey(ctx, "demo", "wiki", "WIKI_SECRET_KEY")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, _ := w.runWithOperators(t)
+	if got.Status.Phase != gentianov1alpha1.TenantExportPhaseReady {
+		t.Fatalf("phase = %s: %+v", got.Status.Phase, got.Status.Conditions)
+	}
+	if w.vault.value("gentian-os/tenants/demo/apps/wiki/derived/WIKI_SECRET_KEY") != held || len(w.vault.puts) != 0 {
+		t.Errorf("the key was changed: written %v", w.vault.puts)
+	}
+	if st := w.wikiStatus(t).Secrets; !reflect.DeepEqual(st.NotHeld, []string{"derived:WIKI_SECRET_KEY"}) {
+		t.Errorf("status.secrets.notHeld = %v", st.NotHeld)
+	}
+	if notes := strings.Join(got.Status.Notes, "\n"); !strings.Contains(notes, "the bundle holds no value for derived:WIKI_SECRET_KEY, which the app's profile here declares: left as it is") {
+		t.Errorf("the notes:\n%s", notes)
 	}
 }

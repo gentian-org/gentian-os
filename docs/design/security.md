@@ -1495,10 +1495,9 @@ Properties:
   in its own database (it encrypts the sign-in tokens it keeps for a
   person, and those of connected tool servers, with this key unless given
   another) is no longer readable: people sign in again and connect such
-  servers again. A bundle carries the secrets a profile declares under
-  `secrets.generated` and not these keys (§6.4), so under `random` the same
-  holds for a tenant restored where the stored key is another: after a
-  purge, under another name, or on another cluster.
+  servers again. A bundle carries these keys with the generated secrets
+  (§6.4), so a restore after a purge, under another name or on another
+  cluster sets the key the data was written with.
 
 **An app's own secrets** (`spec.secrets.generated` of its profile and an
 extension's `appSecrets`, stored at `…/apps/<app>/internal/<name>`) follow
@@ -1530,14 +1529,14 @@ again they are other values wherever the mode is `random`, and under
 another. So a bundle carries them, in both modes, and a restore sets them.
 
 **What a bundle holds.** Per app, every secret its profile declares that the
-vault holds: one artefact, `secrets/<app>.json.age`, a document of names and
-values (`bundle.AppSecrets`). No other stored credential is in a bundle: a
+vault holds: the generated ones (`secrets.generated`, an extension's
+`appSecrets`) and the keys under `secrets.derived` (§6.3). One artefact,
+`secrets/<app>.json.age`, a document of names and values
+(`bundle.AppSecrets`), the declared keys in a section of their own
+(`derived`). No other stored credential is in a bundle: a
 database's password, a bucket's keys, a cache's password, a sign-in client's
 secret, a model gateway key and a contract's password are made again where
-the bundle is restored, and no stored data depends on them. A key a profile
-declares under `secrets.derived` (§6.3) is not in a bundle either, although
-an app may encrypt with it: whether it travels like the generated ones is
-not decided. A credential a
+the bundle is restored, and no stored data depends on them. A credential a
 person typed in is not in a bundle either.
 
 **How it is protected.** The operator reads the values from OpenBao,
@@ -1575,8 +1574,9 @@ nobody who only reads the backup storage:
 
 **What a restore does.** Before an app's data is replaced, each secret the
 bundle holds for it is written to
-`gentian-os/tenants/<tenant restored into>/apps/<app>/internal/<name>`, where
-`<name>` is one the app's profile declares on this cluster. The path is
+`gentian-os/tenants/<tenant restored into>/apps/<app>/internal/<name>`, and
+each declared key to `…/apps/<app>/derived/<key>`, where `<name>` or `<key>`
+is one the app's profile declares on this cluster. The path is
 built by the operator; the bundle supplies names and values and no path.
 Nothing is written for an app the restore does not restore, under a name the
 profile does not declare, or outside the tenant restored into; what the
@@ -1584,8 +1584,10 @@ bundle holds besides is named in the result and not written. This holds for
 an import under another tenant's name as well.
 
 A value that differs from the stored one **replaces it**: the one exception
-to §7. The app's ExternalSecrets are then told to read again, the restore
-waits until the Secrets they fill hold the new values, the Helm releases
+to §7. The app's ExternalSecrets are then told to read again, a declared key
+is written into the Secret the operator delivers it in
+(`llm-credentials-<app>`), the restore
+waits until those Secrets hold the new values, the Helm releases
 that are handed one as a value are upgraded, and only then is the app paused
 and its data replaced; the app is restarted when the data is in. A secret
 that has not reached the app after ten minutes fails the restore of that app
@@ -1595,6 +1597,10 @@ is written and nothing restarted on their account.
 
 An app that was uninstalled with its data kept has its secrets set the same
 way, with nothing to hand them to: its next install finds them.
+
+A secret the profile declares and the bundle holds no value for is left as
+it is and named in the result: a format 4 bundle written before declared
+keys travelled holds none of them.
 
 A bundle of format 3 or older holds no secrets and restores as before: no
 stored secret is changed, and the result says that what an app encrypted is

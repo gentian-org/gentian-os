@@ -546,14 +546,43 @@ func (s *Seeder) SeedAppSecret(ctx context.Context, tenant, app, name string) (s
 // is false where the path holds nothing; an error is a path that could not
 // be read, which is not the same.
 func (s *Seeder) ReadAppSecret(ctx context.Context, tenant, app, name string) (value string, found bool, err error) {
-	got, err := s.w.Get(ctx, InternalPath(tenant, app, name))
+	return s.readValue(ctx, InternalPath(tenant, app, name), fmt.Sprintf("app-secret(%s/%s/%s)", tenant, app, name))
+}
+
+// readValue reads the "value" a path holds. what names it in an error.
+func (s *Seeder) readValue(ctx context.Context, path, what string) (value string, found bool, err error) {
+	got, err := s.w.Get(ctx, path)
 	if errors.Is(err, ErrNotFound) || (err == nil && got == nil) {
 		return "", false, nil
 	}
 	if err != nil {
-		return "", false, fmt.Errorf("read app-secret(%s/%s/%s): %w", tenant, app, name, err)
+		return "", false, fmt.Errorf("read %s: %w", what, err)
 	}
 	return got["value"], got["value"] != "", nil
+}
+
+// replaceValue sets the "value" a path holds, whatever it held, reads it
+// back, and reports whether that changed it. Unexported: the two callers
+// build the path themselves, from a tenant, an app and a name.
+func (s *Seeder) replaceValue(ctx context.Context, path, what, value string) (changed bool, err error) {
+	if value == "" {
+		return false, fmt.Errorf("replace %s: no value", what)
+	}
+	have, found, err := s.readValue(ctx, path, what)
+	if err != nil {
+		return false, err
+	}
+	if found && have == value {
+		return false, nil
+	}
+	if err := s.w.Put(ctx, path, map[string]string{"value": value}); err != nil {
+		return false, fmt.Errorf("replace %s: %w", what, err)
+	}
+	got, err := s.w.Get(ctx, path)
+	if err != nil || got["value"] != value {
+		return false, fmt.Errorf("replace %s: the vault does not give the value back: %v", what, err)
+	}
+	return true, nil
 }
 
 // ReplaceAppSecret sets one of an app's own secrets to value, whatever the
@@ -567,25 +596,21 @@ func (s *Seeder) ReadAppSecret(ctx context.Context, tenant, app, name string) (v
 // built here from the tenant, the app and the name; a caller hands over no
 // path.
 func (s *Seeder) ReplaceAppSecret(ctx context.Context, tenant, app, name, value string) (changed bool, err error) {
-	if value == "" {
-		return false, fmt.Errorf("replace app-secret(%s/%s/%s): no value", tenant, app, name)
-	}
-	have, found, err := s.ReadAppSecret(ctx, tenant, app, name)
-	if err != nil {
-		return false, err
-	}
-	if found && have == value {
-		return false, nil
-	}
-	path := InternalPath(tenant, app, name)
-	if err := s.w.Put(ctx, path, map[string]string{"value": value}); err != nil {
-		return false, fmt.Errorf("replace app-secret(%s/%s/%s): %w", tenant, app, name, err)
-	}
-	got, err := s.w.Get(ctx, path)
-	if err != nil || got["value"] != value {
-		return false, fmt.Errorf("replace app-secret(%s/%s/%s): the vault does not give the value back: %v", tenant, app, name, err)
-	}
-	return true, nil
+	return s.replaceValue(ctx, InternalPath(tenant, app, name), fmt.Sprintf("app-secret(%s/%s/%s)", tenant, app, name), value)
+}
+
+// ReadDerivedKey reads the stored value of one key a profile declares under
+// spec.secrets.derived, as ReadAppSecret reads a generated secret.
+func (s *Seeder) ReadDerivedKey(ctx context.Context, tenant, app, key string) (value string, found bool, err error) {
+	return s.readValue(ctx, DerivedKeyPath(tenant, app, key), fmt.Sprintf("derived key(%s/%s/%s)", tenant, app, key))
+}
+
+// ReplaceDerivedKey sets one declared key to value, whatever the path held:
+// ReplaceAppSecret for a key under spec.secrets.derived, a restore's for
+// the same reason, at the path built here from the tenant, the app and the
+// key.
+func (s *Seeder) ReplaceDerivedKey(ctx context.Context, tenant, app, key, value string) (changed bool, err error) {
+	return s.replaceValue(ctx, DerivedKeyPath(tenant, app, key), fmt.Sprintf("derived key(%s/%s/%s)", tenant, app, key), value)
 }
 
 // --- Contracts ---------------------------------------------------------------

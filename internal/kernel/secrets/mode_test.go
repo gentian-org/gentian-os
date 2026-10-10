@@ -380,6 +380,28 @@ func TestReplaceAppSecretSetsTheValueAndSaysWhetherItChanged(t *testing.T) {
 		t.Error("an empty value was written")
 	}
 
+	// A key declared under spec.secrets.derived is set the same way, at its
+	// own path, and the generated secret of the same name is another thing.
+	key, err := s.SeedDerivedKey(ctx, "acme", "wiki", "session_key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, found, err := s.ReadDerivedKey(ctx, "acme", "wiki", "session_key"); !found || err != nil || got != key {
+		t.Fatalf("declared key read back %v, %v", found, err)
+	}
+	if changed, err := s.ReplaceDerivedKey(ctx, "acme", "wiki", "session_key", "the-bundles-key"); !changed || err != nil {
+		t.Fatalf("declared key: changed = %v, %v", changed, err)
+	}
+	if got, err := s.SeedDerivedKey(ctx, "acme", "wiki", "session_key"); err != nil || got != "the-bundles-key" {
+		t.Errorf("after the replacement the seeder returns %q, %v", got, err)
+	}
+	if got, _, _ := s.ReadAppSecret(ctx, "acme", "wiki", "session_key"); got != "the-bundles-value" {
+		t.Errorf("replacing the declared key changed the generated secret to %q", got)
+	}
+	if _, found, err := s.ReadDerivedKey(ctx, "acme", "wiki", "never_made"); found || err != nil {
+		t.Errorf("a key never made: found %v, %v", found, err)
+	}
+
 	away := secrets.NewSeeder(&deafStore{data: map[string]map[string]string{}}, nil)
 	if _, _, err := away.ReadAppSecret(ctx, "acme", "wiki", "session_key"); err == nil {
 		t.Error("a vault that does not answer read as an empty path")

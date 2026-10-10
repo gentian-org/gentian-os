@@ -573,8 +573,10 @@ from nothing else, as `granted` and `withdrawn` lists of `user`, `relation`,
 `object`, with the `cluster` they were read on. A format 2 bundle has none of
 them and restores as before. **Format 4** adds to an app's `stores` an entry
 of `kind: secrets`, `name` the app, `path` `secrets/<app>.json`: the app's own
-secrets, a JSON document of `secrets` (name to value) and `extensions`
-(extension, then name to value), with no path in it. A format 3 bundle has
+secrets, a JSON document of `secrets` (name to value), `extensions`
+(extension, then name to value) and `derived` (the keys the profile declares
+under `secrets.derived`, key to value), with no path in it. `derived` was
+added within format 4; a document without it reads as before. A format 3 bundle has
 none and restores as before, changing no stored secret
 ([security.md §6.4](security.md)). A manifest of a format newer than the
 platform reads is refused. A `postgresOwned` artefact is

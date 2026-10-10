@@ -313,6 +313,58 @@ func TestAppSecretsAgainstAnObjectStoreAndAVault(t *testing.T) {
 		t.Errorf("imported under a new name, the app cannot read the data the bundle brought: %v", err)
 	}
 
+	// --- a key the profile declares, which the app encrypts with too ---
+	declared, err := seeder.SeedDerivedKey(ctx, "demo", "wiki", "WIKI_SECRET_KEY")
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := wikiWrites(t, declared, "a token the wiki keeps")
+	have, found, err := seeder.ReadDerivedKey(ctx, "demo", "wiki", "WIKI_SECRET_KEY")
+	if err != nil || !found || have != declared {
+		t.Fatalf("read the declared key for the backup: %v, found %v", err, found)
+	}
+	sealed, err = backup.SealAppSecrets(toBackupKey, "", &bundle.AppSecrets{App: "wiki",
+		Secrets: map[string]string{"encryption_key": first}, Derived: map[string]string{"WIKI_SECRET_KEY": have}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	withKeys := gentianov1alpha1.BundleRef{Bucket: ref.Bucket, Prefix: "with-declared-keys"}
+	if err := store.PutArtefact(ctx, withKeys, path, sealed); err != nil {
+		t.Fatal(err)
+	}
+	if err := kv.DeleteTree(ctx, secrets.AppPath("demo", "wiki")); err != nil {
+		t.Fatal(err)
+	}
+	again, err := seeder.SeedDerivedKey(ctx, "demo", "wiki", "WIKI_SECRET_KEY")
+	if err != nil || again == declared {
+		t.Fatalf("installed again, the declared key: %v", err)
+	}
+	if _, err := wikiReads(again, token); err == nil {
+		t.Fatal("the app reads its token with the new key")
+	}
+	back, err := store.AppSecrets(ctx, withKeys, path, key)
+	if err != nil || back.Secrets["WIKI_SECRET_KEY"] != "" {
+		t.Fatalf("the artefact with declared keys: %v", err)
+	}
+	if changed, err := seeder.ReplaceDerivedKey(ctx, "demo", "wiki", "WIKI_SECRET_KEY", back.Derived["WIKI_SECRET_KEY"]); err != nil || !changed {
+		t.Fatalf("replace the declared key: changed %v, %v", changed, err)
+	}
+	record, err = kv.Get(ctx, secrets.DerivedKeyPath("demo", "wiki", "WIKI_SECRET_KEY"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plain, err := wikiReads(record["value"], token); err != nil || plain != "a token the wiki keeps" {
+		t.Errorf("restored, the app cannot read what it encrypted with the declared key: %v", err)
+	}
+	// It stands: the seeder's next pass returns it, and the generated
+	// secret's path was not touched by it.
+	if kept, err := seeder.SeedDerivedKey(ctx, "demo", "wiki", "WIKI_SECRET_KEY"); err != nil || kept != declared {
+		t.Errorf("after the restore the seeder's next pass does not return the restored key: %v", err)
+	}
+	if _, found, _ := seeder.ReadAppSecret(ctx, "demo", "wiki", "WIKI_SECRET_KEY"); found {
+		t.Error("the declared key was written among the generated secrets")
+	}
+
 	// --- and under a passphrase the requester chose ---
 	withPassphrase := backup.Encryption{Mode: gentianov1alpha1.ExportEncryptionPassphrase}
 	sealed, err = backup.SealAppSecrets(withPassphrase, "correct horse battery", &bundle.AppSecrets{App: "wiki", Secrets: map[string]string{"encryption_key": first}})

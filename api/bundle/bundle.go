@@ -114,7 +114,8 @@ const (
 	ArtefactMailboxes = "mailboxes"
 	// ArtefactSecrets is an app's own secrets: the values the platform
 	// generated for it because its profile asked for them
-	// (spec.secrets.generated, and an extension's appSecrets). One JSON
+	// (spec.secrets.generated, an extension's appSecrets, and the keys
+	// under spec.secrets.derived). One JSON
 	// document per app (AppSecrets), encrypted like every artefact and by
 	// the operator itself, so that the values are in no Job. It holds names
 	// and values and no path: a restore writes a value only under a name
@@ -147,6 +148,12 @@ type AppSecrets struct {
 	// extension's name and then by the name the extension declares each
 	// under.
 	Extensions map[string]map[string]string `json:"extensions,omitempty"`
+	// Derived are the keys the app's profile declares under
+	// spec.secrets.derived, by key: values the platform made for the app
+	// and keeps in the vault like the generated ones, apart from them. A
+	// document written before these travelled has none, and reads as
+	// before.
+	Derived map[string]string `json:"derived,omitempty"`
 }
 
 // Empty reports whether the document holds no value.
@@ -154,7 +161,7 @@ func (a *AppSecrets) Empty() bool {
 	if a == nil {
 		return true
 	}
-	if len(a.Secrets) > 0 {
+	if len(a.Secrets) > 0 || len(a.Derived) > 0 {
 		return false
 	}
 	for _, ext := range a.Extensions {

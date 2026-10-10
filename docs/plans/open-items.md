@@ -305,11 +305,10 @@ Each is true of the code today.
     event listener signs with, and the kernel realm's own mail login on a
     cluster that runs its own mail server. Each needs a place in OpenBao
     that nobody has chosen, and neither is part of a tenant's bundle.
-    Open: a key a profile declares under `secrets.derived` is kept in the
-    vault and follows the mode since 2026-10-10, an app may encrypt with it,
-    and a bundle does not carry it. Whether it travels like the generated
-    secrets, to `…/apps/<app>/derived/<key>` of the tenant restored into, is
-    to be decided.
+    **Decided 2026-10-10** and built: a key a profile declares under
+    `secrets.derived` travels in the same artefact and is set by a restore
+    at `…/apps/<app>/derived/<key>` of the tenant restored into, under the
+    rules of the generated secrets.
 14. **Whether a change of `secretMode` on an installed cluster is refused.**
     Today it converts nothing and existing credentials stay, with one
     exception: back from `random` to `derived`, the installer writes derived

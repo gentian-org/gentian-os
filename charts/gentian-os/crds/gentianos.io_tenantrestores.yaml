@@ -401,6 +401,14 @@ spec:
                             type: string
                           type: array
                           x-kubernetes-list-type: atomic
+                        notHeld:
+                          description: |-
+                            NotHeld are the secrets the app's profile here declares that the
+                            bundle holds no value for. A restore leaves them as they are.
+                          items:
+                            type: string
+                          type: array
+                          x-kubernetes-list-type: atomic
                         planned:
                           description: |-
                             Planned says Replaced and Releases are final: the stored values were

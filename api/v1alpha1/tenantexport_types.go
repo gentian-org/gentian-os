@@ -445,8 +445,9 @@ type BundleArtefact struct {
 }
 
 // AppSecretsStatus is what an export or a restore did with an app's own
-// secrets (spec.secrets.generated of its profile, and its extensions'
-// appSecrets). An extension's secret is named "<extension>/<name>".
+// secrets (spec.secrets.generated of its profile, its extensions'
+// appSecrets, and the keys under spec.secrets.derived). An extension's
+// secret is named "<extension>/<name>", a declared key "derived:<key>".
 type AppSecretsStatus struct {
 	// Names are the secrets an export captured, or the ones a restore sets:
 	// those the bundle holds and the app's profile here declares.
@@ -458,6 +459,11 @@ type AppSecretsStatus struct {
 	// +optional
 	// +listType=atomic
 	NotDeclared []string `json:"notDeclared,omitempty"`
+	// NotHeld are the secrets the app's profile here declares that the
+	// bundle holds no value for. A restore leaves them as they are.
+	// +optional
+	// +listType=atomic
+	NotHeld []string `json:"notHeld,omitempty"`
 	// Replaced are the secrets the app was handed anew: those whose stored
 	// value was another than the bundle's and was replaced by it, and those
 	// the vault held already while a Secret of the app did not. Restore

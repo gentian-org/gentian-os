@@ -33,8 +33,8 @@ import (
 // An app's own secrets, in a bundle and out of it.
 //
 // An app encrypts and signs what it stores with the secrets its profile had
-// the platform generate (spec.secrets.generated, and an extension's
-// appSecrets). The data is in the bundle; without the secrets it was written
+// the platform make (spec.secrets.generated, an extension's appSecrets, and
+// the keys under spec.secrets.derived). The data is in the bundle; without the secrets it was written
 // with it is unreadable wherever those are not the ones in the vault: after
 // a purge and a new install, in a tenant of another name, on another
 // cluster. So an export puts them into the bundle, as one more artefact of
@@ -97,10 +97,43 @@ type declaredSecret struct {
 	// extension is "" for the app's own.
 	extension string
 	name      string
+	// derived says it is a key under spec.secrets.derived: kept at the
+	// app's derived/ path, and delivered by the operator itself in the
+	// Secret llm-credentials-<app>, not through an ExternalSecret.
+	derived bool
 }
 
-// declaredSecrets are the secrets a profile has the platform generate for an
-// app and for each of its extensions.
+// derivedLabel is how a key under spec.secrets.derived is named where names
+// are listed. An extension's name has no colon in it.
+func derivedLabel(key string) string { return "derived:" + key }
+
+// path is where the secret is kept for a tenant: built here, from the
+// tenant, the app and the name, and from nothing a bundle says.
+func (d declaredSecret) path(tenantName string) string {
+	if d.derived {
+		return secrets.DerivedKeyPath(tenantName, d.vaultApp, d.name)
+	}
+	return secrets.InternalPath(tenantName, d.vaultApp, d.name)
+}
+
+// read and replace are the Seeder's, for the kind of secret this is.
+func (d declaredSecret) read(ctx context.Context, s *secrets.Seeder, tenantName string) (string, bool, error) {
+	if d.derived {
+		return s.ReadDerivedKey(ctx, tenantName, d.vaultApp, d.name)
+	}
+	return s.ReadAppSecret(ctx, tenantName, d.vaultApp, d.name)
+}
+
+func (d declaredSecret) replace(ctx context.Context, s *secrets.Seeder, tenantName, value string) (bool, error) {
+	if d.derived {
+		return s.ReplaceDerivedKey(ctx, tenantName, d.vaultApp, d.name, value)
+	}
+	return s.ReplaceAppSecret(ctx, tenantName, d.vaultApp, d.name, value)
+}
+
+// declaredSecrets are the secrets a profile has the platform make for an
+// app and for each of its extensions: the generated ones, and the keys
+// declared under spec.secrets.derived.
 func declaredSecrets(appName string, profile *gentianov1alpha1.ComponentProfile) []declaredSecret {
 	if profile == nil {
 		return nil
@@ -124,18 +157,50 @@ func declaredSecrets(appName string, profile *gentianov1alpha1.ComponentProfile)
 			}
 		}
 	}
+	for _, k := range profile.DerivedSecrets() {
+		if k.Key != "" {
+			out = append(out, declaredSecret{label: derivedLabel(k.Key), vaultApp: appName, name: k.Key, derived: true})
+		}
+	}
 	return out
 }
 
 // heldValue is the value a bundle's document holds for a declared secret.
 func heldValue(held *bundle.AppSecrets, d declaredSecret) string {
-	if held == nil {
+	switch {
+	case held == nil:
 		return ""
-	}
-	if d.extension == "" {
+	case d.derived:
+		return held.Derived[d.name]
+	case d.extension == "":
 		return held.Secrets[d.name]
 	}
 	return held.Extensions[d.extension][d.name]
+}
+
+// hold puts a value into a bundle's document, where a secret of that kind
+// goes.
+func hold(doc *bundle.AppSecrets, d declaredSecret, value string) {
+	switch {
+	case d.derived:
+		if doc.Derived == nil {
+			doc.Derived = map[string]string{}
+		}
+		doc.Derived[d.name] = value
+	case d.extension == "":
+		if doc.Secrets == nil {
+			doc.Secrets = map[string]string{}
+		}
+		doc.Secrets[d.name] = value
+	default:
+		if doc.Extensions == nil {
+			doc.Extensions = map[string]map[string]string{}
+		}
+		if doc.Extensions[d.extension] == nil {
+			doc.Extensions[d.extension] = map[string]string{}
+		}
+		doc.Extensions[d.extension][d.name] = value
+	}
 }
 
 // heldNames are the names a bundle's document holds, as they are listed.
@@ -151,6 +216,9 @@ func heldNames(held *bundle.AppSecrets) []string {
 		for name := range values {
 			out = append(out, backup.ExtensionSecretName(ext, name))
 		}
+	}
+	for key := range held.Derived {
+		out = append(out, derivedLabel(key))
 	}
 	sort.Strings(out)
 	return out
@@ -198,27 +266,14 @@ func (r *TenantExportReconciler) captureAppSecrets(
 	doc := &bundle.AppSecrets{App: appName}
 	var names []string
 	for _, d := range declared {
-		value, found, err := r.Reconciler.Seeder.ReadAppSecret(ctx, tenant.Name, d.vaultApp, d.name)
+		value, found, err := d.read(ctx, r.Reconciler.Seeder, tenant.Name)
 		if err != nil {
 			return nil, nil, err
 		}
 		if !found {
 			continue
 		}
-		if d.extension == "" {
-			if doc.Secrets == nil {
-				doc.Secrets = map[string]string{}
-			}
-			doc.Secrets[d.name] = value
-		} else {
-			if doc.Extensions == nil {
-				doc.Extensions = map[string]map[string]string{}
-			}
-			if doc.Extensions[d.extension] == nil {
-				doc.Extensions[d.extension] = map[string]string{}
-			}
-			doc.Extensions[d.extension][d.name] = value
-		}
+		hold(doc, d, value)
 		names = append(names, d.label)
 	}
 	if doc.Empty() {
@@ -355,16 +410,17 @@ func (r *TenantRestoreReconciler) restoreAppSecrets(
 			// What will change, written down before anything does: were the
 			// values replaced first and the record lost, the next pass would
 			// find nothing to replace and hand the app nothing.
-			st.Names, st.NotDeclared, st.Replaced = nil, nil, nil
+			st.Names, st.NotDeclared, st.NotHeld, st.Replaced = nil, nil, nil, nil
 			declaredLabels := map[string]bool{}
 			for _, d := range declared {
 				declaredLabels[d.label] = true
 				value := heldValue(held, d)
 				if value == "" {
+					st.NotHeld = append(st.NotHeld, d.label)
 					continue
 				}
 				st.Names = append(st.Names, d.label)
-				have, found, err := seeder.ReadAppSecret(ctx, tenant.Name, d.vaultApp, d.name)
+				have, found, err := d.read(ctx, seeder, tenant.Name)
 				if err != nil {
 					return false, "", err
 				}
@@ -373,7 +429,7 @@ func (r *TenantRestoreReconciler) restoreAppSecrets(
 				// app was handed it. The app is handed it now.
 				lacking := false
 				if found && have == value && !entry.Retained {
-					lacking, err = r.appLacks(ctx, ns, secrets.InternalPath(tenant.Name, d.vaultApp, d.name), value)
+					lacking, err = r.appLacks(ctx, ns, d.path(tenant.Name), value, directReaders(tenant.Name, []declaredSecret{d}, []string{d.label}))
 					if err != nil {
 						return false, "", err
 					}
@@ -388,7 +444,7 @@ func (r *TenantRestoreReconciler) restoreAppSecrets(
 				}
 			}
 			if !entry.Retained && len(st.Replaced) > 0 {
-				releases, err := r.secretReleases(ctx, ns, replacedPaths(tenant.Name, declared, st.Replaced))
+				releases, err := r.secretReleases(ctx, ns, replacedPaths(tenant.Name, declared, st.Replaced), directReaders(tenant.Name, declared, st.Replaced))
 				if err != nil {
 					return false, "", err
 				}
@@ -407,8 +463,15 @@ func (r *TenantRestoreReconciler) restoreAppSecrets(
 			if value == "" {
 				continue
 			}
-			if _, err := seeder.ReplaceAppSecret(ctx, tenant.Name, d.vaultApp, d.name, value); err != nil {
+			if _, err := d.replace(ctx, seeder, tenant.Name, value); err != nil {
 				return false, "", err
+			}
+			// A declared key reaches the app in a Secret the operator writes
+			// itself; it is written now, not at the tenant's next pass.
+			if d.derived && !entry.Retained {
+				if err := r.Tenant.deliverDerivedKey(ctx, tenant, d.vaultApp, d.name, value); err != nil {
+					return false, "", err
+				}
 			}
 		}
 		st.AppliedAt = ptrNow()
@@ -448,10 +511,49 @@ func replacedPaths(tenantName string, declared []declaredSecret, replaced []stri
 	out := map[string]bool{}
 	for _, d := range declared {
 		if slices.Contains(replaced, d.label) {
-			out[secrets.InternalPath(tenantName, d.vaultApp, d.name)] = true
+			out[d.path(tenantName)] = true
 		}
 	}
 	return out
+}
+
+// directReaders are the keys of the Secrets the operator writes itself from
+// the vault, for the declared keys among the labels: llm-credentials-<app>,
+// which holds each key the profile declares under spec.secrets.derived.
+func directReaders(tenantName string, declared []declaredSecret, labels []string) []secretReader {
+	var out []secretReader
+	for _, d := range declared {
+		if d.derived && slices.Contains(labels, d.label) {
+			out = append(out, secretReader{target: modelCredentialsSecretName(d.vaultApp), key: d.name,
+				path: d.path(tenantName), property: "value", direct: true})
+		}
+	}
+	return out
+}
+
+// deliverDerivedKey writes one declared key into the app's Secret
+// llm-credentials-<app>, where the operator delivers such keys, when that
+// Secret is there and the operator's. Where it is not, the app has not been
+// given model access yet, and the tenant's reconcile writes the Secret with
+// what the vault holds.
+func (r *TenantReconciler) deliverDerivedKey(ctx context.Context, tenant *gentianov1alpha1.Tenant, app, key, value string) error {
+	secret := &corev1.Secret{}
+	err := r.Get(ctx, types.NamespacedName{Name: modelCredentialsSecretName(app), Namespace: tenantNamespaceName(tenant)}, secret)
+	if apierrors.IsNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !ownsModelCredentials(secret, tenant.Name, app) || string(secret.Data[key]) == value {
+		return nil
+	}
+	patch := client.MergeFrom(secret.DeepCopy())
+	if secret.Data == nil {
+		secret.Data = map[string][]byte{}
+	}
+	secret.Data[key] = []byte(value)
+	return r.Patch(ctx, secret, patch)
 }
 
 // secretReader is one key of a Secret the secrets operator fills from a
@@ -462,6 +564,9 @@ type secretReader struct {
 	key            string
 	path           string
 	property       string
+	// direct says the operator writes the Secret itself: no ExternalSecret
+	// fills it, and where it is not there, nothing waits for it.
+	direct bool
 }
 
 // secretReaders are the keys of Secrets in a namespace that are filled from
@@ -509,18 +614,21 @@ func (r *TenantRestoreReconciler) secretReaders(ctx context.Context, ns string, 
 
 // appLacks reports whether a Secret that is filled from the path holds
 // another value than the one given.
-func (r *TenantRestoreReconciler) appLacks(ctx context.Context, ns, path, value string) (bool, error) {
+func (r *TenantRestoreReconciler) appLacks(ctx context.Context, ns, path, value string, direct []secretReader) (bool, error) {
 	readers, _, err := r.secretReaders(ctx, ns, map[string]bool{path: true})
 	if err != nil {
 		return false, err
 	}
-	for _, rd := range readers {
+	for _, rd := range append(readers, direct...) {
 		if rd.property != "" && rd.property != "value" {
 			continue
 		}
 		target := &corev1.Secret{}
 		err := r.Get(ctx, types.NamespacedName{Name: rd.target, Namespace: ns}, target)
 		if apierrors.IsNotFound(err) {
+			if rd.direct {
+				continue
+			}
 			return true, nil
 		}
 		if err != nil {
@@ -558,8 +666,9 @@ func (r *TenantRestoreReconciler) refreshExternalSecrets(ctx context.Context, ns
 
 // secretReleases are the Helm releases that are handed, as a value, a key of
 // a Secret filled from one of the paths, each with the revision it is at.
-func (r *TenantRestoreReconciler) secretReleases(ctx context.Context, ns string, paths map[string]bool) ([]gentianov1alpha1.SecretsRelease, error) {
+func (r *TenantRestoreReconciler) secretReleases(ctx context.Context, ns string, paths map[string]bool, direct []secretReader) ([]gentianov1alpha1.SecretsRelease, error) {
 	readers, _, err := r.secretReaders(ctx, ns, paths)
+	readers = append(readers, direct...)
 	if err != nil || len(readers) == 0 {
 		return nil, err
 	}
@@ -629,6 +738,7 @@ func (r *TenantRestoreReconciler) secretsPending(
 	if err != nil {
 		return nil, err
 	}
+	readers = append(readers, directReaders(tenantName, declared, st.Replaced)...)
 	stored := map[string]map[string]string{}
 	var pending []string
 	for _, rd := range readers {
@@ -648,6 +758,9 @@ func (r *TenantRestoreReconciler) secretsPending(
 		err := r.Get(ctx, types.NamespacedName{Name: rd.target, Namespace: ns}, target)
 		if err != nil && !apierrors.IsNotFound(err) {
 			return nil, err
+		}
+		if err != nil && rd.direct {
+			continue
 		}
 		if err != nil || string(target.Data[rd.key]) != record[property] {
 			name := "Secret " + rd.target
@@ -706,6 +819,9 @@ func secretsNote(entry *gentianov1alpha1.AppExportStatus) string {
 		parts = append(parts, "its own secrets "+strings.Join(st.Replaced, ", ")+" were replaced by the bundle's, and the app was restarted with them")
 	case len(st.Names) > 0:
 		parts = append(parts, "its own secrets are the bundle's already; none was changed")
+	}
+	if len(st.NotHeld) > 0 {
+		parts = append(parts, "the bundle holds no value for "+strings.Join(st.NotHeld, ", ")+", which the app's profile here declares: left as it is")
 	}
 	if len(st.NotDeclared) > 0 {
 		parts = append(parts, "the bundle also holds "+strings.Join(st.NotDeclared, ", ")+", which the app's profile here does not declare: not written")
