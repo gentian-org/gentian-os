@@ -70,9 +70,10 @@ domain is the cluster's. Two things follow.
 
 - **Two realms share one address space.** The platform's people (kernel
   realm) and the user tenant's (realm `user`) both have `@<KERNEL_DOMAIN>`
-  addresses. The platform admin is `admin@<KERNEL_DOMAIN>` and stays so -- its
-  password derivation and recovery depend on the name -- so the user tenant's
-  first administrator is `user-admin@<KERNEL_DOMAIN>`. Nothing stops an
+  addresses. The platform admin is `admin@<KERNEL_DOMAIN>` and stays so -- the
+  installer creates the account under that name and looks it up by it when it
+  issues an activation link (§1.4) -- so the user tenant's first administrator
+  is `user-admin@<KERNEL_DOMAIN>`. Nothing stops an
   administrator of either realm from creating a person whose address exists in
   the other; the two accounts are separate, and they share a mailbox
   ([multi-tenancy.md §3](multi-tenancy.md)).
@@ -140,6 +141,32 @@ Provisioning is via the [Gentian Admin Console](admin-console.md).
 | Tenant admin | The address on the tenant's `status.adminEmail`: `admin@<tenant-domain>`, both the username and the address; `user-admin@<KERNEL_DOMAIN>` for the user tenant of a single-tenancy cluster | The same, issued by the registrar: `kubectl gentian tenants activate-admin <tenant>` |
 
 The link is mailed to a recovery address or shown once (see [commands.md](../commands.md)).
+
+**No administrator's password follows the cluster's `secretMode`.** It is
+neither derived from the master password nor drawn at random: the account is
+created without a password, in both modes, and the only password it ever has
+is the one its holder sets through the link. Nothing can recompute it and
+nothing holds a copy, so it does not depend on the account's name, on the
+master password or on the vault.
+
+What does follow `secretMode` is the credential the link is issued with. The
+installer issues the platform admin's link as Keycloak's own bootstrap
+administrator (the `master` realm, Secret `keycloak-admin`, vault path
+`gentian-os/kernel/identity/keycloak-bootstrap`). That password is a machine
+credential like every other kernel one: with `secretMode: derived` it is
+computed from the master password and the cluster's salt, and with
+`secretMode: random` it is drawn once and the vault holds the only copy.
+
+**Recovery** is a new link, never a recovered password:
+
+- The platform admin: `./install.sh --activate-admin`, run on a host with
+  access to the cluster. It needs nobody to be signed in. It reads Keycloak's
+  bootstrap credential from the cluster, looks the account up by its name
+  (`admin@<KERNEL_DOMAIN>` in the kernel realm) and issues a link even when
+  the account already has a password; following it sets a new one and, where
+  the platform tenant requires it, a second factor.
+- A tenant admin: `kubectl gentian tenants activate-admin <tenant>`, by
+  somebody who may configure the cluster.
 
 ### 1.5 User attributes
 
