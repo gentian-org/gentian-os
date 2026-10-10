@@ -428,10 +428,10 @@ func TestATenantWithNoVouchingComponentRendersNoneOfIt(t *testing.T) {
 	if got := vouchingIssuersOf(objs); len(got) != 0 {
 		t.Errorf("%d vouching identity providers with no component vouching", len(got))
 	}
-	// The only identity provider entry such a tenant has is its broker to
-	// the kernel realm.
-	if got := ofKind(objs, "IdentityProvider"); len(got) != 1 {
-		t.Errorf("%d identity providers, want the kernel realm's broker alone", len(got))
+	// Such a tenant has no identity provider entry at all: the one to the
+	// kernel realm is switched off.
+	if got := ofKind(objs, "IdentityProvider"); len(got) != 0 {
+		t.Errorf("%d identity providers, want none", len(got))
 	}
 	if got := vouchingClientsOf(objs); len(got) != 0 {
 		t.Errorf("%d vouching clients with no component vouching", len(got))
