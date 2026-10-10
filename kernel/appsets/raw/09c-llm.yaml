@@ -14,8 +14,10 @@
 # deployments repository, and the Cluster claim in it is handed to the chart as
 # a values file. That is how the claim's spec.llm reaches the chart: which
 # models the gateway offers (instances and providers), whether a provider's
-# token is fetched, whether the mock model server runs. A commit to the claim
-# is a sync of this Application.
+# token is fetched, whether the mock model server runs, and whether the
+# gateway's NetworkPolicy admits the edge for the console
+# (spec.llm.console.enabled). A commit to the claim is a sync of this
+# Application.
 #
 # NOT covered here: the vLLM instances themselves. The gateway offers a model
 # for each entry of spec.llm.instances and nothing starts the server behind
@@ -58,11 +60,6 @@ spec:
           parameters:
             - name: env
               value: '{{.env}}'
-            # Whether the gateway's console is served (spec.llm.console.enabled,
-            # off by default): whether the gateway's NetworkPolicy admits the
-            # edge.
-            - name: console.enabled
-              value: 'llm.console.placeholder'
             # Where LLM serving runs. v4 left this at the chart's default,
             # platform-kernel, because that was v4's one namespace for
             # everything; on v5 it is a system-tier function of its own and

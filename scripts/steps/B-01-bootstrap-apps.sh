@@ -159,7 +159,6 @@ _v5_render() {
         --set-string "appStore.chartBranch=$(gentian_ui_chart_branch)" \
         --set-string "appStore.chartVersion=$(_v5_keep_chart_version app-store "${APP_STORE_CHART_VERSION:-}")" \
         --set-string "llmEnabled=${LLM_SUPPORT:-false}" \
-        --set-string "llmConsoleEnabled=${LLM_CONSOLE:-false}" \
         --set-string "tenancyMode=${TENANCY_MODE:-multi}" \
         --set-string "acmeStaging=${acme_staging}" \
         --set-string "tenantDNS01ClusterIssuer=$(gentian_dns01_cluster_issuer_name)" \

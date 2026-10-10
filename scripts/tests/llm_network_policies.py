@@ -50,10 +50,10 @@ CLOSED = {
     "database": {9187: "metrics: nothing the platform runs scrapes it"},
 }
 
-# The Helm value that says the claim switched the gateway's console on
-# (spec.llm.console.enabled), as the ApplicationSets take it. A row of the
-# table marked `when: console` is a client only then.
-CONSOLE_ON = ("--set-string", "llmConsoleEnabled=true")
+# A claim that switches the gateway's console on (spec.llm.console.enabled),
+# as the chart reads it: the claim is a values file of the Application. A row
+# of the table marked `when: console` is a client only then.
+CONSOLE_ON = ("--set", "spec.llm.console.enabled=true")
 
 # The port an app is handed and its kernel-access policy opens
 # (internal/modelgateway Port; the Go test of the client table holds the
@@ -210,7 +210,7 @@ def check_clients():
     # that switches it on. A client that comes with the console is admitted
     # on the second and refused on the first.
     for console, extra in ((False, ()), (True, CONSOLE_ON)):
-        policies = by_name(render(application(*extra)))
+        policies = by_name(render(application(), *extra))
         said = "the console on" if console else "the console off"
         for server in SERVERS:
             policy = policies[POLICY[server]]
@@ -313,56 +313,50 @@ def check_console():
     if len(edge) != 1:
         raise Failure(f"the layout has the edge namespaces {edge}")
     edge = edge[0]
-    # What the ApplicationSet passes the chart: "true" for the one word that
-    # switches the console on, "false" for everything else.
-    for extra, want in (((), "false"), (("--set-string", "llmConsoleEnabled=false"), "false"),
-                        (("--set-string", "llmConsoleEnabled="), "false"), (("--set-string", "llmConsoleEnabled=yes"), "false"),
-                        (CONSOLE_ON, "true"), (("--set", "llmConsoleEnabled=true"), "true")):
-        app = application(*extra)
-        got = app["params"].get("console.enabled")
-        if got != want:
-            raise Failure(f"with {' '.join(extra) or 'nothing said'} the ApplicationSet passes console.enabled={got!r}, want {want!r}")
-        gateway = by_name(render(app))[POLICY["gateway"]]
+    # The chart reads the claim, which the Application hands it as a values
+    # file: a commit to the claim is what switches the rule, in both
+    # directions, and no parameter of the ApplicationSet stands over it.
+    app = application()
+    if not app["valueFiles"]:
+        raise Failure("the LLM ApplicationSet hands the chart no claim")
+    for name in app["params"]:
+        if name.startswith("console") or name.startswith("spec."):
+            raise Failure(f"the ApplicationSet passes {name} as a parameter, over the claim's llm.console.enabled")
+    claims = (
+        ("spec:\n  kernelDomain: example.org\n", False),
+        ("spec:\n  llm:\n    enabled: true\n", False),
+        ("spec:\n  llm:\n    enabled: true\n    console: {}\n", False),
+        ("spec:\n  llm:\n    enabled: true\n    console:\n      enabled: false\n", False),
+        ("spec:\n  llm:\n    enabled: true\n    console:\n      enabled: true\n", True),
+    )
+    for text, want in claims:
+        with tempfile.NamedTemporaryFile("w", suffix=".yaml") as f:
+            f.write(text)
+            f.flush()
+            gateway = by_name(render(app, "-f", f.name))[POLICY["gateway"]]
         peers = edge_peers(gateway, edge)
-        if want == "false" and peers:
-            raise Failure(f"with {' '.join(extra) or 'nothing said'} the gateway admits the edge: {peers}")
-        if want == "true":
+        if not want and peers:
+            raise Failure(f"for the claim {text!r} the gateway admits the edge: {peers}")
+        if want:
             if len(peers) != 1 or match_labels(peers[0].get("podSelector") or {}, "the edge's pods") != {"app.kubernetes.io/name": "envoy"}:
                 raise Failure(f"with the console on the gateway must admit the Gateway's Envoy pods and nothing else of the edge: {peers}")
     # The chart's own default is off as well: rendered by hand, no edge.
-    app = application()
     by_hand = by_name(helm("llm", app["path"], "-n", app["namespace"], "--set", f"servicesNamespace={app['namespace']}"))
     if edge_peers(by_hand[POLICY["gateway"]], edge):
         raise Failure("the chart's own defaults admit the edge to the gateway")
     # No other server of the namespace is the edge's business, either way.
     for extra in ((), CONSOLE_ON):
-        policies = by_name(render(application(*extra)))
+        policies = by_name(render(app, *extra))
         for server in SERVERS:
             if server != "gateway" and edge_peers(policies[POLICY[server]], edge):
                 raise Failure(f"{POLICY[server]} admits the edge")
-    # The bootstrap chart hands the claim's answer to the ApplicationSets, off
-    # unless it is the word true.
-    with tempfile.NamedTemporaryFile("w", suffix=".yaml") as f:
-        f.write("namespaces:\n")
-        for line in (ROOT / "kernel/namespaces.yaml").read_text().splitlines():
-            f.write("  " + line + "\n")
-        f.flush()
-        base = ["boot", "kernel/bootstrap/chart", "-f", f.name, "-f", "kernel/platforms.yaml",
-                "--set-string", "appsets.enabled=true", "--set-string", "kernelDomain=k.example", "--set-string", "cluster=c",
-                "--set-string", "llmEnabled=true",
-                "--set-string", "versions.headlamp.chart=0.0.0", "--set-string", "versions.headlamp.repo=https://example.invalid"]
-        for passed, want in ((None, "false"), ("false", "false"), ("", "false"), ("true", "true")):
-            args = base + (["--set-string", f"llmConsoleEnabled={passed}"] if passed is not None else [])
-            root = [d for d in helm(*args) if d.get("kind") == "Application" and d["metadata"]["name"] == "gentian-appsets"]
-            if len(root) != 1:
-                raise Failure("the bootstrap chart renders no gentian-appsets Application")
-            got = root[0]["spec"]["source"]["helm"]["valuesObject"].get("llmConsoleEnabled")
-            if got != want:
-                raise Failure(f"LLM_CONSOLE={passed!r}: the ApplicationSets are handed llmConsoleEnabled={got!r}, want {want!r}")
-    # And the installer passes the claim's answer, defaulting to off.
-    step = (ROOT / "scripts/steps/B-01-bootstrap-apps.sh").read_text()
-    if '--set-string "llmConsoleEnabled=${LLM_CONSOLE:-false}"' not in step:
-        raise Failure("B-01 no longer passes the claim's llm.console.enabled to the bootstrap chart as llmConsoleEnabled")
+    # Nothing of the installer carries the switch: a value passed from an
+    # install run would hold the rule to what the claim said then.
+    for path in ("scripts/steps/B-01-bootstrap-apps.sh", "kernel/bootstrap/chart/values.yaml",
+                 "kernel/bootstrap/chart/templates/root-appsets.yaml", "kernel/appsets/values.yaml",
+                 "kernel/appsets/templates/appsets.yaml", "kernel/appsets/raw/09c-llm.yaml"):
+        if "llmConsoleEnabled" in (ROOT / path).read_text() or "llm.console.placeholder" in (ROOT / path).read_text():
+            raise Failure(f"{path} carries the console switch from the install run to the gateway's chart")
 
 
 def main():

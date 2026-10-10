@@ -439,10 +439,13 @@ still the claim's and the console cannot add one; it is for inspecting them,
 keys and spend. The host label `llm` stays reserved either way.
 
 The switch is in the claim, and on the Models tab of the administration
-console, with a warning beside it. Switched on from the console, the route
-appears as soon as the claim is applied and answers nothing until the
-installer's next run admits the edge to the gateway (third point below).
-Switched off, the route is gone as soon as the claim is applied.
+console, with a warning beside it. Both halves follow the commit to the claim,
+with no run of the install: the operator makes or removes the route once the
+claim is applied, and the gateway's chart, which is handed the claim as a
+values file, renders or drops the rule that admits the edge to the gateway
+once Argo CD syncs its Application. The two are separate syncs of one commit;
+between them a route without the rule answers nothing, and a rule without the
+route admits pods that have nothing to route.
 
 Three things to know before switching it on:
 
@@ -461,10 +464,8 @@ Three things to know before switching it on:
 - **An upgrade takes the console away.** A claim written before the setting
   existed does not state it and reads as off, so a cluster that had the console
   loses the route on its next run. The installer says so in one line whenever
-  the cluster serves models and the console is off. The route follows the claim
-  as soon as it is applied; the NetworkPolicy rule arrives with the installer's
-  next run, which is what passes the setting to the gateway's chart. Between
-  the two the route exists and answers nothing.
+  the cluster serves models and the console is off. The NetworkPolicy rule
+  goes with it: the gateway's chart reads the same field of the claim.
 
 ---
 

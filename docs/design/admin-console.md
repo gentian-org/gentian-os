@@ -303,7 +303,8 @@ address that is not a public `https` address.
 
 The tab also switches the gateway's own console on and off
 (`llm.console.enabled`), with a warning that it opens a public address for the
-gateway's console and API. GPU time slicing is not on the tab: nothing reads
+gateway's console and API. The route and the gateway's network rule both
+follow that commit. GPU time slicing is not on the tab: nothing reads
 the setting today.
 
 ---

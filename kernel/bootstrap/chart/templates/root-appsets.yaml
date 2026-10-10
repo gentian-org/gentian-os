@@ -46,7 +46,6 @@ spec:
         relayHost: {{ .Values.smtpHost | default "" | quote }}
         egressHost: {{ .Values.mailEgressHost | default "" | quote }}
         storageClass: {{ .Values.storageClass | default "" | quote }}
-        llmConsoleEnabled: {{ ternary "true" "false" (eq (toString .Values.llmConsoleEnabled) "true") | quote }}
         {{- /* The stores' NetworkPolicies: on unless the cluster says
              "false". Compared as a string, the way the phase switches are:
              the installer passes it with --set-string. */}}

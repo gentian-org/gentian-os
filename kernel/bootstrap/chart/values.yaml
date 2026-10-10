@@ -68,11 +68,6 @@ smtpHost: ""
 # the cluster actually has.
 llmEnabled: "false"
 
-# Whether the model gateway's console is served at llm.<kernelDomain>, from
-# the Cluster claim's llm.console.enabled. Off by default; passed on to the
-# gateway's chart, whose NetworkPolicy admits the edge only when it is "true".
-llmConsoleEnabled: "false"
-
 # The desktop -- a component every tenant gets from the profile the operator
 # chart ships (ui-restructure.md §1). What the bootstrap decides is which
 # branch's chart that profile names: a prerelease per branch on a dev cluster,

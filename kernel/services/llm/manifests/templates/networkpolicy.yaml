@@ -28,8 +28,12 @@
                         team (internal/modelgateway, the tenant reconciler,
                         and a purge, which runs in the operator).
     the edge            only where the cluster's claim switches the gateway's
-                        console on (spec.llm.console.enabled, passed here as
-                        console.enabled; off by default). The console is then
+                        console on (spec.llm.console.enabled, off by default).
+                        Read from the claim itself, which this chart is
+                        handed as a values file, like the route the operator
+                        makes from the same field: a commit that changes the
+                        setting changes both, with no install run between.
+                        The console is then
                         a kernel console, llm.<kernelDomain>, routed by the
                         authenticated Gateway (kernel_gateway_routes.go), and
                         the connection comes from the Gateway's Envoy pods;
@@ -95,7 +99,7 @@ spec:
             matchLabels:
               app.kubernetes.io/name: gentian-os
               app.kubernetes.io/component: operator
-        {{- if eq (toString .Values.console.enabled) "true" }}
+        {{- if eq (toString (dig "console" "enabled" false (.Values.spec.llm | default dict))) "true" }}
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: {{ $np.namespaces.edge | quote }}

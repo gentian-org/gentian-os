@@ -548,8 +548,8 @@ console there, behind the kernel sign-in, and a tile for it on their desktop.
 A claim that does not state it reads as off, so a cluster that had the console
 before the setting existed loses it on the next run; the install prints one
 line naming the setting whenever the cluster serves models and the console is
-off. After changing it, run the install again: the route follows the claim,
-the gateway's network rule follows the run ([llms.md](design/llms.md)).
+off. Changing it needs no run of the install: the route and the gateway's
+network rule both follow the commit to the claim ([llms.md](design/llms.md)).
 
 The models the gateway offers are the claim's, and changing them needs no run
 of the install: the cluster declares the credential of a provider the claim
