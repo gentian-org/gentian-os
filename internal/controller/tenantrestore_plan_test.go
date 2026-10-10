@@ -294,11 +294,11 @@ func TestAFormat1BundleRestoresByDerivationAndSaysSo(t *testing.T) {
 	if !reflect.DeepEqual(plan.apps[0].artefacts, want) {
 		t.Errorf("artefacts = %+v\nwant %+v", plan.apps[0].artefacts, want)
 	}
-	notes := strings.Join(restoreLimits(plan.derivation), "\n")
+	notes := strings.Join(restoreLimits(plan.derivation, plan.schemaVersion), "\n")
 	if !strings.Contains(notes, "format 1") || !strings.Contains(notes, "derived") {
 		t.Errorf("the result does not say the names were derived: %s", notes)
 	}
-	if strings.Contains(strings.Join(restoreLimits(gentianov1alpha1.RestoreNamesFromManifest), "\n"), "format 1") {
+	if strings.Contains(strings.Join(restoreLimits(gentianov1alpha1.RestoreNamesFromManifest, 2), "\n"), "format 1") {
 		t.Error("a format 2 restore is flagged as derived")
 	}
 }

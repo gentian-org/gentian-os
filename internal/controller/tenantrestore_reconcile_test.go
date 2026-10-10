@@ -13,6 +13,7 @@ package controller
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sort"
 	"strings"
 	"testing"
@@ -25,6 +26,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
+	"github.com/gentian-org/gentian-os/api/bundle"
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/backup"
 	"github.com/gentian-org/gentian-os/internal/bundlestore"
@@ -36,6 +38,32 @@ type fakeBundles struct {
 	err      error
 	keys     []bundlestore.Key
 	removed  []string
+	// objects are the artefacts the operator wrote itself, as it wrote
+	// them: ciphertext, by path.
+	objects map[string][]byte
+}
+
+// PutArtefact keeps what an export hands over, as the object store would.
+func (f *fakeBundles) PutArtefact(_ context.Context, ref gentianov1alpha1.BundleRef, path string, cipher []byte) error {
+	if f.objects == nil {
+		f.objects = map[string][]byte{}
+	}
+	f.objects[ref.Bucket+"/"+ref.Prefix+"/"+path] = cipher
+	return nil
+}
+
+// AppSecrets opens what was put, with the key, as the object store's reader
+// does.
+func (f *fakeBundles) AppSecrets(_ context.Context, ref gentianov1alpha1.BundleRef, path string, key bundlestore.Key) (*bundle.AppSecrets, error) {
+	cipher, ok := f.objects[ref.Bucket+"/"+ref.Prefix+"/"+path]
+	if !ok {
+		return nil, fmt.Errorf("the bundle does not hold %s", path)
+	}
+	ids, err := key.Identities()
+	if err != nil {
+		return nil, err
+	}
+	return backup.OpenAppSecrets(cipher, ids)
 }
 
 func (f *fakeBundles) Manifest(_ context.Context, _ gentianov1alpha1.BundleRef, key bundlestore.Key) (*backup.Manifest, error) {
@@ -187,7 +215,7 @@ func TestARestoreRunsFromTheManifestAndReportsWhatItLeftOut(t *testing.T) {
 	}
 	// What no restore brings back is said on the result.
 	notes := strings.Join(got.Status.Notes, "\n")
-	for _, want := range []string{"Stored credentials are not in a bundle", "have to be entered again", "recovery kit"} {
+	for _, want := range []string{"Stored credentials are not in this bundle", "have to be entered again", "recovery kit"} {
 		if !strings.Contains(notes, want) {
 			t.Errorf("the result's notes lack %q", want)
 		}

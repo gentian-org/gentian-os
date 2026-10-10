@@ -151,7 +151,8 @@ var AppKinds = []KindRule{
 	},
 	{
 		Kind: KindCredentials, MadeBy: "the tenant reconciler's seeder, and the app Composition for generated secrets",
-		Export: Omits, ExportNote: "a bundle holds no stored credential; the tenant restored into has its own, seeded when it was provisioned, and a restore changes none; what a person entered has to be entered again",
+		Export: Carries, ExportNote: "of the credentials, the app's own secrets only -- the ones its profile has the platform generate, which its data is written with -- encrypted by the operator itself, and set again by a restore at the app's own place in the tenant restored into; every other credential is not carried: the tenant restored into has its own, seeded when it was provisioned, and a restore changes none; what a person entered has to be entered again",
+		Artefacts: []string{bundle.ArtefactSecrets},
 		Uninstall: Keeps, AppPurge: Destroys, TenantDelete: Destroys,
 		TenantDeleteNote: "with the tenant's whole vault subtree",
 		FoundBy:          "the names below the tenant's apps path in the vault",
@@ -275,7 +276,7 @@ var TenantOwned = []TenantRule{
 	},
 	{
 		What: "the tenant's vault subtree", MadeBy: "the tenant reconciler's seeder, and people",
-		Export: "not carried: a bundle holds no stored credential",
+		Export: "not carried as a whole: of it a bundle holds each app's own secrets, as an artefact of the app, and no other stored credential",
 		Retain: "kept",
 		Delete: "deleted; an operator with no vault that was not told to run without one fails here", Destroyed: true,
 	},

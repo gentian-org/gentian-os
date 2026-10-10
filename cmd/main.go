@@ -435,6 +435,9 @@ func main() {
 		// rather than the manager's client. Nil is tolerated by the reconciler;
 		// a failure then reports that a Job failed and not why.
 		LogTailer: buildLogTailer(mgr),
+		// An app's own secrets go into a bundle from the operator's memory,
+		// encrypted there: this is how it writes them.
+		Bundles: &bundlestore.Store{Client: mgr.GetClient()},
 	}
 	if err := tenantExportReconciler.SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "TenantExport")

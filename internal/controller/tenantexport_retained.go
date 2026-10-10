@@ -235,6 +235,19 @@ func (r *TenantExportReconciler) captureRetained(
 	entry.Message = ""
 	entry.Stores = unitKinds(units)
 	entry.Artefacts = unitArtefacts(units)
+	// An uninstall keeps the app's secrets in the vault with its data, and
+	// the data is of no use without them.
+	if err := r.withAppSecrets(ctx, export, tenant, app.name, app.profile, encryption, entry); err != nil {
+		entry.Attempts++
+		if entry.Attempts > exportMaxAttempts {
+			return failed(fmt.Sprintf("its own secrets could not be put into the bundle: %v", err))
+		}
+		// Not captured yet: the next pass comes back here.
+		entry.Artefacts = nil
+		entry.Phase = gentianov1alpha1.TenantExportPhaseRunning
+		entry.LastFailure = err.Error()
+		return r.requeueExport(ctx, export, tenant)
+	}
 	if err := r.persist(ctx, export); err != nil {
 		return ctrl.Result{}, err
 	}

@@ -137,6 +137,53 @@ func (s *Store) Manifest(ctx context.Context, ref gentianov1alpha1.BundleRef, ke
 	return OpenManifest(cipher, ids)
 }
 
+// appSecretsLimit bounds an app's secrets artefact as it is read: a handful
+// of short values, with room to spare.
+const appSecretsLimit = 4 << 20
+
+// PutArtefact writes one artefact the operator made itself into a bundle,
+// already encrypted. path is the artefact's place below the bundle's prefix,
+// without the suffix encryption adds; the suffix is added here, so that
+// nothing written through this is ever named as a plaintext file.
+func (s *Store) PutArtefact(ctx context.Context, ref gentianov1alpha1.BundleRef, path string, cipher []byte) error {
+	if ref.Bucket == "" || ref.Prefix == "" {
+		return errors.New("bundle.bucket and bundle.prefix are required")
+	}
+	if !bytes.HasPrefix(cipher, []byte("age-encryption.org/")) {
+		return errors.New("refusing to write an artefact that is not an age file")
+	}
+	mc, err := s.Minio(ctx, &ref)
+	if err != nil {
+		return err
+	}
+	_, err = mc.PutObject(ctx, ref.Bucket, ObjectPrefix(ref)+path+backup.EncryptedSuffix,
+		bytes.NewReader(cipher), int64(len(cipher)), minio.PutObjectOptions{ContentType: "application/octet-stream"})
+	if err != nil {
+		return fmt.Errorf("write %s: %w", path, err)
+	}
+	return nil
+}
+
+// AppSecrets reads an app's secrets artefact and opens it with the key.
+func (s *Store) AppSecrets(ctx context.Context, ref gentianov1alpha1.BundleRef, path string, key Key) (*bundle.AppSecrets, error) {
+	if ref.Bucket == "" || ref.Prefix == "" {
+		return nil, errors.New("bundle.bucket and bundle.prefix are required")
+	}
+	ids, err := key.Identities()
+	if err != nil {
+		return nil, err
+	}
+	mc, err := s.Minio(ctx, &ref)
+	if err != nil {
+		return nil, err
+	}
+	cipher, err := ReadObject(ctx, mc, ref.Bucket, ObjectPrefix(ref)+path+backup.EncryptedSuffix, appSecretsLimit)
+	if err != nil {
+		return nil, fmt.Errorf("the bundle's manifest names %s and the bundle does not hold it: %w", path, err)
+	}
+	return backup.OpenAppSecrets(cipher, ids)
+}
+
 // OpenManifest decrypts and reads a manifest, and refuses one of a format
 // this build does not read.
 func OpenManifest(cipher []byte, ids []age.Identity) (*bundle.Manifest, error) {

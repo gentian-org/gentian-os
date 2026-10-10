@@ -326,12 +326,20 @@ func planApp(
 		stores = derivedStores(source, app, now)
 	}
 	covered := map[backup.Kind]bool{}
+	holdsSecrets := false
 	for _, s := range stores {
 		if err := cleanArtefactPath(s.Path); err != nil {
 			return nil, "", "", fmt.Errorf("app %s: %w", app.Name, err)
 		}
 		a := gentianov1alpha1.BundleArtefact{Kind: s.Kind, Name: s.Name, Path: s.Path, Release: s.Release}
 		switch s.Kind {
+		case bundle.ArtefactSecrets:
+			if err := plannedSecrets(app, s); err != nil {
+				return nil, "", "", err
+			}
+			// No target: where a value goes is never the bundle's to say.
+			a.Name = app.Name
+			holdsSecrets = true
 		case bundle.ArtefactPostgres, bundle.ArtefactPostgresOwned:
 			if inv.Stores.Database != gentianov1alpha1.DatabaseEnginePostgreSQL {
 				return nil, "", fmt.Sprintf("has a PostgreSQL database in the bundle and %s here", engineText(inv.Stores.Database)), nil
@@ -388,7 +396,35 @@ func planApp(
 	if len(untouched) > 0 {
 		note = joinNotes(note, "the bundle holds nothing for its "+strings.Join(untouched, ", its ")+"; left as it is")
 	}
+	note = joinNotes(note, secretsPlanNote(app.Name, now.profile, holdsSecrets))
 	return artefacts, note, "", nil
+}
+
+// plannedSecrets checks an app's secrets artefact as a manifest names it:
+// the app's own, at the one place an export writes it. A manifest comes from
+// a bundle, and a bundle from anywhere; one that files another app's
+// secrets under this app, or names a path of its own, is not gone by.
+func plannedSecrets(app backup.ManifestApp, s backup.ManifestStore) error {
+	if s.Name != app.Name || s.Path != backup.SecretsArtefact(app.Name) {
+		return fmt.Errorf("app %s: the manifest names secrets %q at %q, which is not where this app's own are", app.Name, s.Name, s.Path)
+	}
+	return nil
+}
+
+// secretsPlanNote says, before anything is changed, what a restore does with
+// the secrets the app's profile here has the platform generate.
+func secretsPlanNote(appName string, profile *gentianov1alpha1.ComponentProfile, held bool) string {
+	declared := declaredSecrets(appName, profile)
+	switch {
+	case held && len(declared) > 0:
+		return "the bundle holds the secrets its data was written with: each one its profile declares here is set to the bundle's value, " +
+			"replacing the stored one where they differ, and the app is restarted with them"
+	case held:
+		return "the bundle holds secrets of its own and its profile here declares none: none is written"
+	case len(declared) > 0:
+		return "the bundle holds none of its own secrets, which are left as they are: what the app encrypted with them is readable only if they are the ones the data was written with"
+	}
+	return ""
 }
 
 // planRetained decides an app the bundle holds as retained and the tenant
@@ -416,6 +452,7 @@ func planRetained(
 			"nothing says how its stores are to be made here. Add the app's definition to a catalogue of this cluster and restore it by naming it in spec.apps", nil
 	}
 	declared := backup.ProfileStores(now.profile)
+	holdsSecrets := false
 	gone := func(what string) string {
 		return fmt.Sprintf("was uninstalled with its data kept when the bundle was taken, and this tenant no longer holds its %s: it was purged since, and a purge is for good", what)
 	}
@@ -432,6 +469,12 @@ func planRetained(
 			engine = gentianov1alpha1.DatabaseEngineMariaDB
 		}
 		switch {
+		case s.Kind == bundle.ArtefactSecrets:
+			if err := plannedSecrets(app, s); err != nil {
+				return nil, "", "", err
+			}
+			a.Name = app.Name
+			holdsSecrets = true
 		case engine != "":
 			switch {
 			case now.held.Database == engine:
@@ -471,10 +514,18 @@ func planRetained(
 		}
 		artefacts = append(artefacts, a)
 	}
-	if len(artefacts) == 0 {
+	if !slices.ContainsFunc(artefacts, func(a gentianov1alpha1.BundleArtefact) bool { return a.Kind != bundle.ArtefactSecrets }) {
 		return nil, "", "is in the bundle as an uninstalled app, with no data", nil
 	}
 	note = "its data was put back as an uninstalled app's: the app is not installed, and installing it finds the data"
+	switch own := declaredSecrets(app.Name, now.profile); {
+	case holdsSecrets && len(own) > 0:
+		note = joinNotes(note, "the bundle holds the secrets its data was written with: each one its profile declares here is set to the bundle's value, where its next install finds it")
+	case holdsSecrets:
+		note = joinNotes(note, "the bundle holds secrets of its own and no profile here declares them: none is written, and the app installed later makes new ones that cannot read what it encrypted")
+	case len(own) > 0:
+		note = joinNotes(note, "the bundle holds none of its own secrets: what the app encrypted with them is readable only if the ones here are the ones the data was written with")
+	}
 	for _, a := range artefacts {
 		if a.Claim != nil {
 			note = joinNotes(note, "its volume claims were made here, on this cluster's default storage class")
@@ -611,11 +662,21 @@ func omissionsText(omitted []gentianov1alpha1.RestoreOmission) string {
 // tenant being restored into already has, derived from this cluster's master
 // password when it was provisioned, and a restore changes none of it. What a
 // person typed in is nowhere but the vault it was typed into.
-func restoreLimits(derivation string) []string {
+func restoreLimits(derivation string, schemaVersion int) []string {
+	credentials := "Of the stored credentials a bundle holds one kind: the secrets the platform generated for an app at its profile's request, which the app's data was written with. " +
+		"A restore sets them to the bundle's values; what is said of each app says which. Every other credential the platform seeds -- a database's, a bucket's, a sign-in client's -- " +
+		"was made for this tenant when it was provisioned and a restore changes none of them. "
+	encrypted := "Data an app encrypted with a secret the platform generated for it is readable where that secret was set from the bundle: an app whose secrets the bundle does not hold reads such data only where they are the ones it was written with."
+	if schemaVersion < secretsSchemaVersion {
+		credentials = fmt.Sprintf("Stored credentials are not in this bundle: it is of format %d, and a bundle holds an app's own secrets from format %d on. "+
+			"The ones the platform seeds were made for this tenant when it was provisioned and this restore changes none of them. ", schemaVersion, secretsSchemaVersion)
+		encrypted = "Data an app encrypted with a secret the platform generated for it can be read only where that secret is the same as when the bundle was taken: " +
+			"in the tenant it was taken of, as long as the app was not purged under random secrets, or on a cluster built from the first one's recovery kit with derived secrets."
+	}
 	notes := []string{
-		"Stored credentials are not in a bundle. The ones the platform seeds were made for this tenant when it was provisioned and a restore changes none of them. " +
+		credentials +
 			"Credentials a person entered -- a repository's password, an SMTP relay's, an API key typed into an app's settings in the vault -- did not come back and have to be entered again.",
-		"Data an app encrypted with a secret the platform generated for it can be read only where that secret is the same: on the cluster the bundle was taken on, or one built from its recovery kit.",
+		encrypted,
 		"Members came back without passwords and have to be sent a reset. App grants, integration bindings and the cache are not in a bundle: grants and bindings are declared state and come from where the tenant is declared.",
 	}
 	if derivation == gentianov1alpha1.RestoreNamesDerived {

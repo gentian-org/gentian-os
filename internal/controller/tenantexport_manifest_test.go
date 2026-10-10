@@ -84,7 +84,7 @@ func TestAnExportCapturesWhatAPurgeDestroysAndTheManifestNamesIt(t *testing.T) {
 		}},
 	}
 	m := r.buildManifest(export, tenant)
-	if m.SchemaVersion != 3 || !m.NamesArtefacts() {
+	if m.SchemaVersion != 4 || !m.NamesArtefacts() {
 		t.Fatalf("schemaVersion = %d", m.SchemaVersion)
 	}
 	if len(m.Apps) != 1 || m.Apps[0].Name != "wiki" {

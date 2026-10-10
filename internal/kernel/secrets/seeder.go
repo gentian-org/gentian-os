@@ -14,6 +14,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 )
 
@@ -56,8 +57,7 @@ type ModeFunc func(ctx context.Context) (Mode, error)
 // seeder falls back to crypto/rand.
 //
 // In ModeRandom every value is drawn from crypto/rand and the master password
-// is not used, whether or not the Seeder holds it -- but for an app's own
-// secrets, which stay derived (see SeedAppSecret).
+// is not used, whether or not the Seeder holds it.
 //
 // In both modes the first value stored at a path stays the path's value: a
 // later pass reads it back and never replaces it. That is what keeps a random
@@ -143,19 +143,6 @@ func randomHex(n int) string {
 		panic("secrets.Seeder: crypto/rand failed: " + err.Error())
 	}
 	return hex.EncodeToString(buf)[:n]
-}
-
-// genDerived is gen as it is in ModeDerived, whatever the cluster's mode: the
-// value is computed from the master password where there is one. It is for a
-// value that has to come out the same when it is made again somewhere else.
-func (s *Seeder) genDerived(salt, info string, n int) generated {
-	if n <= 0 {
-		n = 40
-	}
-	if s.d != nil && s.d.HasMaster() {
-		return generated{value: s.d.Derive(salt, info, n), reproducible: true}
-	}
-	return generated{value: randomHex(n)}
 }
 
 // seedAndRead writes data with PutOnce, then re-reads to honour any value
@@ -530,18 +517,22 @@ func (s *Seeder) SeedIMAP(ctx context.Context, tenant, app string, base IMAPCred
 
 // --- Per-app internal secrets ------------------------------------------------
 
-// SeedAppSecret derives a single AppSecret by name and writes it as
-// {"value": "<derived>"} under …/internal/{name}.
+// SeedAppSecret makes a single AppSecret by name and writes it as
+// {"value": "<value>"} under …/internal/{name}: derived or random as the
+// mode says, and the first value stored stays the path's.
 //
-// Derived in ModeRandom as well, and it is the one value that is. An app
-// encrypts and signs its own data with these, and a bundle holds no stored
-// credential: an app purged and installed again, or a tenant imported again
-// under its name, reads the data a bundle brings back only because the secret
-// comes out the same. A random one would have to travel with the data, and
-// whether a bundle may carry it is not decided.
+// An app encrypts and signs its own data with these, so the data is readable
+// only with the value it was written with. A bundle carries the values with
+// the data (bundle.ArtefactSecrets) and a restore sets them
+// (ReplaceAppSecret): that, and not making the value again, is what brings
+// an app's data back readable after a purge, in another tenant or on another
+// cluster, in both modes.
 func (s *Seeder) SeedAppSecret(ctx context.Context, tenant, app, name string) (string, error) {
 	salt := InternalPath(tenant, app, name)
-	g := s.genDerived(salt, "value", 40)
+	g, err := s.gen(ctx, salt, "value", 40)
+	if err != nil {
+		return "", fmt.Errorf("seed app-secret(%s/%s/%s): %w", tenant, app, name, err)
+	}
 	got, err := s.seedAndRead(ctx, salt, map[string]string{
 		"value": g.value,
 	}, g.reproducible)
@@ -549,6 +540,52 @@ func (s *Seeder) SeedAppSecret(ctx context.Context, tenant, app, name string) (s
 		return "", fmt.Errorf("seed app-secret(%s/%s/%s): %w", tenant, app, name, err)
 	}
 	return got["value"], nil
+}
+
+// ReadAppSecret reads the stored value of one of an app's own secrets. found
+// is false where the path holds nothing; an error is a path that could not
+// be read, which is not the same.
+func (s *Seeder) ReadAppSecret(ctx context.Context, tenant, app, name string) (value string, found bool, err error) {
+	got, err := s.w.Get(ctx, InternalPath(tenant, app, name))
+	if errors.Is(err, ErrNotFound) || (err == nil && got == nil) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("read app-secret(%s/%s/%s): %w", tenant, app, name, err)
+	}
+	return got["value"], got["value"] != "", nil
+}
+
+// ReplaceAppSecret sets one of an app's own secrets to value, whatever the
+// path held, and reports whether that changed it. It reads the path back
+// and fails unless it then holds value.
+//
+// This is the one place a stored value the platform generated is replaced,
+// and it is a restore's: the data a bundle brings back was written with the
+// bundle's value, and the value the path holds -- made new when the app was
+// installed again, or for another tenant -- cannot read it. The path is
+// built here from the tenant, the app and the name; a caller hands over no
+// path.
+func (s *Seeder) ReplaceAppSecret(ctx context.Context, tenant, app, name, value string) (changed bool, err error) {
+	if value == "" {
+		return false, fmt.Errorf("replace app-secret(%s/%s/%s): no value", tenant, app, name)
+	}
+	have, found, err := s.ReadAppSecret(ctx, tenant, app, name)
+	if err != nil {
+		return false, err
+	}
+	if found && have == value {
+		return false, nil
+	}
+	path := InternalPath(tenant, app, name)
+	if err := s.w.Put(ctx, path, map[string]string{"value": value}); err != nil {
+		return false, fmt.Errorf("replace app-secret(%s/%s/%s): %w", tenant, app, name, err)
+	}
+	got, err := s.w.Get(ctx, path)
+	if err != nil || got["value"] != value {
+		return false, fmt.Errorf("replace app-secret(%s/%s/%s): the vault does not give the value back: %v", tenant, app, name, err)
+	}
+	return true, nil
 }
 
 // --- Contracts ---------------------------------------------------------------

@@ -121,13 +121,10 @@ func TestDerivedModeGivesTheValuesItAlwaysGave(t *testing.T) {
 	}
 }
 
-// appSecret is the one value that is derived in random mode too: an app's
-// data is readable only with it, and no bundle carries it.
-const appSecret = "app secret"
-
 // Random mode gives values the master password does not lead to, each its
 // own, and the same ones on every later pass — also from another Seeder, which
-// is what an operator restart is. An app's own secret is the exception.
+// is what an operator restart is. An app's own secret is one of them: a
+// bundle carries it with the data that was written with it.
 func TestRandomModeIsIndependentOfTheMasterAndStable(t *testing.T) {
 	srv := newFakeBao()
 	defer srv.Close()
@@ -141,7 +138,7 @@ func TestRandomModeIsIndependentOfTheMasterAndStable(t *testing.T) {
 		if v == "" {
 			t.Errorf("%s is empty", k)
 		}
-		if (v == goldenDerived[k]) != (k == appSecret) {
+		if v == goldenDerived[k] {
 			t.Errorf("%s = %q in random mode; the derived value is %q", k, v, goldenDerived[k])
 		}
 		if other, dup := seen[v]; dup {
@@ -167,7 +164,7 @@ func TestRandomModeIsIndependentOfTheMasterAndStable(t *testing.T) {
 	elsewhere := seedAll(t, secrets.NewSeeder(newClient(t, other.URL), secrets.NewDeriver(goldenMaster, goldenSalt)).
 		WithMode(fixed(secrets.ModeRandom)))
 	for k, v := range first {
-		if (elsewhere[k] == v) != (k == appSecret) {
+		if elsewhere[k] == v {
 			t.Errorf("%s on a second cluster: %q, here %q", k, elsewhere[k], v)
 		}
 	}
@@ -320,19 +317,74 @@ func TestRandomValueIsNotReturnedUnread(t *testing.T) {
 	}
 }
 
-// An app's own secret comes out the same wherever the master password and the
-// salt are the same: on a vault emptied by a purge, and in random mode. That
-// is what lets the app read data a bundle brings back, since no bundle holds
-// the secret.
-func TestAppSecretIsReproducibleInBothModes(t *testing.T) {
+// An app's own secret follows the mode like every other generated value:
+// derived, it is the value it always was; random, it is another on a vault
+// emptied by a purge, which is why a bundle carries it.
+func TestAppSecretFollowsTheMode(t *testing.T) {
 	ctx := context.Background()
-	for _, mode := range []secrets.Mode{secrets.ModeDerived, secrets.ModeRandom} {
+	make1 := func(mode secrets.Mode) string {
 		srv := newFakeBao()
+		defer srv.Close()
 		s := secrets.NewSeeder(newClient(t, srv.URL), secrets.NewDeriver(goldenMaster, goldenSalt)).WithMode(fixed(mode))
 		got, err := s.SeedAppSecret(ctx, "acme", "wiki", "session_key")
-		srv.Close()
-		if err != nil || got != goldenDerived[appSecret] {
-			t.Errorf("%s: app secret = %q, %v; want %q", mode, got, err, goldenDerived[appSecret])
+		if err != nil || len(got) != 40 {
+			t.Fatalf("%s: app secret = %q, %v", mode, got, err)
 		}
+		return got
+	}
+	if got := make1(secrets.ModeDerived); got != goldenDerived["app secret"] {
+		t.Errorf("derived: app secret = %q; want %q", got, goldenDerived["app secret"])
+	}
+	first, second := make1(secrets.ModeRandom), make1(secrets.ModeRandom)
+	if first == goldenDerived["app secret"] || first == second {
+		t.Errorf("random: app secret = %q, and %q on an emptied vault; the derived one is %q", first, second, goldenDerived["app secret"])
+	}
+}
+
+// A restore sets an app's own secret to the value its data was written with:
+// the one stored value that is replaced. Where the path holds that value
+// already nothing is written; a path that cannot be read is an error and not
+// "nothing stored", and so is a value the vault does not give back.
+func TestReplaceAppSecretSetsTheValueAndSaysWhetherItChanged(t *testing.T) {
+	ctx := context.Background()
+	srv := newFakeBao()
+	defer srv.Close()
+	kv := newClient(t, srv.URL)
+	s := secrets.NewSeeder(kv, secrets.NewDeriver(goldenMaster, goldenSalt)).WithMode(fixed(secrets.ModeRandom))
+
+	if _, found, err := s.ReadAppSecret(ctx, "acme", "wiki", "session_key"); found || err != nil {
+		t.Fatalf("an empty path read as found = %v, %v", found, err)
+	}
+	made, err := s.SeedAppSecret(ctx, "acme", "wiki", "session_key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, found, err := s.ReadAppSecret(ctx, "acme", "wiki", "session_key"); !found || err != nil || got != made {
+		t.Fatalf("read back %q, %v, %v; made %q", got, found, err, made)
+	}
+	if changed, err := s.ReplaceAppSecret(ctx, "acme", "wiki", "session_key", made); changed || err != nil {
+		t.Errorf("the same value: changed = %v, %v", changed, err)
+	}
+	if changed, err := s.ReplaceAppSecret(ctx, "acme", "wiki", "session_key", "the-bundles-value"); !changed || err != nil {
+		t.Fatalf("another value: changed = %v, %v", changed, err)
+	}
+	// It stands: a later pass of the seeder keeps it.
+	if got, err := s.SeedAppSecret(ctx, "acme", "wiki", "session_key"); err != nil || got != "the-bundles-value" {
+		t.Errorf("after the replacement the seeder returns %q, %v", got, err)
+	}
+	stored, _ := kv.Get(ctx, secrets.InternalPath("acme", "wiki", "session_key"))
+	if len(stored) != 1 || stored["value"] != "the-bundles-value" {
+		t.Errorf("the path holds %v", stored)
+	}
+	if _, err := s.ReplaceAppSecret(ctx, "acme", "wiki", "session_key", ""); err == nil {
+		t.Error("an empty value was written")
+	}
+
+	away := secrets.NewSeeder(&deafStore{data: map[string]map[string]string{}}, nil)
+	if _, _, err := away.ReadAppSecret(ctx, "acme", "wiki", "session_key"); err == nil {
+		t.Error("a vault that does not answer read as an empty path")
+	}
+	if _, err := away.ReplaceAppSecret(ctx, "acme", "wiki", "session_key", "v"); err == nil {
+		t.Error("a value was set in a vault that does not answer")
 	}
 }

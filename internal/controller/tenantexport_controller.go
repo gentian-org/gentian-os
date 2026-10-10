@@ -101,6 +101,11 @@ type TenantExportReconciler struct {
 	// behaviour, which the unit suites rely on and which is merely less useful,
 	// not incorrect.
 	LogTailer PodLogTailer
+
+	// Bundles writes into a bundle what the operator makes itself: an app's
+	// own secrets, which it encrypts and no Job is handed. Without it an
+	// export of an app that has such secrets stored fails and says so.
+	Bundles BundleWriter
 }
 
 // +kubebuilder:rbac:groups=gentianos.io,resources=tenantexports,verbs=get;list;watch;create;update;patch;delete
@@ -388,6 +393,22 @@ func (r *TenantExportReconciler) captureApp(
 	// What was captured, artefact by artefact: this is what the manifest
 	// says the bundle holds, and what a restore goes by.
 	entry.Artefacts = unitArtefacts(units)
+	// And the secrets the data was written with, which the operator puts
+	// into the bundle itself.
+	if err := r.withAppSecrets(ctx, export, tenant, appName, profile, encryption, entry); err != nil {
+		// Bounded like a capture Job: a vault or an object store that does
+		// not answer fails the export, with the reason, and a bundle whose
+		// data is unreadable without them is not written as complete.
+		entry.Attempts++
+		if entry.Attempts > exportMaxAttempts {
+			return r.failApp(ctx, export, tenant, appName, fmt.Sprintf("its own secrets could not be put into the bundle: %v", err))
+		}
+		// Not captured yet: the next pass comes back here.
+		entry.Artefacts = nil
+		entry.Phase = gentianov1alpha1.TenantExportPhaseRunning
+		entry.LastFailure = err.Error()
+		return r.requeueExport(ctx, export, tenant)
+	}
 	unmarkQuiesced(&export.Status.Quiesced, appName)
 	logger.Info("captured app", "app", appName, "stores", entry.Stores)
 	if err := r.persist(ctx, export); err != nil {
@@ -1001,12 +1022,13 @@ func (r *TenantExportReconciler) complete(
 		captured += "; NOT in the bundle: " + strings.Join(export.Status.NotIncluded, "; ")
 	}
 	// A profile may declare secrets its data is welded to
-	// (spec.backup.boundSecrets). A bundle carries no stored credential, so
-	// they are not in it, and an export that said only "captured" would be
-	// claiming more than it did.
+	// (spec.backup.boundSecrets). Of the vault a bundle carries the secrets
+	// the platform generated for the app and nothing else, so these are not
+	// in it, and an export that said only "captured" would be claiming more
+	// than it did.
 	if unbound := r.appsWithBoundSecrets(ctx, export); len(unbound) > 0 {
 		captured += "; the secrets " + strings.Join(unbound, ", ") +
-			" declare in spec.backup.boundSecrets are NOT in the bundle (a bundle holds no stored credential): their data restores readable only where those secrets are the same"
+			" declare in spec.backup.boundSecrets are NOT in the bundle (of the vault a bundle holds the secrets the platform generated for an app, and no other): their data restores readable only where those secrets are the same"
 	}
 	setExportCondition(export, conditionExportComplete, metav1.ConditionTrue, "Captured", captured)
 	return ctrl.Result{}, r.persist(ctx, export)

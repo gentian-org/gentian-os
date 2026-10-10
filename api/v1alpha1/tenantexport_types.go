@@ -417,11 +417,13 @@ type BundleRef struct {
 // BundleArtefact is one artefact of a bundle: a database dump, a bucket's
 // archive, a volume's archive.
 type BundleArtefact struct {
-	// Kind is postgres, postgresOwned, mariadb, mariadbOwned, s3 or volume;
-	// for what is the tenant's own also identity, mailboxes or rights.
+	// Kind is postgres, postgresOwned, mariadb, mariadbOwned, s3, volume or
+	// secrets; for what is the tenant's own also identity, mailboxes or
+	// rights.
 	Kind string `json:"kind"`
 	// Name is what the artefact was captured from: the database, bucket or
-	// volume claim, by its name in the tenant the bundle was taken of.
+	// volume claim, by its name in the tenant the bundle was taken of; for
+	// secrets, the app.
 	Name string `json:"name"`
 	// Path is the artefact's place in the bundle.
 	// +optional
@@ -440,6 +442,56 @@ type BundleArtefact struct {
 	// that never had it, the claim is not there and is made from this.
 	// +optional
 	Claim *BundleClaim `json:"claim,omitempty"`
+}
+
+// AppSecretsStatus is what an export or a restore did with an app's own
+// secrets (spec.secrets.generated of its profile, and its extensions'
+// appSecrets). An extension's secret is named "<extension>/<name>".
+type AppSecretsStatus struct {
+	// Names are the secrets an export captured, or the ones a restore sets:
+	// those the bundle holds and the app's profile here declares.
+	// +optional
+	// +listType=atomic
+	Names []string `json:"names,omitempty"`
+	// NotDeclared are the secrets the bundle holds that the app's profile
+	// here does not declare. A restore writes none of them.
+	// +optional
+	// +listType=atomic
+	NotDeclared []string `json:"notDeclared,omitempty"`
+	// Replaced are the secrets the app was handed anew: those whose stored
+	// value was another than the bundle's and was replaced by it, and those
+	// the vault held already while a Secret of the app did not. Restore
+	// only.
+	// +optional
+	// +listType=atomic
+	Replaced []string `json:"replaced,omitempty"`
+	// Releases are the Helm releases that are handed a replaced secret as a
+	// value, each with the revision it was at before the secret was
+	// replaced. The restore waits for each to have been upgraded.
+	// +optional
+	// +listType=atomic
+	Releases []SecretsRelease `json:"releases,omitempty"`
+	// Planned says Replaced and Releases are final: the stored values were
+	// compared with the bundle's.
+	// +optional
+	Planned bool `json:"planned,omitempty"`
+	// AppliedAt is when the vault held the bundle's values.
+	// +optional
+	AppliedAt *metav1.Time `json:"appliedAt,omitempty"`
+	// DeliveredAt is when the app's Secrets held them too and its releases
+	// had been upgraded with them.
+	// +optional
+	DeliveredAt *metav1.Time `json:"deliveredAt,omitempty"`
+}
+
+// SecretsRelease is one Helm release a restore waits for after replacing a
+// secret the release is handed as a value.
+type SecretsRelease struct {
+	// Name is the Release object's.
+	Name string `json:"name"`
+	// Revision is the revision the release was at before.
+	// +optional
+	Revision int64 `json:"revision,omitempty"`
 }
 
 // BundleClaim is a volume claim, as much of it as making it again takes.
@@ -495,6 +547,12 @@ type AppExportStatus struct {
 	// Digest is the pinned digest of the app's build, when the tenant pins one.
 	// +optional
 	Digest string `json:"digest,omitempty"`
+
+	// Secrets says what was done with the app's own secrets: which an
+	// export put into the bundle, and which a restore set from it. Names
+	// only; no value is ever in a status.
+	// +optional
+	Secrets *AppSecretsStatus `json:"secrets,omitempty"`
 
 	// Phase is this app's own phase, using the same vocabulary as the export.
 	// +optional

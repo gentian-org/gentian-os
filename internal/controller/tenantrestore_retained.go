@@ -64,6 +64,28 @@ func (r *TenantRestoreReconciler) restoreRetained(
 	}
 	entry.Phase = gentianov1alpha1.TenantExportPhaseRunning
 
+	// The secrets its data was written with, at the app's place in this
+	// tenant's vault, where its next install finds them: an install keeps a
+	// value that is stored. Nothing runs, so nothing is handed them now.
+	if secretsArtefact(entry.Artefacts) != nil && (entry.Secrets == nil || entry.Secrets.DeliveredAt == nil) {
+		profiles, err := loadComponentProfileIndex(ctx, r.Client)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		profile, _ := appProfileFromIndex(profiles, appName)
+		done, failure, err := r.restoreAppSecrets(ctx, restore, tenant, appName, profile)
+		entry = appStatus(&restore.Status.Apps, appName)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		if failure != "" {
+			return failed(failure)
+		}
+		if !done {
+			return ctrl.Result{RequeueAfter: exportRequeueAfter}, nil
+		}
+	}
+
 	ready, waiting, err := r.ensureRetainedStores(ctx, tenant, appName, entry.Artefacts)
 	if err != nil {
 		return failed(fmt.Sprintf("make the stores its data is put back into: %v", err))
@@ -103,6 +125,9 @@ func (r *TenantRestoreReconciler) restoreRetained(
 	}
 	entry.Phase = gentianov1alpha1.TenantExportPhaseReady
 	entry.Message = ""
+	if note := secretsNote(entry); note != "" {
+		restore.Status.Notes = append(restore.Status.Notes, appName+": "+note)
+	}
 	if err := r.persist(ctx, restore); err != nil {
 		return ctrl.Result{}, err
 	}

@@ -96,7 +96,7 @@ func TestMariaDBExportRestoreAndTeardownCoverEveryDatabaseOfTheApp(t *testing.T)
 	}
 	export.Status.Apps = []gentianov1alpha1.AppExportStatus{{Name: "shop", ChartVersion: "2.0.0", Artefacts: want}}
 	if m := r.buildManifest(export, tenant); len(m.Apps) != 1 || m.Apps[0].DatabaseEngine != "mariadb" || len(m.Apps[0].Stores) != 2 ||
-		m.Apps[0].Stores[1].Kind != "mariadbOwned" || m.SchemaVersion != 3 {
+		m.Apps[0].Stores[1].Kind != "mariadbOwned" || m.SchemaVersion != 4 {
 		t.Errorf("manifest = %+v", m)
 	}
 	// The question each act asks, of this app's database and user: under

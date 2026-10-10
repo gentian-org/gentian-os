@@ -71,6 +71,9 @@ type TenantRestoreReconciler struct {
 // is one.
 type BundleReader interface {
 	Manifest(ctx context.Context, ref gentianov1alpha1.BundleRef, key bundlestore.Key) (*backup.Manifest, error)
+	// AppSecrets reads an app's secrets artefact, at the path the manifest
+	// gives for it, and opens it with the key.
+	AppSecrets(ctx context.Context, ref gentianov1alpha1.BundleRef, path string, key bundlestore.Key) (*bundle.AppSecrets, error)
 	RemoveImported(ctx context.Context, ref gentianov1alpha1.BundleRef) error
 }
 
@@ -266,6 +269,22 @@ func (r *TenantRestoreReconciler) restoreApp(
 	spec := profileBackupSpec(profile)
 	entry := appStatus(&restore.Status.Apps, appName)
 
+	// The secrets the bundle's data was written with, before anything else:
+	// the app is handed them while it still runs, and is paused only then.
+	if entry.QuiesceStart == nil {
+		ready, failure, err := r.restoreAppSecrets(ctx, restore, tenant, appName, profile)
+		entry = appStatus(&restore.Status.Apps, appName)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		if failure != "" {
+			return r.failApp(ctx, restore, tenant, appName, spec, failure)
+		}
+		if !ready {
+			return ctrl.Result{RequeueAfter: exportRequeueAfter}, nil
+		}
+	}
+
 	if entry.QuiesceStart == nil {
 		mode, qErr := r.Tenant.quiesceApp(ctx, tenant.Name, appName, spec)
 		if qErr != nil {
@@ -381,7 +400,11 @@ func (r *TenantRestoreReconciler) restoreApp(
 	// After the resume, not before: the hooks above need a pod to exec into,
 	// and a pod restarted while maintenance mode was still on would come back
 	// still holding users out.
-	if used != gentianov1alpha1.BackupQuiesceScaleDown {
+	//
+	// And always where the app's own secrets were replaced: whatever of the
+	// app was not rolled by the upgrade of its release starts again here,
+	// with the values its data was written with.
+	if used != gentianov1alpha1.BackupQuiesceScaleDown || secretsReplaced(entry) {
 		if err := r.Tenant.restartAppWorkloads(ctx, tenant.Name, appName); err != nil {
 			return ctrl.Result{}, fmt.Errorf("restart %s after restore: %w", appName, err)
 		}
@@ -390,6 +413,9 @@ func (r *TenantRestoreReconciler) restoreApp(
 
 	entry.Phase = gentianov1alpha1.TenantExportPhaseReady
 	entry.Message = ""
+	if note := secretsNote(entry); note != "" {
+		restore.Status.Notes = append(restore.Status.Notes, appName+": "+note)
+	}
 	logger.Info("restored app", "app", appName)
 	if err := r.persist(ctx, restore); err != nil {
 		return ctrl.Result{}, err
@@ -473,6 +499,10 @@ func (r *TenantRestoreReconciler) restoreUnits(
 	for _, a := range entry.Artefacts {
 		p := params
 		switch a.Kind {
+		case bundle.ArtefactSecrets:
+			// No unit: the operator sets them itself (restoreAppSecrets),
+			// so that no Job is handed a value.
+			continue
 		case bundle.ArtefactPostgres:
 			p = pgParams
 			p.Name = name("pgr")
@@ -1008,7 +1038,7 @@ func recordPlan(restore *gentianov1alpha1.TenantRestore, plan *restorePlan) {
 	restore.Status.SourceTenant = plan.sourceTenant
 	restore.Status.NameDerivation = plan.derivation
 	restore.Status.NotRestored = plan.notRestored
-	restore.Status.Notes = restoreLimits(plan.derivation)
+	restore.Status.Notes = restoreLimits(plan.derivation, plan.schemaVersion)
 	// What the export that wrote the bundle found and did not capture.
 	for _, missing := range plan.notIncluded {
 		restore.Status.Notes = append(restore.Status.Notes, "The bundle says it does not hold "+missing+".")

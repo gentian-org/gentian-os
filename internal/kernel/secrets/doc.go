@@ -26,7 +26,8 @@ SPDX-License-Identifier: MPL-2.0
 //
 // That is the cluster's secretMode derived. With secretMode random the Seeder
 // draws each value from crypto/rand instead and the path holds the only copy;
-// an app's own secrets stay derived in both modes (see Mode, SeedAppSecret).
+// an app's own secrets follow the mode too, and travel in the tenant's bundle
+// with the data written with them (see Mode, SeedAppSecret, ReplaceAppSecret).
 //
 // The package intentionally exposes a narrow surface — one method per
 // kernel-requirement category — so every reconciler performs the same

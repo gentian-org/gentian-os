@@ -253,13 +253,15 @@ spec:
                             type: object
                           kind:
                             description: |-
-                              Kind is postgres, postgresOwned, mariadb, mariadbOwned, s3 or volume;
-                              for what is the tenant's own also identity, mailboxes or rights.
+                              Kind is postgres, postgresOwned, mariadb, mariadbOwned, s3, volume or
+                              secrets; for what is the tenant's own also identity, mailboxes or
+                              rights.
                             type: string
                           name:
                             description: |-
                               Name is what the artefact was captured from: the database, bucket or
-                              volume claim, by its name in the tenant the bundle was taken of.
+                              volume claim, by its name in the tenant the bundle was taken of; for
+                              secrets, the app.
                             type: string
                           path:
                             description: Path is the artefact's place in the bundle.
@@ -366,6 +368,78 @@ spec:
                         app's, without pausing anything; a restore puts it back as retained and
                         installs nothing.
                       type: boolean
+                    secrets:
+                      description: |-
+                        Secrets says what was done with the app's own secrets: which an
+                        export put into the bundle, and which a restore set from it. Names
+                        only; no value is ever in a status.
+                      properties:
+                        appliedAt:
+                          description: AppliedAt is when the vault held the bundle's
+                            values.
+                          format: date-time
+                          type: string
+                        deliveredAt:
+                          description: |-
+                            DeliveredAt is when the app's Secrets held them too and its releases
+                            had been upgraded with them.
+                          format: date-time
+                          type: string
+                        names:
+                          description: |-
+                            Names are the secrets an export captured, or the ones a restore sets:
+                            those the bundle holds and the app's profile here declares.
+                          items:
+                            type: string
+                          type: array
+                          x-kubernetes-list-type: atomic
+                        notDeclared:
+                          description: |-
+                            NotDeclared are the secrets the bundle holds that the app's profile
+                            here does not declare. A restore writes none of them.
+                          items:
+                            type: string
+                          type: array
+                          x-kubernetes-list-type: atomic
+                        planned:
+                          description: |-
+                            Planned says Replaced and Releases are final: the stored values were
+                            compared with the bundle's.
+                          type: boolean
+                        releases:
+                          description: |-
+                            Releases are the Helm releases that are handed a replaced secret as a
+                            value, each with the revision it was at before the secret was
+                            replaced. The restore waits for each to have been upgraded.
+                          items:
+                            description: |-
+                              SecretsRelease is one Helm release a restore waits for after replacing a
+                              secret the release is handed as a value.
+                            properties:
+                              name:
+                                description: Name is the Release object's.
+                                type: string
+                              revision:
+                                description: Revision is the revision the release
+                                  was at before.
+                                format: int64
+                                type: integer
+                            required:
+                            - name
+                            type: object
+                          type: array
+                          x-kubernetes-list-type: atomic
+                        replaced:
+                          description: |-
+                            Replaced are the secrets the app was handed anew: those whose stored
+                            value was another than the bundle's and was replaced by it, and those
+                            the vault held already while a Secret of the app did not. Restore
+                            only.
+                          items:
+                            type: string
+                          type: array
+                          x-kubernetes-list-type: atomic
+                      type: object
                     stores:
                       description: |-
                         Stores lists the kinds captured for this app (postgres, mariadb, s3,

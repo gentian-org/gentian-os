@@ -55,9 +55,18 @@ import (
 //
 // The version is bumped, although only fields were added, because a reader
 // of version 2 would take a retained app for an installed one and would say
-// nothing of the mailboxes and the rights it left out. A reader refuses a
-// version newer than its own.
-const SchemaVersion = 3
+// nothing of the mailboxes and the rights it left out.
+//
+// Version 4 adds one kind of artefact to an app's, and renames nothing: the
+// app's own secrets (ArtefactSecrets), the values the platform generated for
+// it and its data is encrypted or signed with. A version 3 bundle holds none
+// and reads as before: a restore of one changes no stored secret, so what an
+// app encrypted is readable only where its secrets are the ones it was
+// written with. The version is bumped because a reader of version 3 does not
+// know the kind and would leave the app that has one out.
+//
+// A reader refuses a version newer than its own.
+const SchemaVersion = 4
 
 // OldestReadableSchemaVersion is the oldest manifest a restore still reads.
 const OldestReadableSchemaVersion = 1
@@ -103,6 +112,15 @@ const (
 	// (doveadm backup): every folder, every message, with its flags and its
 	// identifiers. Since version 3.
 	ArtefactMailboxes = "mailboxes"
+	// ArtefactSecrets is an app's own secrets: the values the platform
+	// generated for it because its profile asked for them
+	// (spec.secrets.generated, and an extension's appSecrets). One JSON
+	// document per app (AppSecrets), encrypted like every artefact and by
+	// the operator itself, so that the values are in no Job. It holds names
+	// and values and no path: a restore writes a value only under a name
+	// the app's profile declares where it is restored, at that app's own
+	// place in the tenant restored into. Since version 4.
+	ArtefactSecrets = "secrets"
 	// ArtefactRights is no file: the entries are in the manifest itself
 	// (Manifest.Rights). The name is what the inventory and a restore's
 	// result call them by. Since version 3.
@@ -112,7 +130,40 @@ const (
 // AppArtefacts are the kinds of artefact an app's data is carried as, for
 // an installed app and for one that was uninstalled with its data kept
 // alike.
-var AppArtefacts = []string{ArtefactPostgres, ArtefactPostgresOwned, ArtefactMariaDB, ArtefactMariaDBOwned, ArtefactS3, ArtefactVolume}
+var AppArtefacts = []string{ArtefactPostgres, ArtefactPostgresOwned, ArtefactMariaDB, ArtefactMariaDBOwned, ArtefactS3, ArtefactVolume, ArtefactSecrets}
+
+// AppSecrets is the content of an app's secrets artefact.
+//
+// Names and values, and nothing that says where a value is kept: the place
+// is the restoring platform's to decide, from the tenant restored into and
+// the app's profile there.
+type AppSecrets struct {
+	// App is the app the secrets are of.
+	App string `json:"app"`
+	// Secrets are the app's own, by the name its profile declares each
+	// under.
+	Secrets map[string]string `json:"secrets,omitempty"`
+	// Extensions are the secrets of the app's extensions, by the
+	// extension's name and then by the name the extension declares each
+	// under.
+	Extensions map[string]map[string]string `json:"extensions,omitempty"`
+}
+
+// Empty reports whether the document holds no value.
+func (a *AppSecrets) Empty() bool {
+	if a == nil {
+		return true
+	}
+	if len(a.Secrets) > 0 {
+		return false
+	}
+	for _, ext := range a.Extensions {
+		if len(ext) > 0 {
+			return false
+		}
+	}
+	return true
+}
 
 // TenantArtefacts are the kinds of artefact that are a tenant's own and no
 // app's. A restore puts the rights back last, after the realm whose groups
@@ -241,9 +292,10 @@ type ManifestApp struct {
 	// what the profile asked for — see the controller's fallback.
 	QuiesceMode string `json:"quiesceMode,omitempty"`
 
-	// BoundSecretKeys is reserved and never written. A bundle carries no
-	// stored credential: what the platform seeds is derived again where the
-	// bundle is restored, and nothing else from the vault is copied.
+	// BoundSecretKeys is reserved and never written. Of what the vault
+	// holds, a bundle carries the app's own secrets and nothing else, as an
+	// artefact among the app's stores (ArtefactSecrets): no value is in the
+	// manifest.
 	BoundSecretKeys []string `json:"boundSecretKeys,omitempty"`
 }
 
@@ -256,9 +308,10 @@ func (m *Manifest) NamesArtefacts() bool {
 // ManifestStore is one captured artefact.
 type ManifestStore struct {
 	// Kind is one of the Artefact kinds: postgres, postgresOwned, mariadb,
-	// mariadbOwned, s3, volume, identity or mailboxes.
+	// mariadbOwned, s3, volume, secrets, identity or mailboxes.
 	Kind string `json:"kind"`
-	// Name is the database, bucket or claim captured; for postgresOwned,
+	// Name is the database, bucket or claim captured; for secrets, the app;
+	// for postgresOwned,
 	// the role whose databases the archive holds; for mariadbOwned, the
 	// provisioned database whose name the archive's databases begin with.
 	Name string `json:"name"`

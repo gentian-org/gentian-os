@@ -292,7 +292,7 @@ func TestAnExportCapturesTheDataOfUninstalledApps(t *testing.T) {
 		{Name: "files", Retained: true, Artefacts: want["files"]},
 	}
 	m := w.er.buildManifest(w.export, w.tenant)
-	if m.SchemaVersion != 3 || len(m.Apps) != 2 {
+	if m.SchemaVersion != 4 || len(m.Apps) != 2 {
 		t.Fatalf("manifest = %+v", m)
 	}
 	if m.Apps[0].Retained || !m.Apps[1].Retained || m.Apps[1].ChartVersion != "" || m.Apps[1].DatabaseEngine != "postgresql" {
@@ -1383,7 +1383,7 @@ func TestAFormat2BundleStillRestores(t *testing.T) {
 	if err := json.Unmarshal(raw, m); err != nil {
 		t.Fatal(err)
 	}
-	if m.SchemaVersion != 2 || bundle.OldestReadableSchemaVersion > 2 || bundle.SchemaVersion != 3 {
+	if m.SchemaVersion != 2 || bundle.OldestReadableSchemaVersion > 2 || bundle.SchemaVersion != 4 {
 		t.Fatalf("the fixture is of format %d; this build reads %d to %d", m.SchemaVersion, bundle.OldestReadableSchemaVersion, bundle.SchemaVersion)
 	}
 	if !m.NamesArtefacts() || m.Mailboxes != nil || m.Rights != nil || m.Apps[0].Retained {
@@ -1542,6 +1542,25 @@ func TestEveryTenantArtefactIsCapturedPlannedRestoredAndDestroyed(t *testing.T) 
 	// an app is one a restore of an installed app and of a retained one
 	// both know.
 	for _, kind := range bundle.AppArtefacts {
+		if kind == bundle.ArtefactSecrets {
+			// No unit: the operator sets an app's secrets itself, so that
+			// no Job is handed a value. Planned for an installed app and
+			// for a retained one, and never as a unit.
+			own := backup.ManifestStore{Kind: kind, Name: "wiki", Path: backup.SecretsArtefact("wiki")}
+			data := backup.ManifestStore{Kind: bundle.ArtefactPostgres, Name: "n", Path: "p/x"}
+			profile := storesProfile("wiki", gentianov1alpha1.DatabaseEnginePostgreSQL, true, false)
+			artefacts, _, why, err := planRetained(w.tenant, backup.ManifestApp{Name: "wiki", Retained: true, Stores: []backup.ManifestStore{data, own}},
+				liveApp{profile: profile}, true)
+			if err != nil || why != "" || secretsArtefact(artefacts) == nil {
+				t.Errorf("%s: an uninstalled app's are not brought: %q, %v", kind, why, err)
+			}
+			restore.Status.Apps = []gentianov1alpha1.AppExportStatus{{Name: "wiki", Artefacts: artefacts}}
+			units, err := rr.restoreUnits(ctx, w.tenant, "wiki", restore, backup.Decryption{Mode: gentianov1alpha1.ExportEncryptionPassphrase, SecretName: "k", SecretKey: "passphrase"})
+			if err != nil || len(units) != 1 || units[0].Kind != bundle.ArtefactPostgres {
+				t.Errorf("%s: a restore makes a unit for it, or none for the data beside it: %v", kind, err)
+			}
+			continue
+		}
 		entry := gentianov1alpha1.BundleArtefact{Kind: kind, Name: "n", Path: "p/x", Target: "t"}
 		restore.Status.Apps = []gentianov1alpha1.AppExportStatus{{Name: "wiki", Artefacts: []gentianov1alpha1.BundleArtefact{entry}}}
 		units, err := rr.restoreUnits(ctx, w.tenant, "wiki", restore, backup.Decryption{Mode: gentianov1alpha1.ExportEncryptionPassphrase, SecretName: "k", SecretKey: "passphrase"})

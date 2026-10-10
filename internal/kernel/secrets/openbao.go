@@ -15,6 +15,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -212,7 +213,11 @@ func (c *KVClient) put(ctx context.Context, logicalPath string, data map[string]
 	return fmt.Errorf("openbao put %s: HTTP %d: %s", logicalPath, resp.StatusCode, string(payload))
 }
 
-// Get reads the secret data at logicalPath.
+// ErrNotFound is a path that holds nothing.
+var ErrNotFound = errors.New("not found")
+
+// Get reads the secret data at logicalPath. A path that holds nothing is
+// ErrNotFound.
 func (c *KVClient) Get(ctx context.Context, logicalPath string) (map[string]string, error) {
 	tok, err := c.authToken(ctx)
 	if err != nil {
@@ -230,7 +235,7 @@ func (c *KVClient) Get(ctx context.Context, logicalPath string) (map[string]stri
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode == http.StatusNotFound {
-		return nil, fmt.Errorf("openbao get %s: not found", logicalPath)
+		return nil, fmt.Errorf("openbao get %s: %w", logicalPath, ErrNotFound)
 	}
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
