@@ -202,9 +202,11 @@ type ServiceRequirements struct {
 	// +optional
 	Mail *MailRequirement `json:"mail,omitempty"`
 
-	// MCP specifies a Model Context Protocol server requirement.
-	// When enabled, the orchestrator registers the app's MCP endpoint in the
-	// kernel MCP registry and wires OIDC authentication.
+	// MCP declares that the component exposes a Model Context Protocol
+	// endpoint. It is a declaration only: there is no MCP registry, and the
+	// platform registers nothing and wires no authentication for it. Its one
+	// effect today is that a chart component declaring it is installed
+	// through the app Composition.
 	// +optional
 	MCP *MCPRequirement `json:"mcp,omitempty"`
 
@@ -731,9 +733,10 @@ type IMAPRequirement struct {
 	TokenSignIn bool `json:"tokenSignIn,omitempty"`
 }
 
-// MCPRequirement describes a Model Context Protocol server endpoint.
+// MCPRequirement describes a Model Context Protocol server endpoint. Nothing
+// reads its fields yet (see ServiceRequirements.MCP).
 type MCPRequirement struct {
-	// Enabled activates MCP endpoint registration.
+	// Enabled says the component exposes the endpoint.
 	// +kubebuilder:default=true
 	Enabled bool `json:"enabled"`
 
@@ -743,7 +746,7 @@ type MCPRequirement struct {
 	// +kubebuilder:validation:Pattern=`^/.*`
 	Endpoint string `json:"endpoint,omitempty"`
 
-	// Auth is the authentication method for MCP calls.
+	// Auth is the authentication method the endpoint expects.
 	// +optional
 	// +kubebuilder:validation:Enum=oidc;none
 	// +kubebuilder:default=oidc

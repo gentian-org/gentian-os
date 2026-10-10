@@ -68,8 +68,10 @@ func adminsApprove(tenant string) (Tuple, error) {
 // ReconcileTenants makes each named tenant known to the store: attached to
 // its cluster, and its three role relations held by the tenant's groups.
 //
-// Written at start from what git lists under clusters/<c>/tenants/, so a
-// cluster rebuilt from git arrives at the same place. `cluster` is what audit
+// Written by the operator from the Tenant objects of the cluster
+// (AuthzProjectionReconciler), which are what git lists under
+// clusters/<c>/tenants/, so a cluster rebuilt from git arrives at the same
+// place. `cluster` is what audit
 // and approval derive through and is written whenever it is missing. The
 // role tuples are the same. `operated_by` is consent (model v1): written when
 // a tenant is first attached, so a fresh deploy is operated by its cluster,

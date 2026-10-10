@@ -1456,21 +1456,24 @@ spec:
                           type: object
                         mcp:
                           description: |-
-                            MCP specifies a Model Context Protocol server requirement.
-                            When enabled, the orchestrator registers the app's MCP endpoint in the
-                            kernel MCP registry and wires OIDC authentication.
+                            MCP declares that the component exposes a Model Context Protocol
+                            endpoint. It is a declaration only: there is no MCP registry, and the
+                            platform registers nothing and wires no authentication for it. Its one
+                            effect today is that a chart component declaring it is installed
+                            through the app Composition.
                           properties:
                             auth:
                               default: oidc
-                              description: Auth is the authentication method for MCP
-                                calls.
+                              description: Auth is the authentication method the endpoint
+                                expects.
                               enum:
                               - oidc
                               - none
                               type: string
                             enabled:
                               default: true
-                              description: Enabled activates MCP endpoint registration.
+                              description: Enabled says the component exposes the
+                                endpoint.
                               type: boolean
                             endpoint:
                               default: /mcp
@@ -3109,21 +3112,23 @@ spec:
                         type: object
                       mcp:
                         description: |-
-                          MCP specifies a Model Context Protocol server requirement.
-                          When enabled, the orchestrator registers the app's MCP endpoint in the
-                          kernel MCP registry and wires OIDC authentication.
+                          MCP declares that the component exposes a Model Context Protocol
+                          endpoint. It is a declaration only: there is no MCP registry, and the
+                          platform registers nothing and wires no authentication for it. Its one
+                          effect today is that a chart component declaring it is installed
+                          through the app Composition.
                         properties:
                           auth:
                             default: oidc
-                            description: Auth is the authentication method for MCP
-                              calls.
+                            description: Auth is the authentication method the endpoint
+                              expects.
                             enum:
                             - oidc
                             - none
                             type: string
                           enabled:
                             default: true
-                            description: Enabled activates MCP endpoint registration.
+                            description: Enabled says the component exposes the endpoint.
                             type: boolean
                           endpoint:
                             default: /mcp

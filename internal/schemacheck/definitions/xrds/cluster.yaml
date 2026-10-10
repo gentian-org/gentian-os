@@ -305,7 +305,7 @@ spec:
                 # Consumed directly by Compositions, which is why these live on
                 # the claim rather than in the Helm values chain. Everything
                 # here came from cluster-settings.env, a shell file the
-                # installer read and no reconciler could see (§2).
+                # installer read and no reconciler could see.
                 tenancyMode:
                   type: string
                   description: Whether the cluster hosts one tenant or many.
@@ -813,12 +813,13 @@ spec:
                         both         render both issuers and let a Certificate
                                      name the one it wants.
 
-                        Read by the installer from this file at A-06, before the
-                        Cluster XR exists — the same way networkMode and nodeIp
-                        are read at A-05 and A-07. No Composition consumes it;
-                        the cluster issuers are shell-applied, and this is where
-                        the cluster says which endpoint it is on rather than the
-                        installer's pointer file saying so on its behalf.
+                        Read by the installer from this file when it applies
+                        the cluster issuers (step A-09), before the Cluster XR
+                        exists — the same way it reads networkMode and nodeIp.
+                        No Composition consumes it; the cluster issuers are
+                        shell-applied, and this is where the cluster says which
+                        endpoint it is on rather than the installer's pointer
+                        file saying so on its behalf.
                       enum:
                         - staging
                         - production
@@ -841,8 +842,8 @@ spec:
                         forever. Set "cluster" only for a zone public resolvers
                         cannot see, such as an internal rfc2136 server.
 
-                        Read by the installer at A-05, which passes it to the
-                        cert-manager release it manages.
+                        Read by the installer when it installs cert-manager
+                        (step A-02), which passes it to the release it manages.
                       pattern: '^(cluster|[^,\s]+(,[^,\s]+)*)$'
                       default: "1.1.1.1:53,8.8.8.8:53"
                     dnsProvider:

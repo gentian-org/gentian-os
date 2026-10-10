@@ -43,8 +43,7 @@ because `result_failure = continue` moves on to the next realm.
 | Namespace | `system-mail` — where the operator addresses mail |
 | Deployment / Service | `dovecot-<env>` (e.g. `dovecot-dev`) |
 | LMTP DNS | `dovecot-dev.system-mail.svc.cluster.local:24` |
-| Argo CD | ApplicationSet `gentian-infra-helm` (wave 9) |
-| Bootstrap | `install.sh` step `D-04-mail` when `MAIL_SERVICE_MODE=system` |
+| Argo CD | ApplicationSet `gentian-mail`, composed only when the claim's `mail.serviceMode` is `system` |
 
 ## Image
 

@@ -11,17 +11,15 @@ metadata:
 data:
   values.yaml: |
     # Helm chart: bokysan/mail — https://bokysan.github.io/docker-postfix/
-    # Kept deliberately, not required. platform-kernel IS in the exclusion list
-    # of the Kyverno baseline policies (gentian-disallow-privilege-escalation,
-    # gentian-require-seccomp), so nothing here is enforced against this Pod —
-    # these are set anyway because a relay that can escalate is worth avoiding on
-    # its own merits, and because the exclusion list is a policy decision that
-    # could be tightened later without wanting mail to break.
+    # Required. Mail runs in system-mail, which is the system tier, and the
+    # Kyverno baseline policies (gentian-disallow-privilege-escalation,
+    # gentian-require-seccomp) exclude only the kernel tier: both settings
+    # are enforced against this Pod.
     #
     # runAsNonRoot and a capability drop are deliberately omitted: Postfix binds
     # 25/587. Kyverno's non-root and capabilities rules are "=(securityContext)"
     # conditionals that only engage on keys that are present, so leaving them out
-    # stays compliant without needing a MAC waiver if the exclusion is ever removed.
+    # stays compliant without needing a MAC waiver.
     container:
       postfix:
         securityContext:

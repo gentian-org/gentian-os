@@ -317,7 +317,7 @@ spec:
                         CompletedUnits records each capture Job that finished, by Job name.
 
                         This is the durable completion record; the Job object is not one. A
-                        finished Job can be TTL-collected or swept by the kernel Job GC while a
+                        finished Job can be TTL-collected while a
                         sibling unit is still running, and inferring completion from the Job's
                         existence made the controller re-run a dump it had already uploaded.
                       items:

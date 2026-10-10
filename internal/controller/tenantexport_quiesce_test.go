@@ -369,9 +369,8 @@ func TestDeletingAnExportResumesAppsCleansBundleThenReleases(t *testing.T) {
 	}
 }
 
-// The status is the record that a unit finished — the Job is not. The kernel
-// Job GC and the Job's own TTL can both remove a completed Job while a
-// sibling unit still runs, and recreating it re-ran a dump that had already
+// The status is the record that a unit finished — the Job is not. The Job's
+// own TTL can remove a completed Job while a sibling unit still runs, and recreating it re-ran a dump that had already
 // been uploaded.
 func TestCompletedUnitIsNotRerunAfterItsJobDisappears(t *testing.T) {
 	s := runtime.NewScheme()

@@ -1133,11 +1133,11 @@ load_deployments_cluster_settings() {
         claim_setting KV_MOUNT          openbao.kvMount              "${claim_file}"
         # Which Let's Encrypt endpoint. Read here rather than from the stage
         # profile that deployment.md points at, because the issuers are applied
-        # at A-06 and a stage profile is Helm values Argo CD renders later —
+        # at A-09 and a stage profile is Helm values Argo CD renders later —
         # unreadable at the moment the answer is needed. The claim is a file
         # before it is an object, which is exactly why it can serve both.
         claim_setting ACME_ENV          certificates.acmeEnv         "${claim_file}"
-        # Where cert-manager checks DNS-01 propagation. Read at A-05, which is
+        # Where cert-manager checks DNS-01 propagation. Read at A-02, which is
         # before the Cluster XR exists, for the same reason as ACME_ENV.
         claim_setting DNS01_RECURSIVE_NAMESERVERS certificates.dns01RecursiveNameservers "${claim_file}"
         # The external relay, when mail.serviceMode is external. Same object,
@@ -1985,10 +1985,9 @@ check_prereqs() {
     fi
 
     # ── Operator image ────────────────────────────────────────────────────────
-    # The tag the cluster will actually run. ArgoCD reconciles the chart from
-    # clusters/<id>/kernel/values.yaml continuously, so that file wins over the
-    # installer's --set: checking GENTIAN_OS_IMAGE_TAG alone would pass while
-    # the cluster pulled something else.
+    # The tags the cluster may run: the one in clusters/<id>/kernel/values.yaml
+    # and the one this run renders (GENTIAN_OS_IMAGE_TAG). Both are checked
+    # below, for the reason given there.
     local _os_repo _os_tag _os_values
     _os_repo="${GENTIAN_OS_IMAGE_REPOSITORY:-ghcr.io/gentian-org/gentian-os}"
     _os_values="${GENTIAN_DEPLOYMENTS_PATH:-}/clusters/${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-}/kernel/values.yaml"

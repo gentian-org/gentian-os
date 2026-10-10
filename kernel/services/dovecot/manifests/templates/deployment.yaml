@@ -77,8 +77,7 @@ spec:
 # release. keycloak_dovecot_tenant_client.go and mail_reconciler.go read
 # `dovecot-admin` instead — the doveadm password to provision a tenant's
 # mailboxes, and the OIDC client secret to declare the tenant's Dovecot client
-# in Keycloak. On v4 kernel/services/kernel-admin wrote it into
-# platform-kernel; the operator addresses mail by function now
+# in Keycloak. The operator addresses mail by function
 # (layout.System("mail")) and looks for it beside Dovecot.
 #
 # Two names for one vault path rather than one Secret used twice: the chart
@@ -523,10 +522,9 @@ spec:
             {{- end }}
             - name: mail
               mountPath: /var/mail
-          # Kept deliberately, not required. platform-kernel IS in the exclusion
-          # list of the Kyverno baseline policies, so nothing here is enforced
-          # against this Pod — these are set anyway so the workload stays
-          # deployable if that exclusion is ever tightened.
+          # Required. Mail runs in system-mail, which is the system tier, and
+          # the Kyverno baseline policies exclude only the kernel tier: both
+          # settings are enforced against this Pod.
           #
           # runAsNonRoot and a capability drop are deliberately NOT set: Dovecot
           # binds 143/993/24, all privileged ports. Kyverno's non-root and

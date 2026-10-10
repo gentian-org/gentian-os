@@ -308,8 +308,6 @@ spec:
                   key: {{ .Values.cloudflare.tunnelAPITokenSecretRef.key | default "api-token" | quote }}
                   optional: true
             {{- end }}
-            - name: INFRA_NAMESPACE
-              value: {{ .Values.infraNamespace | quote }}
             - name: SERVICES_NAMESPACE
               value: {{ .Values.servicesNamespace | quote }}
             # The ext-auth bouncer's Service, which every kernel-zone SecurityPolicy
@@ -340,8 +338,6 @@ spec:
             - name: MAIL_SMTP_HOST
               value: {{ . | quote }}
             {{- end }}
-            - name: OPENBAO_NAMESPACE
-              value: {{ .Values.openbaoNamespace | quote }}
             - name: MEMCACHED_IMAGE
               value: {{ .Values.memcached.image | quote }}
             - name: POSTGRES_PROVISIONER_IMAGE
@@ -384,8 +380,6 @@ spec:
               value: {{ $usageSampler.retention | default "9600h" | quote }}
             - name: METRICS_SERVER_ENABLED
               value: {{ $metricsServer.enabled | default false | quote }}
-            - name: KERNEL_NAMESPACE
-              value: {{ .Values.infraNamespace | default "kernel-authentication" | quote }}
             - name: POD_NAMESPACE
               valueFrom:
                 fieldRef:

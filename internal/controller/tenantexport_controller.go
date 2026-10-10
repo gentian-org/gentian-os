@@ -642,7 +642,7 @@ func (r *TenantExportReconciler) ensureCaptureJob(
 ) (bool, error) {
 	entry := appStatus(&export.Status.Apps, unit.Job.Labels[meta.AppLabel])
 	// The status record decides, not the Job's existence: a finished Job can
-	// be TTL-collected or swept by the kernel Job GC while a sibling unit is
+	// be TTL-collected while a sibling unit is
 	// still running, and recreating it here re-ran a dump that had already
 	// been uploaded.
 	if slices.Contains(entry.CompletedUnits, unit.JobName) {

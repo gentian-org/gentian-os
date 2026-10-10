@@ -5,8 +5,8 @@ Helm chart and image. Wired to the tenant mail reconciler: the operator maintain
 the virtual-domain and mailbox maps this deployment mounts, so tenant churn needs
 no restart.
 
-Inbound delivery to tenant mailboxes additionally requires Dovecot, which is not
-yet configured — see `kernel/services/dovecot/README.md`.
+Inbound delivery to tenant mailboxes goes on to Dovecot — see
+`kernel/services/dovecot/README.md`.
 
 ## Install location
 
@@ -16,14 +16,11 @@ yet configured — see `kernel/services/dovecot/README.md`.
 | Namespace | `system-mail` — where the operator addresses mail |
 | Release name | `postfix-<env>` (e.g. `postfix-dev`) |
 | Service DNS | `postfix-dev.system-mail.svc.cluster.local:587` |
-| Argo CD | ApplicationSet `gentian-infra-helm` (wave 9) |
-| Bootstrap | `install.sh` step `D-04-mail` when `MAIL_SERVICE_MODE=system` |
+| Argo CD | ApplicationSet `gentian-mail`, composed only when the claim's `mail.serviceMode` is `system` |
 
-The namespace is not `gentian-<env>`. `mailSharedPostfixHost()` hands every tenant
-app `postfix-<stage>.<servicesNamespace>`, the operator writes
-`postfix-kernel-virtual-mailbox-maps` into that namespace, and a Pod can only mount
-a ConfigMap from its own namespace — so Postfix runs where the operator addresses
-it. The tenant NetworkPolicy baseline already permits egress to `platform-kernel`.
+The operator writes `postfix-kernel-virtual-mailbox-maps` into `system-mail`,
+and a Pod can only mount a ConfigMap from its own namespace — so Postfix runs
+where the operator addresses mail.
 
 ## Chart / image
 
