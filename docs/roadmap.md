@@ -1231,6 +1231,31 @@ does not exist yet that something cannot be the Composition.
   - `[ ]` Look an address up at the identity provider by its mail attribute, per removal record.
   - `[ ]` Keep the rule that nothing changes for a domain whose lookups fail.
 
+### 2.30 OpenBao's Storage Is Snapshotted, and Random Mode Is Drilled (**)
+* **Target Domain**: Secrets & Recovery
+* **Context**: Nothing takes a snapshot of OpenBao's storage. Under
+  `secretMode: derived` that costs little: the installer and the operator
+  write the same credentials again from the master password and the salt the
+  recovery kit holds. Under `secretMode: random` OpenBao holds the only copy
+  of what was drawn at random, so a cluster that loses OpenBao's storage and
+  keeps running has every service and app locked out of its own store
+  ([security.md §6](design/security.md)). The mode itself has unit tests and
+  a test of the installer's functions, and has never been through a loss and
+  a recovery.
+* **Proposed Solution**: A scheduled snapshot of OpenBao's storage, encrypted
+  and kept off the volume OpenBao runs on, with a documented way back that
+  uses the unseal material of the recovery kit; and recovery drills on a
+  cluster installed with `secretMode: random`.
+* **Backlog Items**:
+  - `[ ]` Take a snapshot of OpenBao's storage on a schedule, encrypt it, and store it beside the bundles or at a destination of its own.
+  - `[ ]` Decide which key a snapshot is encrypted to and who holds it; the recovery kit says where the snapshots are.
+  - `[ ]` Restore OpenBao from a snapshot and unseal it with the recovery kit's material, as a documented procedure.
+  - `[ ]` Report a snapshot that is missing or older than its schedule allows.
+  - `[ ]` Drill, under `random`: OpenBao's storage is lost on a running cluster and put back from a snapshot; every service and app reads its store again.
+  - `[ ]` Drill, under `random`: a cluster is rebuilt from the recovery kit, and its tenants are restored from their bundles.
+  - `[ ]` Drill, under `random`: a tenant's bundle is restored into a new cluster, under the same name and under a new one.
+  - `[ ]` Run the same three drills under `derived`, so that the two modes are compared on what each recovers.
+
 ## 3. User Management & Shell UI
 
 ### 3.1 SCIM & Provisioning Bus Integration (*)

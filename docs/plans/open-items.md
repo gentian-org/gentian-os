@@ -260,13 +260,38 @@ Each is true of the code today.
 13. **Three credentials that stay derived under `secretMode: random`.** The
     mode now reaches what the operator makes for an app, and the installer
     keeps what it made. Three are still computed from the master password in
-    both modes. An app's own secrets (`spec.appSecrets`): its data is
-    readable only with them and no bundle carries a credential, so a random
-    one needs a decision on whether a bundle may. The key Keycloak's event
-    listener signs with, and the kernel realm's own mail login on a cluster
-    that runs its own mail server: each needs a place in OpenBao that nobody
-    has chosen. Until then `random` does not mean "nothing follows from the
-    master password" ([security.md §6.3](../design/security.md)).
+    both modes ([security.md §6.3](../design/security.md)). **Decided
+    2026-10-10** for an app's own secrets (`spec.appSecrets`): a bundle
+    carries the secrets that cannot be made again where it is restored, only
+    in a part that is encrypted to the backup key, and the app's secrets then
+    follow the mode. Not built. A bundle is encrypted in every mode
+    (`internal/backup/encrypt.go`), so the condition can be met; what is
+    still to be decided before it is built:
+    - *A restore into another tenant.* An import makes the new tenant's apps
+      first, each with secrets of its own, so the bundle's secrets would
+      replace stored ones. A right granted in one tenant is not carried into
+      another by a file (`TenantRestore.spec.intoNewTenant`); whether a
+      secret is, and to which paths, is open.
+    - *A restore replaces a stored value.* The same holds for an app purged
+      and installed again in the same tenant: the first value stored at a
+      path would no longer be the path's value (security.md §7).
+    - *A bundle says nothing of who wrote it.* Anyone who knows the
+      cluster's public key can encrypt to it. Today a made-up bundle
+      replaces data; with secrets it would also set values in OpenBao.
+    - *A bundle encrypted to a requester's own key or passphrase.* It is not
+      encrypted to the backup key, so it would carry no secret, and under
+      `random` would not bring an app's encrypted data back readable.
+    - *Who can open a bundle.* With `spec.backup.escrowIdentity` (the
+      default) the backup key is in OpenBao, where the cluster
+      administrators' policy reads it and is refused a tenant's paths; the
+      bundles would give that policy the tenant's app secrets.
+    - *Which secrets.* A profile names its secrets and does not say which of
+      them stored data depends on; all of an app's would travel, or a
+      profile gets a field for it.
+    The key Keycloak's event listener signs with, and the kernel realm's own
+    mail login on a cluster that runs its own mail server, stay derived:
+    each needs a place in OpenBao that nobody has chosen, and neither is
+    part of a tenant's bundle.
 14. **Whether a change of `secretMode` on an installed cluster is refused.**
     Today it converts nothing and existing credentials stay, with one
     exception: back from `random` to `derived`, the installer writes derived
@@ -282,7 +307,14 @@ Each is true of the code today.
     answer.
 16. **Whether the platform snapshots OpenBao.** Under `secretMode: random`
     OpenBao holds the only copy of what was drawn at random, no bundle and no
-    recovery kit carries it, and nothing takes a snapshot.
+    recovery kit carries it, and nothing takes a snapshot. **Decided
+    2026-10-10**: it will, and `random` is to be put through recovery drills
+    with it; on the roadmap, item 2.30.
+17. **What a cluster configuration without a mode means.** **Decided
+    2026-10-10**, as built: a `gentian-cluster-config` that is not there yet,
+    or that was written before it carried `secretMode`, reads as `derived`,
+    which is what every cluster did before the operator read the mode
+    (`ClusterSecretMode` in `internal/controller/cluster_config.go`).
 
 ## 5. Known and deliberately not now
 
