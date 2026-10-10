@@ -1288,6 +1288,26 @@ mappers and flow, nor the broker client is made any more
   - `[ ]` Publish the answer as status the usher serves under `can_audit`, with the time it was read.
   - `[ ]` Show it on the Models tab and in `kubectl gentian models list`, and keep the declared flag where no answer exists.
 
+### 2.32 A Tenant's Values and Drop-In Files Are Written by the Director (**)
+* **Target Domain**: App Catalogue & Customization Framework
+* **Context**: A tenant's per-app values (`Tenant.spec.apps[].config.extraValues`), its drop-in files (`config.dropIns`) and a customization record of tenant scope can be set only by a commit to the deployments repository. No route of the director writes them and the administration console has no screen for them ([app-customization.md](app-customization.md) §2.1, §2.2.1).
+* **Proposed Solution**: A route of the director that writes a tenant's per-app values and drop-in files as signed commits, checked against what the profile declares as the operator checks them, and an editor in the administration console for the tenant's administrator.
+* **Backlog Items**:
+  - `[ ]` Director: read and write one app's `config.extraValues` and `config.dropIns` of a tenant, as a commit that names the person and the relation that allowed it.
+  - `[ ]` The same guardrails at the write as at the reconcile: a declared, tenant-editable drop-in, the reserved file names, the size, the format.
+  - `[ ]` Console: the editor, with the resulting diff before it is committed.
+
+### 2.33 Drop-In Files Are Mounted into the App (**)
+* **Target Domain**: App Catalogue & Customization Framework
+* **Context**: The operator validates a tenant's drop-in files and stores them in a ConfigMap `app-dropin-<profile>-<name>`. Nothing mounts it: the platform generates no mount and no chart of the catalogue mounts that ConfigMap, so drop-in content has no effect on the app ([app-customization.md](app-customization.md) §2.2.1).
+* **Proposed Solution**: The ConfigMap is mounted at the path the profile declares for the drop-in, after the profile's own files, and the app picks a change up.
+* **Backlog Items**:
+  - `[ ]` Decide where the mount is made: by the platform from `spec.customization.dropIns`, or by each chart from a value the platform passes.
+  - `[ ]` Mount it, for a chart the operator installs and for a composed app.
+  - `[ ]` A change of the content reaches the running app: a rollout, or a reload where the app has one.
+  - `[ ]` A test that a tenant's file is read by the app and wins over the profile's by its prefix.
+
+
 ## 3. User Management & Shell UI
 
 ### 3.1 SCIM & Provisioning Bus Integration (*)
