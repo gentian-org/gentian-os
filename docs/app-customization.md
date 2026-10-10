@@ -269,12 +269,13 @@ catalogue PR, but cannot introduce code.
             :root { --primary: #0b7285; }
 ```
 
-**Delivery.** The operator reconciles `Tenant.spec.apps[].config.dropIns` into a ConfigMap
-`app-dropin-<profile>-<name>` in the tenant namespace
-(`internal/controller/dropin_reconciler.go`) and removes it when the entry goes. Mounting it is
-the chart's: the platform generates no mount, so a chart that takes tenant drop-ins mounts the
-ConfigMap of that name at the declared path, after the profile's own, and tenant files win by
-the `90-`–`99-` prefix.
+**Delivery: a tenant's drop-in has no effect on the app yet.** The operator reconciles
+`Tenant.spec.apps[].config.dropIns` into a ConfigMap `app-dropin-<profile>-<name>` in the tenant
+namespace (`internal/controller/dropin_reconciler.go`) and removes it when the entry goes. That is
+where it ends: the platform generates no mount, and no chart of the catalogue mounts that
+ConfigMap, so the content is validated, stored, and read by nothing. For it to take effect a chart
+has to mount the ConfigMap of that name at the declared path, after the profile's own, where
+tenant files win by the `90-`–`99-` prefix ([roadmap.md](roadmap.md) §2.33).
 
 **Guardrails** — checked by the operator when it reconciles the tenant. One entry that fails
 holds every drop-in of the tenant back (the Tenant's `DropInsReady` condition is false, reason
@@ -289,10 +290,12 @@ holds every drop-in of the tenant back (the Tenant's `DropInsReady` condition is
 | Content must parse as the declared `format` | a malformed fragment must fail before it is mounted, not crash the app at boot |
 | No secret material — values land in a ConfigMap, in etcd | secrets go through `valueMapping`, always |
 
-**No self-service yet.** Neither the director nor the admin console has a way to set
-`config.dropIns`; like `config.extraValues` (§2.1) it is an edit of the tenant's manifest. An
-editor for the tenant's administrator — the declared tenant-editable drop-ins, validated, with
-the resulting diff — is designed and not built.
+**Set by a commit, and by nothing else.** A tenant's values (`config.extraValues`, §2.1), its
+drop-ins (`config.dropIns`) and a customization record of tenant scope (§5) can be set today only
+by a commit to the deployments repository. No route of the director writes any of them and the
+admin console has no screen for them. A route that writes them as signed commits, and an editor
+for the tenant's administrator — the declared tenant-editable drop-ins, validated, with the
+resulting diff — are on the roadmap ([roadmap.md](roadmap.md) §2.32) and not built.
 
 ### 2.3 L2 — Companion (side-by-side)
 
@@ -322,6 +325,13 @@ than the declaration is what holds; the binding's `Granted` condition names what
 not granted. That is all the platform does for a contract today: the path is to the target's pods as
 a whole, the granted capabilities are recorded and not enforced, and the target is not told which
 app is calling. What a consumer may do there is the target's to check.
+
+**A companion that needs the Kubernetes API asks for a cluster role by name.** It cannot bring a
+role of its own: `requires.privileges.clusterRoles[]` names one of the roles the platform defines
+and the ServiceAccount the chart runs under, and the role is bound only where the cluster permits
+it for the profile and the security officer granted it on the install. Rules written on the entry
+are ignored. The platform's set is empty today, so no app gets such access
+([security.md §3.4](design/security.md)).
 
 **L2 vs L3 tie-breaker** — the one decision this ladder cannot make positionally:
 

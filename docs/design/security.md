@@ -780,7 +780,7 @@ the code does.
 | The rights check for a component (`requires.services.rights`) | Implemented | A key per component for one question at the bouncer -- may this person use that app of my tenant -- instead of the store's key (`rights_check.go`, `internal/bouncer/check.go`). Platform-trust profiles only |
 | A removed person's mailbox | Implemented; proven in local containers, not on a cluster | Whoever removes the person chooses archive or delete; no default, and the registrar refuses a removal without the choice. The registrar writes the choice down (`MailboxRemoval`, the one kind it may write in the cluster) and has no access to `system-mail`. The operator acts only on an address of the tenant's mail domain that no person of any realm on that domain holds, after the address's mail passwords are gone ([mail.md §5c](mail.md)). Mail to the address is refused at `RCPT` (550, unknown recipient) while the record stands and nobody holds the address; a deleted mailbox's record is removed after 30 days, and the recipient policy decides again from then |
 | A tenant's backup and deletion | Implemented | A bundle (format 3) holds what a deletion destroys, mailboxes included, and a deletion destroys the mailboxes. Rights recorded as granted are not written into a tenant made new for the restore (`TenantRestore.spec.intoNewTenant`); they are named instead ([data-lifecycle.md](data-lifecycle.md)) |
-| Approval path for profile-declared egress | Implemented | `requires.privileges.egress` is a request. A rule reaches the NetworkPolicy only once it was granted by name on the install (`internal/security/privilege.go`, `GrantedEgressRules`). The tenant's administrator approves it (`can_approve_privilege`) and the director writes the grant as a commit (`internal/director/api/privileges.go`). A pod-security waiver takes effect only where the cluster's allowlist names it (`PlatformSecurityPolicy`) and the security officer granted it on the install (`mac_waiver_reconciler.go`): either alone waives nothing, and the tenant's `MacWaiversReady` condition says which of the two is missing. A grant that is withdrawn or has expired takes the namespace label away at the tenant's next reconcile; nothing reconciles at the moment of expiry. A requested cluster role is recorded when granted and created by nothing: a profile states the role as rules of its own, and the platform has no set of roles defined beforehand that a grant could bind |
+| Approval path for profile-declared egress | Implemented | `requires.privileges.egress` is a request. A rule reaches the NetworkPolicy only once it was granted by name on the install (`internal/security/privilege.go`, `GrantedEgressRules`). The tenant's administrator approves it (`can_approve_privilege`) and the director writes the grant as a commit (`internal/director/api/privileges.go`). A pod-security waiver takes effect only where the cluster's allowlist names it (`PlatformSecurityPolicy`) and the security officer granted it on the install (`mac_waiver_reconciler.go`): either alone waives nothing, and the tenant's `MacWaiversReady` condition says which of the two is missing. A grant that is withdrawn or has expired takes the namespace label away at the tenant's next reconcile; nothing reconciles at the moment of expiry. A cluster role is asked for by name, from a set the platform defines, and is bound only where the platform has it, the allowlist permits it for the profile and it was granted on the install (§3.4a). The set is empty, so no role is bound on any cluster today |
 | Pod-security admission (privileged, host ns, non-root, hostPath, caps, priv-esc) | Implemented | `kernel/security/kyverno/policies/` |
 | Gateway rate limit | **Partial**: sign-in posts only | Envoy's local limit per client address on the identity provider's sign-in pages and on a sign-in sidecar's answer path (`edge_rate_limit.go`, §2.14). Routes behind a session, the token endpoint and WebSocket duration: **Target** |
 | Service mesh, SPIFFE/SPIRE, workload identity | **Target**, with one exception | The operator's app-lifecycle listener admits its two callers, the director and the usher, by ServiceAccount: each presents a projected token for the audience `gentian-os-operator` and the operator asks the API server whose it is (`internal/applifecycle/auth.go`). Every other call between platform services still rests on a shared key or on the person's token |
@@ -1028,6 +1028,38 @@ What it does not do:
 - **A grant the operator wrote before it stopped doing so stays.** An earlier operator wrote a full grant for every declared integration. Those objects are left as they are and keep the path open; an administrator narrows or empties one by setting the grant, and it goes with the tenant.
 
 Revoking a grant removes the network path and both key Secrets in one reconcile. It does not change the shared password at `vaultPath`, which stays in the consumer's values until the app is rolled.
+
+#### 3a. Cluster roles — named by the platform, never written by a profile
+
+Referred to as §3.4a. An app that needs to read something of the cluster through the Kubernetes API asks for a cluster role **by name**:
+
+```yaml
+spec:
+  requires:
+    privileges:
+      clusterRoles:
+        - name: read-nodes               # one of the platform's roles
+          serviceAccount: dashboard      # the account the chart runs its pods under
+          reason: "The dashboard lists node capacity."
+```
+
+The operator binds the role to that ServiceAccount, in the component's own namespace, with a `ClusterRoleBinding`, and only while all of these hold (`internal/security/cluster_roles.go`, `internal/controller/component_cluster_roles.go`):
+
+| Condition | Who decides | Reason on the Component when it is missing |
+|---|---|---|
+| The name is in the platform's set | The platform, in this repository | `UnknownRole` |
+| The cluster permits it for this profile: `PlatformSecurityPolicy.spec.allowedClusterRoles[]`, `{profile, role}` | Whoever holds `can_set_admission` on the cluster (`PUT /v1/clusters/{c}/platform-security`, `{"allowedClusterRoles": […]}`) | `NotAllowed` |
+| A live grant `clusterRoles/<name>` is on the install | The security officer (`cluster#can_approve`), as for a pod-security waiver | `NotGranted` |
+
+The Component's `ClusterRolesBound` condition names each request and what became of it. Two more reasons bind nothing: `NoServiceAccount` (the entry names none, or names `default`, which every pod without an account of its own runs under) and `RoleNotInstalled` (the platform's `ClusterRole` object is not on the cluster, or does not carry the platform's label). A binding goes at the component's next reconcile when the grant is withdrawn or has expired, when the cluster stops permitting it (a change of the policy wakes the component), when the profile stops asking, and with the component. Nothing reconciles at the moment a grant expires.
+
+**A profile's own rules are never made into a role.** `rules` is still accepted on an entry so that an older profile stays installable; such an entry binds nothing and the condition says `FreeFormRules`. The install still waits for the grant of every privilege the profile asks for, this kind included.
+
+**The set is the platform's and is empty.** No profile of the catalogue asks for a cluster role. With an empty set the operator has no permission on RBAC objects and asks the API server for none. A role is added in this repository, never by a catalogue or a tenant, in three places that a test holds together (`internal/security/cluster_roles_test.go`):
+
+1. The `ClusterRole` in `charts/gentian-os/templates/profile-cluster-roles.yaml`, named `gentian-profile-role-<name>` and labelled `gentianos.io/profile-cluster-role: <name>`. Read verbs only, named resources, no Secrets, no wildcard, nothing of RBAC or admission, no `nodes/proxy`, no impersonation; the test refuses anything else.
+2. The name, with what it allows in an approver's words, in `PlatformClusterRoles`.
+3. The operator's own permissions, as markers beside the reconciler: read on `clusterroles`, read, create and delete on `clusterrolebindings`, and `bind` on `clusterroles` held to the names of the set.
 
 #### 4. Runtime authorization — computed at the PEP (per request)
 

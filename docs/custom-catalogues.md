@@ -845,6 +845,14 @@ directory of the deployments repository, which is held to the same checks.
   database (§4.1a). The operator runs it only for an install pinned to a digest whose bundle, from
   a catalogue of the whole cluster, carries it, and holds every other such install
   (`SignInSidecarRefused`). A tenant's own catalogue cannot bring one.
+- **A profile asks for a cluster role by name and cannot write one.** An entry under
+  `requires.privileges.clusterRoles` names one of the roles the platform defines, and the
+  ServiceAccount its chart runs under. The role is bound only where the platform has it, the
+  cluster's `PlatformSecurityPolicy` permits it for the profile, and the security officer granted
+  it on the install; otherwise nothing is bound and the Component says why (`ClusterRolesBound`).
+  Rules stated on an entry are ignored and make it bind nothing. The platform's set is empty
+  today, so a catalogue cannot obtain any access to the Kubernetes API for an app
+  ([security.md §3.4](design/security.md)).
 - **Nothing here is a licence check.** Whether an app arrives is decided where its chart and images
   are pulled.
 

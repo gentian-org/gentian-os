@@ -210,8 +210,8 @@ Each is true of the code today.
 | 21 | **Removing a tenant's file reports "unchanged" and leaves the file when the tenant has no `kustomization.yaml`.** `writeTenantFileLocked` (`internal/director/gitops/backup.go`) decides that there is nothing to remove from the read error of the kustomization, not from that of the file. Unbinding a tenant's domain (`tenants domain <t> --remove`) in such a tenant directory answers `unchanged` and `domain.yaml` stays | `internal/director/gitops/backup.go` |
 | 22 | **The smoke check of a cluster's own mail cannot pass.** `make verify-kernel-services` (and `e2e-p5-keycloak-dovecot`) run `crossplane/tests/e2e/scripts/e2e-verify-kernel-services.sh`, which calls `verify_keycloak_installation`; that function was deleted from `scripts/lib/verify-kernel-services.sh`, so the script always counts one error. The Dovecot check it also calls now looks in `system-mail`, and has not been run | `scripts/lib/verify-kernel-services.sh` |
 | 23 | **A model the cluster serves itself is offered and not served.** Closed in the code on 2026-10-09 for what the claim declares, not yet shown on a cluster: the gateway's model list is its configuration file, written by its chart from `spec.llm.providers` and `spec.llm.instances` of the claim the LLM ApplicationSet hands it. What stays open: nothing starts the vLLM instance behind an entry of `instances` (`kernel/services/llm/chart` is delivered by no Application, has no NetworkPolicy, lacks the pod settings the admission baseline requires and defaults its image to `latest`), so such a model is listed and a call to it fails. The administration console's Models tab and `kubectl gentian models list` show every such model as not served, from that fact and not from the cluster. For a provider's model the tab reads the custodian's list of credentials and flags a missing token; nothing on the cluster does, nothing probes the provider, and a wrong token still shows as a failing call. A provider's credential requirement is declared from the claim by the Cluster composition | [llms.md §5, §6](../design/llms.md), [roadmap.md §2.28](../roadmap.md) |
-| 24 | **A granted cluster role creates nothing.** A profile states a cluster role as rules of its own (`requires.privileges.clusterRoles[].rules`), the security officer can grant it on an install, and nothing creates a role or a binding (`GrantedClusterRoleRules` has no caller). Creating what the profile states would let a catalogue entry define cluster-wide rules; the platform has no set of roles defined beforehand that a grant could bind instead | [security.md §3.0](../design/security.md) |
-| 25 | **The password policy is not in git.** Since 2026-10-10 the registrar's action is the one way to set it and the director commits no password block. A realm that is rebuilt comes back without the policy. The Tenant still has `spec.security.password`, and the tenant Composition still writes it into the realm when a manifest carries it, which puts back what it says over what the registrar set; the director drops the block from `security-policy.yaml` the next time it writes that file. Whether the Composition also resets a policy it does not state has not been checked on a cluster | [admin-console.md §4.5](../design/admin-console.md) |
+| 24 | **Closed in the code on 2026-10-10, not yet shown on a cluster: a granted cluster role created nothing.** A profile asks for a cluster role by name; the operator binds it where the platform's set has it, the allowlist permits it for the profile and it was granted on the install. The set is empty and the operator has no permission on RBAC objects, so the path that binds has run in tests only. The first role brings those permissions with it. [roles-and-authorizations.md](roles-and-authorizations.md) §2 still states that no workload's ServiceAccount is bound to any role, which the first role of the set ends | [security.md §3.4](../design/security.md) |
+| 25 | **The password policy is not in git, and a second change of it is probably undone.** Since 2026-10-10 the registrar's action is the one way to set it and the director commits no password block. A realm that is rebuilt comes back without the policy. The tenant Composition declares the realm without `passwordPolicy` unless the manifest carries `spec.security.password`, and leaves the provider to fill undeclared fields from what it observes: the first policy the registrar sets is then copied into the realm resource and held, and a later change is set back to it. That is what the same resource did to the realm's mail server until every field of it was declared (the note at `smtpServer` in `tenant-default.yaml`); for the password policy it has not been run on a cluster. A manifest that still carries `spec.security.password` has the Composition write that over what the registrar set; the director drops the block from `security-policy.yaml` the next time it writes that file | [admin-console.md §4.5](../design/admin-console.md) |
 | 26 | **Closed in the code on 2026-10-10, not yet shown on a cluster: the operator granted integrations by itself, and a waiver needed no grant.** The operator writes no `AppGrant` and cannot (its role has neither create nor patch); a binding reports what was granted. A pod-security waiver needs the allowlist and the grant on the install. Grants the operator wrote before stay in the cluster | [security.md §3.4](../design/security.md) |
 
 ## 4. Decisions waiting for the owner
@@ -347,6 +347,36 @@ Each is true of the code today.
     switch is on the tab and in the director's route, with a warning. GPU
     time slicing is not: `gpuTimeSliceReplicas` is read by nothing, so a
     switch for it would change nothing (roadmap, item 2.28).
+22. **What becomes of the grants the operator wrote, and whether an install
+    grants anything.** **Decided 2026-10-10**: the grants an earlier operator
+    wrote are left as they are, and nothing is done about them. An install
+    grants nothing: an integration waits for the tenant's administrator. That
+    may be adjusted later.
+23. **How a cluster role is granted.** **Decided 2026-10-10** and built: the
+    platform defines a fixed, named set in this repository, a profile asks by
+    name, and the operator binds on the set, the allowlist and the grant
+    (defect 24). The set is empty. Open with the first role: which roles are
+    in it. Open now: a profile names the ServiceAccount the role is bound to,
+    because the operator knows no other way to learn which account a chart
+    runs its pods under; it is held to the component's own namespace and may
+    not be `default`.
+24. **Whether the Tenant keeps `spec.security.password`.** Defect 25: the
+    field and the Composition's use of it are what is left of the commit
+    path, and removing them changes the Tenant's schema.
+25. **Where a backup key is made.** The administration console no longer
+    offers to make one. The Operations Console shows the same choice and its
+    backend serves neither the route that would make a key nor the one that
+    reads or keeps the workspace's key, and no platform service makes one. A
+    person makes a key with `age-keygen` and pastes the public half.
+    **Decided 2026-10-10**: left as it is; nothing further is built.
+26. **What a purge does with the kernel's volumes.** **Decided 2026-10-10**:
+    the behaviour as built stands, and nothing is to change. A purge does
+    not drain the claims of any kernel namespace before the reverse pass:
+    the vault and the kernel's database stay up through it, and their claims
+    go with their namespaces. The volumes are deleted in the pass after it
+    (`purge_delete_volumes`, `scripts/lib/teardown.sh`), which takes the
+    volumes of the kernel and system namespaces by name and every tenant's
+    by prefix.
 
 ## 5. Known and deliberately not now
 
