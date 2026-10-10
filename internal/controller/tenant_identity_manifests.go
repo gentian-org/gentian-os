@@ -167,7 +167,7 @@ func (r *TenantReconciler) buildIdentityProvisioningJobs(ctx context.Context, te
 	// and the realm is the identity bootstrap's. See adoptsKernelRealm.
 	adopted := r.adoptsKernelRealm(tenant)
 	var broker *realmBrokerParams
-	if r.KernelRealm != "" && r.KernelDomain != "" {
+	if kernelBrokerEnabled && r.KernelRealm != "" && r.KernelDomain != "" {
 		broker = &realmBrokerParams{
 			kernelRealm:       r.KernelRealm,
 			kernelExternalURL: kernelExternalURL(r.KernelDomain),

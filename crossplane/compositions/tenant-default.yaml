@@ -130,6 +130,11 @@ spec:
                  — the same rule oidc.discoveryUrl follows. */}}
             {{- $kernelRealm := dig "identity.kernelRealm" "" $ccData }}
             {{- $kcInternal  := dig "identity.internalUrl" "" $ccData }}
+            {{- /* Switched off: nobody signs in to a tenant realm through the kernel
+                 realm, so the kernel identity provider, its mappers, its
+                 first-login flow and the client it signs in as are not
+                 composed. The code stays; true composes them again. */}}
+            {{- $kernelBroker := false }}
             {{- /* Where Keycloak runs, and so where the broker clients' secrets
                  are published for the IdPs that read them back. Nothing outside
                  this Composition reads them; the namespace only has to exist. */}}
@@ -1918,6 +1923,7 @@ spec:
               providerConfigRef:
                 name: keycloak
 
+            {{- if $kernelBroker }}
             {{- /* ── the claims that carry a user across a realm boundary ──────
                  A brokered login copies a user from one realm into another, and
                  these four decide what survives the crossing. Without them the
@@ -2053,6 +2059,8 @@ spec:
               providerConfigRef:
                 name: keycloak
             {{- end }}
+
+            {{- end }}{{- /* $kernelBroker */}}
 
             {{- /* ── the realm's "groups" client scope ────────────────────────
                  What puts a user's group membership into their tokens. Every
@@ -2403,6 +2411,7 @@ spec:
               providerConfigRef:
                 name: keycloak
 
+            {{- if $kernelBroker }}
             {{- /* ── kernel broker client, observed ────────────────────────────
                  The tenant realm brokers to the kernel realm, and broker-<tenant>
                  in the KERNEL realm is the client it authenticates as. The realm
@@ -2550,6 +2559,7 @@ spec:
                   key: attribute.client_secret
               providerConfigRef:
                 name: keycloak
+            {{- end }}{{- /* $kernelBroker */}}
             {{- end }}
             {{- end }}
 

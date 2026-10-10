@@ -295,8 +295,8 @@ var TenantOwned = []TenantRule{
 		Delete:   "deleted; never when it is the kernel realm, which a tenant only adopts", Destroyed: true,
 	},
 	{
-		What: "the client the tenant's realm signs in to the kernel realm as (broker-<realm>), and the mapper on it", MadeBy: "the tenant's identity Job; the mapper by its Composition",
-		Export: "not carried; made again with the realm",
+		What: "the client the tenant's realm signed in to the kernel realm as (broker-<realm>), and the mapper on it", MadeBy: "nothing any more; the tenant's identity Job and its Composition, on a cluster from before",
+		Export: "not carried",
 		Retain: "kept",
 		Delete: "removed from the kernel realm, by the Job that deletes the realm", Destroyed: true,
 	},

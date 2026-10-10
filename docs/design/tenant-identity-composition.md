@@ -33,12 +33,17 @@ administrator Job and no mail-server Job, only its groups.
 | The zone's sign-in client (`gentian-edge-<zone>`), its scopes and audience mappers | `keycloak-realm-{tenant}`: creates the realm |
 | The token-exchange client, the `groups` scope and mapper, the user profile, realm events | `keycloak-gentian-groups-{tenant}`: the tenant's groups, one per installed app included, and their attributes |
 | The four fixed groups (`members`, `admins`, `app-admins`, `perimeter`) | `keycloak-admin-{tenant}`: the tenant administrator's account, without a password |
-| The kernel identity provider in the tenant realm, its mappers and the `first-broker-login-gentian` flow | OIDC client Jobs, for an app whose client has an OIDC pack ([iam.md §1.7](iam.md)); SAML client Jobs |
+| The realm's required actions | OIDC client Jobs, for an app whose client has an OIDC pack ([iam.md §1.7](iam.md)); SAML client Jobs |
 | `gentian-dovecot` and the `mailbox` scope, where the cluster has its own mail server | `keycloak-kernel-tenant-broker-{tenant}`: the kernel realm's own first-broker-login flow |
 | The realm itself, adopted by name | The realm's mail-server settings, where the cluster has SMTP credentials |
 
 An app without a pack gets its OIDC client from its own app Composition, not
 from a Job; the operator only seeds the client's secret.
+
+Not composed: the kernel identity provider in a tenant realm, its mappers and
+the `first-broker-login-gentian` flow. Nothing signs anybody in through it,
+so it is switched off in the Composition (`$kernelBroker`) and its code kept
+([iam.md §1.7](iam.md)).
 
 ## Composition ordering
 

@@ -39,6 +39,13 @@ const (
 	identityRequeueAfter   = 2 * time.Second
 )
 
+// kernelBrokerEnabled is off: nobody signs in to a tenant realm through the
+// kernel realm, so the realm Job no longer makes the client a tenant realm
+// would sign in to the kernel realm as (broker-<realm>). tenant-default has the
+// same switch for the identity provider that used it. The code stays; true
+// brings the client back.
+const kernelBrokerEnabled = false
+
 // realmBrokerParams holds SSO identity brokering parameters for the realm provisioning job.
 // When nil, no identity brokering is configured for the realm.
 // The broker registers the shared kernel realm as an OIDC Identity Provider in the

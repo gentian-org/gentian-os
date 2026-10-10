@@ -193,11 +193,13 @@ service that only validates tokens (`gentian-dovecot`); it has no scope, role
 or group.
 
 The tenant realm keeps Keycloak's built-in `browser` flow, so it
-authenticates its own people with a credential form. `tenant-default` also
-composes, in each tenant realm, an identity provider `kernel` (hidden on the
-login page, not used by default) and the flow `first-broker-login-gentian`,
-which matches a person arriving through it to an existing account by email.
-The sign-in path of §1.1 does not go through it.
+authenticates its own people with a credential form. Nobody reaches a tenant
+realm through the kernel realm: `tenant-default` no longer composes the
+identity provider `kernel` in a tenant realm, its mappers or the flow
+`first-broker-login-gentian`, and the realm Job no longer makes the client
+`broker-<tenant>` in the kernel realm. All four are switched off in place
+(`$kernelBroker` in the Composition, `kernelBrokerEnabled` in the operator),
+not removed.
 
 ### 1.8 Provisioning accounts in apps
 

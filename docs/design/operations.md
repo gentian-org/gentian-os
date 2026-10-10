@@ -455,8 +455,9 @@ fine print:
   waits until the namespace is gone.
 - **The realm.** Never deleted or disabled when it is the kernel realm, which
   a tenant only adopts.
-- **The client the realm signs in to the kernel realm as** (`broker-<realm>`),
-  and the mapper on it: removed from the kernel realm by the Job that deletes
+- **The client a realm signed in to the kernel realm as** (`broker-<realm>`),
+  and the mapper on it. It is no longer made ([iam.md §1.7](iam.md)); one
+  left from before is removed from the kernel realm by the Job that deletes
   the realm.
 - **The vault subtree.** An operator with no vault that was not told to run
   without one (`GENTIAN_WITHOUT_VAULT=true`) fails the deletion here.

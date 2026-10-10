@@ -396,6 +396,11 @@ republishes its secret without rotating it, which is what lets the IdP take
 credentials from a Secret — so something has to create it, and on a realm that
 does not exist yet that something cannot be the Composition.
 
+Since then the kernel identity provider itself is switched off: nothing signs
+anybody in to a tenant realm through the kernel realm, so neither it, its
+mappers and flow, nor the broker client is made any more
+([iam.md §1.7](design/iam.md)). The code is kept behind a switch.
+
 ### 1.28 Tenant Separation Belongs to the API Server, Not the Console (***)
 * **Target Domain**: Security & Isolation
 * **Context today**: the administration console no longer calls the API
