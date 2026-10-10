@@ -429,9 +429,10 @@ type ComponentSecrets struct {
 	// +optional
 	Generated []AppSecret `json:"generated,omitempty"`
 
-	// Derived secrets are recomputed from the tenant and component name. Their
-	// formula and inputs are load-bearing forever: a change to either silently
-	// rotates the value for every existing tenant. Prefer Generated.
+	// Derived secrets are keys the platform adds to the credentials Secret it
+	// manages for the component, under the names given. Each is made once per
+	// tenant, component and key, the way the cluster's secretMode says, and
+	// kept in the vault.
 	// +optional
 	Derived []DerivedSecretKey `json:"derived,omitempty"`
 }
@@ -999,7 +1000,7 @@ func (p *ComponentProfile) PostInstall() *AppPostInstallJob {
 	return p.Spec.Hooks.PostInstall
 }
 
-// DerivedSecrets are secrets computed from others rather than generated, or
+// DerivedSecrets are the keys the profile declares under secrets.derived, or
 // nil.
 func (p *ComponentProfile) DerivedSecrets() []DerivedSecretKey {
 	if p == nil || p.Spec.Secrets == nil {

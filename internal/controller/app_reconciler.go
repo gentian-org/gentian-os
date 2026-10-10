@@ -12,8 +12,6 @@ package controller
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/base64"
 	"fmt"
 	"strings"
 	"time"
@@ -236,17 +234,6 @@ func (r *TenantReconciler) seedAppSecrets(ctx context.Context, tenant *gentianov
 		}
 	}
 	return nil
-}
-
-// derivedSecretValue computes a stable per-tenant, per-app value.
-//
-// The formula is frozen — see DerivedSecretKey. It predates the declaration and
-// is reproduced exactly, so making the key declarative does not rotate it and
-// does not invalidate the sessions of any app already using one.
-func derivedSecretValue(tenantName, appName string) string {
-	h := sha256.New()
-	_, _ = fmt.Fprintf(h, "%s-%s-secret-salt-value", tenantName, appName)
-	return base64.URLEncoding.EncodeToString(h.Sum(nil))
 }
 
 // appComponentReady reports whether an installed app's Component is Ready,

@@ -3246,19 +3246,22 @@ spec:
                 properties:
                   derived:
                     description: |-
-                      Derived secrets are recomputed from the tenant and component name. Their
-                      formula and inputs are load-bearing forever: a change to either silently
-                      rotates the value for every existing tenant. Prefer Generated.
+                      Derived secrets are keys the platform adds to the credentials Secret it
+                      manages for the component, under the names given. Each is made once per
+                      tenant, component and key, the way the cluster's secretMode says, and
+                      kept in the vault.
                     items:
                       description: |-
-                        DerivedSecretKey names one deterministic value the platform adds to the
-                        credentials Secret it manages for an app.
+                        DerivedSecretKey names one value the platform makes for an app and adds to
+                        the credentials Secret it manages for it.
 
-                        The derivation is deliberately frozen: the value is a function of the tenant
-                        and app name only, so it survives reinstalls. Changing how it is computed
-                        rotates the value for every existing tenant, which for a session-signing key
-                        means logging everyone out — so the formula must not be "improved" in place.
-                        A genuinely better derivation belongs in appSecrets under a new key name.
+                        The value is a secret of this tenant, app and key, made once and kept in
+                        the vault as the app's other credentials are. How it is made follows the
+                        cluster's secretMode: derived from the master password, so that a cluster
+                        rebuilt from the same master password and salt arrives at it again, or
+                        drawn at random, and then the stored copy is the only one. It is never
+                        made again while it is stored: an app signs sessions with such a key and
+                        may encrypt what it keeps with it.
                       properties:
                         key:
                           description: |-

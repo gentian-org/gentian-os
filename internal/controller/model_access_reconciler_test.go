@@ -145,7 +145,7 @@ func newModelAccessWorld(t *testing.T, apps []string, objs ...client.Object) *mo
 	}
 	scheme := deleteGapsScheme()
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(append(objs, gatewayAdminKey())...).Build()
-	w.r = &TenantReconciler{Client: c, Scheme: scheme, Seeder: secrets.NewSeeder(w.vault, nil)}
+	w.r = &TenantReconciler{Client: c, Scheme: scheme, Seeder: secrets.NewSeeder(w.vault, secrets.NewDeriver("unit-test-master"))}
 	return w
 }
 
@@ -217,8 +217,10 @@ func TestOnlyAnAppThatDeclaresTheModelGatewayIsGivenAKey(t *testing.T) {
 	if secretValue(s, modelCredentialsBaseKey) != want || secretValue(s, modelCredentialsBaseURLKey) != want {
 		t.Errorf("address = %q / %q, want %q", secretValue(s, modelCredentialsBaseKey), secretValue(s, modelCredentialsBaseURLKey), want)
 	}
-	if secretValue(s, "WEBUI_SECRET_KEY") != derivedSecretValue("demo", "chat") {
-		t.Error("the derived key the profile asked for is not in the Secret")
+	// The key the profile declared is the one the vault holds for it.
+	declared := w.vault[secrets.DerivedKeyPath("demo", "chat", "WEBUI_SECRET_KEY")]["value"]
+	if declared == "" || secretValue(s, "WEBUI_SECRET_KEY") != declared {
+		t.Errorf("WEBUI_SECRET_KEY = %q, the vault holds %q", secretValue(s, "WEBUI_SECRET_KEY"), declared)
 	}
 	if w.gateway.keys["demo-chat"] != modelgateway.HashKey(key) {
 		t.Errorf("the gateway holds %v, want the Secret's key under demo-chat", w.gateway.keys)
@@ -276,6 +278,7 @@ func TestTheModelKeyIsStableAcrossAReinstallAndGoneAfterAPurge(t *testing.T) {
 	// shared teardown (applifecycle); here, what that leaves behind.
 	path := secrets.CategoryPath("demo", "chat", secrets.ModelAccessCategory)
 	delete(w.vault, path)
+	delete(w.vault, secrets.DerivedKeyPath("demo", "chat", "WEBUI_SECRET_KEY"))
 	delete(w.gateway.keys, "demo-chat")
 	if err := w.r.Delete(ctx, w.secret(t, "chat")); err != nil {
 		t.Fatal(err)

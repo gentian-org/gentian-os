@@ -1516,14 +1516,16 @@ type AppSecret struct {
 	ValuePath string `json:"valuePath"`
 }
 
-// DerivedSecretKey names one deterministic value the platform adds to the
-// credentials Secret it manages for an app.
+// DerivedSecretKey names one value the platform makes for an app and adds to
+// the credentials Secret it manages for it.
 //
-// The derivation is deliberately frozen: the value is a function of the tenant
-// and app name only, so it survives reinstalls. Changing how it is computed
-// rotates the value for every existing tenant, which for a session-signing key
-// means logging everyone out — so the formula must not be "improved" in place.
-// A genuinely better derivation belongs in appSecrets under a new key name.
+// The value is a secret of this tenant, app and key, made once and kept in
+// the vault as the app's other credentials are. How it is made follows the
+// cluster's secretMode: derived from the master password, so that a cluster
+// rebuilt from the same master password and salt arrives at it again, or
+// drawn at random, and then the stored copy is the only one. It is never
+// made again while it is stored: an app signs sessions with such a key and
+// may encrypt what it keeps with it.
 type DerivedSecretKey struct {
 	// Key is the Secret key, and therefore the environment variable name when
 	// the app consumes the Secret with envFrom (e.g. "WEBUI_SECRET_KEY").

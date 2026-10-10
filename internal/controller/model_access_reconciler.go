@@ -13,7 +13,10 @@ package controller
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
+	stderrors "errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -32,6 +35,7 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/backup"
 	"github.com/gentian-org/gentian-os/internal/controller/provisioner"
+	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"github.com/gentian-org/gentian-os/internal/modelgateway"
 )
 
@@ -313,13 +317,64 @@ func (r *TenantReconciler) serveModelAccess(
 		modelCredentialsBaseURLKey: baseURL,
 		modelCredentialsAPIKey:     key,
 	}
-	// Extra deterministic keys the profile asked for. They have always been
-	// delivered in this Secret, and the profile that asks for one consumes
-	// the Secret whole.
+	// The keys the profile declared under secrets.derived. They have always
+	// been delivered in this Secret, and the profile that asks for one
+	// consumes the Secret whole. A key that could not be made holds the
+	// Secret back: the app waits, as it does for its gateway key.
 	for _, dsk := range profile.DerivedSecrets() {
-		data[dsk.Key] = derivedSecretValue(tenant.Name, app)
+		value, why, err := r.derivedKey(ctx, tenant, app, dsk.Key)
+		if err != nil || why != "" {
+			return why, err
+		}
+		data[dsk.Key] = value
 	}
 	return "", r.writeModelCredentials(ctx, tenant, app, data)
+}
+
+// derivedKey is the value of one key a profile declares under
+// secrets.derived: what the vault holds for it, made there on first use the
+// way the cluster's secret mode says (secrets.SeedDerivedKey). why is
+// non-empty, with no error, when it could not be made and the app waits.
+//
+// On an operator that runs without a vault the value is random and kept in
+// the app's Secret, which is then its only copy -- as the gateway key is.
+func (r *TenantReconciler) derivedKey(ctx context.Context, tenant *gentianov1alpha1.Tenant, app, key string) (value, why string, err error) {
+	if r.Seeder != nil {
+		value, err := r.Seeder.SeedDerivedKey(ctx, tenant.Name, app, key)
+		switch {
+		case stderrors.Is(err, secrets.ErrNoMasterPassword):
+			return "", fmt.Sprintf("the key %s is derived from the master password, which the operator could not read when it started; "+
+				"it is made once the operator has been restarted with the master password readable", key), nil
+		case err != nil:
+			return "", fmt.Sprintf("the vault did not keep the key %s: %v", key, err), nil
+		}
+		return value, "", nil
+	}
+	existing := &corev1.Secret{}
+	err = r.Get(ctx, types.NamespacedName{Name: modelCredentialsSecretName(app), Namespace: tenantNamespaceName(tenant)}, existing)
+	if err != nil && !errors.IsNotFound(err) {
+		return "", "", err
+	}
+	if err == nil && ownsModelCredentials(existing, tenant.Name, app) {
+		held := string(existing.Data[key])
+		if held != "" && held != namesOnlyDerivedKey(tenant.Name, app) {
+			return held, "", nil
+		}
+	}
+	buf := make([]byte, 32)
+	if _, err := rand.Read(buf); err != nil {
+		return "", "", fmt.Errorf("generate the key %s: %w", key, err)
+	}
+	return hex.EncodeToString(buf), "", nil
+}
+
+// namesOnlyDerivedKey is the value an earlier version delivered for every
+// declared key: a digest of the tenant's and the app's name, which anybody
+// who knew the two could compute. It is here only to be recognised and
+// replaced.
+func namesOnlyDerivedKey(tenantName, appName string) string {
+	h := sha256.Sum256([]byte(tenantName + "-" + appName + "-secret-salt-value"))
+	return base64.URLEncoding.EncodeToString(h[:])
 }
 
 // modelKey is the key an app presents: what the vault holds for it, made
