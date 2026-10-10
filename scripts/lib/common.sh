@@ -664,7 +664,7 @@ validate_config() {
     # its declarative half moved onto the claim, and these messages went on
     # naming it — telling an operator to fix a value in a file that no longer
     # exists, on the one screen whose whole purpose is saying what to fix.
-    cluster_claim_file="${deployments_root}/clusters/${cluster}/claims/cluster.yaml"
+    cluster_claim_file="${deployments_root}/clusters/${cluster}/kernel/claims/cluster.yaml"
 
     _file_header() {
         local file="$1" role="$2"
@@ -710,10 +710,10 @@ validate_config() {
 
     MAIL_SERVICE_MODE="$(gentian_mail_service_mode)"
     if [[ "${MAIL_SERVICE_MODE}" != "external" && "${MAIL_SERVICE_MODE}" != "system" ]]; then
-        echo "  [INVALID]  MAIL_SERVICE_MODE=${MAIL_SERVICE_MODE}  — must be 'external' or 'kernel' (set in ${cluster_claim_file})"
+        echo "  [INVALID]  MAIL_SERVICE_MODE=${MAIL_SERVICE_MODE}  — must be 'external' or 'system' (set in ${cluster_claim_file})"
         (( errors++ )) || true
     else
-        echo "  [OK]       MAIL_SERVICE_MODE=${MAIL_SERVICE_MODE}  (install-time; invitation mail uses in-cluster Postfix when kernel)"
+        echo "  [OK]       MAIL_SERVICE_MODE=${MAIL_SERVICE_MODE}  (install-time; invitation mail uses in-cluster Postfix when system)"
     fi
     if [[ "${MAIL_SERVICE_MODE}" == "external" ]]; then
         _opt_from EXTERNAL_SMTP_HOST "relay address — mail.host on the Cluster claim" "claims/cluster.yaml"
