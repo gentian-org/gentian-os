@@ -783,11 +783,10 @@ GENTIAN_DEPLOYMENTS_REPO=https://git.internal/gentian-deployments
 
 The Git origin is redirected, including for every child ApplicationSet the
 platform creates. The operator's image is not: the cluster pulls
-`ghcr.io/gentian-org/gentian-os` whatever `install.env` says.
-`GENTIAN_OS_IMAGE_REPOSITORY` changes only which registry the pre-flight looks
-the tag up in. Nor are the infrastructure charts: `INFRA_CHART_REPO` and
-`INFRA_CHART_PRIVATE=true` make the installer ask for, check and store the
-`infra-chart-registry` credential, and no chart is pulled through it yet.
+`ghcr.io/gentian-org/gentian-os` whatever `install.env` says, and the
+pre-flight looks the tag up there. Nor are the infrastructure charts: there is
+no setting that redirects them, and the installer asks for no chart registry
+credential.
 
 App profiles are not part of this: they are fetched from a catalogue, which is
 a public https address (`GENTIAN_CATALOGUE_URL` for the default one). A

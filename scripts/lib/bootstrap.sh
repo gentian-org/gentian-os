@@ -682,7 +682,7 @@ apply_cluster_xr() {
 
 # =============================================================================
 # seed_secrets_remaining — Seed the KV paths that the Cluster XR does not
-# manage: internal/master-password, storage/registry, dns/cloudflare,
+# manage: internal/master-password, dns/cloudflare,
 # database/cnpg, and other kernel paths.
 # Delegates to the existing seed-openbao.sh (uses kv_put_once for safety).
 # =============================================================================

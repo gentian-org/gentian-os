@@ -207,8 +207,6 @@ _env_var_for() {
         # under "Repository credentials" below.
         gentian-*-repository/username)     _repo_credential "$1" username || true ;;
         gentian-*-repository/password)     _repo_credential "$1" token || true ;;
-        infra-chart-registry/username)     echo REGISTRY_USER ;;
-        infra-chart-registry/password)     echo REGISTRY_PASSWORD ;;
         # The DNS credential, whichever provider hosts the zone. CF_API_TOKEN is
         # kept for Cloudflare because it is exported by hand, written in runbooks
         # and cached on disk from earlier installs; the rest get one generated
@@ -304,8 +302,6 @@ _GENTIAN_CACHED_CREDENTIAL_VARS=(
     DERIVATION_SALT
     GENTIAN_DEPLOYMENTS_GIT_USERNAME
     GENTIAN_DEPLOYMENTS_GIT_TOKEN
-    REGISTRY_USER
-    REGISTRY_PASSWORD
     CF_API_TOKEN
     CF_TUNNEL_TOKEN
 )
@@ -405,11 +401,6 @@ _edge_ingress_provider() {
 # A requirement that does not apply is never prompted for and never validated.
 _requirement_applies() {
     case "$1" in
-        infra-chart-registry)
-            # Infra charts come from a public URL unless the cluster says
-            # otherwise, and a public registry has no credential to give.
-            [[ "${INFRA_CHART_PRIVATE:-false}" == "true" ]]
-            ;;
         acme-dns-*|edge-ingress-*)
             # One rule for every provider table: the requirement applies when
             # it names the provider this cluster actually runs. Which provider
@@ -472,21 +463,14 @@ _requirement_applies() {
 # _validate_requirement <name> — run the declared probe against the collected
 # values. Returns 0 when satisfied or when there is nothing to check.
 _validate_requirement() {
-    local name="$1" vtype vhost vurl
+    local name="$1" vtype vurl
     vtype="$(catalogue_get "${name}" 'validate.type' 2>/dev/null || echo noop)"
     [[ -n "${vtype}" && "${vtype}" != "null" ]] || vtype=noop
     [[ "${vtype}" == "noop" ]] && return 0
 
-    vhost="$(catalogue_get "${name}" 'validate.host' 2>/dev/null || true)"
     vurl="$(catalogue_get "${name}" 'validate.url' 2>/dev/null || true)"
 
-    local user pass
     case "${vtype}" in
-        oci-registry)
-            user="${REGISTRY_USER:-}"; pass="${REGISTRY_PASSWORD:-}"
-            [[ -n "${pass}" ]] || return 0
-            run_validator oci-registry "${vhost:-${INFRA_CHART_REPO:-}}" "${user}" "${pass}"
-            ;;
         git-https)
             # Every repository credential is probed the same way: the table
             # names its variables and its mode says how the token is sent.

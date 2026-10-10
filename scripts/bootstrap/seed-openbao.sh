@@ -29,14 +29,11 @@ set -euo pipefail
 #   authz/openfga
 #   mail/postfix                  (requires args 4+5: smtp relay user/pass)
 #   mail/dovecot
-#   storage/registry              (optional, requires args 2+3)
 # =============================================================================
 
 MASTER_PASSWORD="${1:-}"
 SMTP_RELAY_USER="${2:-}"
 SMTP_RELAY_PASS="${3:-}"
-REGISTRY_USER="${REGISTRY_USER:-}"
-REGISTRY_PASSWORD="${REGISTRY_PASSWORD:-}"
 
 BAO_ADDR="${BAO_ADDR:-http://localhost:8200}"
 BAO_TOKEN="${BAO_TOKEN:-}"
@@ -365,18 +362,6 @@ kv_put "mail/smtp" "$(jq -n \
     "starttls": $starttls,
     "username": $username
   }')"
-
-# --- Registry (OCI pull credentials) — only if provided ---
-if [ -n "$REGISTRY_USER" ] && [ -n "$REGISTRY_PASSWORD" ]; then
-    kv_put_once "storage/registry" "$(jq -n \
-        --arg username "${REGISTRY_USER}" \
-        --arg password "${REGISTRY_PASSWORD}" \
-        '{"username": $username, "password": $password}')"
-else
-    echo ""
-    echo "  Skipping registry credentials (not provided)."
-    echo "  To add them later: bao kv put gentian-os/kernel/storage/registry username=<u> password=<p>"
-fi
 
 # --- Provider credentials (DNS zone host, edge ingress) ---
 # Each under the path its provider owns in kernel/platforms.yaml.

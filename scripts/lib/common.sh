@@ -1974,7 +1974,7 @@ check_prereqs() {
     # and the one this run renders (GENTIAN_OS_IMAGE_TAG). Both are checked
     # below, for the reason given there.
     local _os_repo _os_tag _os_values
-    _os_repo="${GENTIAN_OS_IMAGE_REPOSITORY:-ghcr.io/gentian-org/gentian-os}"
+    _os_repo="ghcr.io/gentian-org/gentian-os"
     _os_values="${GENTIAN_DEPLOYMENTS_PATH:-}/clusters/${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-}/kernel/values.yaml"
     # yq_get, not a bare `yq`: mikefarah/yq takes `eval` and kislyuk/yq takes a
     # jq filter, and both ship as `yq`. Calling one syntax directly fails

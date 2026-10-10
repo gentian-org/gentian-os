@@ -153,14 +153,6 @@ try_load_creds_from_openbao() {
             fi
         done
     done
-    if [[ -z "${REGISTRY_USER:-}" ]]; then
-        v=$(_bao_get "storage/registry" '.data.data.username')
-        [[ -n "$v" ]] && { export REGISTRY_USER="$v"; loaded=1; }
-    fi
-    if [[ -z "${REGISTRY_PASSWORD:-}" ]]; then
-        v=$(_bao_get "storage/registry" '.data.data.password')
-        [[ -n "$v" ]] && { export REGISTRY_PASSWORD="$v"; loaded=1; }
-    fi
     # Provider credentials -- the zone host and the edge ingress -- read back
     # from the same tables that decided to ask for them, so what was seeded is
     # what is recovered.

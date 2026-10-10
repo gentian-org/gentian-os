@@ -299,10 +299,21 @@ stops before touching the cluster if any fail.
 |---|---|---|
 | `deployments-repository` | yes | Write access to the repository from step 1 |
 | `master-password` | yes | At least 16 characters |
-| `infra-chart-registry` | no | Only for a private chart registry |
 | `gentian-os-repository`, `gentian-ui-repository` | no | Only when the matching `GENTIAN_*_AUTH` in `install.env` is not `none` |
 | DNS provider credential | under `acme-dns01` | For the provider named in step 4. Cloudflare, the default: an API token with Zone → Zone → Read and Zone → DNS → Edit on the domain's zone — needed by the default issuer, see below |
-| Cloudflare Tunnel API token | under `networkMode: tunnel` | Account → Cloudflare One Connector: cloudflared → Edit. The operator writes the tunnel's routes with it. Not asked on a `static-ip` cluster |
+| Cloudflare Tunnel API token | under `networkMode: tunnel` | Account → Cloudflare One Connector: cloudflared → Edit. Not the tunnel's own token (that one is in the Secret `cloudflared` runs with). It is checked and stored in OpenBao at `gentian-os/kernel/edge/cf-tunnel`. **As installed, the operator writes the tunnel's routes with the DNS token, not with this one** — so on a tunnel cluster give the DNS token this permission too (one token with all three permissions, entered at both questions, is the simple case). To have the operator use this token instead, see below. Not asked on a `static-ip` cluster |
+
+To give the operator the tunnel token as a credential of its own, with the DNS
+token left at its two zone permissions, add this to
+`clusters/<cluster-id>/kernel/values.yaml` in the deployments repository once
+step 0 has written that file, and run `./install.sh` again:
+
+```yaml
+cloudflare:
+  tunnelAPITokenSecretRef:
+    name: cloudflare-tunnel-api-token-gentian-system
+    openbaoPath: gentian-os/kernel/edge/cf-tunnel
+```
 
 Type them when asked. Each reaches OpenBao once it exists, and a later run
 recovers it from there instead of asking again — so a resumed install does not
@@ -1003,7 +1014,6 @@ instead of the prompt:
 |---|---|
 | `deployments-repository` | `GENTIAN_DEPLOYMENTS_GIT_USERNAME`, `GENTIAN_DEPLOYMENTS_GIT_TOKEN` |
 | `master-password` | `MASTER_PASSWORD` |
-| `infra-chart-registry` | `REGISTRY_USER`, `REGISTRY_PASSWORD` |
 | `gentian-os-repository`, `gentian-ui-repository` | `GENTIAN_OS_GIT_USERNAME` / `GENTIAN_OS_GIT_TOKEN`, and the same with `UI` |
 | Cloudflare API token (DNS) | `CF_API_TOKEN` |
 | Cloudflare Tunnel API token | `CF_TUNNEL_TOKEN` |
