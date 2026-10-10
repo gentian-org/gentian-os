@@ -453,18 +453,23 @@ file or a key on this machine. Where the install would act, they print a line
 beginning `Would`:
 
 ```bash
-./install.sh --validate      # which settings and credentials does this configuration have, and which are missing?
+./install.sh --validate      # which settings and credentials does this configuration have, and does this machine and cluster pass the pre-flight?
 ./install.sh --dry-run       # what would the install do to THIS cluster?
 ```
 
 Neither asks for a credential and neither writes the cluster's definition.
-`--validate` checks the step files and prints a report of the configuration,
-ending in a line `Result:`; it runs no pre-flight, and it lists
-`MASTER_PASSWORD` as missing unless that is in the environment or can be read
-from the cluster's OpenBao. `--dry-run` reads the
-cluster, so it has to be reachable, and before the first install it stops at
-`clusters/<cluster-id>/kernel is incomplete`, which is then the expected
-answer. `./install.sh --explain` needs neither a cluster nor a definition.
+`--validate` checks the step files, prints a report of the configuration
+ending in a line `Result:`, and then runs the install's pre-flight: the tools
+on this machine, the cluster reachable and new enough, the operator image
+published. It asks no question and runs no step's check, so it works before
+the first install: a value the install asks for (`MASTER_PASSWORD`, the
+cluster's domain) is listed as `[PENDING]`, not as an error, and a cluster with
+no definition yet is told that the install writes one. It stops after the
+report, with exit status 1, when the report has an error. `--dry-run` goes
+further and runs every step's check. Both read the
+cluster, so it has to be reachable, and before the first install `--dry-run`
+stops at `clusters/<cluster-id>/kernel is incomplete`, which is then the
+expected answer. `./install.sh --explain` needs neither a cluster nor a definition.
 
 ## 5. Handover
 

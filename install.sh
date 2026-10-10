@@ -194,8 +194,12 @@ Running part of it. A step is named by its number or its full id, so
                         is asking the wrong question
 
 Other options:
-  --validate            validate config and step contracts. Changes nothing,
-                        on the same terms as --dry-run
+  --validate, --check   check the step files, report which settings and
+                        credentials this configuration has, then run the
+                        pre-flight (tools, cluster reachable, Kubernetes
+                        version, operator image). Asks no question, collects
+                        no credential and runs no step's check(). Changes
+                        nothing, on the same terms as --dry-run
   --verify-only         run post-install verification and print the summary
   --activate-admin      issue a new activation link for the cluster administrator
                         (admin@<kernel-domain>), mailed or shown once — for a lost
@@ -397,7 +401,26 @@ prepare_run() {
 
     try_load_creds_from_openbao
 
-    [[ "${INSTALL_VALIDATE_ONLY:-0}" == "1" ]] && validate_config
+    # --validate: the report of the configuration, then the same pre-flight an
+    # install runs, and nothing else. It asks no question and collects no
+    # credential, so it is the one command that can be run before anything has
+    # been answered: a cluster with no definition yet is told that an install
+    # writes one, not refused for lacking it.
+    if [[ "${INSTALL_VALIDATE_ONLY:-0}" == "1" ]]; then
+        validate_config || exit 1
+        GENTIAN_NONINTERACTIVE=1 prompt_app_repos
+        local _undefined
+        _undefined="$(cluster_deployment_missing | tr '\n' ' ')"
+        if [[ -n "${_undefined}" ]]; then
+            info "This cluster has no complete deployment definition yet (missing: ${_undefined% })."
+            info "  An install writes it first, asking for each setting — step 0."
+        else
+            require_cluster_deployment
+        fi
+        _ensure_bao
+        CROSSPLANE_MODE=1 check_prereqs
+        return 0
+    fi
 
     prompt_app_repos
 

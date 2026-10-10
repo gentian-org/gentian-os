@@ -624,9 +624,15 @@ load_env_file_override() {
     info "Loaded ${label} from ${file} (overrides prior values)."
 }
 
-# validate_config checks that all required environment variables are set and
-# that key values pass basic format validation. Exits 0 on success, 1 on
-# failure. No cluster actions are taken.
+# validate_config reports which settings and credentials this configuration
+# has and whether key values pass basic format validation. Returns 0 when the
+# configuration is ready and 1 when it is not; the caller decides what follows
+# (--validate goes on to the pre-flight). It used to exit either way, so the
+# pre-flight that --validate is documented to run was never reached.
+#
+# A value an install asks for is not an error here. MASTER_PASSWORD and
+# KERNEL_DOMAIN do not exist before a first install, and reporting them as
+# missing made the command fail exactly when it is first run.
 validate_config() {
     local errors=0 warnings=0
     local deployments_root cluster
@@ -672,7 +678,11 @@ validate_config() {
     }
 
     _file_header "the environment" "Secrets checks (environment, ~/.gentian cache, or OpenBao)"
-    _req_from MASTER_PASSWORD          "HKDF master secret — used to derive all app secrets" "the environment"
+    if [[ -n "${MASTER_PASSWORD:-}" ]]; then
+        echo "  [OK]       MASTER_PASSWORD"
+    else
+        echo "  [PENDING]  MASTER_PASSWORD  — not in the environment, the ~/.gentian cache or this cluster's OpenBao. An install asks for it; an unattended one needs it exported."
+    fi
     _opt_from CF_API_TOKEN       "Cloudflare token — needed for DNS-01 wildcard certificates" "the environment"
     if [[ -z "${CF_ZONE_NAME:-}" ]]; then
         echo "  [OK]       CF_ZONE_NAME  (optional; derived from KERNEL_DOMAIN when unset)"
@@ -792,14 +802,13 @@ validate_config() {
     echo ""
     if (( errors > 0 )); then
         echo -e "${RED}Result: ${errors} error(s), ${warnings} warning(s) — config is NOT ready.${NC}"
-        exit 1
+        return 1
     elif (( warnings > 0 )); then
         echo -e "${YELLOW}Result: 0 errors, ${warnings} warning(s) — config is ready (with caveats).${NC}"
-        exit 0
     else
         echo -e "${GREEN}Result: all checks passed — config is ready.${NC}"
-        exit 0
     fi
+    return 0
 }
 
 # load_operator_config sources declarative operator-provided env files before
@@ -1916,7 +1925,7 @@ check_prereqs() {
     fi
 
     # ── Required environment variables ───────────────────────────────────────
-    # A dry run collects no credentials, and neither does a teardown, so their
+    # A dry run or a validation collects no credentials, and neither does a teardown, so their
     # absence is the expected state rather than a missing prerequisite. Counting
     # it as one aborts over values the run was never going to use — and on a
     # teardown that means refusing to remove a cluster because the operator no
@@ -1924,8 +1933,8 @@ check_prereqs() {
     MAIL_SERVICE_MODE="$(gentian_mail_service_mode)"
     export MAIL_SERVICE_MODE
 
-    if [[ "${GENTIAN_DRY_RUN:-0}" == "1" ]]; then
-        info "Dry run: credential variables not checked (none were collected)."
+    if gentian_read_only; then
+        info "Dry run or validation: credential variables not checked (none were collected)."
     elif [[ "${GENTIAN_DIRECTION:-forward}" == "reverse" ]]; then
         info "Teardown: credential variables not checked (none were collected)."
     else

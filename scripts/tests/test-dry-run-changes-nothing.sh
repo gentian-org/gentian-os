@@ -244,6 +244,12 @@ EOF
             echo "keybox" > "${HOME_DIR}/.gentian/gnupg/pubring.kbx"
             printf 'MASTER_PASSWORD=cached\n' > "${HOME_DIR}/.gentian/bootstrap-credentials.env"
             chmod 600 "${HOME_DIR}/.gentian/bootstrap-credentials.env" ;;
+        first)
+            # Before the first install: the checkout holds no definition of
+            # this cluster at all, and nothing is uncommitted.
+            rm -rf "${CHECKOUT}/clusters"
+            g -C "${CHECKOUT}" add -A; g -C "${CHECKOUT}" commit -m "no cluster yet"
+            g -C "${CHECKOUT}" push origin main ;;
     esac
 }
 
@@ -295,12 +301,15 @@ install() {
     env -i HOME="${HOME_DIR}" PATH="${BIN}:${PATH}" TMPDIR="${SB}/tmp" TERM=dumb \
         CALLS="${SB}/calls.log" VIOLATIONS="${SB}/violations.log" REAL_GIT="${REAL_GIT}" CLUSTER="${cluster}" \
         INSTALL_CONFIG_FILE="${SB}/install.env" GENTIAN_NONINTERACTIVE=1 KUBECONFIG="${SB}/no-kubeconfig" \
-        GENTIAN_VALIDATE_TIMEOUT=2 \
+        GENTIAN_VALIDATE_TIMEOUT=2 ${EXTRA_ENV[@]+"${EXTRA_ENV[@]}"} \
         bash "${REPO}/install.sh" "$@" </dev/null 2>&1
     echo "exit=$?"
 }
 
-# scenario <what> <fixture: bare|furnished> <cluster> <want exit: N or any> <args...>
+# Further environment for the next runs, as NAME=value words.
+EXTRA_ENV=()
+
+# scenario <what> <fixture: bare|furnished|first> <cluster> <want exit: N or any> <args...>
 scenario() {
     local what="$1" fixture="$2" cluster="$3" want="$4"; shift 4
     local before_home before_origin before_repo out problems=""
@@ -404,9 +413,25 @@ else
 fi
 
 scenario "--dry-run --only A-06 (one step)" furnished full 0 --dry-run --only A-06
-scenario "--validate" bare empty any --validate
+# --validate reports the configuration and then runs the pre-flight. It used
+# to stop after the report, whatever the report said, and to count the master
+# password -- which no first install has yet -- as an error.
+scenario "--validate" bare empty 0 --validate
 says "  it validated the configuration" "Result:"
-scenario "--validate on a host that has installed before" furnished full any --validate
+says "  it names the claim where the claim is" "clusters/sandbox/kernel/claims/cluster.yaml"
+says "  a master password nobody has typed yet is pending, not missing" "[PENDING]  MASTER_PASSWORD"
+says "  it went on to the pre-flight" "All pre-flight checks passed"
+says "  and reached its end" "Validation complete"
+scenario "--validate on a host that has installed before" furnished full 0 --validate
+says "  it went on to the pre-flight" "All pre-flight checks passed"
+EXTRA_ENV=(KERNEL_DOMAIN=sandbox.example.test)
+scenario "--validate before the first install, with no definition of the cluster" first empty 0 --validate
+says "  it says an install writes the definition" "no complete deployment definition yet"
+says "  it went on to the pre-flight" "All pre-flight checks passed"
+EXTRA_ENV=()
+scenario "--validate of an unattended install with no domain to give" first empty 1 --validate
+says "  it says what is missing" "[MISSING]  KERNEL_DOMAIN"
+says "  and that the configuration is not ready" "config is NOT ready"
 
 scenario "--uninstall --dry-run" furnished full 0 --uninstall --dry-run
 says "  it reached the end of the teardown preview" "Teardown complete"

@@ -80,23 +80,31 @@ token for it is revoked.
 ./install.sh --explain    # every step, what it provides and what it mutates
 ./install.sh --status     # run every check() against the cluster
 ./install.sh --dry-run    # run the checks, print the plan, change nothing
-./install.sh --validate   # report the configuration; changes nothing
+./install.sh --validate   # report the configuration, run the pre-flight; changes nothing
 ```
 
-`--status` and `--dry-run` read the cluster, so it has to be reachable.
-`--validate` checks the step contracts and then prints a report of the
-configuration it found — the credentials in the environment, the settings of
-the Cluster claim, `install.env` — ending in a line `Result:`. It runs no
-pre-flight, and it lists `MASTER_PASSWORD` as missing unless that is in the
-environment or can be read from the cluster's OpenBao.
+`--status`, `--dry-run` and `--validate` read the cluster, so it has to be
+reachable.
+`--validate` checks the step contracts, prints a report of the configuration it
+found — the credentials in the environment, the settings of the Cluster claim,
+`install.env` — ending in a line `Result:`, and then runs the install's
+pre-flight (the tools, the cluster and its Kubernetes version, the operator
+image). It asks no question and runs no step's `check()`. With an error in the
+report it stops there, exit status 1. A value the install asks for is not an
+error: `MASTER_PASSWORD` is listed as `[PENDING]` unless it is in the
+environment, the `~/.gentian` cache or the cluster's OpenBao, and so is the
+kernel domain before the first install — except in an unattended run
+(`GENTIAN_NONINTERACTIVE=1`), which has nobody to ask and needs
+`KERNEL_DOMAIN` given.
 `--dry-run` and `--validate` do not write the cluster's definition; before the
 first install a dry run therefore stops at
-`clusters/<cluster-id>/kernel is incomplete`.
+`clusters/<cluster-id>/kernel is incomplete`, and a validation says that an
+install writes it and goes on to the pre-flight.
 
-None of the four collects a credential. `--dry-run` runs the same preflight as
-an install except for that: no step's `check()` reads a credential, so it has
-everything it needs to print the plan. The install collects them; the preview
-does not.
+None of the four collects a credential. `--dry-run` and `--validate` run the
+same preflight as an install except for that: no step's `check()` reads a
+credential, so a dry run has everything it needs to print the plan. The
+install collects them; the preview does not.
 
 "Changes nothing" is meant of everything an install touches, not only of the
 cluster. Under `--dry-run` and `--validate`:
