@@ -772,6 +772,7 @@ spec:
       - en
       - de
     loginTheme: gentian
+    passwordPolicy: ""
     realm: user
     registrationAllowed: false
     resetPasswordAllowed: true

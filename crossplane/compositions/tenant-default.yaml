@@ -2349,9 +2349,13 @@ spec:
                 {{- if dig "requireSpecialChars" false $pw }}{{- $pwParts = append $pwParts "specialChars(1)" }}{{- end }}
                 {{- if gt (int (dig "historyCount" 0 $pw)) 0 }}{{- $pwParts = append $pwParts (printf "passwordHistory(%d)" (int (dig "historyCount" 0 $pw))) }}{{- end }}
                 {{- if gt (int (dig "maxAgeDays" 0 $pw)) 0 }}{{- $pwParts = append $pwParts (printf "forceExpiredPasswordChange(%d)" (int (dig "maxAgeDays" 0 $pw))) }}{{- end }}
-                {{- if $pwParts }}
+                {{- /* Declared always, and empty when the tenant states no
+                     password rules. Left off, the field is not left alone:
+                     the provider copies the realm's live policy into the
+                     resource and holds it, as it did with smtpServer below,
+                     so a policy taken out of git would stay in force. Empty
+                     is Keycloak's own: no policy. */}}
                 passwordPolicy: {{ join " and " $pwParts | quote }}
-                {{- end }}
                 {{- $session := dig "session" dict $sec }}
                 {{- $bf := dig "bruteForce" dict $sec }}
                 {{- if $kd }}
