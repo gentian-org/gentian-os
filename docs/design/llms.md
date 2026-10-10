@@ -35,6 +35,11 @@ This document details the architecture for integrating Large Language Model (LLM
     `kernel/services/llm/manifests/templates/gateway-config.yaml`). Nothing
     registers a model through the gateway's API, and the gateway takes none
     from its database.
+*   **The cluster's administrator changes them in the administration
+    console** (§5, "Changing the models"), or with `kubectl gentian models`.
+    Both ask the director, which commits the claim. The console flags a model
+    that cannot answer: one the cluster would serve itself, and a provider's
+    model whose token is missing.
 *   **Not built:** starting the vLLM instances themselves. The gateway offers a
     model for each entry of `spec.llm.instances` and calls it at
     `vllm-<name>-inference.system-llm`, port 8000; the chart that holds that
@@ -219,6 +224,73 @@ refuses to store one — nothing typed into its console or sent to its API
 becomes a model. No step of the installer, no Job and no controller is
 involved; Argo CD syncs the claim and the chart together.
 
+### Changing the models
+
+The cluster's administrator changes them on the **Models** tab of the
+administration console, or by command:
+
+```bash
+kubectl gentian models list                  # each model, and what the claim says of it
+kubectl gentian models show > models.json    # the settings, as `set` takes them
+kubectl gentian models set -f models.json    # make the claim declare exactly these
+```
+
+Both ask the director, and the director is the only writer:
+
+| Route | Who may | What it does |
+|---|---|---|
+| `GET /v1/clusters/{c}/models` | `can_audit` on the cluster | The settings (`enabled`, `gpuAcceleration`, `instances`, `providers`) and each model under the gateway's name, with what the claim says of it |
+| `PUT /v1/clusters/{c}/models` | `can_configure` on the cluster | Replaces the settings in the claim, as one signed commit in the person's name |
+
+A tenant's administrator holds neither relation, and the routes exist under
+`/v1/clusters` only. The console and the command write nothing to git and do
+not reach the gateway.
+
+The `PUT` carries the whole of the settings. A model, an instance or a provider
+that the body does not name is removed from the claim, and with it from the
+gateway, whoever wrote it there. The director holds the body to the schema of
+`spec.llm` it was built with — names, `https` addresses, the modes — and also
+refuses an empty model id, text over more than one line, and two entries that
+would give the gateway one model name twice. A body with any other field is
+refused unread: the gateway's console switch (`llm.console.enabled`), GPU time
+slicing and a provider's token are not set here. The rest of the claim, its
+comments included, stays as it was; a comment written inside the list of
+instances or of providers is lost when that list changes.
+
+Two things an administrator who has `can_configure` can do here, which follow
+from the claim being theirs to write: point a provider at any `https` address,
+and name any property of the shared provider credential as its token. The
+gateway then sends that token to that address.
+
+**A provider named for the first time has no credential to enter its token
+under.** The credential requirement of a provider is declared in this
+repository (`credentials.yaml`, one provider today) and reaches a cluster with
+the installer (below). The console says so on the provider's models and does
+nothing about it.
+
+### Whether a model works
+
+The console shows it per model, and asks neither the gateway nor any pod of
+`system-llm`:
+
+| Model | Shown as | Known from |
+|---|---|---|
+| An instance's, with `gpuAcceleration` true | **Not served** | The director, from one fact: the platform starts no vLLM instance (§6). Every such model is flagged, also one whose instance somebody runs by hand |
+| An instance's, with `gpuAcceleration` false; any model with `enabled` false | **Not offered** | The director, from the claim: the gateway does not list it |
+| A provider's, with no credential `llm-provider-<name>` on the cluster, or one that lacks the property `apiKeyProperty` names | **No credential** / **Property missing** | The custodian's list of credentials, which the console reads already |
+| A provider's, whose credential is not satisfied | **Token missing** | The same list |
+| A provider's, whose token is there | **Token supplied** | The same list. Not "works": nothing probes the token or the address |
+
+`kubectl gentian models list` shows the director's part only.
+
+A status that says a model answers would need somebody to ask the gateway
+(its `/health` or `/v1/models` with a key) or to read the instance's
+Deployment, and to publish the answer where the usher can read it. Nothing
+does: the operator registers keys at the gateway and reads no model state.
+That reader would be a new path into `system-llm` and is not built.
+
+### Seeing what the gateway was given
+
 To see what the gateway was given, and what an app is offered:
 
 ```bash
@@ -267,8 +339,9 @@ database.
 
 **A model whose token is missing is listed and does not answer.** Until the
 token is supplied a call to such a model comes back as an authentication
-error from the gateway; nothing compares the claim's `apiKeyProperty` with the
-credential requirements, and nothing reports the gap. When the token is
+error from the gateway. The administration console flags it on the Models tab
+(above); nothing on the cluster compares the claim's `apiKeyProperty` with the
+credential requirements, and no status or alert reports the gap. When the token is
 supplied, rotated or removed, the gateway's container restarts by itself to
 read it: a probe compares the mounted Secret with what the container started
 with. That takes up to a few minutes — the ExternalSecret's resync, the
@@ -381,7 +454,9 @@ the same file and the same mechanism as for a provider's models (§5).
 Deployment, Service and volume of an instance is in the repository
 (`kernel/services/llm/chart`) and no Application delivers it, so on a cluster
 installed today the model above is listed and a call to it fails with a
-connection error. What is missing before the platform can start it:
+connection error. The administration console and `kubectl gentian models list`
+show every such model as not served (§5, "Whether a model works"). What is
+missing before the platform can start it:
 
 - an Application that delivers the chart with the claim's `instances` — and
   with them `gpuMemoryUtilization`, `maxModelLen`, `modelCacheSize`,

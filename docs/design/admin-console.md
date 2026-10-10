@@ -49,6 +49,7 @@ service's answer from OpenFGA.
 | **Notifications** | Publish a notice to the tenant's people (§5) | director, usher (read) |
 | **Audit** | Changes to declared state, from git (§4.7) | director |
 | **Cluster settings**, **Platform security**, **Customization**, **Licence report** (platform administrator) | The Cluster claim's settings, permitted waivers, customization debt, the last licence report | director |
+| **Models** (platform administrator) | The models the model gateway offers, which are the Cluster claim's: providers and their models, the models the cluster serves itself, and the two switches. Each model is flagged when it cannot answer. No token is entered here (§6a) | director; custodian (read, for the token's state) |
 | **Catalogues** | Hidden. The cluster renders no catalogue of its own; the screen is kept and not linked |
 
 **Nothing is installed from the console.** Apps come from the App Store app, a
@@ -262,6 +263,28 @@ profile declares (`spec.hooks.provisioning`, [iam.md §1.8](iam.md)).
 
 ---
 
+## 6a. Models
+
+The model gateway serves the models the Cluster claim declares and no others
+([llms.md](llms.md) §5). The **Models** tab is where the cluster's
+administrator reads and changes them: `GET` and `PUT /v1/clusters/{c}/models`
+of the director, under `can_audit` and `can_configure` on the cluster. A
+tenant's administrator has no such tab and is refused by the director.
+
+A save is one commit of the claim. What is not on the screen when it is
+committed is removed from the gateway. The gateway restarts with the new list
+once Argo CD has synced.
+
+The tab flags a model that cannot answer, without asking the gateway: a model
+the cluster would serve itself is "not served", because the platform starts no
+server for it; a provider's model is "token missing" or "no credential" when
+the custodian's list says so. A token that is there is shown as supplied, not
+as working. A provider's token is entered on the Credentials tab, under
+`llm-provider-<name>`; a provider the platform ships no credential requirement
+for has nowhere to enter one, and the tab says so.
+
+---
+
 ## 7. Platform roles
 
 Which Keycloak group holds which platform role is stated on the Cluster claim
@@ -287,6 +310,7 @@ a control that exists.
 | Realm-wide second-factor rule, WebAuthn | Not built (§4.4) |
 | Creating and removing accounts inside apps (SCIM or events) | Not built (§6) |
 | Group-scoped and mailed notices | Not built (§5) |
+| A model's health as the gateway sees it; a credential for a provider the platform ships none for | Not built (§6a; [llms.md](llms.md) §5) |
 | Minting a backup key in the console | Not built: the console must not hold a key |
 | Agents and delegation, access requests, break-glass workflow | Not built |
 | A tenant's own upstream identity provider, service-account registry, dynamic groups, guests with an end date, access certification | Not built |
