@@ -226,8 +226,10 @@ func (r *TenantReconciler) buildIdentityProvisioningJobs(ctx context.Context, te
 		//
 		// The kernel broker Job is down to one thing: the kernel realm's own
 		// first-broker-login flow. No XTenant covers the kernel realm, so nothing
-		// composes it.
-		jobs = append(jobs, *makeKernelTenantBrokerJob(tenant.Name, realmName, r.KernelRealm))
+		// composes it. Not built while kernelBroker is off: nothing names the flow.
+		if kernelBroker {
+			jobs = append(jobs, *makeKernelTenantBrokerJob(tenant.Name, realmName, r.KernelRealm))
+		}
 		// No portal clients at all: the portal is retired, and a tenant's people
 		// sign in through the edge's zone client, which tenant-default composes.
 		if r.clusterKeycloakSMTPCredentialsAvailable(ctx) {

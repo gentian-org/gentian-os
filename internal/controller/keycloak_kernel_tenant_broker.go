@@ -32,6 +32,12 @@ const kernelTenantBrokerVersion = "5"
 // for users imported from tenant IdPs during portal login.
 const kernelPortalFirstBrokerLoginFlowAlias = "first-broker-login-kernel-portal"
 
+// kernelBroker is switched off: nobody signs in to a tenant realm through the
+// kernel realm (tenant-default's $kernelBroker), so the kernel realm's
+// first-broker-login flow is not made and no tenant administrator is looked
+// for in the kernel realm. The code stays; true brings both back.
+var kernelBroker = false
+
 func kernelExternalURL(kernelDomain string) string {
 	return fmt.Sprintf("https://id.%s/auth", kernelDomain)
 }
@@ -106,7 +112,7 @@ func makeKernelTenantBrokerJob(tenantName, realmName, kernelRealm string) *batch
 }
 
 func (r *TenantReconciler) ensureKernelTenantBrokerJob(ctx context.Context, tenant *gentianov1alpha1.Tenant) (bool, error) {
-	if r.KernelRealm == "" || r.KernelDomain == "" {
+	if !kernelBroker || r.KernelRealm == "" || r.KernelDomain == "" {
 		return true, nil
 	}
 	return r.waitForProvisioningJob(ctx, tenant.Name, tenantKernelBrokerJobName(tenant.Name))

@@ -104,17 +104,8 @@ func markKernelPortalIdentityJobsComplete(t *testing.T, tenantName string) {
 	t.Helper()
 	// No portal-public: that client and its openbao-audience mapper are
 	// Composition resources now, so no Job appears for this helper to wait on.
-	for _, suffix := range []string{
-		"kernel-tenant-broker",
-	} {
-		jobName := "keycloak-" + suffix + "-" + tenantName
-		waitFor(t, jobAppearTimeout, func() bool {
-			j := &batchv1.Job{}
-			return testClient.Get(context.Background(),
-				types.NamespacedName{Name: jobName, Namespace: layout.Namespace(layout.Authentication)}, j) == nil
-		})
-		markJobComplete(t, jobName, layout.Namespace(layout.Authentication))
-	}
+	// Nor the kernel broker Job: it is switched off with the kernel identity
+	// provider (kernelBroker), so none appears.
 	// SMTP realm config is only provisioned when cluster SMTP credentials exist.
 	smtpJob := "keycloak-tenant-smtp-" + tenantName
 	j := &batchv1.Job{}

@@ -877,7 +877,8 @@ case "${HTTP}" in
   *) echo "ERROR: reading realm %[1]s answered HTTP ${HTTP}" >&2; exit 1 ;;
 esac
 `, realmName)
-	if kernelRealm == "" {
+	// Not while kernelBroker is off: nothing creates that user in the kernel realm.
+	if kernelRealm == "" || !kernelBroker {
 		return script
 	}
 	return script + fmt.Sprintf(`# Also disable the tenant admin in the kernel realm, which brokers its sign-in.
