@@ -68,7 +68,9 @@ is the whole of a reconfigure.
 only on an uninstall — and `E-04-user-tenant` does on a multi-tenancy cluster,
 where the install creates no tenant; `B-09` and `D-04` do on a cluster without
 OIDC, `C-03` on one with no DNS provider, `B-10` until the signing keys are in
-the deployments repository.
+the deployments repository. After the handover `B-08`, `B-09`, `B-10` and
+`D-04` read `undefined` as well: their checks ask OpenBao, and the installer's
+token for it is revoked.
 
 ---
 
@@ -78,13 +80,17 @@ the deployments repository.
 ./install.sh --explain    # every step, what it provides and what it mutates
 ./install.sh --status     # run every check() against the cluster
 ./install.sh --dry-run    # run the checks, print the plan, change nothing
-./install.sh --validate   # is the configuration coherent? changes nothing
+./install.sh --validate   # report the configuration; changes nothing
 ```
 
-`--status`, `--dry-run` and `--validate` read the cluster, so it has to be
-reachable; `--validate` runs the pre-flight as well as checking the
-configuration and the step contracts. `--dry-run` and `--validate` do not
-write the cluster's definition, so before the first install they stop at
+`--status` and `--dry-run` read the cluster, so it has to be reachable.
+`--validate` checks the step contracts and then prints a report of the
+configuration it found — the credentials in the environment, the settings of
+the Cluster claim, `install.env` — ending in a line `Result:`. It runs no
+pre-flight, and it lists `MASTER_PASSWORD` as missing unless that is in the
+environment or can be read from the cluster's OpenBao.
+`--dry-run` and `--validate` do not write the cluster's definition; before the
+first install a dry run therefore stops at
 `clusters/<cluster-id>/kernel is incomplete`.
 
 None of the four collects a credential. `--dry-run` runs the same preflight as
@@ -175,10 +181,15 @@ files of the platform's own chart and renders nothing when one is missing, so
 an install into a repository without them stops at `D-01` with no operator.
 Step 0 warns about a missing one and does not write it.
 
-A cluster property set in `install.env` beats the claim, silently — the file is
-loaded first. The installer reports it rather than reversing the precedence,
-because an operator who wrote it there meant something, but the claim is where
-it belongs.
+A cluster property set in `install.env` beats the claim — the file is loaded
+first. The installer warns (`… is set in install.env — it overrides
+claims/cluster.yaml`) rather than reversing the precedence, because an operator
+who wrote it there meant something, but the claim is where it belongs. The
+template lists them at its end: `TENANCY_MODE`, `SECRET_MODE`, `NETWORK_MODE`,
+`NODE_IP`, `STORAGE_CLASS`, `PLATFORM`, `MAIL_SERVICE_MODE`, `DNS_PROVIDER`,
+`ACME_ENV`, `LETSENCRYPT_EMAIL`, `LLM_SUPPORT`, `GPU_ACCELERATION`. An
+unattended first run exports them for that run
+([GETTING-STARTED.md](../GETTING-STARTED.md), *Installing unattended*).
 
 ### What `install.env` holds
 
@@ -190,20 +201,30 @@ The template carries one line per setting; the reasoning is here.
 | `GENTIAN_DEPLOYMENTS_STAGE` | `dev`, `staging` or `prod`. A cluster keeps one stage for life, which is why there is no `<stage>` segment inside its own tree. |
 | `GENTIAN_*_AUTH` | `none`, `basic` (username + token) or `bearer` — how the installer authenticates to that repository. The credential itself is prompted for. Deployments defaults to `basic` because a private repository cannot describe its own access; set `none` for a public one. Argo CD reads the deployments repository and `gentian-os` with the same setting — see *How Argo CD gets a repository's credential* below. |
 | `GENTIAN_*_REPO` / `_BRANCH` | Point them at a mirror for a forked or air-gapped install; the child ApplicationSets follow. |
-| `GENTIAN_OS_BRANCH` | The ref every in-cluster Application tracks — [deployment.md §4](deployment.md). |
+| `GENTIAN_OS_BRANCH` | The ref every in-cluster Application tracks — [deployment.md §4](deployment.md). Set it to the branch or release tag the checkout is on: the installer runs the image built from the checkout's commit under that name. |
+| `GENTIAN_UI_BRANCH` | The branch of `gentian-ui` written to that repository's claim when step 0 scaffolds it. |
+| `GENTIAN_DEPLOYMENTS_PATH` | The local checkout of the deployments repository. `~/.gentian/gentian-deployments` by default. |
+| `CLUSTER_ADMIN_RECOVERY_EMAIL` | Where the platform admin's activation link is mailed at the handover, and the account's recovery address afterwards. Unset, the handover asks; with no address, or while the kernel realm cannot send mail yet, the link is shown once in the terminal. |
+| `GENTIAN_HANDOVER_WAIT_SECS` | How long `E-03` waits for the platform admin's sign-in. 1800 by default. |
+| `GENTIAN_NONINTERACTIVE` | `1` takes the default for every question and asks for nothing. Then `KERNEL_DOMAIN` has to be given for the first run, `GENTIAN_KIT_RECIPIENT` has to be set, and the bootstrap credentials come from the environment. |
+| `GENTIAN_KIT_RECIPIENT` | An age public key the recovery kit is encrypted to, in place of a passphrase typed at the terminal. |
+| `GENTIAN_KIT_INCLUDE_BREAK_GLASS` | `0` keeps the break-glass signing key out of the recovery kit. Then only the install host can sign for the deployments repository when the director cannot. |
+| `GENTIAN_NO_CREDENTIAL_CACHE` | `1` keeps typed credentials in the process only; a resumed run asks again. |
+| `GENTIAN_MASK_SECRETS` | `1` reads secret fields without showing them. By default what is typed or pasted is shown. |
+| `GENTIAN_GPG_HOME` | The keyring of the two deployment signing keys. `~/.gentian/gnupg` by default. |
+| `PORTAL_IMAGE_TAG` | The branch whose charts are installed for the platform's own apps. `develop` by default — see *Image tags* below. |
 | `GENTIAN_CATALOGUE_URL` | The address of the default catalogue, `gentian`, written to `spec.catalogue.sources` when step 0 scaffolds a new Cluster claim. Unset, the address follows from what is installed: a cluster installed from a release tag or from `main` (`GENTIAN_OS_BRANCH`, or the checkout's branch) gets the released catalogue, `https://gentian-org.github.io/gentian-apps`; one installed from any other branch gets the development catalogue, `https://gentian-org.github.io/gentian-apps/develop`. Set, it is used whatever the ref. Step 0 prints the choice and writes the reason above the address in the claim. A public https address; the director fetches from nothing else ([custom-catalogues.md](custom-catalogues.md)). An existing claim is never rewritten: on an existing cluster the address is changed with `kubectl gentian catalogues` ([custom-catalogues.md §3](custom-catalogues.md)). |
 | `GENTIAN_STORE_URL` | The base address of the App Store API, written to `spec.catalogue.storeUrl` when step 0 scaffolds a new Cluster claim. Defaults to `https://store-service.aluvian.io`. It must not be an address a cluster's own App Store app could have — `store.<a domain a cluster is installed under>` — which is why the default is `store-service.…` and not `store.…`; a cluster whose claim names its own App Store host offers no App Store (`store-address-is-own-host`). |
-| `TENANCY_MODE` | `multi` (default) or `single`, for an unattended first run; step 0 asks otherwise. It is written to the Cluster claim (`spec.tenancyMode`), which owns it from then on. See *Tenancy modes* below. |
+| `TENANCY_MODE`, `SECRET_MODE` | Not for `install.env`. Step 0 asks for both; an unattended first run exports them (`multi` or `single`; `derived` or `random`). They are written to the Cluster claim (`spec.tenancyMode`, `spec.secretMode`), which owns them from then on. See *Tenancy modes* and *What the master password does* below. |
 | `GENTIAN_USER_TENANT_WAIT_SECS` | How long `E-04` waits for the user tenant of a single-tenancy cluster to be Ready. 900 by default. |
 | `KERNEL_NETWORK_POLICIES` | `true` or unset. **Off by default.** On, step `A-01` gives every kernel namespace the NetworkPolicies of `kernel/security/network-policies` -- ingress is refused unless listed, egress is not restricted ([design/security.md §2.13](design/security.md)) -- and `B-01` tells the operator, which then narrows what tenants and publishing proxies admit from the edge namespace. Anything else removes them. Turn it on after a successful install, and off again if a component then times out reaching another: §9. |
 | `STORE_NETWORK_POLICIES` | `true` (default) or `false`. The policies on the shared stores, the kernel's PostgreSQL, the mail servers and the model gateway ([design/security.md §2.7](design/security.md)). |
-| `INSTALL_CLUSTER_INFRA` | `0` when cert-manager, CloudNativePG and Reloader are managed elsewhere on this cluster. |
 | `GENTIAN_NO_LICENCE_REPORT` | `1` turns the licence report off, as `--no-licence-report` does; `0` turns it back on. Unset keeps what the cluster has. Off, nothing is sent and the App Store is not offered: no tenant gets the App Store app — [design/operations.md §6.2](design/operations.md). |
 | `GENTIAN_LICENCE_REPORT_URL` | Where the licence report goes, instead of the default address in `kernel/bootstrap/chart/values.yaml`. `https` only. |
 | `OPENBAO_CLI_VERSION` | Which `bao` to fetch when none is on `PATH`. Defaults to the pin in `versions.yaml`, which is where component versions are declared. The archive is fetched from the OpenBao release for Linux or macOS on x86_64 or arm64, compared with that release's checksum list, and installed to `~/.local/bin` only when it matches; on any other host install `bao` yourself. |
 | `GENTIAN_DEFAULT_PROFILES` | The profiles step 0 places in `clusters/<cluster>/catalogue/`, on every install run: https addresses of profiles in a catalogue (`<catalogue>/profiles/<name>.yaml`), comma separated, each optionally pinned as `<address>@sha256:<digest>`. Unset, it is one profile, the Operations Console's, from `https://catalogue.aluvian.io/profiles/operations-console.yaml` (`GENTIAN_STORE_CATALOGUE_URL` replaces the address before `/profiles/`). Set, the value is used as it stands, and set empty places none; `--disable-api-extensions` places none. A profile is written only when it hashes to a stated digest — see *The default profile* below. A local file or an `http` address is refused. Remove a line an earlier install left here. |
 | `CROSSPLANE_ACTIVATE_ALL` | `true` installs every resource type of every Crossplane provider, as installs did before; unset, only the types `crossplane/providers/activation.yaml` names exist. The way back if a fresh install waits on a type that list lacks — see *Provider resource types* below. |
-| `INFRA_CHART_REPO` / `_PRIVATE` | Where the infrastructure charts come from, and whether that registry needs a credential. Install-time rather than cluster state: it decides what the installer does before a cluster exists. |
+| `GENTIAN_OS_IMAGE_TAG` | Leave it unset — see *Image tags* below. |
 
 ### How Argo CD gets a repository's credential
 
@@ -622,6 +643,13 @@ model gateway over the ones its database was created with.
 
 The salt is generated at first install and stored in OpenBao beside the password.
 
+What you have to keep, by mode:
+
+| `secretMode` | Keep | Why |
+|---|---|---|
+| `derived` | The recovery kit, and its passphrase somewhere else | It holds the master password and the salt, which reproduce every generated credential; the OpenBao recovery key; the backup key; and the break-glass signing key |
+| `random` | The recovery kit, **and** snapshots of OpenBao that you take yourself | The kit holds the same things, and none of the credentials drawn at random; only OpenBao has those |
+
 > Under `derived`, reproducing a cluster's credentials needs the master password
 > **and** the salt. The salt lives only in OpenBao, so a disaster that loses
 > OpenBao's storage also loses it, and the master password alone reproduces
@@ -714,6 +742,14 @@ spec:
     issuerMode: self-signed
 ```
 
+Choose it at step 0's issuer question on a first install. A claim edited by
+hand takes effect once it is applied (`C-01`): step `A-09`, which creates the
+issuers, reads the mode from the Cluster object on the cluster, and before
+that object exists from the environment variable `CERT_ISSUER_MODE`, not from
+the claim file. A first install that is run again before it has passed `C-01`
+therefore needs `CERT_ISSUER_MODE=self-signed` exported, or it takes the mode
+to be `acme-dns01` and asks for a DNS credential.
+
 Issuance is then offline and instant. The certificates are not publicly trusted,
 so anything validating a kernel hostname from outside the cluster needs the root
 CA in its trust store:
@@ -737,12 +773,17 @@ For an air-gapped or forked install, point the platform at your own copies in
 
 ```bash
 GENTIAN_OS_REPO=https://git.internal/gentian-os
-GENTIAN_OS_IMAGE_REPOSITORY=registry.internal/gentian-os
+GENTIAN_OS_AUTH=basic                 # when the mirror asks for a login
 GENTIAN_DEPLOYMENTS_REPO=https://git.internal/gentian-deployments
 ```
 
-Both the Git origin and the image registry are redirected, including for every
-child ApplicationSet the platform creates.
+The Git origin is redirected, including for every child ApplicationSet the
+platform creates. The operator's image is not: the cluster pulls
+`ghcr.io/gentian-org/gentian-os` whatever `install.env` says.
+`GENTIAN_OS_IMAGE_REPOSITORY` changes only which registry the pre-flight looks
+the tag up in. Nor are the infrastructure charts: `INFRA_CHART_REPO` and
+`INFRA_CHART_PRIVATE=true` make the installer ask for, check and store the
+`infra-chart-registry` credential, and no chart is pulled through it yet.
 
 App profiles are not part of this: they are fetched from a catalogue, which is
 a public https address (`GENTIAN_CATALOGUE_URL` for the default one). A
@@ -768,9 +809,10 @@ when.
 
 Lost credentials are rotated, not recovered.
 
-The installer's bootstrap token is revoked by step `E-03` once an OIDC write
-path is configured. Until then that token is the only way to write a credential,
-so the step refuses to revoke it and says so.
+The installer's bootstrap token is revoked by step `E-03` once a recovery kit
+has been exported (`E-02`) and a platform administrator's sign-in has proven
+that somebody else can write a credential. Until then that token is the only
+way to write one, so the step refuses to revoke it and says so.
 
 ---
 
@@ -783,7 +825,8 @@ Uninstall is the same steps in reverse:
 ./install.sh --uninstall
 ./install.sh --uninstall --skip E-01  # keep tenant workloads and their Git manifests
 ./install.sh --purge                  # the same, plus OpenBao and infra volumes and local state
-./install.sh --purge --cluster-infra  # the same, plus CNPG, Reloader and their CRDs
+./install.sh --purge --cluster-infra  # the same, plus CNPG, Reloader, external-dns, cert-manager, their CRDs,
+                                      # this cluster's published DNS records and the kept wildcard certificate
 ```
 
 OpenBao KV data survives an uninstall, so reinstalling onto the same cluster
