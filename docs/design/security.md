@@ -1418,11 +1418,6 @@ What still reaches the master password, and should not:
   catalogue's Composition is rendered with Crossplane's. Either can read the
   Secret `gentian-os-master-password`, or make a store of its own (§5). What
   a chart contains is not inspected.
-- The catalogue's Element profile brings a Composition of its own whose
-  database Job signs in to OpenBao as the role `app-init`, from the tenant's
-  namespace, to read the master password and derive in shell. Nothing in
-  this repository makes that role, so on a cluster installed from it the
-  sign-in is refused.
 
 Narrowing these, and moving the master password to a KMS or HSM, are target.
 
