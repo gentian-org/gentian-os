@@ -2710,7 +2710,7 @@ print_roles_summary() {
     fi
 }
 
-# _scaffold_default_profiles <cluster> -- the Aluvian entries a vanilla
+# _scaffold_default_profiles <cluster> -- the store's entries a vanilla
 # installation comes with, written as materialised profiles.
 #
 # GENTIAN_DEFAULT_PROFILES lists them, comma separated: each the https address
