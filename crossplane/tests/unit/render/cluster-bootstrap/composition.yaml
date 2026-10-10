@@ -1132,6 +1132,16 @@ spec:
                     # claim with nothing passing it on, so an app's credentials
                     # were derived on a cluster whose claim said random.
                     secretMode: {{ default "derived" (dig "secretMode" "" $spec) | quote }}
+                    # Where OpenBao is and how ESO signs in to it: what the
+                    # kernel's ClusterSecretStore below is made from. The Tenant
+                    # Composition makes each tenant's store from the same
+                    # values, so the two cannot name different servers.
+                    openbao.namespace: {{ $secretsNs | quote }}
+                    openbao.server: {{ $openbaoServer | quote }}
+                    openbao.kvMount: {{ $kvMount | quote }}
+                    openbao.authMount: {{ $authMount | quote }}
+                    eso.namespace: {{ $esoNs | quote }}
+                    eso.serviceAccount: {{ $esoSa | quote }}
                     tenant.limitRange.default.cpu: {{ default "500m" (dig "tenantDefaults" "limitRange" "defaultCpu" "" $spec) | quote }}
                     tenant.limitRange.default.memory: {{ default "512Mi" (dig "tenantDefaults" "limitRange" "defaultMemory" "" $spec) | quote }}
                     tenant.limitRange.defaultRequest.cpu: {{ default "100m" (dig "tenantDefaults" "limitRange" "defaultRequestCpu" "" $spec) | quote }}
@@ -1139,7 +1149,31 @@ spec:
               providerConfigRef:
                 name: kubernetes
 
-            {{- /* ── ESO ClusterSecretStore pointing at OpenBao ───────────────── */}}
+            {{- /* ── ESO ClusterSecretStore pointing at OpenBao ─────────────────
+                 The kernel's store. Its role reads every kernel path, so
+                 which namespaces may name it is what keeps a kernel secret
+                 out of a tenant's namespace: an ExternalSecret anywhere else
+                 is refused by ESO before OpenBao is asked.
+
+                 Selected by the tier label, which the installer puts on the
+                 kernel namespaces and this Composition on the system ones,
+                 and never by a list of names. A tenant's namespace reads
+                 through the store its own Composition makes for it
+                 (openbao-tenant-<tenant>, tenant-default.yaml), whose role
+                 sees that tenant's paths and nothing of the kernel.
+
+                 One tenant namespace is named: the platform tenant's. Its
+                 desktop keeps its data on the kernel's PostgreSQL, and the
+                 password of that database role is a property of the kernel
+                 path gentian-os/kernel/database/postgresql, which the
+                 operator's ExternalSecret reads from that namespace
+                 (component_desktop.go). The name is
+                 layout.Tenant(PlatformTenantName); a test holds the two
+                 together.
+
+                 kernel/services/_globals/eso-cluster-secret-store.yaml is the
+                 installer's copy of this object and carries the same
+                 conditions. */}}
             ---
             apiVersion: kubernetes.crossplane.io/v1alpha2
             kind: Object
@@ -1155,6 +1189,16 @@ spec:
                   metadata:
                     name: openbao
                   spec:
+                    conditions:
+                      - namespaceSelector:
+                          matchExpressions:
+                            - key: gentianos.io/tier
+                              operator: In
+                              values:
+                                - kernel
+                                - system
+                      - namespaces:
+                          - tenant-platform
                     provider:
                       vault:
                         server: {{ $openbaoServer }}

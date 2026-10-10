@@ -225,7 +225,14 @@ func (r *ComponentReconciler) componentDatabaseNamespace(tenant *gentianov1alpha
 func (r *ComponentReconciler) ensureDatabaseRequirement(ctx context.Context, comp *gentianov1alpha1.Component, tenant *gentianov1alpha1.Tenant) (ready bool, reason, message string, err error) {
 	var target map[string]interface{}
 	var data []interface{}
+	// The tenant's own store, as for everything read into a tenant's
+	// namespace.
+	store := secrets.TenantStore(tenant.Name)
 	if tenantAdoptsKernelRealm(tenant, r.KernelRealm) {
+		// The one kernel path read from a tenant's namespace: only the
+		// kernel's store reads it, and that store admits the platform
+		// tenant's namespace for this.
+		store = secrets.KernelStore
 		// The names the kernel's chart declares, which a backup of this
 		// tenant captures by too (backup/desktop.go).
 		target = databaseSecretTemplate(backup.KernelPostgresHost(), backup.KernelPostgresPort,
@@ -250,7 +257,7 @@ func (r *ComponentReconciler) ensureDatabaseRequirement(ctx context.Context, com
 			})
 		}
 	}
-	return r.ensureDatabaseSecret(ctx, comp, target, data)
+	return r.ensureDatabaseSecret(ctx, comp, store, target, data)
 }
 
 // databaseSecretTemplate is the credential Secret every database requirement
@@ -378,11 +385,11 @@ func roleJobHash(job *batchv1.Job) string {
 
 // ensureDatabaseSecret delivers the credential into the component's
 // namespace and reports whether it has arrived.
-func (r *ComponentReconciler) ensureDatabaseSecret(ctx context.Context, comp *gentianov1alpha1.Component, template map[string]interface{}, data []interface{}) (ready bool, reason, message string, err error) {
+func (r *ComponentReconciler) ensureDatabaseSecret(ctx context.Context, comp *gentianov1alpha1.Component, store string, template map[string]interface{}, data []interface{}) (ready bool, reason, message string, err error) {
 	name := comp.Name + componentDatabaseSecretSuffix
 	spec := map[string]interface{}{
 		"refreshInterval": "1h",
-		"secretStoreRef":  map[string]interface{}{"name": "openbao", "kind": "ClusterSecretStore"},
+		"secretStoreRef":  secrets.StoreRef(store),
 		"target": map[string]interface{}{
 			"name":           name,
 			"creationPolicy": "Owner",

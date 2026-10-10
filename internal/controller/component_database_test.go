@@ -26,6 +26,7 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/backup"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
+	"github.com/gentian-org/gentian-os/internal/layout"
 	"github.com/gentian-org/gentian-os/internal/usage"
 )
 
@@ -200,6 +201,11 @@ func TestATenantDesktopsDatabaseIsMadeOnTheTenantPostgres(t *testing.T) {
 	if len(refs) != 5 {
 		t.Fatalf("credential reads %d properties, want host, port, name, user and password", len(refs))
 	}
+	// Through the tenant's own store: the kernel's is not usable from a
+	// tenant's namespace.
+	if store, _, _ := unstructured.NestedString(es.Object, "spec", "secretStoreRef", "name"); store != secrets.TenantStore("acme") {
+		t.Fatalf("credential read through the store %q, want %q", store, secrets.TenantStore("acme"))
+	}
 	_ = unstructured.SetNestedSlice(es.Object, []interface{}{map[string]interface{}{"type": "Ready", "status": "True"}}, "status", "conditions")
 	if err := c.Update(ctx, es); err != nil {
 		t.Fatal(err)
@@ -259,5 +265,41 @@ func TestProvisioningContainersAreAdmittedInTheSystemNamespaces(t *testing.T) {
 func TestTheUsageStoreReadsTheDesktopComponentsDatabaseSecret(t *testing.T) {
 	if want := "desktop" + componentDatabaseSecretSuffix; usage.ShellDatabaseSecret != want {
 		t.Fatalf("usage reads %q; the desktop component's Secret is %q", usage.ShellDatabaseSecret, want)
+	}
+}
+
+// The platform tenant's desktop keeps its data on the kernel's PostgreSQL,
+// and the password of that role is a property of a kernel path. It is the
+// one ExternalSecret in a tenant's namespace that reads through the kernel's
+// store, which admits that namespace by name; every other tenant's reads
+// through the tenant's own.
+func TestOnlyThePlatformTenantsDesktopReadsThroughTheKernelStore(t *testing.T) {
+	ctx := context.Background()
+	s := componentDatabaseScheme(t)
+	c := fake.NewClientBuilder().WithScheme(s).Build()
+	r := &ComponentReconciler{Client: c, Scheme: s, KernelRealm: "kernel"}
+	comp := desktopComponentFixture(gentianov1alpha1.PlatformTenantName)
+	if _, _, _, err := r.ensureDatabaseRequirement(ctx, comp, platformTenantFixture()); err != nil {
+		t.Fatal(err)
+	}
+	es := &unstructured.Unstructured{}
+	es.SetGroupVersionKind(externalSecretGVK)
+	if err := c.Get(ctx, types.NamespacedName{Name: comp.Name + componentDatabaseSecretSuffix, Namespace: comp.Namespace}, es); err != nil {
+		t.Fatalf("ExternalSecret: %v", err)
+	}
+	if comp.Namespace != layout.Tenant(gentianov1alpha1.PlatformTenantName) {
+		t.Fatalf("the platform tenant's desktop is in %q", comp.Namespace)
+	}
+	if store, _, _ := unstructured.NestedString(es.Object, "spec", "secretStoreRef", "name"); store != secrets.KernelStore {
+		t.Errorf("read through the store %q, want the kernel's", store)
+	}
+	refs, _, _ := unstructured.NestedSlice(es.Object, "spec", "data")
+	if len(refs) != 1 {
+		t.Fatalf("the credential reads %d values, want the one password", len(refs))
+	}
+	key, _, _ := unstructured.NestedString(refs[0].(map[string]interface{}), "remoteRef", "key")
+	property, _, _ := unstructured.NestedString(refs[0].(map[string]interface{}), "remoteRef", "property")
+	if key != "gentian-os/kernel/database/postgresql" || property != "portal_shell_user_password" {
+		t.Errorf("the credential reads %s#%s", key, property)
 	}
 }

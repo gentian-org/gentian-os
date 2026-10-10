@@ -236,7 +236,7 @@ spec:
           refreshInterval: 1h
           secretStoreRef:
             kind: ClusterSecretStore
-            name: openbao
+            name: openbao-tenant-acme
           target:
             creationPolicy: Owner
             name: repository-vendor-apps-pull

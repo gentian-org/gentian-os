@@ -6,8 +6,8 @@ metadata:
 status:
   conditions:
   - lastTransitionTime: "2024-01-01T00:00:00Z"
-    message: 'Unready resources: keycloak-dovecot-oidc-client, keycloak-edge-exchange-client,
-      keycloak-edge-exchange-default-scopes, and 17 more'
+    message: 'Unready resources: eso-secret-store, keycloak-dovecot-oidc-client, keycloak-edge-exchange-client,
+      and 20 more'
     reason: Creating
     status: "False"
     type: Ready
@@ -179,6 +179,57 @@ spec:
         secretKeys:
         - client-secret
         symbols: 0
+  providerConfigRef:
+    name: kubernetes
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: eso-secret-store
+  labels:
+    crossplane.io/composite: user
+  name: user-secret-store
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: user
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: external-secrets.io/v1
+      kind: ClusterSecretStore
+      metadata:
+        labels:
+          app.kubernetes.io/managed-by: gentian-os
+          gentianos.io/tenant: user
+        name: openbao-tenant-user
+      spec:
+        conditions:
+        - namespaceSelector:
+            matchLabels:
+              gentianos.io/tenant: user
+              gentianos.io/tier: tenant
+        provider:
+          vault:
+            auth:
+              kubernetes:
+                mountPath: kubernetes
+                role: eso-tenant-user
+                serviceAccountRef:
+                  name: external-secrets
+                  namespace: kernel-secrets
+            caProvider:
+              key: tls.crt
+              name: openbao-tls
+              namespace: kernel-secrets
+              type: Secret
+            path: secret
+            server: https://openbao.kernel-secrets.svc.cluster.local:8200
+            version: v2
   providerConfigRef:
     name: kubernetes
 ---
@@ -1059,6 +1110,35 @@ spec:
   providerConfigRef:
     name: kubernetes
 ---
+apiVersion: kubernetes.vault.upbound.io/v1alpha1
+kind: AuthBackendRole
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: vault-auth-role-eso
+  labels:
+    crossplane.io/composite: user
+  name: user-eso-role
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: user
+    uid: ""
+spec:
+  forProvider:
+    backend: kubernetes
+    boundServiceAccountNames:
+    - external-secrets
+    boundServiceAccountNamespaces:
+    - kernel-secrets
+    roleName: eso-tenant-user
+    tokenPolicies:
+    - eso-tenant-user
+    tokenTtl: 3600
+  providerConfigRef:
+    name: openbao
+---
 apiVersion: vault.vault.upbound.io/v1alpha1
 kind: Policy
 metadata:
@@ -1083,6 +1163,49 @@ spec:
       }
       path "secret/metadata/gentian-os/tenants/user/*" {
         capabilities = ["list", "delete"]
+      }
+  providerConfigRef:
+    name: openbao
+---
+apiVersion: vault.vault.upbound.io/v1alpha1
+kind: Policy
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: vault-policy-eso
+  labels:
+    crossplane.io/composite: user
+  name: user-eso-policy
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: user
+    uid: ""
+spec:
+  forProvider:
+    name: eso-tenant-user
+    policy: |
+      path "secret/data/gentian-os/tenants/user/apps/*" {
+        capabilities = ["read"]
+      }
+      path "secret/data/gentian-os/tenants/user/repositories/*" {
+        capabilities = ["read"]
+      }
+      path "secret/data/gentian-os/tenants/user/contracts/*" {
+        capabilities = ["read"]
+      }
+      path "secret/data/gentian-os/tenants/user/backup/*" {
+        capabilities = ["deny"]
+      }
+      path "secret/metadata/gentian-os/tenants/user/backup/*" {
+        capabilities = ["deny"]
+      }
+      path "secret/data/gentian-os/kernel/*" {
+        capabilities = ["deny"]
+      }
+      path "secret/metadata/gentian-os/kernel/*" {
+        capabilities = ["deny"]
       }
   providerConfigRef:
     name: openbao

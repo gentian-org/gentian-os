@@ -158,7 +158,7 @@ spec:
         refreshInterval: 1h
         secretStoreRef:
           kind: ClusterSecretStore
-          name: openbao
+          name: openbao-tenant-demo
         target:
           creationPolicy: Owner
           deletionPolicy: Retain
@@ -368,7 +368,7 @@ spec:
         refreshInterval: 1h
         secretStoreRef:
           kind: ClusterSecretStore
-          name: openbao
+          name: openbao-tenant-demo
         target:
           creationPolicy: Owner
           deletionPolicy: Retain

@@ -4,7 +4,8 @@
 # claim to deny
 # =============================================================================
 # Phase 7, criterion 5. The Cluster composition renders three OpenBao policies —
-# eso-read, cluster-admin and tenant-admin — and the tenant-admin deny on
+# eso-read, cluster-admin and tenant-admin — the Tenant composition a fourth
+# for each tenant, eso-tenant-<tenant>, and the tenant-admin deny on
 # gentian-os/kernel/* is the one authz rule in the system where a mistake is a
 # breach rather than an annoyance. Nothing asserted it.
 #
@@ -305,6 +306,67 @@ expect "${ESO_TOKEN}" "allowed the destination credential in the same subtree" \
     "secret/data/gentian-os/tenants/acme/backup/destination" "read"
 expect "${ESO_TOKEN}" "DENIED paths outside gentian-os" \
     "secret/data/somewhere/else" "deny"
+
+# ── eso-tenant-<tenant> ──────────────────────────────────────────────────────
+# What ESO reads for a tenant's namespace. The kernel's store, with eso-read
+# above, is not usable from a tenant's namespace; an ExternalSecret there
+# reads through the tenant's own store, which signs in with a role that
+# carries this policy and no other. So this policy is what an app chart's
+# ExternalSecret can reach, whatever path it names -- and the two properties
+# that matter are both denials: nothing of the kernel, nothing of another
+# tenant. From the Tenant composition's golden render, for its fixture tenant.
+TENANT_GOLDEN="crossplane/tests/unit/render/tenant-default/expected.yaml"
+TENANT_FIXTURE="render-fixture"
+tenant_eso_body="$(policy_body "${TENANT_GOLDEN}" "eso-tenant-${TENANT_FIXTURE}")"
+if [[ -z "${tenant_eso_body}" || "${tenant_eso_body}" == "null" ]]; then
+    echo "  ${RED}✗${NC} eso-tenant-${TENANT_FIXTURE} — not present in ${TENANT_GOLDEN}"
+    exit 1
+fi
+printf '%s\n' "${tenant_eso_body}" > "${WORKDIR}/eso-tenant.hcl"
+bao policy write "eso-tenant-${TENANT_FIXTURE}" "${WORKDIR}/eso-tenant.hcl" >/dev/null 2>&1 || {
+    echo "  ${RED}✗${NC} eso-tenant-${TENANT_FIXTURE} — OpenBao rejected the policy"; exit 1; }
+TENANT_ESO_TOKEN="$(bao token create -policy="eso-tenant-${TENANT_FIXTURE}" -field=token 2>/dev/null)"
+
+echo ""
+echo "  eso-tenant-${TENANT_FIXTURE} ${DIM}(what ESO holds for one tenant's namespace)${NC}"
+expect "${TENANT_ESO_TOKEN}" "allowed reading its tenant's app credentials" \
+    "secret/data/gentian-os/tenants/${TENANT_FIXTURE}/apps/some-app/database" "read"
+expect "${TENANT_ESO_TOKEN}" "allowed reading a secret generated for one of its apps" \
+    "secret/data/gentian-os/tenants/${TENANT_FIXTURE}/apps/some-app/internal/admin_password" "read"
+expect "${TENANT_ESO_TOKEN}" "allowed reading its tenant's repository credentials" \
+    "secret/data/gentian-os/tenants/${TENANT_FIXTURE}/repositories/x" "read"
+expect "${TENANT_ESO_TOKEN}" "allowed reading its tenant's contract keys" \
+    "secret/data/gentian-os/tenants/${TENANT_FIXTURE}/contracts/c" "read"
+expect "${TENANT_ESO_TOKEN}" "DENIED the master password and the salt" \
+    "secret/data/gentian-os/kernel/internal/master-password" "deny"
+expect "${TENANT_ESO_TOKEN}" "DENIED the director's commit-signing key" \
+    "secret/data/gentian-os/kernel/signing/director" "deny"
+expect "${TENANT_ESO_TOKEN}" "DENIED any other kernel path" \
+    "secret/data/gentian-os/kernel/database/postgresql" "deny"
+expect "${TENANT_ESO_TOKEN}" "DENIED kernel metadata — path names leak too" \
+    "secret/metadata/gentian-os/kernel/internal/master-password" "deny"
+expect "${TENANT_ESO_TOKEN}" "DENIED another tenant's app credentials" \
+    "secret/data/gentian-os/tenants/acme/apps/some-app/database" "deny"
+expect "${TENANT_ESO_TOKEN}" "DENIED another tenant's repository credentials" \
+    "secret/data/gentian-os/tenants/acme/repositories/x" "deny"
+expect "${TENANT_ESO_TOKEN}" "DENIED another tenant's contract keys" \
+    "secret/data/gentian-os/tenants/acme/contracts/c" "deny"
+expect "${TENANT_ESO_TOKEN}" "DENIED its own tenant's backup destination — read in the kernel's namespaces" \
+    "secret/data/gentian-os/tenants/${TENANT_FIXTURE}/backup/destination" "deny"
+expect "${TENANT_ESO_TOKEN}" "DENIED its own tenant's escrowed backup identity" \
+    "secret/data/gentian-os/tenants/${TENANT_FIXTURE}/backup/identity" "deny"
+expect "${TENANT_ESO_TOKEN}" "DENIED its own tenant's administrator record" \
+    "secret/data/gentian-os/tenants/${TENANT_FIXTURE}/admin" "deny"
+expect "${TENANT_ESO_TOKEN}" "DENIED listing the tenants" \
+    "secret/metadata/gentian-os/tenants" "deny"
+expect "${TENANT_ESO_TOKEN}" "DENIED paths outside gentian-os" \
+    "secret/data/identity/portal-admin" "deny"
+# The other half of the same statement: the kernel's store still reads the
+# master password, because the probe that reports whether it was supplied
+# reads it. What keeps that from a tenant is which namespaces may name the
+# kernel's store, not this policy.
+expect "${ESO_TOKEN}" "eso-read still reads the master password (kernel namespaces only)" \
+    "secret/data/gentian-os/kernel/internal/master-password" "read"
 
 # ── custodian-write ──────────────────────────────────────────────────────────
 # The custodian sets a credential for a person the authorization store allows,

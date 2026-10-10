@@ -705,7 +705,7 @@ func (r *ComponentReconciler) ensureSignInSecret(
 		"metadata":   map[string]interface{}{"name": s.service, "namespace": comp.Namespace},
 		"spec": map[string]interface{}{
 			"refreshInterval": "1h",
-			"secretStoreRef":  map[string]interface{}{"name": "openbao", "kind": "ClusterSecretStore"},
+			"secretStoreRef":  secrets.StoreRef(secrets.TenantStore(tenant.Name)),
 			// The Secret is this object's and goes with it.
 			"target": map[string]interface{}{"name": s.service, "creationPolicy": "Owner", "deletionPolicy": "Delete"},
 			"data":   data,

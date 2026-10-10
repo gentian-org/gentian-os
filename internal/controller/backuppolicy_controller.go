@@ -33,6 +33,7 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/backup"
+	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"github.com/gentian-org/gentian-os/internal/meta"
 	"github.com/gentian-org/gentian-os/internal/schemacheck/crdcheck"
 )
@@ -460,9 +461,11 @@ func (r *BackupPolicyReconciler) applyExternalSecret(
 		},
 		"spec": map[string]any{
 			"refreshInterval": "1h",
-			"secretStoreRef":  map[string]any{"name": "openbao", "kind": "ClusterSecretStore"},
-			"target":          map[string]any{"creationPolicy": creationPolicy},
-			"data":            data,
+			// The kernel's store: both ExternalSecrets are in kernel
+			// namespaces, also where the path is a tenant's.
+			"secretStoreRef": secrets.StoreRef(secrets.KernelStore),
+			"target":         map[string]any{"creationPolicy": creationPolicy},
+			"data":           data,
 		},
 	}}
 	desired.SetLabels(labels)

@@ -77,6 +77,16 @@ spec:
       metadata:
         name: openbao
       spec:
+        conditions:
+        - namespaceSelector:
+            matchExpressions:
+            - key: gentianos.io/tier
+              operator: In
+              values:
+              - kernel
+              - system
+        - namespaces:
+          - tenant-platform
         provider:
           vault:
             auth:
@@ -118,6 +128,8 @@ spec:
       apiVersion: v1
       data:
         certificates.trustAnchorSecret: ""
+        eso.namespace: kernel-secrets
+        eso.serviceAccount: external-secrets
         identity.internalUrl: http://gentian-idp-keycloak-keycloakx-http.kernel-authentication.svc.cluster.local:8080/auth
         identity.kernelRealm: ""
         identity.namespace: kernel-authentication
@@ -130,6 +142,10 @@ spec:
         mail.smtpHost: ""
         network.edgeNamespace: kernel-edge
         node.ip: ""
+        openbao.authMount: kubernetes
+        openbao.kvMount: secret
+        openbao.namespace: kernel-secrets
+        openbao.server: https://openbao.kernel-secrets.svc.cluster.local:8200
         secretMode: derived
         tenancyMode: multi
         tenant.limitRange.default.cpu: 500m

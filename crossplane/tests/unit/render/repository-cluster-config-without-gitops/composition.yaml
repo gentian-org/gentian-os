@@ -418,12 +418,13 @@ spec:
                  namespace the tenant's apps run in and not its DMZ, where
                  only the platform's own proxy runs.
 
-                 The store the ExternalSecret reads through is the cluster's
-                 one, whose role reads every path: there is no store of the
-                 tenant's own. What keeps this to the tenant's secrets is
-                 therefore checked here, on the path -- a tenant's repository
-                 whose credential is declared outside that tenant's repositories
-                 gets no pull Secret at all.
+                 The store the ExternalSecret reads through is the tenant's
+                 own (openbao-tenant-<tenant>, tenant-default.yaml), whose
+                 role reads that tenant's paths only and which no other
+                 namespace may name. The path is checked here as well -- a
+                 tenant's repository whose credential is declared outside that
+                 tenant's repositories gets no pull Secret at all, instead of
+                 one that never arrives.
 
                  One Secret, two readers. A kubelet reads .dockerconfigjson;
                  provider-helm reads username and password, by those names,
@@ -466,7 +467,7 @@ spec:
                     externalSecretSpec:
                       refreshInterval: 1h
                       secretStoreRef:
-                        name: openbao
+                        name: openbao-tenant-{{ $tenant }}
                         kind: ClusterSecretStore
                       target:
                         name: repository-{{ $claimName }}-pull
@@ -502,6 +503,12 @@ spec:
             # in every matching namespace present and future. A
             # ClusterExternalSecret rather than one per namespace, so adding a
             # tenant does not add a Git object.
+            #
+            # The credential is a kernel path, read through the kernel's
+            # store, which only kernel and system namespaces may name
+            # (cluster-default.yaml). A selector that matches a tenant's
+            # namespace therefore yields no Secret there: ESO refuses the
+            # ExternalSecret it would make.
             apiVersion: kubernetes.crossplane.io/v1alpha2
             kind: Object
             metadata:

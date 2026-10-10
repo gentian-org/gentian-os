@@ -21,3 +21,9 @@ data:
   tenant.limitRange.defaultRequest.cpu: 100m
   tenant.limitRange.defaultRequest.memory: 128Mi
   mail.serviceMode: system
+  openbao.namespace: kernel-secrets
+  openbao.server: https://openbao.kernel-secrets.svc.cluster.local:8200
+  openbao.kvMount: secret
+  openbao.authMount: kubernetes
+  eso.namespace: kernel-secrets
+  eso.serviceAccount: external-secrets

@@ -293,6 +293,146 @@ spec:
                     capabilities = ["list", "delete"]
                   }
 
+            {{- /* ── The tenant's own secret store ─────────────────────────────
+                 What ESO reads for this tenant's namespace, and all it reads
+                 there: a store of the tenant's own, whose role in OpenBao
+                 sees this tenant's paths and nothing else.
+
+                 The kernel's store (openbao, cluster-default.yaml) reads
+                 every kernel path -- the master password among them -- and
+                 every tenant's. It is not usable from a tenant's namespace,
+                 so an ExternalSecret there, whoever wrote it, can name only
+                 this store; and this store answers for no kernel path and for
+                 no other tenant's, because OpenBao refuses the role, not
+                 because nobody asked.
+
+                 Three objects: the policy, the role that carries it, and the
+                 store that signs in with the role. The role is bound to
+                 ESO's own ServiceAccount, as the kernel's is: nothing in the
+                 tenant's namespace can sign in with it.
+
+                 The policy grants what becomes a Secret in the tenant's
+                 namespace and no more: its apps' credentials, its
+                 repositories' pull credentials, and the keys of its
+                 contracts. Not backup/: a tenant's backup destination is
+                 read in the kernel's namespaces, where the capture Jobs run.
+                 The denies are stated although nothing grants those paths: a
+                 deny holds whatever is later added to this policy or to
+                 another one the role is given.
+
+                 The store is cluster-scoped because its ServiceAccount is in
+                 another namespace, and held to this tenant by its
+                 conditions: the two labels this Composition puts on the
+                 tenant's namespace and on no other. The tenant's DMZ carries
+                 another tier and is not admitted; only the platform's proxy
+                 runs there, and it reads no secret from OpenBao. */}}
+            {{- $openbaoNs     := default "kernel-secrets" (dig "openbao.namespace" "" $ccData) }}
+            {{- $openbaoServer := default (printf "https://openbao.%s.svc.cluster.local:8200" $openbaoNs) (dig "openbao.server" "" $ccData) }}
+            {{- $storeKvMount  := default $kvMount (dig "openbao.kvMount" "" $ccData) }}
+            {{- $authMount     := default "kubernetes" (dig "openbao.authMount" "" $ccData) }}
+            {{- $esoNs         := default "kernel-secrets" (dig "eso.namespace" "" $ccData) }}
+            {{- $esoSa         := default "external-secrets" (dig "eso.serviceAccount" "" $ccData) }}
+            ---
+            apiVersion: vault.vault.upbound.io/v1alpha1
+            kind: Policy
+            metadata:
+              name: {{ $tenant }}-eso-policy
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: vault-policy-eso
+            spec:
+              providerConfigRef:
+                name: openbao
+              forProvider:
+                name: eso-tenant-{{ $tenant }}
+                policy: |
+                  path "{{ $storeKvMount }}/data/gentian-os/tenants/{{ $tenant }}/apps/*" {
+                    capabilities = ["read"]
+                  }
+                  path "{{ $storeKvMount }}/data/gentian-os/tenants/{{ $tenant }}/repositories/*" {
+                    capabilities = ["read"]
+                  }
+                  path "{{ $storeKvMount }}/data/gentian-os/tenants/{{ $tenant }}/contracts/*" {
+                    capabilities = ["read"]
+                  }
+                  path "{{ $storeKvMount }}/data/gentian-os/tenants/{{ $tenant }}/backup/*" {
+                    capabilities = ["deny"]
+                  }
+                  path "{{ $storeKvMount }}/metadata/gentian-os/tenants/{{ $tenant }}/backup/*" {
+                    capabilities = ["deny"]
+                  }
+                  path "{{ $storeKvMount }}/data/gentian-os/kernel/*" {
+                    capabilities = ["deny"]
+                  }
+                  path "{{ $storeKvMount }}/metadata/gentian-os/kernel/*" {
+                    capabilities = ["deny"]
+                  }
+
+            ---
+            apiVersion: kubernetes.vault.upbound.io/v1alpha1
+            kind: AuthBackendRole
+            metadata:
+              name: {{ $tenant }}-eso-role
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: vault-auth-role-eso
+            spec:
+              providerConfigRef:
+                name: openbao
+              forProvider:
+                backend: {{ $authMount }}
+                roleName: eso-tenant-{{ $tenant }}
+                boundServiceAccountNames:
+                  - {{ $esoSa }}
+                boundServiceAccountNamespaces:
+                  - {{ $esoNs }}
+                tokenPolicies:
+                  - eso-tenant-{{ $tenant }}
+                tokenTtl: 3600
+
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              name: {{ $tenant }}-secret-store
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: eso-secret-store
+            spec:
+              providerConfigRef:
+                name: kubernetes
+              forProvider:
+                manifest:
+                  apiVersion: external-secrets.io/v1
+                  kind: ClusterSecretStore
+                  metadata:
+                    name: openbao-tenant-{{ $tenant }}
+                    labels:
+                      gentianos.io/tenant: {{ $tenant }}
+                      app.kubernetes.io/managed-by: gentian-os
+                  spec:
+                    conditions:
+                      - namespaceSelector:
+                          matchLabels:
+                            gentianos.io/tier: tenant
+                            gentianos.io/tenant: {{ $tenant }}
+                    provider:
+                      vault:
+                        server: {{ $openbaoServer }}
+                        path: {{ $storeKvMount }}
+                        version: v2
+                        {{- if hasPrefix "https://" $openbaoServer }}
+                        caProvider:
+                          type: Secret
+                          name: openbao-tls
+                          namespace: {{ $openbaoNs }}
+                          key: tls.crt
+                        {{- end }}
+                        auth:
+                          kubernetes:
+                            mountPath: {{ $authMount }}
+                            role: eso-tenant-{{ $tenant }}
+                            serviceAccountRef:
+                              name: {{ $esoSa }}
+                              namespace: {{ $esoNs }}
+
             {{- range $job := $jobs }}
             ---
             apiVersion: kubernetes.crossplane.io/v1alpha2

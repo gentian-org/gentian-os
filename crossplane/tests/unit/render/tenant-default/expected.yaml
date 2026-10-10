@@ -6,8 +6,8 @@ metadata:
 status:
   conditions:
   - lastTransitionTime: "2024-01-01T00:00:00Z"
-    message: 'Unready resources: keycloak-dovecot-oidc-client, keycloak-edge-exchange-client,
-      keycloak-edge-exchange-default-scopes, and 28 more'
+    message: 'Unready resources: eso-secret-store, keycloak-dovecot-oidc-client, keycloak-edge-exchange-client,
+      and 31 more'
     reason: Creating
     status: "False"
     type: Ready
@@ -179,6 +179,57 @@ spec:
         secretKeys:
         - client-secret
         symbols: 0
+  providerConfigRef:
+    name: kubernetes
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: eso-secret-store
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-secret-store
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: external-secrets.io/v1
+      kind: ClusterSecretStore
+      metadata:
+        labels:
+          app.kubernetes.io/managed-by: gentian-os
+          gentianos.io/tenant: render-fixture
+        name: openbao-tenant-render-fixture
+      spec:
+        conditions:
+        - namespaceSelector:
+            matchLabels:
+              gentianos.io/tenant: render-fixture
+              gentianos.io/tier: tenant
+        provider:
+          vault:
+            auth:
+              kubernetes:
+                mountPath: kubernetes
+                role: eso-tenant-render-fixture
+                serviceAccountRef:
+                  name: external-secrets
+                  namespace: kernel-secrets
+            caProvider:
+              key: tls.crt
+              name: openbao-tls
+              namespace: kernel-secrets
+              type: Secret
+            path: secret
+            server: https://openbao.kernel-secrets.svc.cluster.local:8200
+            version: v2
   providerConfigRef:
     name: kubernetes
 ---
@@ -1560,6 +1611,35 @@ spec:
   providerConfigRef:
     name: kubernetes
 ---
+apiVersion: kubernetes.vault.upbound.io/v1alpha1
+kind: AuthBackendRole
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: vault-auth-role-eso
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-eso-role
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  forProvider:
+    backend: kubernetes
+    boundServiceAccountNames:
+    - external-secrets
+    boundServiceAccountNamespaces:
+    - kernel-secrets
+    roleName: eso-tenant-render-fixture
+    tokenPolicies:
+    - eso-tenant-render-fixture
+    tokenTtl: 3600
+  providerConfigRef:
+    name: openbao
+---
 apiVersion: vault.vault.upbound.io/v1alpha1
 kind: Policy
 metadata:
@@ -1584,6 +1664,49 @@ spec:
       }
       path "secret/metadata/gentian-os/tenants/render-fixture/*" {
         capabilities = ["list", "delete"]
+      }
+  providerConfigRef:
+    name: openbao
+---
+apiVersion: vault.vault.upbound.io/v1alpha1
+kind: Policy
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: vault-policy-eso
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-eso-policy
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  forProvider:
+    name: eso-tenant-render-fixture
+    policy: |
+      path "secret/data/gentian-os/tenants/render-fixture/apps/*" {
+        capabilities = ["read"]
+      }
+      path "secret/data/gentian-os/tenants/render-fixture/repositories/*" {
+        capabilities = ["read"]
+      }
+      path "secret/data/gentian-os/tenants/render-fixture/contracts/*" {
+        capabilities = ["read"]
+      }
+      path "secret/data/gentian-os/tenants/render-fixture/backup/*" {
+        capabilities = ["deny"]
+      }
+      path "secret/metadata/gentian-os/tenants/render-fixture/backup/*" {
+        capabilities = ["deny"]
+      }
+      path "secret/data/gentian-os/kernel/*" {
+        capabilities = ["deny"]
+      }
+      path "secret/metadata/gentian-os/kernel/*" {
+        capabilities = ["deny"]
       }
   providerConfigRef:
     name: openbao

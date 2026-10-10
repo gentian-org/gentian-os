@@ -38,6 +38,7 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/kernel"
+	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"github.com/gentian-org/gentian-os/internal/layout"
 	"github.com/gentian-org/gentian-os/internal/profilebundle"
 )
@@ -867,6 +868,11 @@ func TestTheSidecarIsWrittenBesideTheApp(t *testing.T) {
 	}
 	if target, _, _ := unstructured.NestedString(handed.Object, "spec", "target", "name"); target != "notes-sign-in" {
 		t.Fatalf("the values land in %q", target)
+	}
+	// Read through the tenant's own store, whose role sees no other
+	// tenant's paths and none of the kernel's.
+	if store, _, _ := unstructured.NestedString(handed.Object, "spec", "secretStoreRef", "name"); store != secrets.TenantStore("acme") {
+		t.Fatalf("the values are read through the store %q, want %q", store, secrets.TenantStore("acme"))
 	}
 
 	// What it may reach: three places, one port each.
