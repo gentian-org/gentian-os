@@ -1332,6 +1332,15 @@ mappers and flow, nor the broker client is made any more
   - `[ ]` Warn in the install dialog when an app's requirement exceeds the tenant's remaining headroom, which is the decision this data exists to inform.
   - `[ ]` Drop the "not set by this profile" fallback once the resolved figures are always available.
 
+### 3.7 A Sessions Screen in the Administration Console (**)
+* **Target Domain**: Identity & Access
+* **Context**: Earlier documents described a Sessions screen as built. Nothing has it: neither the console nor the registrar lists a person's sessions or ends one. An administrator who switches a member off or removes them ends no session by that act; the realm refuses to renew the account's tokens, so the front door stops answering within one access-token lifetime, five minutes ([iam.md §1.12](design/iam.md)). A change of a person's groups ends nothing either ([open-items.md](plans/open-items.md), defect 17).
+* **Proposed Solution**: A screen in the administration console, on registrar actions that ask `can_manage_users`: the sessions of a person in the tenant's realm, and ending one or all of them at the realm. Ending a session at the realm is what makes it tell the apps that can be told ([iam.md §1.12](design/iam.md)), which switching an account off does not do today.
+* **Backlog Items**:
+  - `[ ]` Registrar: list a person's sessions; end one; end all. Recorded like every other identity act.
+  - `[ ]` Console: the screen, per person.
+  - `[ ]` Decide whether switching a member off, removing them, or changing their groups ends their sessions as part of the act.
+
 ---
 
 ## 4. Agentic AI Layer

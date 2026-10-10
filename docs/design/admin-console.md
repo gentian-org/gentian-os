@@ -182,9 +182,13 @@ and cannot change the password part. The director takes no password block.
 
 ### 4.6 Sessions
 
-The console has no session screen: listing a person's sessions and ending one
-from the console is not built. A person who was removed is refused by the
-front door on their next request ([iam.md §1.11](iam.md)).
+The console has no Sessions screen. Listing a person's sessions and ending
+one from the console is not built; it is a possible future feature
+([roadmap.md](../roadmap.md) §3.7).
+
+What ends a session today when an administrator switches a member off or
+removes them is the realm's refusal to renew it, within five minutes; nobody
+ends it by hand. The whole of it is in [iam.md §1.12](iam.md).
 
 ### 4.7 Audit
 
@@ -314,7 +318,7 @@ a control that exists.
 
 | Topic | State |
 |---|---|
-| Session list and revocation in the console | Not built (§4.6) |
+| Session list and revocation in the console | Not built; a possible future feature (§4.6, [roadmap.md](../roadmap.md) §3.7) |
 | Sign-in and access audit, export, retention | Not built (§4.7; [roadmap.md](../roadmap.md) §1.12) |
 | Realm-wide second-factor rule, WebAuthn | Not built (§4.4) |
 | Creating and removing accounts inside apps (SCIM or events) | Not built (§6) |

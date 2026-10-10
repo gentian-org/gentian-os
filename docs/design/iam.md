@@ -433,6 +433,27 @@ session for them, and each ends differently.
 | **An app behind the sign-in sidecar** whose handler can end a session | the realm posts a signed logout request to the sidecar, inside the cluster; the sidecar checks it and has the handler end the person's sessions in the app | at once, if the sidecar was running when the realm told it |
 | **Any other app session** | nothing the platform does. The app's own lifetime for a session | a sidecar's app: an hour at most. An app with its own client: as long as the app keeps a session |
 
+**When an administrator switches a member off.** There is no Sessions screen and no act that
+ends somebody's session by hand; one is a possible future feature
+([roadmap.md](../roadmap.md) §3.7). What happens today:
+
+- The registrar sets the account to disabled at the realm (`update-person`), or deletes it
+  (`remove-person`). It ends no session itself and tells no app
+  (`internal/registrar/identity/people.go`).
+- The realm stops signing the account in and stops renewing its tokens. The front door keeps a
+  person signed in only by renewing a five-minute access token against the realm session, so
+  every host of the zone stops answering them **within five minutes**, not at once
+  (`accessTokenLifespan` in `tenant-default`).
+- For a removed person the rights go as well: the realm's event reaches the operator, the
+  membership entries are deleted, and the front door refuses the next request it asks about.
+  A person who is only switched off keeps their group memberships; what stops them is the
+  realm.
+- The realm posts no logout notice to the apps for either act, so a session an app holds itself
+  is not ended. It is of no use behind the front door, which refuses the request first. A
+  credential the app itself issued and accepts on a public entry (`authMode: app`: an app
+  password, an API key) is the app's alone: the platform does not end it, and it works until the
+  app or its administrator withdraws it (§1.8).
+
 **How the realm tells an app.** Server to server, at the app's own Service inside the cluster —
 never at the app's public address, where every path is behind a session and the realm, which is
 not a browser, has none. Nothing is opened for it at the front door.
