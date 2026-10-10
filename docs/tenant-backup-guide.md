@@ -277,9 +277,27 @@ age-keygen -o backup-identity.txt
 age-keygen -y backup-identity.txt        # the public key — paste this one
 ```
 
-The private key never reaches the platform at all. The console does not make a
-key for you: a key made on the server is only as private as the server is, and
-the console is built to hold none.
+Made this way, the private key never reaches the platform at all. No server
+makes a key for you: a key made on a server is only as private as the server
+is.
+
+Where the Operations Console is installed, its backup forms offer the same
+thing without the command line. **A new key for this workspace** makes the key
+pair in your browser, on your own machine, and shows the private key once, as
+a file `age -d -i` reads as it is and as a QR code to print. The form then
+uses its public half. Two things are yours to decide there:
+
+- **Save it.** The file or the printed code is your copy. Nothing else has
+  one unless you ask for the next point.
+- **Keep a copy in the vault** (optional). The private key is then handed
+  once to the custodian, which stores it in the vault under your workspace,
+  if you may set your workspace's credentials. No screen and no service
+  returns it afterwards; the console shows only that a copy is kept, for
+  which public key, and who put it there. A copy in the vault is a copy on
+  the cluster: it helps when you lose the file, not when you lose the
+  cluster, and reading it back takes access to the vault, which whoever runs
+  the cluster has as well. Leave the box unticked if the key must exist
+  nowhere but with you.
 
 Give the **public** key — the line starting `age1` — to whoever sets the
 schedule, or paste it into the Export screen for a single backup. Keep the

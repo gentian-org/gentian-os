@@ -372,12 +372,16 @@ Each is true of the code today.
 24. **Whether the Tenant keeps `spec.security.password`.** Defect 25: the
     field and the Composition's use of it are what is left of the commit
     path, and removing them changes the Tenant's schema.
-25. **Where a backup key is made.** The administration console no longer
-    offers to make one. The Operations Console shows the same choice and its
-    backend serves neither the route that would make a key nor the one that
-    reads or keeps the workspace's key, and no platform service makes one. A
-    person makes a key with `age-keygen` and pastes the public half.
-    **Decided 2026-10-10**: left as it is; nothing further is built.
+25. **Where a backup key is made.** **Decided 2026-10-10**: in the
+    person's browser, in the Operations Console, or on the command line with
+    `age-keygen`; no server makes one. The administration console offers
+    neither. The Operations Console submits the public half with the backup
+    policy or the export, through the director, and on request hands the
+    private half to the custodian (`PUT /v1/backup-identity`, under
+    `can_write_credential` on the caller's tenant), which writes it to
+    `gentian-os/tenants/<tenant>/backup/identity` and returns it on no
+    route. This covers a tenant's own key. The cluster's backup key is made
+    with the recovery kit as before, and no console makes or keeps it.
 26. **What a purge does with the kernel's volumes.** **Decided 2026-10-10**:
     the behaviour as built stands, and nothing is to change. A purge does
     not drain the claims of any kernel namespace before the reverse pass:

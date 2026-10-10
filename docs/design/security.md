@@ -1564,7 +1564,19 @@ nobody who only reads the backup storage:
   operator, whose policy reads all of `gentian-os/*`; the secrets operator
   is denied the path.
 - *a key or passphrase the requester named*: the requester. They asked for a
-  bundle only they can open, and it holds the secrets too.
+  bundle only they can open, and it holds the secrets too. A tenant's own
+  key is made by a person, with `age-keygen` or in the browser by an add-on,
+  never by a service of the platform. Its private half reaches the cluster
+  only if that person asks for a copy to be kept: the custodian then writes
+  it to `gentian-os/tenants/<tenant>/backup/identity` for a caller who holds
+  `can_write_credential` on the tenant whose realm signed them in, and takes
+  the tenant from that realm, never from the request
+  (`internal/custodian/backupidentity.go`). The custodian's own policy
+  writes the path and cannot read it; no route returns the value, and the
+  one that answers whether a copy is kept reads the path's metadata. The
+  secrets operators are denied the path; the operator's policy reads all of
+  `gentian-os/*` and so this copy as well, which makes a kept copy readable
+  by whoever runs the cluster. A key that must not be is not kept here.
 
 **What a restore does.** Before an app's data is replaced, each secret the
 bundle holds for it is written to

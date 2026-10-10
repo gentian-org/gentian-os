@@ -334,7 +334,7 @@ a control that exists.
 | Creating and removing accounts inside apps (SCIM or events) | Not built (§6) |
 | Group-scoped and mailed notices | Not built (§5) |
 | A model's health as the gateway sees it | Not built (§6a; [llms.md](llms.md) §5; [roadmap.md](../roadmap.md) §2.31) |
-| Making a backup key in the console | Not offered: the console must not hold a key. A person makes one with `age-keygen` and gives the console the public half ([tenant-backup-guide.md](../tenant-backup-guide.md)) |
+| Making a backup key in the console | Not offered here. A person makes one with `age-keygen` and gives the console the public half, or makes one in the browser in the Operations Console, which can also have the custodian keep a copy in the vault ([tenant-backup-guide.md](../tenant-backup-guide.md) §8). No server makes a key |
 | Agents and delegation, access requests, break-glass workflow | Not built |
 | A tenant's own upstream identity provider, service-account registry, dynamic groups, guests with an end date, access certification | Not built |
 

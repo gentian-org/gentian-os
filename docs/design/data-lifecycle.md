@@ -250,7 +250,10 @@ read restored data.
 Whoever can open a bundle reads these secrets with the data: the holder of
 the key it was encrypted to. For the cluster's backup key that is the holder
 of the recovery kit and, where the key is also kept in OpenBao
-(`spec.backup.escrowIdentity`, the default), a platform administrator.
+(`spec.backup.escrowIdentity`, the default), a platform administrator. A
+tenant's own key is made by a person, on the command line or in the browser,
+and is on the cluster only if that person had the custodian keep a copy
+([security.md §6.4](security.md)).
 
 A bundle is not signed. A restore cannot tell who made the bundle it is
 given, and sets the secrets of the apps it restores to the values that
