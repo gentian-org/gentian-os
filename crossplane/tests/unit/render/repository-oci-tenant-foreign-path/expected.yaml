@@ -43,7 +43,7 @@ spec:
       kind: AppProject
       metadata:
         name: gentianos-tenants
-        namespace: argocd
+        namespace: kernel-gitops
       spec:
         sourceRepos:
         - https://registry.vendor.example
@@ -78,7 +78,7 @@ spec:
       kind: ExternalSecret
       metadata:
         name: repo-borrowed-q4m9z
-        namespace: argocd
+        namespace: kernel-gitops
       spec:
         data:
         - remoteRef:
@@ -134,7 +134,7 @@ spec:
         labels:
           gentianos.io/credential-requirement: borrowed-q4m9z
         name: credreq-repository-borrowed-q4m9z
-        namespace: gentian-system
+        namespace: kernel-control
       spec:
         data:
         - remoteRef:

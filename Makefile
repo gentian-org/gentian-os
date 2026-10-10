@@ -546,6 +546,8 @@ check-render-fixtures:
 
 ## Run crossplane render golden-file tests for all test cases in crossplane/tests/unit/render/
 ## Skip directories without an expected.yaml (run 'make test-unit-render-update' to generate them)
+## A directory with an expected-error.txt holds a claim the Composition must
+## refuse: the render has to fail, and with the one line that file holds.
 test-unit-render: check-render-fixtures
 	@echo "=== crossplane render golden tests ==="
 	@failed=0; \
@@ -555,7 +557,7 @@ test-unit-render: check-render-fixtures
 			echo "SKIP: $$name (missing xr/composition/functions.yaml)"; \
 			continue; \
 		fi; \
-		if [ ! -f "$$dir/expected.yaml" ]; then \
+		if [ ! -f "$$dir/expected.yaml" ] && [ ! -f "$$dir/expected-error.txt" ]; then \
 			echo "SKIP: $$name (no expected.yaml — run 'make test-unit-render-update' to generate)"; \
 			continue; \
 		fi; \
@@ -571,7 +573,19 @@ test-unit-render: check-render-fixtures
 		fi; \
 		actual=$$(crossplane render "$$dir/xr.yaml" "$$dir/composition.yaml" "$$dir/functions.yaml" $$req_args $$obs_args 2>&1); \
 		rc=$$?; \
-		if [ $$rc -ne 0 ]; then \
+		if [ -f "$$dir/expected-error.txt" ]; then \
+			want=$$(cat "$$dir/expected-error.txt"); \
+			if [ $$rc -eq 0 ]; then \
+				echo "FAIL: $$name (rendered, and must be refused)"; \
+				failed=1; \
+			elif ! printf '%s' "$$actual" | grep -qF -- "$$want"; then \
+				echo "FAIL: $$name (refused, but not with the sentence in expected-error.txt)"; \
+				echo "$$actual"; \
+				failed=1; \
+			else \
+				echo "PASS: $$name (refused)"; \
+			fi; \
+		elif [ $$rc -ne 0 ]; then \
 			echo "FAIL: $$name (crossplane render exited $$rc)"; \
 			echo "$$actual"; \
 			failed=1; \
@@ -595,6 +609,10 @@ test-unit-render-update:
 		name=$$(basename "$$dir"); \
 		if [ ! -f "$$dir/xr.yaml" ] || [ ! -f "$$dir/composition.yaml" ] || [ ! -f "$$dir/functions.yaml" ]; then \
 			echo "SKIP: $$name (missing xr/composition/functions.yaml)"; \
+			continue; \
+		fi; \
+		if [ -f "$$dir/expected-error.txt" ]; then \
+			echo "KEPT: $$name (a refusal; expected-error.txt is written by hand)"; \
 			continue; \
 		fi; \
 		req_args=""; \

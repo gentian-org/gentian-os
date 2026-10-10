@@ -3,7 +3,7 @@ apiVersion: external-secrets.io/v1
 kind: ExternalSecret
 metadata:
   name: credreq-repository-borrowed-q4m9z
-  namespace: gentian-system
+  namespace: kernel-control
   labels:
     gentianos.io/credential-requirement: borrowed-q4m9z
 status:

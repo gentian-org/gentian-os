@@ -11,7 +11,7 @@ metadata:
   name: deployments-q7xw2
   labels:
     crossplane.io/claim-name: deployments
-    crossplane.io/claim-namespace: crossplane-system
+    crossplane.io/claim-namespace: kernel-provisioning
 spec:
   type: git
   role: deployments

@@ -1,9 +1,10 @@
-# A private Git repository the operator also pushes to, with the install host
-# reaching it at a different address than in-cluster pods do.
+# The writable git repository of repository-git, with its credential present,
+# on a cluster whose configuration has not been published: there is no
+# cluster-config ConfigMap in required-resources.
 #
-# Where each artefact lands comes from the cluster-config ConfigMap in
-# required-resources, not from this claim: the git credential beside the
-# director, which pushes with it, and the repository Secret beside Argo CD.
+# Nothing is delivered. The composition has no namespace name of its own to
+# fall back on, so the render is refused, with the sentence in
+# expected-error.txt, which names both missing keys.
 apiVersion: gentianos.io/v1alpha1
 kind: XRepository
 metadata:

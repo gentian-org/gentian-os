@@ -123,28 +123,31 @@ spec:
             */ -}}
             {{- $extra  := index .context "apiextensions.crossplane.io/extra-resources" }}
             {{- $probes := dig "credentialProbe" list $extra }}
-            {{- /* Where the kernel runs, from the cluster's own configuration.
-                 Every artefact below is written beside the operator and the
-                 director, and which namespace that is depends on the layout
-                 the cluster was installed with. This was the v4 name,
-                 hardcoded, so on a v5 cluster the git credential landed in a
-                 namespace nothing reads: the director could clone a public
-                 repository and never push to it, which is what it did.
+            {{- /* Where the kernel and Argo CD run, from the cluster's own
+                 configuration. Every artefact below is written beside the
+                 operator and the director or beside Argo CD, and which
+                 namespaces those are is the layout the cluster was installed
+                 with.
 
-                 Absent means a cluster whose claim predates the key, which
-                 is a v4 cluster, and v4's name is the right answer there. */}}
+                 There is no default for either. A configuration without the
+                 keys -- not published yet, or published by something that
+                 does not know the layout -- fails this step, naming the
+                 missing key: the claim reports Synced=False with that
+                 sentence, nothing new is composed and nothing already
+                 delivered is touched. A credential written to a guessed
+                 namespace is one nothing reads, or one something else does. */}}
             {{- $ccData := dict }}
             {{- range (dig "clusterConfig" list $extra) }}
             {{- $ccData = .data | default dict }}
             {{- end }}
-            {{- $kernelNs := dig "kernel.controlNamespace" "gentian-system" $ccData }}
-            {{- /* Where Argo CD runs. Absent means a cluster whose claim
-                 predates the key, which is a v4 cluster, and v4's name is the
-                 right answer there -- the same reasoning as the control
-                 namespace above. This was written as "argocd" four times, so
-                 on v5 the repository Secret landed in a namespace that does
-                 not exist and Argo CD did not see it. */}}
-            {{- $argoNs := dig "kernel.gitopsNamespace" "argocd" $ccData }}
+            {{- $kernelNs := dig "kernel.controlNamespace" "" $ccData }}
+            {{- $argoNs := dig "kernel.gitopsNamespace" "" $ccData }}
+            {{- $missing := list }}
+            {{- if eq $kernelNs "" }}{{- $missing = append $missing "kernel.controlNamespace" }}{{- end }}
+            {{- if eq $argoNs "" }}{{- $missing = append $missing "kernel.gitopsNamespace" }}{{- end }}
+            {{- if $missing }}
+            {{- fail (printf "nothing is delivered for repository %s: the cluster configuration (the ConfigMap labelled gentianos.io/config-type=cluster-config) does not carry %s, so there is no namespace to deliver to. The Cluster composition publishes both." $claimName (join " and " $missing)) }}
+            {{- end }}
             {{- /* No credential means nothing to wait for, so the artefacts below are
                  emitted immediately rather than never. */}}
             {{- $satisfied := not $hasCred }}

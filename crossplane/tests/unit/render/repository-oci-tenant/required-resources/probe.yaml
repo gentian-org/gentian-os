@@ -3,7 +3,7 @@ apiVersion: external-secrets.io/v1
 kind: ExternalSecret
 metadata:
   name: credreq-repository-vendor-apps-x7k2p
-  namespace: gentian-system
+  namespace: kernel-control
   labels:
     gentianos.io/credential-requirement: vendor-apps-x7k2p
 status:

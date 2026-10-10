@@ -8,7 +8,7 @@ metadata:
   name: gentian-apps
   labels:
     crossplane.io/claim-name: gentian-apps
-    crossplane.io/claim-namespace: crossplane-system
+    crossplane.io/claim-namespace: kernel-provisioning
 spec:
   type: git
   role: apps

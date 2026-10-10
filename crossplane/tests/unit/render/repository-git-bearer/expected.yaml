@@ -27,7 +27,7 @@ metadata:
   generateName: deployments-q7xw2-
   labels:
     crossplane.io/claim-name: deployments
-    crossplane.io/claim-namespace: crossplane-system
+    crossplane.io/claim-namespace: kernel-provisioning
     crossplane.io/composite: deployments-q7xw2
   ownerReferences:
   - apiVersion: gentianos.io/v1alpha1
@@ -43,7 +43,7 @@ spec:
       kind: AppProject
       metadata:
         name: gentianos-tenants
-        namespace: argocd
+        namespace: kernel-gitops
       spec:
         sourceRepos:
         - https://git.mirror.example/platform/gentian-deployments
@@ -62,7 +62,7 @@ metadata:
   generateName: deployments-q7xw2-
   labels:
     crossplane.io/claim-name: deployments
-    crossplane.io/claim-namespace: crossplane-system
+    crossplane.io/claim-namespace: kernel-provisioning
     crossplane.io/composite: deployments-q7xw2
   ownerReferences:
   - apiVersion: gentianos.io/v1alpha1
@@ -78,7 +78,7 @@ spec:
       kind: ExternalSecret
       metadata:
         name: repo-deployments-q7xw2
-        namespace: argocd
+        namespace: kernel-gitops
       spec:
         data:
         - remoteRef:
@@ -110,7 +110,7 @@ metadata:
   generateName: deployments-q7xw2-
   labels:
     crossplane.io/claim-name: deployments
-    crossplane.io/claim-namespace: crossplane-system
+    crossplane.io/claim-namespace: kernel-provisioning
     crossplane.io/composite: deployments-q7xw2
   ownerReferences:
   - apiVersion: gentianos.io/v1alpha1
@@ -128,7 +128,7 @@ spec:
         labels:
           gentianos.io/credential-requirement: deployments-q7xw2
         name: credreq-repository-deployments-q7xw2
-        namespace: gentian-system
+        namespace: kernel-control
       spec:
         data:
         - remoteRef:
@@ -155,7 +155,7 @@ metadata:
     crossplane.io/composition-resource-name: credreq-deployments-q7xw2
   labels:
     crossplane.io/claim-name: deployments
-    crossplane.io/claim-namespace: crossplane-system
+    crossplane.io/claim-namespace: kernel-provisioning
     crossplane.io/composite: deployments-q7xw2
     gentianos.io/credential-phase: bootstrap
     gentianos.io/credential-scope: cluster
@@ -193,7 +193,7 @@ metadata:
   generateName: deployments-q7xw2-
   labels:
     crossplane.io/claim-name: deployments
-    crossplane.io/claim-namespace: crossplane-system
+    crossplane.io/claim-namespace: kernel-provisioning
     crossplane.io/composite: deployments-q7xw2
   ownerReferences:
   - apiVersion: gentianos.io/v1alpha1
@@ -209,7 +209,7 @@ spec:
       kind: ExternalSecret
       metadata:
         name: deployments-git-credentials
-        namespace: gentian-system
+        namespace: kernel-control
       spec:
         data:
         - remoteRef:

@@ -114,17 +114,6 @@ ALLOWED = {
         ("helm uninstall crossplane -n crossplane-system", "e2e-p0-clean undoes what the by-hand p0 procedure installed"),
         ("kubectl delete ns crossplane-system", "e2e-p0-clean undoes what the by-hand p0 procedure installed"),
     ],
-    # Where a repository's credential is written when the cluster's
-    # configuration does not say where the kernel runs. Naming the layout's
-    # namespaces here would deliver it where it is refused today.
-    "crossplane/compositions/repository-default.yaml": [
-        ('dig "kernel.controlNamespace" "gentian-system"', "the fallback for a cluster configuration without the key"),
-    ],
-    "crossplane/tests/unit/render/repository-": [
-        ("crossplane-system", "a claim as that fallback's fixtures have it"),
-        ("gentian-system", "what that fallback renders"),
-        ("namespace: argocd", "what that fallback renders"),
-    ],
     # The installer's own copy of the staging trust anchor, written to a
     # namespace nothing creates; the operator writes the one that is read.
     "scripts/lib/certs.sh": [

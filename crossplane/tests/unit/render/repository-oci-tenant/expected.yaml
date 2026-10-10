@@ -43,7 +43,7 @@ spec:
       kind: AppProject
       metadata:
         name: gentianos-tenants
-        namespace: argocd
+        namespace: kernel-gitops
       spec:
         sourceRepos:
         - oci://registry.vendor.example/acme
@@ -78,7 +78,7 @@ spec:
       kind: ExternalSecret
       metadata:
         name: repo-vendor-apps-x7k2p
-        namespace: argocd
+        namespace: kernel-gitops
       spec:
         data:
         - remoteRef:
@@ -134,7 +134,7 @@ spec:
         labels:
           gentianos.io/credential-requirement: vendor-apps-x7k2p
         name: credreq-repository-vendor-apps-x7k2p
-        namespace: gentian-system
+        namespace: kernel-control
       spec:
         data:
         - remoteRef:

@@ -24,7 +24,7 @@ metadata:
   generateName: gentian-apps-
   labels:
     crossplane.io/claim-name: gentian-apps
-    crossplane.io/claim-namespace: crossplane-system
+    crossplane.io/claim-namespace: kernel-provisioning
     crossplane.io/composite: gentian-apps
   ownerReferences:
   - apiVersion: gentianos.io/v1alpha1
@@ -40,7 +40,7 @@ spec:
       kind: AppProject
       metadata:
         name: gentianos-tenants
-        namespace: argocd
+        namespace: kernel-gitops
       spec:
         sourceRepos:
         - https://github.com/gentian-org/gentian-apps
@@ -59,7 +59,7 @@ metadata:
   generateName: gentian-apps-
   labels:
     crossplane.io/claim-name: gentian-apps
-    crossplane.io/claim-namespace: crossplane-system
+    crossplane.io/claim-namespace: kernel-provisioning
     crossplane.io/composite: gentian-apps
   ownerReferences:
   - apiVersion: gentianos.io/v1alpha1
@@ -77,7 +77,7 @@ spec:
         labels:
           argocd.argoproj.io/secret-type: repository
         name: repo-gentian-apps
-        namespace: argocd
+        namespace: kernel-gitops
       stringData:
         type: git
         url: https://github.com/gentian-org/gentian-apps

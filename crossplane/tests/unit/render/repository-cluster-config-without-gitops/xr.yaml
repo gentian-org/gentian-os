@@ -1,9 +1,7 @@
-# A private Git repository the operator also pushes to, with the install host
-# reaching it at a different address than in-cluster pods do.
-#
-# Where each artefact lands comes from the cluster-config ConfigMap in
-# required-resources, not from this claim: the git credential beside the
-# director, which pushes with it, and the repository Secret beside Argo CD.
+# The writable git repository of repository-git, with its credential present,
+# on a cluster whose configuration names the kernel's namespace and not Argo
+# CD's. Nothing is delivered -- not even the half that could be placed -- and
+# the refusal names the one missing key (expected-error.txt).
 apiVersion: gentianos.io/v1alpha1
 kind: XRepository
 metadata:
