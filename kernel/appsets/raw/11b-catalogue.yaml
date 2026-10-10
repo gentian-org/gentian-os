@@ -3,7 +3,7 @@
 #
 # AD-3: a profile arrives when a tenant installs it, at a content digest,
 # through the director, which commits it to clusters/<cluster>/catalogue/.
-# Step 0 writes the default profiles there too (sovereignty-concept.md §5.4).
+# Step 0 writes the default profiles there too (AD-14).
 # Nothing synced that directory: every materialised entry stayed a file in
 # git, and the first default profile -- the Operations Console -- never
 # became a ComponentProfile. This is the Application that reads it.

@@ -900,8 +900,8 @@ describe a store page asking a desktop to install are superseded by it.
 ## WP-15 Sovereignty — the bundle, import, purge, the Operations Console (`os`, `ui`, `corp`)
 
 From [sovereignty-concept.md](sovereignty-concept.md), which is normative for
-all of it. The free half is Gentian OS's (export, download, import, purge,
-offboard, the bundle format); the convenience half is the Operations Console's.
+all of it that is Gentian OS's: export, download, import, purge, offboard and
+the bundle format. The Operations Console is an add-on built on those.
 
 **M1 and M2a, landed 2026-10-02**
 
@@ -951,6 +951,6 @@ offboard, the bundle format); the convenience half is the Operations Console's.
       in the first profiles (Nextcloud files, contacts, calendar; mail).
 - [ ] **Scheduled backups as a content-addressed repository** under Object
       Lock, with PITR for databases, a monthly off-site bundle, verification
-      and drills (§5.3) — Operations Console work, on the OS's capture units.
+      and drills — Operations Console work, on the OS's capture units.
 - [ ] **Self-service restore** and **recovery on a click** in the Operations
       Console; **ingest and egress** converters (§6).

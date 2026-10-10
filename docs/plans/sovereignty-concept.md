@@ -1,26 +1,91 @@
 # Sovereignty concept: the tenant's data is the tenant's
 
-Two layers, two promises. **Gentian OS** promises security and sovereignty:
-at any moment a tenant can take all of their data with them, and at any moment
-they can have all of it destroyed, without asking the platform's permission and
-without depending on anyone's tooling to read what they took. **A vendor's
-add-ons** promise convenience and reliability: the same data looked after on a schedule,
-kept off-site, recoverable with one click, and movable in and out of the
-workspace products an organisation already uses. The first is this
-repository. The second is a set of add-ons installed from a catalogue under
-their own license; what that license asks of whoever installs them is stated
-with the add-ons, not here, and no install is gated on it by the cluster.
+Gentian OS is open source. This document says what that gives a tenant, how
+much of it is built, and what the project commits to keep that way.
 
-What the OS contributes to any license stated in users is a fact, not a gate:
-the registrar answers how many people hold an account on the cluster, per
-realm (`GET /v1/clusters/{c}/people/count`, `can_audit`). A platform
-administrator can read it today; a console telling them that the number has
-crossed what an installed add-on's license allows is not wired yet.
+The promise is security and sovereignty: at any moment a tenant can take all
+of their data with them, and at any moment they can have all of it destroyed,
+without asking the platform's permission and without depending on anyone's
+tooling to read what they took.
 
-Everything in this document follows from keeping those two promises distinct,
-and from one further rule: every lifecycle flow is built from the same few
-primitives, so that export, backup, import, recovery and deletion agree about
-what "all of the data" is. The inventory of what exists today is in §9.
+Anyone may build on Gentian OS, and a vendor may sell add-ons and services on
+top of it. An add-on is not part of this repository: it comes from a catalogue
+under its own license and brings its own packaging (§5). Nothing in this
+document depends on one.
+
+One rule shapes the rest of the document: every lifecycle flow is built from
+the same few primitives, so that export, import, restore and deletion agree
+about what "all of the data" is. The inventory of what exists today is in §9.
+
+## What is free
+
+Everything in this repository, at any size, for an organisation's own use or
+for its customers. [LICENSING.md](../../LICENSING.md) says which license
+covers which file; running the software asks nothing under either.
+
+For a tenant's data, that means the following. "Built" is the state on the
+branch this document is on; §9 has the detail.
+
+| What | Who does it | State |
+|---|---|---|
+| The bundle: one format for a tenant's data, encrypted, readable with [age](https://age-encryption.org) and a tar tool (§1) | — | built as schema 1; schema 2 (credentials, secrets, mail, standard formats per app) is designed |
+| Export now, and download the bundle as one file (§4.2) | tenant administrator | built |
+| Import a bundle as a new tenant, on this cluster or another (§4.3) | cluster administrator | built |
+| Restore a bundle into a tenant that exists | cluster administrator | built, with no console screen |
+| Retire a tenant and keep its data | cluster administrator | built |
+| Purge: destroy a tenant's data (§4.4) | cluster administrator | built for databases, buckets, volumes, the realm and the backup bucket; the stores listed in §9.3 are still left behind |
+| Offboard: export to the tenant's key, hand over, purge, and a signed record of what was destroyed (§4.5) | tenant administrator asks, cluster administrator confirms | not built |
+| Standard formats per app — files, vCard, iCalendar, Maildir (§6) | — | not built |
+
+## What the project commits to keep free
+
+Each of these is stated in this repository already; the place is named beside
+it. Where a commitment is about something not yet built, the table above says
+so.
+
+1. **The OS is open source, all of it.** The core is MPL-2.0; the resource
+   types, the CRDs generated from them and the bundle format are Apache-2.0.
+   No code the project writes for the OS is under a source-available or
+   network-copyleft license ([licensing.md](licensing.md), Excluded Licenses).
+2. **Leaving is part of the core.** Export, import, restore and purge are
+   core functions under the core's license, so that a tenant's mobility never
+   depends on an add-on ([licensing.md](licensing.md), License Allocation).
+3. **The bundle format belongs to the OS and there is one of it.** It is
+   specified here, anything that reads or writes a tenant's data in bulk uses
+   it, and it is readable with standard tools and no running service (§1,
+   §1.2).
+4. **A bundle is always encrypted, and the tenant can have it encrypted to a
+   key of their own**, which the provider cannot read. That this is the
+   default for an export a person asks for is decided and not yet built
+   (§1.4).
+5. **An import does not depend on the cluster the bundle came from**, nor on
+   its provider's recovery kit (§4.3).
+6. **The OS builds, installs and runs with no add-on and no store present.**
+   Nothing in it — the APIs, the formats, leaving — depends on one. A default
+   install may propose an add-on; it never requires one (§5,
+   [licensing.md](licensing.md), [LICENSING.md](../../LICENSING.md)).
+7. **The cluster gates nothing on a license.** It holds no entitlement, and
+   an install is asked of the person who makes it and of nothing else
+   ([architectural-decisions.md](architectural-decisions.md) AD-3, AD-14).
+8. **The standard formats per app are standards, never a Gentian schema**, so
+   that a tenant's files, contacts, calendars and mail stay readable by other
+   products (§6).
+
+## What is not part of the commitment
+
+- **Scheduled backups.** `TenantExportSchedule`, `BackupPolicy` and their
+  controllers are in this repository today and work
+  ([tenant-backup-guide.md](../tenant-backup-guide.md)). The plan is for them
+  to leave it for a separate component (§5, §7). What stays is the export
+  they schedule. Whoever runs a cluster can also schedule exports with
+  anything that can call the director.
+- **A store.** The App Store app on a cluster shows the data of a store run
+  outside it. A cluster with no store installs apps by command (AD-14). A
+  cluster that has turned its licence report off has no App Store app
+  ([operations.md](../design/operations.md) §6.2); nothing else changes.
+- **Software the OS installs that is not the project's.** The system services
+  and the catalogue's apps keep their own licenses
+  ([LICENSING.md](../../LICENSING.md)).
 
 ## 1. The one object: the bundle
 
@@ -28,9 +93,9 @@ A **bundle** is a self-contained, encrypted snapshot of one tenant. It is the
 unit everything else moves: an export produces one, a backup is an export on a
 timer, an import consumes one, recovery is an import of the most recent one,
 and deletion is the promise that nothing the bundle would have contained
-survives. Its format is normative here, in Gentian OS, and every add-on
-tool produces or consumes exactly this format — the converters, the schedulers,
-the recovery screen. There is no second format.
+survives. Its format is normative here, in Gentian OS, and anything built on
+top of the OS produces or consumes exactly this format. There is no second
+format.
 
 ### 1.1 Contents (schema 2)
 
@@ -57,7 +122,7 @@ the export form, off by default.
 **Identity is Keycloak and the portable form is SCIM.** There is no LDAP in
 Gentian and none is proposed. A bundle carries the realm export for a faithful
 restore and the SCIM projection for everything that is not Gentian — the
-converters in §6, and any directory the tenant moves to next.
+standard formats of §6, and any directory the tenant moves to next.
 
 Not in a bundle, on purpose: caches (Redis), derived files an app regenerates,
 and **platform-issued credentials** — the database passwords, S3 keys and
@@ -94,16 +159,17 @@ Every artefact is an age file. The recipient is one of:
 |---|---|---|
 | **tenant key** — an X25519 identity minted in the console, shown once, escrowable at the tenant's choice | the tenant | manual export |
 | **passphrase** | whoever holds the phrase | manual export, on request |
-| **platform key** — the cluster's backup recipients | the tenant and the operator | scheduled backup (add-on) |
+| **platform key** — the cluster's backup recipients | the tenant and the operator | scheduled export |
 
-This is what exists (`BackupKeyChoice`), with one change: a manual export
-defaults to the tenant's own key, not the platform's. Sovereignty means the
-default bundle is one the provider cannot read.
+The three modes exist. One change is decided and not built: a manual export
+defaults to the tenant's own key, not the platform's — today an export that
+names no key is encrypted to the cluster's. Sovereignty means the default
+bundle is one the provider cannot read.
 
 ## 2. The primitives
 
 Five operations, each implemented once in Gentian OS, from which every flow in
-§3 is built — the OS's own and the add-ons' alike.
+§3 is built, and which anything built on top calls as well.
 
 | # | Primitive | Where it lives | Does |
 |---|---|---|---|
@@ -120,27 +186,25 @@ closing that is the first piece of work.
 
 ## 3. The flows
 
-| Flow | Product | Who | Composition | Today |
-|---|---|---|---|---|
-| **Create** | OS | cluster admin | P1 | built |
-| **Export** | OS | tenant admin, one click | P3 → stage in the cluster's bucket → stream to the browser as a `.gentian` file → delete the stage after `ttlSeconds` | P3 built; download missing |
-| **Import** | OS | cluster admin | read `manifest.json` → P1 with the bundle's `TenantSpec` → wait for Ready → P4 | missing |
-| **Restore** | OS | cluster admin | P4 into the existing tenant from a bundle the admin supplies | built, admin-only, no console |
-| **Retire** | OS | cluster admin | remove the manifest; data follows `deletionPolicy` (Retain) | built |
-| **Purge** | OS | cluster admin | set `deletionPolicy: Delete`, wait for the cluster to hold it, remove the manifest → P5 | built 2026-10-02; P5 incomplete |
-| **Offboard** | OS | tenant admin asks, cluster admin confirms | Export to the tenant's key → hand over → Purge → signed deletion record | missing; the sovereign exit |
-| **Backup** | add-on | tenant admin sets it, nobody runs it | P3 on a schedule → a destination → retention | built in OS today; moves (§5) |
-| **Remote backup** | add-on | cluster admin | Backup to an external destination, keys escrowed | partly built in OS today; moves (§5) |
-| **Recovery** | add-on | cluster or tenant admin, one click | pick a bundle → Import (tenant gone) or Restore (tenant present) → verified | missing |
-| **Ingest** | add-on | tenant admin | converter reads M365 / Google Workspace → writes a bundle → Import | missing |
-| **Egress** | add-on | tenant admin | Export → converter pushes the bundle to M365 / Google Workspace | missing |
+| Flow | Who | Composition | Today |
+|---|---|---|---|
+| **Create** | cluster admin | P1 | built |
+| **Export** | tenant admin, one click | P3 → stage in the cluster's bucket → stream to the browser as a `.gentian` file → delete the stage after `ttlSeconds` | built |
+| **Import** | cluster admin | read `manifest.json` → P1 with the bundle's `TenantSpec` → wait for Ready → P4 | built |
+| **Restore** | cluster admin | P4 into the existing tenant from a bundle the admin supplies | built, admin-only, no console |
+| **Retire** | cluster admin | remove the manifest; data follows `deletionPolicy` (Retain) | built |
+| **Purge** | cluster admin | set `deletionPolicy: Delete`, wait for the cluster to hold it, remove the manifest → P5 | built 2026-10-02; P5 incomplete (§9.3) |
+| **Offboard** | tenant admin asks, cluster admin confirms | Export to the tenant's key → hand over → Purge → signed deletion record | missing; the sovereign exit |
 
-Import is Create plus Restore; Recovery is Import or Restore chosen by whether
-the tenant exists; Backup is Export on a timer; Offboard is Export plus Purge;
-Ingest and Egress are a converter on either side of Import and Export. No flow
-introduces machinery the others lack, which is the DRY the title asks for: not
-one binary, but one inventory, one bundle, one manifest path, and the add-on
-flows calling the OS primitives through the director like any other client.
+Import is Create plus Restore, and Offboard is Export plus Purge. No flow
+introduces machinery the others lack: one inventory, one bundle, one manifest
+path.
+
+Anything further is a composition of these and is not a flow of the OS: a
+backup is an Export on a timer, a recovery is an Import or a Restore of the
+newest bundle, and a migration from or to another product is a converter on
+either side of Import and Export (§6). Whoever builds such a thing calls the
+OS primitives through the director like any other client (§5).
 
 ## 4. What has to change in Gentian OS for the flows to hold
 
@@ -166,7 +230,7 @@ flows calling the OS primitives through the director like any other client.
 A director route streams a bundle as one `.gentian` file:
 `GET /v1/tenants/{t}/backups/{name}/download`. The export is staged in the
 cluster's own bucket as today, the stream is a tar of the prefix, and the stage
-is removed when `ttlSeconds` expires. The console's Backup tab gets a
+is removed when `ttlSeconds` expires. The console's Export tab gets a
 **Download** button per bundle and an **Export now** that defaults to "to my
 computer, encrypted to my key", with the `omitCredentials` checkbox beside the
 key choice.
@@ -224,99 +288,65 @@ export to a key the tenant supplies → hand the bundle over → purge with
 `keepBundles: false` → deletion record. Each step is one of the above; the flow
 only sequences them and refuses to purge before the export is Ready.
 
-## 5. What is Gentian OS and what is an add-on
+## 5. Add-ons, and where the OS ends
 
-Everything a tenant needs to **own** their data is in gentian-os. Everything
-that makes owning it **convenient and reliable** is a vendor's add-on: delivered
-as catalogue entries under its own license, bringing its own profiles, its own
-controller and its own AppProject as every add-on does. The Admin Console
-points at them and builds its default workflows around them. What it never
-does is make them mandatory — every promise in §1 holds with nothing but
-Gentian OS installed.
+Everything a tenant needs to **own** their data is in gentian-os, and every
+promise in §1 holds with nothing but Gentian OS installed.
 
-| | Gentian OS (FOSS) | Add-on |
-|---|---|---|
-| Bundle format, schema, encryption | normative here | consumes and produces |
-| Export now, to the browser, to the tenant's key | ✓ | |
-| Delete now: retire, purge, offboard, deletion record | ✓ | |
-| Import a bundle; restore into an existing tenant | ✓, cluster admin | |
-| Canonical interchange forms per app (§6) | ✓, the contract | converters target it |
-| Scheduled backups | | ✓ |
-| External destinations, key escrow, retention across tenants | | ✓ |
-| Recovery on a click, restore drills with proof, DR | | ✓ |
-| Converters: M365 / Google Workspace ⇄ bundle | | ✓ |
+What goes beyond that — looking after the data on a schedule, keeping copies
+elsewhere, moving data in from other products — can be built on top by
+anyone, and a vendor may sell it. Such an add-on is delivered as catalogue
+entries under its own license, and it brings its own packaging as every
+add-on does: its profiles, its controller if it has one, and its own
+AppProject. What its license asks of whoever installs it is stated with the
+add-on, not here, and the cluster gates no install on it.
 
-**What moves.** `TenantExportSchedule`, `BackupPolicy` and their controllers
-exist in gentian-os today and are the scheduling layer; they move to the
-Operations Console's component (§5.1). What stays is the primitive they
+An add-on uses the OS the way every other client does:
+
+- It calls the primitives of §2 through the director, with the signed-in
+  person's token. It never writes to git itself — the director is the only
+  writer (AD-2) — and it reads a tenant's data only through a bundle the
+  person was allowed to open.
+- It produces and consumes the bundle of §1 and no other format.
+
+**Scheduling is to move out of this repository.** `TenantExportSchedule`,
+`BackupPolicy` and their controllers exist in gentian-os today. They are to
+move to a separate component (§5.2). What stays is the primitive they
 schedule (`TenantExport`) and the director's routes that write a committed
-backup policy for a tenant — the director is the only writer of git (AD-2),
-so an add-on's console sets a policy the same way the Admin Console sets anything:
-by asking the director. A cluster without the add-on component installed holds
-the policy file and nothing acts on it; that is the OS on its own, precisely.
+backup policy for a tenant. A cluster without such a component holds the
+policy file and nothing acts on it.
 
-**The 2026-09-22 backup split** recorded in work-packages WP-9 drew the line
-one step further towards gentian-os: it kept "local backup" — scheduling to
-the cluster's own storage — and `BackupPolicy` on the free side, and moved
-only remote targets, escrow, cross-tenant retention, drills, DR and migration
-to an add-on component. This document supersedes it: the line is at *scheduling*,
-not at *where the bundle goes*. WP-9's entry is updated to point here.
+This supersedes the 2026-09-22 backup split recorded in work-packages WP-9,
+which kept scheduling to the cluster's own storage in gentian-os. The line is
+at *scheduling*, not at *where the bundle goes*.
 
-### 5.1 The Operations Console
+### 5.1 What the Admin Console says about add-ons
 
-An add-on app, built from the same template as the Admin Console and
-installed the same way — a component per tenant from its own profile
-(AD-10), with its platform-tenant instance carrying the cluster-scope
-screens. Where the Admin Console is the place a tenant *controls* its
-workspace, the Operations Console is the place it is *looked after*:
+Where an OS flow has a continuation in an add-on, the Admin Console says so:
+with the add-on installed it links to it, and without it the same place says
+what the add-on would do and offers to install it. The OS path is always
+there and always works.
 
-| Screen | Scope | Does |
-|---|---|---|
-| **Backups** | tenant | schedule (cron, apps, key, retention), destination (cluster storage, external S3), last and next run, each bundle's status and size, verification state |
-| **Recovery** | tenant and cluster | pick a bundle, see what it holds (manifest, apps, people, capture time), restore into the tenant or re-import a tenant that is gone — one click, behind the typed-name confirmation the purge dialog uses |
-| **Drills** | cluster | periodic restore into a scratch tenant, diffed against the source, reported as proof that the backups are restorable |
-| **Destinations and keys** | cluster | external endpoints, credentials, escrowed identities, which tenants may override the cluster policy |
-| **Ingest** | tenant | connect M365 or Google Workspace, choose what to bring (people, mail, files, calendars, contacts), produce a bundle, import it |
-| **Egress** | tenant | export a bundle and push it to M365 or Google Workspace |
-| **Disaster recovery** | cluster | the whole cluster's tenants from the newest bundles at an external destination, in order |
+### 5.2 An add-on that brings a controller
 
-Its backend talks to the director with the signed-in person's token, as the
-Admin Console does; what it needs that the director does not yet offer
-(scheduling state, drill results, converter progress) its own controller
-holds, in its own CRDs, shipped with its profile. It never bypasses the
-director for a write to git, and it never reads tenant data except through a
-bundle the person was allowed to open.
-
-**The Admin Console promotes it.** Its Backup tab is built around the
-Operations Console being there: with it installed, the tab shows the schedule,
-the last run and a link into Recovery beside the one-click export; without it,
-the same places show what scheduled backups, recovery and drills would give
-this tenant and an **Install** that opens the store entry. The same pattern
-applies wherever an OS flow has an add-on continuation: the purge dialog mentions
-that a tenant with scheduled backups keeps its bundles off-site; the import
-screen mentions that Ingest does the same from M365 or Google Workspace. The
-OS path is always there and always works; the add-on path is the default the
-screens lead to.
-
-### 5.2 Shipping a controller from the catalogue
-
-The Operations Console is two catalogue entries, because it is two kinds of
-thing:
+An add-on that reconciles objects of its own is two catalogue entries,
+because it is two kinds of thing:
 
 | Entry | Class (AD-4) | Installed by | Holds |
 |---|---|---|---|
-| `operations` | `service` | the platform administrator, once per cluster, into `system-operations` | the CRDs (`BackupSchedule`, `BackupDestination`, `RestoreDrill`, `ConverterRun`), the controller, its ClusterRole |
-| `operations-console` | `app` | each tenant, from the store | the console: frontend, BFF, tile |
+| the service | `service` | the platform administrator, once per cluster, into a namespace of its own | the CRDs, the controller, its ClusterRole |
+| the console | `app` | each tenant | the screens: frontend, backend, tile |
 
 The console **requires the service** the way an app requires a database —
-`requires.services: [operations]` — and AD-5 does the rest: a tenant that
-installs the console on a cluster without the service is told the platform
-owes it something, and the install waits until the administrator provides it.
-No new mechanism; a service that happens to carry CRDs is still a service.
+`requires.services` — and AD-5 does the rest: a tenant that installs the
+console on a cluster without the service is told the platform owes it
+something, and the install waits until the administrator provides it. No new
+mechanism; a service that happens to carry CRDs is still a service.
 
 What is new is that a catalogue entry extends the Kubernetes API. That is a
 privilege, and it goes through the one approval path privileges have
-([target-component-structure.md](target-component-structure.md) §4.3):
+([target-component-structure.md](target-component-structure.md) §4.3). This
+privilege kind is designed and not built.
 
 ```yaml
 spec:
@@ -324,10 +354,10 @@ spec:
   requires:
     privileges:
       apiExtensions:
-        - name: backup-kinds
-          group: operations.gentian.example
-          kinds: [BackupSchedule, BackupDestination, RestoreDrill, ConverterRun]
-          reason: "Schedules and drills are declared per tenant and reconciled cluster-wide."
+        - name: schedule-kinds
+          group: schedules.example.org
+          kinds: [Schedule]
+          reason: "Schedules are declared per tenant and reconciled cluster-wide."
       clusterRoles:
         - name: run-exports
           rules: [...]   # create TenantExport/TenantRestore, read Tenants
@@ -373,93 +403,39 @@ which cluster-scoped kinds a project may apply; ours admits everything today,
 and the grant is where the whitelist would otherwise have to be, because the
 grant has an approver and a reason and a whitelist has neither.
 
-### 5.3 How the Operations Console stores backups
+### 5.3 What a default install proposes
 
-Scheduled backups are not a nightly `.gentian` bundle: a bundle repeats every
-byte, and a tenant with 200 GB of files cannot afford one a day. Nor are they a
-monthly full plus daily diffs, the classic grandfather-father-son scheme — a
-restore then replays a chain, one damaged diff breaks every restore after it,
-and the chain grows until the next full. The industry moved past both to
-**content-addressed, deduplicated, encrypted repositories** (restic, Kopia,
-Borg; Veeam's and Rubrik's immutable repositories are the commercial form),
-and that is what the Operations Console uses.
+A default install proposes a store and one add-on. Both arrive through
+surfaces the OS already has, and the OS installs and runs without them.
 
-- **A repository per tenant**, in a bucket with **S3 Object Lock** in
-  compliance mode. Data is split into chunks stored once under their content
-  hash; **every snapshot is logically a full backup** — a restore reads one
-  snapshot and no chain — while **physically only new chunks are written**, so
-  a daily snapshot costs the day's changes. Chunks are immutable, which is what
-  Object Lock wants: new objects are locked for the retention period (35 days
-  by default), and pruning removes only chunks whose lock has expired. An
-  attacker holding the cluster's credentials can write, and cannot delete or
-  overwrite anything inside the window.
-- **Databases by their own point-in-time machinery**, not dumps: CNPG WAL
-  archiving and MariaDB incremental backups into the same locked bucket, which
-  gives recovery to any minute at almost no daily cost. The quiesce logic the
-  OS already has stays for the object and volume stores where consistency
-  needs it.
-- **A full `.gentian` bundle monthly, the last two kept, at a second
-  destination** — another provider or site. Not as the base of a chain, but as
-  the 3-2-1 off-site copy and the sovereign escape hatch that needs no
-  repository software to read. It is the same bundle the tenant downloads with
-  one click, so recovery onto a cold cluster is "import the newest bundle",
-  the flow §4.3 defines.
-- **Verification is not optional.** Deduplication's one real risk is a damaged
-  shared chunk silently reaching many snapshots, so the repository is checked
-  with full data reads on a schedule, and the restore drills (§5.1) restore a
-  real snapshot into a scratch tenant and diff it.
-- **The key is the other half of the defence.** A locked bucket protects
-  nothing if the key can be deleted, so the repository key is the tenant's or
-  escrowed outside the cluster, never only a Secret the cluster holds.
-- **Snapshots are bundles.** The repository's snapshot is schema 2 in a fourth
-  container (§1.3): the same artefacts, the same manifest, chunked instead of
-  tarred. The OS's `bundle` package does not need to read it — exporting a
-  snapshot as a `.gentian` file is the Operations Console's job — but the
-  contents are identical, so a drill, a recovery and a download all restore
-  the same thing.
-
-Loss bounds that follow: an operational mistake costs up to one snapshot
-interval; ransomware with cluster access costs nothing inside the retention
-window; losing the cluster and its provider together costs up to a month, from
-the off-site bundle. Whether the engine is restic or Kopia as a library or the
-same principle implemented over the OS's capture units is a build decision for
-the Operations Console, not for this document.
-
-### 5.4 Installed by default
-
-A vanilla installation comes with the App Store and the Operations Console,
-because the default workflows are built around them (§5). Both arrive through
-surfaces the OS already has, so the OS still installs and runs without them:
-
-- **The store.** Step 0's scaffold of the Cluster claim sets `catalogue.storeUrl`
-  and lists the Gentian catalogue source rather than commenting them out.
-  The App Store app is a platform UI on the cluster that shows the store's
-  data and installs through the director (AD-3). The source can be installed
-  from by every tenant; nothing the store says decides what a tenant may
-  install, and the cluster does no licence gating (AD-3, AD-14).
-- **The Operations Console.** Its two entries (§5.2) are `defaultForTenants`
-  apps and a service the installer declares on the Cluster claim's default
-  components. The `apiExtensions` grant the service needs is written into the
-  scaffold with the installing administrator as approver — the scaffold commit
-  is theirs, under the break-glass key, so the grant has the person, the time
-  and the reason AD-5 asks for. A cluster administrator who wants it gone
-  removes the grant, and the service with it, by one commit.
+- **The store.** Step 0's scaffold of the Cluster claim sets
+  `catalogue.storeUrl` and lists one catalogue source. The App Store app is a
+  platform UI on the cluster that shows the store's data and installs through
+  the director (AD-3). Every tenant can install from the source; nothing the
+  store says decides what a tenant may install, and the cluster does no
+  licence gating (AD-3, AD-14). The addresses are the installer's defaults
+  and can be changed or left out ([install-reference.md](../install-reference.md)).
+- **One add-on's profile.** Step 0 places the profile of the Operations
+  Console, an add-on from the store's catalogue, among the cluster's
+  profiles, held to a digest like any install (AD-14,
+  `GENTIAN_DEFAULT_PROFILES`). It is not part of this repository and carries
+  its own license.
 - **The switch.** `./install.sh --disable-api-extensions`
-  (`GENTIAN_DISABLE_API_EXTENSIONS=1`) leaves the grant and the service out
-  of the scaffold. The console app, requiring the service, then waits and
-  says why, and the Admin Console promotes it exactly as it would on any
-  cluster without it. Nothing else changes: export, import, purge and the
-  bundle are the OS's and need no extension.
+  (`GENTIAN_DISABLE_API_EXTENSIONS=1`) places no default profile. Nothing
+  else changes: export, import, purge and the bundle are the OS's and need no
+  extension. The switch is also to leave out the API-extension grant of §5.2
+  once that exists; today the scaffold only records the choice.
 
-## 6. Converters, and why apps need a canonical form
+## 6. Standard formats per app
 
 A bundle's app data is store-shaped: a Nextcloud bundle is a Postgres dump and
-an object tree keyed the way Nextcloud keys them. A converter from Google Drive
-cannot usefully produce that. What it can produce is **files in folders,
-contacts as vCard, calendars as iCalendar, mail as Maildir** — the
+an object tree keyed the way Nextcloud keys them. Another product cannot
+usefully read or produce that. What it can read and produce is **files in
+folders, contacts as vCard, calendars as iCalendar, mail as Maildir** — the
 interchange forms every workspace product can emit and ingest. These are
-standard formats, never a Gentian schema, so the exit door stays open even for
-a tenant who never installs the converters.
+standard formats, never a Gentian schema, so the exit door stays open with
+nothing but the OS installed. This document calls an app's data in these
+formats its canonical form.
 
 A `ComponentProfile` may therefore declare, under `spec.backup`:
 
@@ -474,63 +450,47 @@ backup:
 
 Export runs the hooks and writes `apps/<app>/canonical/`; import, finding
 canonical data and no raw stores for an app, runs the import hooks after the
-app is provisioned. A converter therefore writes a bundle containing a manifest
-(tenant name, people as SCIM, the apps to install) and canonical data only, and
-Import brings it up like any other bundle. The reverse converter reads
-canonical data and the SCIM people and pushes them through the Graph or
-Workspace APIs. The hooks are each app's own and ship with its profile.
+app is provisioned. A converter from another product therefore writes a
+bundle containing a manifest (tenant name, people as SCIM, the apps to
+install) and canonical data only, and Import brings it up like any other
+bundle. A converter in the other direction reads canonical data and the SCIM
+people. The hooks are each app's own and ship with its profile; converters
+are not part of the OS.
 
 ## 7. Order of work
-
-Gentian OS first, because it is the contract everything else is built on.
 
 **M1 (landed 2026-10-02) — the structures, before the content.** Creating
 and deleting a tenant follow §2–§4: purge drops Postgres databases and
 roles, MinIO users and the backup bucket (the OpenFGA, kernel-realm, LiteLLM,
 Redis and mail units of §9.3 are still open); `keepBundles` reaches the
-operator, the console and the CLI; the Operations Console exists as its own
-app with the backup screens moved out of the Admin Console, talking to the
-director's existing backup routes; the Admin Console keeps export and gains
-the promotion; the installer learns the switch.
+operator, the console and the CLI; the schedule, policy and destination
+screens left the Admin Console, which keeps export; the installer learns the
+switch (§5.3).
 
 **M2a (landed 2026-10-02) — the round trip.** Download (§4.2) and Import
 (§4.3) exist end to end: director routes, operator verbs, the console's
 Download link and Import card, `kubectl gentian tenants import`. Step 0
 materialises the default profiles into `clusters/<id>/catalogue/`
-(`GENTIAN_DEFAULT_PROFILES`, §5.4). The vendor's side publishes its chart and
-builds its catalogue source.
+(`GENTIAN_DEFAULT_PROFILES`, §5.3).
 
-**M2b — still to do**, in this order: inventory parity for the remaining
-units; the scheduling controllers and the `operations` service with its
-`apiExtensions` grant; schema 2 (credentials, SCIM, secrets, mail, digests);
-the deletion record and the offboard flow; canonical forms.
+**M2b — still to do**, in this order:
 
 1. **Inventory parity** (P2 = P3 = P5): mail unit, OpenBao data secrets,
-   Postgres roles, OpenFGA tuples, kernel-realm artefacts, LiteLLM, MinIO
-   users, Redis keys, backup bucket — each added to the inventory and to both
-   capture and purge. `keepBundles` on purge, in console and CLI. Deletion
-   record.
+   OpenFGA tuples, kernel-realm artefacts, LiteLLM, Redis keys — each added
+   to the inventory and to both capture and purge. Deletion record.
 2. **Schema 2**: per-app layout, digests in the manifest, credentials
    (with `omitCredentials`) and SCIM in the identity part, single-file
    container, `bundle` package with three backends. Schema 1 bundles stay
    readable.
-3. **Download**: director route, console buttons, tenant-key default,
-   `omitCredentials` checkbox.
-4. **Import**: director route, manifest-driven Create, chained Restore;
-   `kubectl gentian tenants import <file>`. Recovery playbook rewritten
-   around it (it still names `tenants deploy`, a command that no longer
-   exists).
-5. **Offboard** flow and console action.
-6. **Canonical forms**: CRD field, hooks in the first profiles (Nextcloud
+3. **Export defaults**: the tenant's own key as the default of a manual
+   export, and the `omitCredentials` checkbox.
+4. **Offboard** flow and console action.
+5. **Canonical forms**: CRD field, hooks in the first profiles (Nextcloud
    files, contacts, calendar; mail).
-7. **Scheduling moves out**: `TenantExportSchedule`, `BackupPolicy` and
-   their controllers leave gentian-os for the Operations Console's component;
-   the Admin Console's Backup tab keeps export and download and promotes the
-   Operations Console for the rest.
-
-The add-on — the Operations Console with backups, destinations, recovery,
-drills, then ingest and egress — starts after 2, 6 and 7, since those are its
-contract and its code.
+6. **Scheduling moves out**: `TenantExportSchedule`, `BackupPolicy` and
+   their controllers leave gentian-os for a separate component, with the
+   API-extension privilege kind of §5.2; the Admin Console's Export tab
+   keeps export and download.
 
 ## 8. Open questions
 
@@ -552,20 +512,20 @@ contract and its code.
   (users, groups, memberships — no credentials) and the shell database.
 - Restore into an existing tenant, admin-only, realm by partial import with
   `passwordResetRequired`.
-- Console: Backup tab with key choice (platform / new / existing /
-  passphrase), destination choice, schedule; cluster and tenant
-  `BackupPolicy` through the director.
+- Console: Export tab with key choice (platform / new / existing /
+  passphrase) and download; cluster and tenant `BackupPolicy` through the
+  director.
 - Retire and, since 2026-10-02, purge through the director, behind a typed
   name in console and CLI.
 
 ### 9.2 Not built
 
-Recovery as a one-click flow, offboarding, deletion record, SCIM projection,
-credentials in the bundle, mail and secrets capture, canonical forms,
-converters, the `operations` service and the controllers' move. Built since
-the first draft: download, import (upload, inspect, declare from the
-manifest, restore), the Operations Console as an app, `keepBundles`, the
-default-profile materialisation.
+Offboarding, the deletion record, the SCIM projection, credentials in the
+bundle, mail and secrets capture, canonical forms, the tenant's own key as
+the default of a manual export, the API-extension privilege kind and the
+scheduling controllers' move out of this repository. Built since the first
+draft: download, import (upload, inspect, declare from the manifest,
+restore), `keepBundles`, the default-profile materialisation.
 
 ### 9.3 Where capture and purge disagree
 

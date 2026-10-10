@@ -1540,19 +1540,18 @@ _claim_cluster_fields() {
     # Where software may enter this cluster (AD-14).
     #
     # The App Store and its catalogue are set, because a vanilla installation
-    # comes with them (sovereignty-concept.md §5.4): the store is where people
-    # are sent for apps, and the Gentian source is where the Operations
-    # Console's entries come from. Changing a source is an edit to this file
+    # comes with them: the store is where people are sent for apps, and the
+    # Gentian source is where the Operations Console's entries come from. Changing a source is an edit to this file
     # rather than an environment variable on the director -- opening a
     # catalogue to a tenant is then a commit with an author and a date, and
     # "what may this cluster install from" is answerable without cluster
     # access. A cluster with no source still works: it materialises nothing on
     # reference, and its profiles arrive with the kernel.
     _claim_catalogue_section
-    # The Aluvian extensions. Recorded here even while nothing reads it,
-    # so the choice an installer made is in git beside everything else it
+    # The API extensions of add-ons. Recorded here even while nothing reads
+    # it, so the choice an installer made is in git beside everything else it
     # chose; the grant and the service entries follow when the catalogue
-    # serves them (sovereignty-concept.md §5.2, §5.4).
+    # serves them.
     if [[ "${GENTIAN_DISABLE_API_EXTENSIONS:-0}" == "1" ]]; then
         printf '  # apiExtensions: disabled (--disable-api-extensions): no Operations Console\n'
     else
@@ -2381,9 +2380,10 @@ EOF
     # reviewer and the cluster both read them from (AD-2).
     gentian_publish_signing_material "${kernel_dir}" || true
 
-    # The profiles every tenant gets without asking (sovereignty-concept.md
-    # §5.4): materialised into the same directory the director materialises an
-    # installed entry into, so the operator sees them like any other.
+    # The profiles every tenant gets without asking (AD-14, the installer's
+    # default profile): materialised into the same directory the director
+    # materialises an installed entry into, so the operator sees them like
+    # any other.
     #
     # Not `|| true` any more: a catalogue that cannot be reached returns 0 and
     # the install goes on, and what returns 1 -- a profile that is not the
