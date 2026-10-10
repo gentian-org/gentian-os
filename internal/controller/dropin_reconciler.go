@@ -55,9 +55,10 @@ var dropInFileNamePattern = regexp.MustCompile(`^9[0-9]-[a-zA-Z0-9._-]+$`)
 // has explicitly declared as tenantEditable. It may not introduce code, invent
 // mount paths, or shadow platform files.
 //
-// The mount itself is generated from ComponentProfile.spec.customization.dropIns by the
-// composition, so no per-app operator logic is involved: the operator only writes
-// validated content into a predictably named ConfigMap.
+// Nothing mounts it. The operator writes validated content into a predictably
+// named ConfigMap and stops there: no composition and no chart of the
+// catalogue mounts that ConfigMap into the app, so a tenant's drop-in has no
+// effect on the app yet.
 func (r *TenantReconciler) ensureTenantDropIns(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ctrl.Result, error) {
 	desired, err := r.buildTenantDropIns(ctx, tenant)
 	if err != nil {
