@@ -14,6 +14,7 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -71,6 +72,11 @@ func TestEnsureMacWaivers_annotatesApprovedWaivers(t *testing.T) {
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Test Tenant",
 			Apps:        []gentianov1alpha1.TenantApp{{Profile: "catalogue-test-app"}},
+			Privileges: []gentianov1alpha1.TenantPrivilegeGrant{
+				waiverGrant("catalogue-test-app", "run-as-root"),
+				// Granted, and not on the allowlist: a grant widens nothing.
+				waiverGrant("catalogue-test-app", "other"),
+			},
 		},
 	}
 
@@ -106,8 +112,21 @@ func TestEnsureMacWaivers_annotatesApprovedWaivers(t *testing.T) {
 	}
 }
 
+// waiverGrant is the security officer's yes to one pod-security request of
+// one install.
+func waiverGrant(install, name string) gentianov1alpha1.TenantPrivilegeGrant {
+	return gentianov1alpha1.TenantPrivilegeGrant{
+		Install:    install,
+		Privilege:  "podSecurity/" + name,
+		Approver:   "officer",
+		ApprovedAt: metav1.Now(),
+		Reason:     "reviewed for this install",
+	}
+}
+
 // macWaiverFixture builds a tenant whose single app requests one waiver that the
-// platform policy allows, so the waiver is approved and should be granted.
+// platform policy allows and that was granted on the install, so the waiver
+// takes effect.
 func macWaiverFixture(extra ...client.Object) (*gentianov1alpha1.Tenant, []client.Object) {
 	psp := &gentianov1alpha1.PlatformSecurityPolicy{
 		ObjectMeta: metav1.ObjectMeta{Name: gentianov1alpha1.PlatformSecurityPolicyName},
@@ -136,6 +155,7 @@ func macWaiverFixture(extra ...client.Object) (*gentianov1alpha1.Tenant, []clien
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Test Tenant",
 			Apps:        []gentianov1alpha1.TenantApp{{Profile: "app-a"}},
+			Privileges:  []gentianov1alpha1.TenantPrivilegeGrant{waiverGrant("app-a", "run-as-root")},
 		},
 	}
 	objs := append([]client.Object{psp, profile, tenant,
@@ -271,4 +291,75 @@ func macWaiverConditionHasReason(tenant *gentianov1alpha1.Tenant, reason string)
 		}
 	}
 	return false
+}
+
+// The allowlist alone waives nothing. It says what the cluster may ever
+// waive; whether this tenant's install gets it is the grant's to say, and
+// without one the namespace is not labelled and the tenant says why.
+func TestEnsureMacWaivers_allowlistWithoutGrantWaivesNothing(t *testing.T) {
+	t.Parallel()
+	expired := waiverGrant("app-a", "run-as-root")
+	expired.ExpiresAt = &metav1.Time{Time: time.Now().Add(-time.Hour)}
+	for name, grants := range map[string][]gentianov1alpha1.TenantPrivilegeGrant{
+		"no grant":                nil,
+		"a grant that expired":    {expired},
+		"another install's grant": {waiverGrant("app-b", "run-as-root")},
+		"another privilege's":     {waiverGrant("app-a", "something-else")},
+		"an egress grant, same name": {{Install: "app-a", Privilege: "egress/run-as-root", Approver: "admin",
+			ApprovedAt: metav1.Now(), Reason: "outbound mail relay"}},
+	} {
+		tenant, objs := macWaiverFixture()
+		tenant.Spec.Privileges = grants
+		c := fake.NewClientBuilder().WithScheme(macWaiverScheme(t)).WithObjects(objs...).Build()
+		r := &TenantReconciler{Client: c}
+		if _, err := r.ensureMacWaivers(context.Background(), tenant); err != nil {
+			t.Fatalf("%s: ensureMacWaivers: %v", name, err)
+		}
+		ns := &corev1.Namespace{}
+		if err := c.Get(context.Background(), client.ObjectKey{Name: "tenant-demo"}, ns); err != nil {
+			t.Fatalf("%s: get namespace: %v", name, err)
+		}
+		key := gentianov1alpha1.MacWaiverLabelKey("gentian-require-non-root")
+		if got := ns.Labels[key]; got != "" {
+			t.Fatalf("%s: namespace label %s = %q, want none without a grant on the install", name, key, got)
+		}
+		reported := false
+		for _, cond := range tenant.Status.Conditions {
+			if cond.Type == conditionMacWaiversReady && cond.Status == metav1.ConditionFalse && cond.Reason == "WaiverNotGranted" {
+				reported = true
+			}
+		}
+		if !reported {
+			t.Fatalf("%s: conditions = %+v, want WaiverNotGranted", name, tenant.Status.Conditions)
+		}
+	}
+}
+
+// A grant that is withdrawn takes the namespace label with it.
+func TestEnsureMacWaivers_withdrawnGrantRemovesLabel(t *testing.T) {
+	t.Parallel()
+	tenant, objs := macWaiverFixture()
+	c := fake.NewClientBuilder().WithScheme(macWaiverScheme(t)).WithObjects(objs...).Build()
+	r := &TenantReconciler{Client: c}
+	key := gentianov1alpha1.MacWaiverLabelKey("gentian-require-non-root")
+	label := func() string {
+		ns := &corev1.Namespace{}
+		if err := c.Get(context.Background(), client.ObjectKey{Name: "tenant-demo"}, ns); err != nil {
+			t.Fatalf("get namespace: %v", err)
+		}
+		return ns.Labels[key]
+	}
+	if _, err := r.ensureMacWaivers(context.Background(), tenant); err != nil {
+		t.Fatalf("ensureMacWaivers: %v", err)
+	}
+	if label() != gentianov1alpha1.MacWaiverApprovedValue {
+		t.Fatal("a waiver that is permitted and granted was not put into effect")
+	}
+	tenant.Spec.Privileges = nil
+	if _, err := r.ensureMacWaivers(context.Background(), tenant); err != nil {
+		t.Fatalf("ensureMacWaivers: %v", err)
+	}
+	if got := label(); got != "" {
+		t.Fatalf("label = %q after the grant was withdrawn, want none", got)
+	}
 }

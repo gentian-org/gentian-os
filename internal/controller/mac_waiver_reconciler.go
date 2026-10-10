@@ -17,6 +17,7 @@ import (
 	"maps"
 	"sort"
 	"strings"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -123,8 +124,9 @@ func (r *TenantReconciler) ensureMacWaiverNamespaceLabels(
 	return notInEffect, nil
 }
 
-// ensureMacWaivers intersects ComponentProfile requests with PlatformSecurityPolicy allowlist
-// and records approved waivers on the Tenant for compositions to consume.
+// ensureMacWaivers puts into effect the waivers a profile asks for that the
+// PlatformSecurityPolicy allowlist permits AND that were granted on the
+// tenant's install, and records them on the Tenant.
 func (r *TenantReconciler) ensureMacWaivers(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ctrl.Result, error) {
 	allowed, err := security.LoadAllowedMacWaivers(ctx, r.Client)
 	if err != nil {
@@ -133,6 +135,9 @@ func (r *TenantReconciler) ensureMacWaivers(ctx context.Context, tenant *gentian
 
 	approvedByProfile := map[string][]gentianov1alpha1.MacWaiverRequest{}
 	pendingDenials := []string{}
+	// ungranted are waivers the cluster permits and nobody granted on this
+	// tenant's install.
+	ungranted := []string{}
 
 	for _, app := range tenant.Spec.Apps {
 		profileName, err := catalogue.ResolveTenantAppProfile(ctx, r.Client, app)
@@ -146,23 +151,36 @@ func (r *TenantReconciler) ensureMacWaivers(ctx context.Context, tenant *gentian
 			}
 			return ctrl.Result{}, fmt.Errorf("get ComponentProfile %s for mac waivers: %w", profileName, err)
 		}
-		// A pod-security waiver is a privilege the profile ASKS for (AD-5).
-		// This is the cluster-wide half of the answer -- the
-		// PlatformSecurityPolicy allowlist, which says what may ever be
-		// waived here; the per-install half is the grant on the Component.
-		asks := security.WaiverRequests(profile.Privileges())
-		if len(asks) == 0 {
+		// A pod-security waiver is a privilege the profile ASKS for (AD-5),
+		// and two answers are needed before it takes effect. The cluster's
+		// allowlist (PlatformSecurityPolicy) says what may ever be waived
+		// here. The grant on the install says that somebody who may approve
+		// said yes for this tenant's install of it. Either alone waives
+		// nothing: the allowlist is not written per tenant, and a grant
+		// cannot widen what the cluster permits.
+		if profile.Privileges() == nil || len(profile.Privileges().PodSecurity) == 0 {
 			continue
 		}
-		approved := security.ApprovedMacWaivers(profileName, asks, allowed)
+		asks := security.WaiverRequests(profile.Privileges())
+		allowlisted := security.ApprovedMacWaivers(profileName, asks, allowed)
+		granted := security.GrantedSet(security.TenantGrants(tenant, profileName), time.Now())
+		var approved []gentianov1alpha1.MacWaiverRequest
+		for i := range profile.Privileges().PodSecurity {
+			w := &profile.Privileges().PodSecurity[i]
+			ask := fmt.Sprintf("%s/%s/%s", profileName, w.Policy, w.Scope)
+			if !security.IsWaiverApproved(allowlisted, w.Policy, w.Scope) {
+				pendingDenials = append(pendingDenials, ask)
+				continue
+			}
+			ref := security.PrivilegeRef(security.PrivilegePodSecurity, w.Name)
+			if _, ok := granted[ref]; !ok {
+				ungranted = append(ungranted, fmt.Sprintf("%s (%s on %s)", ask, ref, profileName))
+				continue
+			}
+			approved = append(approved, gentianov1alpha1.MacWaiverRequest{Policy: w.Policy, Scope: w.Scope})
+		}
 		if len(approved) > 0 {
 			approvedByProfile[profileName] = approved
-		}
-		for _, req := range asks {
-			if !security.IsWaiverApproved(approved, req.Policy, req.Scope) {
-				pendingDenials = append(pendingDenials,
-					fmt.Sprintf("%s/%s/%s", profileName, req.Policy, req.Scope))
-			}
 		}
 	}
 
@@ -202,6 +220,9 @@ func (r *TenantReconciler) ensureMacWaivers(ctx context.Context, tenant *gentian
 	case len(pendingDenials) > 0:
 		r.setCondition(tenant, conditionMacWaiversReady, metav1.ConditionFalse, "WaiverNotApproved",
 			fmt.Sprintf("MAC waivers pending cluster approval: %v", pendingDenials))
+	case len(ungranted) > 0:
+		r.setCondition(tenant, conditionMacWaiversReady, metav1.ConditionFalse, "WaiverNotGranted",
+			fmt.Sprintf("permitted by the cluster and not granted on the install, so not in effect: %v", ungranted))
 	case len(notInEffect) > 0:
 		// Approved and granted at the namespace, but no running Pod claims it, so
 		// nothing is actually exempt yet. Reported rather than left silent: the
