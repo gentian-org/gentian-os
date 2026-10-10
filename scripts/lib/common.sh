@@ -464,8 +464,10 @@ SCRIPT_DIR="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 # purge_local_state — which reads this variable, so the purge follows the file
 # without needing to know where it went.
 OPENBAO_INIT_FILE="${OPENBAO_INIT_FILE:-${HOME}/.gentian/openbao-init.json}"
+# 0 (--no-cluster-infra) leaves the kernel wildcard certificate unissued
+# (install_kernel_wildcard) and nothing else.
 INSTALL_CLUSTER_INFRA="${INSTALL_CLUSTER_INFRA:-1}"
-# A vanilla installation comes with the Aluvian extensions -- the
+# A vanilla installation comes with the store's extensions -- the
 # Operations Console and the API-extension grant its service needs. 1 leaves
 # them out of the scaffold; the OS installs and runs the same either way.
 GENTIAN_DISABLE_API_EXTENSIONS="${GENTIAN_DISABLE_API_EXTENSIONS:-0}"
@@ -524,33 +526,6 @@ GENTIAN_GATEWAY_CONTROLLER_NAME="${GENTIAN_GATEWAY_CONTROLLER_NAME:-gateway.envo
 # Gateway's: 1.9 is tested on 1.33 to 1.36, and nothing else the installer pulls
 # asks for more. Raise it with the pin that raises it.
 GENTIAN_MIN_KUBERNETES_MINOR=33
-
-usage() {
-    cat <<'EOF'
-Usage: ./install.sh [options]
-
-Options:
-  --no-cluster-infra   Skip cluster infra installation (cert-manager, reloader, CNPG)
-  --cluster-infra      Force cluster infra installation (default)
-  --config-file PATH   Source non-secret installer config from PATH
-  --secrets-file PATH  Source secret installer values from PATH
-  --no-config-files    Disable auto-loading of install.env
-    --verify-only        Skip install steps and only run ArgoCD health verification
-  --validate, --check  Validate config and secrets; print a report and exit (no
-                       cluster actions are taken)
-  -h, --help           Show this help
-
-Environment overrides:
-  INSTALL_CLUSTER_INFRA=1|0
-  GENTIAN_DISABLE_API_EXTENSIONS=1|0
-  GENTIAN_NO_LICENCE_REPORT=1|0
-  GENTIAN_LICENCE_REPORT_URL=https://...
-  GENTIAN_DEFAULT_PROFILES=<https address of a catalogue profile>[@sha256:<digest>][,...]
-  INSTALL_CONFIG_FILE=/path/to/install.env
-  INSTALL_VALIDATE_ONLY=1
-EOF
-}
-
 
 load_env_file() {
     local file="$1"

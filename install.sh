@@ -149,7 +149,10 @@ GENTIAN_ROTATE_BREAK_GLASS=""
 GENTIAN_TENANT_NAME="${GENTIAN_TENANT_NAME:-}"
 
 driver_usage() {
-    sed -n '3,42p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+    # The header of this file, whole: from its title to the line that ends it.
+    # A fixed line range cut it off in the middle of a sentence once the
+    # header grew.
+    sed -n '3,/^set -euo pipefail$/p' "${BASH_SOURCE[0]}" | sed -e '$d' -e 's/^# \{0,1\}//'
     cat <<'EOF'
 
 Recovery:
@@ -216,7 +219,10 @@ Other options:
                         is sent and the App Store is not offered. The same as
                         GENTIAN_NO_LICENCE_REPORT=1 in install.env, which is
                         where to put it so a later run does not turn it back on
-  --no-cluster-infra    skip cert-manager / CNPG / reloader on install
+  --no-cluster-infra    do not issue the kernel wildcard certificate (C-03).
+                        That is all it leaves out: cert-manager, CNPG and
+                        Reloader are installed as always. The same as
+                        INSTALL_CLUSTER_INFRA=0 in the environment
   --cluster-infra       with --purge, also remove them and their CRDs: CNPG,
                         Reloader, external-dns, cert-manager. They may serve
                         workloads that are not Gentian's, and this discards the
