@@ -4,7 +4,7 @@ Profile bundles exactly as gentian-apps publishes them: the output of its
 `scripts/build-catalogue-source.py` (`dist/catalogue/profiles/<name>.yaml`),
 copied here unchanged so that these tests need no other repository.
 
-Built from gentian-apps commit `c65ae1e` (branch `develop`), all nine.
+Built from gentian-apps commit `a33cef5` (branch `develop`), all nine.
 
 They are fixtures for what the two repositories have to agree on: each must be
 a bundle the director accepts and the operator verifies

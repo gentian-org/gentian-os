@@ -527,9 +527,11 @@ spec:
                     namespace: {{ $ns }}
                   spec:
                     refreshInterval: 1h
+                    {{- /* The tenant's own store: the kernel's is not usable
+                         from a tenant's namespace. */}}
                     secretStoreRef:
                       kind: ClusterSecretStore
-                      name: openbao
+                      name: openbao-tenant-{{ $tenant }}
                     target:
                       name: {{ $secretName }}
                       creationPolicy: Owner
