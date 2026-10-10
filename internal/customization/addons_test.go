@@ -19,7 +19,7 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
-func profile(name, family, role string, addon *gentianov1alpha1.CustomizationAddon, license string) *gentianov1alpha1.ComponentProfile {
+func profile(name, family, role string, addon *gentianov1alpha1.PackageAddon, license string) *gentianov1alpha1.ComponentProfile {
 	p := &gentianov1alpha1.ComponentProfile{ObjectMeta: metav1.ObjectMeta{Name: name}}
 	if role != "" {
 		p.Annotations = map[string]string{gentianov1alpha1.AnnotationProfileDeploymentRole: role}
@@ -28,7 +28,7 @@ func profile(name, family, role string, addon *gentianov1alpha1.CustomizationAdd
 	// cluster is the addon declaration itself.
 	_, _ = family, license
 	if addon != nil {
-		p.Spec.Package.Addon = &gentianov1alpha1.PackageAddon{ID: addon.ID, Of: addon.Of}
+		p.Spec.Package.Addon = addon
 	}
 	return p
 }
@@ -38,9 +38,9 @@ func odooFixture() (*gentianov1alpha1.ComponentProfile, map[string]*gentianov1al
 	idx := map[string]*gentianov1alpha1.ComponentProfile{
 		"odoo-base-ce": base,
 		"odoo-crm-ce": profile("odoo-crm-ce", "odoo", "addon",
-			&gentianov1alpha1.CustomizationAddon{ID: "crm", Of: "odoo-base-ce"}, "LGPL-3.0"),
+			&gentianov1alpha1.PackageAddon{ID: "crm", Of: "odoo-base-ce"}, "LGPL-3.0"),
 		"odoo-accounting-ce": profile("odoo-accounting-ce", "odoo", "addon",
-			&gentianov1alpha1.CustomizationAddon{ID: "account", Of: "odoo-base-ce"}, "LGPL-3.0"),
+			&gentianov1alpha1.PackageAddon{ID: "account", Of: "odoo-base-ce"}, "LGPL-3.0"),
 	}
 	return base, idx
 }
@@ -92,7 +92,7 @@ func TestResolveAddonsRejectsAnythingThatIsNotAnAddon(t *testing.T) {
 func TestResolveAddonsRejectsWrongBaseAndFamily(t *testing.T) {
 	base, idx := odooFixture()
 	idx["nextcloud-mail-ce"] = profile("nextcloud-mail-ce", "nextcloud", "addon",
-		&gentianov1alpha1.CustomizationAddon{ID: "mail", Of: "nextcloud-base-ce"}, "AGPL-3.0-only")
+		&gentianov1alpha1.PackageAddon{ID: "mail", Of: "nextcloud-base-ce"}, "AGPL-3.0-only")
 	_, errs := ResolveAddons(base, []string{"nextcloud-mail-ce"}, idx)
 	if !anyContains(errs, "activates into") {
 		t.Fatalf("expected wrong-base rejection, got %v", errs)
@@ -103,7 +103,7 @@ func TestResolveAddonsRejectsDuplicateAppSideID(t *testing.T) {
 	base, idx := odooFixture()
 	// an ee edition of the same addon resolves to the same Odoo module
 	idx["odoo-crm-ee"] = profile("odoo-crm-ee", "odoo", "addon",
-		&gentianov1alpha1.CustomizationAddon{ID: "crm", Of: "odoo-base-ce"}, "proprietary")
+		&gentianov1alpha1.PackageAddon{ID: "crm", Of: "odoo-base-ce"}, "proprietary")
 	_, errs := ResolveAddons(base, []string{"odoo-crm-ce", "odoo-crm-ee"}, idx)
 	if !anyContains(errs, "both resolve to id") {
 		t.Fatalf("expected duplicate-id rejection, got %v", errs)
@@ -123,7 +123,7 @@ func TestResolveAddonsReportsEveryProblem(t *testing.T) {
 func TestResolveAddonsTreatsAPaidAddonLikeAnyOther(t *testing.T) {
 	base, idx := odooFixture()
 	idx["odoo-payroll-ee"] = profile("odoo-payroll-ee", "odoo", "addon",
-		&gentianov1alpha1.CustomizationAddon{ID: "payroll", Of: "odoo-base-ce"}, "proprietary")
+		&gentianov1alpha1.PackageAddon{ID: "payroll", Of: "odoo-base-ce"}, "proprietary")
 	resolved, errs := ResolveAddons(base, []string{"odoo-crm-ce", "odoo-payroll-ee"}, idx)
 	if len(errs) != 0 {
 		t.Fatalf("unexpected errors: %v", errs)
