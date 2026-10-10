@@ -171,8 +171,7 @@ until it is done.
     provider (`acme-dns01`, `cloudflare`). The operator then writes the
     tunnel's routes itself and publishes every hostname as a record pointing at
     the tunnel, through external-dns, which is installed on a tunnel cluster
-    too. (The comment step 0 writes into the claim says external-dns is off
-    there; it is not, and `certificates.externalDns` is read by nothing.)
+    too.
     A tunnel carries HTTP and HTTPS only, so mail goes out through a relay.
   - `static-ip` needs a fixed address that DNS points at and something that
     answers a `LoadBalancer` Service with it: MetalLB on your own machines

@@ -894,34 +894,6 @@ spec:
                         Azure's subscription and resource group, the nameserver
                         for a self-hosted zone. Required keys are declared per
                         provider in kernel/platforms.yaml.
-                    externalDns:
-                      type: boolean
-                      default: true
-                      description: >
-                        Whether external-dns writes this cluster's records.
-
-                        On by default, because it is the only thing that writes
-                        them. Every hostname this cluster serves is published
-                        from the HTTPRoutes the operator writes, and records
-                        with no HTTP object behind them — mail — arrive as
-                        DNSEndpoint CRs. One mechanism, all eight providers in
-                        kernel/platforms.yaml, both network modes.
-
-                        It was off by default while the operator wrote records
-                        itself, to keep two controllers off one record set. That
-                        writer existed for Cloudflare only, so a cluster on any
-                        other zone host had nothing writing records at all, and
-                        a static-ip cluster had nothing either — the adapter
-                        needs a tunnel to point at. Both were silent: names
-                        simply never resolved.
-
-                        Turn it off only where an operator publishes this
-                        cluster's records by hand, or where something outside
-                        the platform already does.
-
-                        Independent of certificates.dnsProvider: that decides
-                        who can solve a DNS-01 challenge, which is needed for a
-                        wildcard whether or not anything writes records.
                     caBundleSecretRef:
                       type: object
                       description: >

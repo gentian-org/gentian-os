@@ -1291,9 +1291,9 @@ explain_issuer_mode() {
         acme-dns01)
             _decided "a DNS API token for the zone is asked for with the credentials."
             if [[ "${NETWORK_MODE:-tunnel}" == "static-ip" ]]; then
-                _decided "externalDns: on — external-dns publishes the kernel hosts at nodeIp."
+                _decided "external-dns is installed and writes every record of the zone, pointing at nodeIp."
             else
-                _decided "externalDns: off — no fixed address to publish; tenant hosts go through the tunnel's CNAMEs."
+                _decided "external-dns is installed and writes every record of the zone, pointing at the tunnel."
             fi
             ;;
         acme-http01)

@@ -1379,33 +1379,19 @@ _claim_cluster_fields() {
             printf '    # dnsParams:                route53 needs region and\n'
             printf '    #                           hostedZoneID; clouddns a project\n'
         fi
-        # On by default where there is a fixed address to publish.
-        #
-        # A cluster with networkMode: static-ip has one stable IP and a named
-        # dnsProvider, which is the whole input external-dns needs — so writing
-        # the records is the obvious behaviour and leaving it off produces a
-        # claim that contradicts itself: a DNS provider named, an address to
-        # point at, and nothing to write anything.
-        #
-        # That contradiction was invisible while clusters ran on domains whose
-        # records had been created by hand. The first install onto a fresh
-        # domain sat waiting for names nothing was publishing, and the wait
-        # blamed the OIDC discovery URL.
-        #
-        # A tunnel cluster is genuinely different and stays commented: it has no
-        # address to publish, its hostnames resolve through the tunnel's own
-        # CNAMEs, and the operator writes the tenant records itself.
+        # No setting for it: external-dns is installed with the DNS provider
+        # and writes every record of this zone, in both network modes. With a
+        # fixed address the records point at the Gateway's address; behind a
+        # tunnel the operator writes DNSEndpoints that point every hostname
+        # at the tunnel's name. The claim once carried a field for it,
+        # certificates.externalDns, which nothing read.
+        printf '    # external-dns is installed with this provider and writes every record\n'
         if [[ "${nm}" == "static-ip" ]]; then
-            printf '    # external-dns writes this zone from the Gateway hostnames.\n'
-            printf '    # Set false where something else already owns these records.\n'
-            printf '    externalDns: true\n'
+            printf '    # of the zone, pointing at the address of the Gateway. dnsProvider:\n'
         else
-            printf '    # externalDns: true         let external-dns write this zone.\n'
-            printf '    #                           Off while networkMode is tunnel: there\n'
-            printf '    #                           is no fixed address to publish, and the\n'
-            printf '    #                           operator writes the tenant records\n'
-            printf '    #                           through the tunnel CNAMEs itself.\n'
+            printf '    # of the zone, pointing at the tunnel. dnsProvider:\n'
         fi
+        printf '    # none is the one setting that leaves the records to somebody else.\n'
     else
         printf '    # dnsProvider:              only read when issuerMode is acme-dns01\n'
     fi
@@ -1794,10 +1780,13 @@ _claim_catalogue_section() {
 # without a store: `catalogue: {}` is a decision somebody wrote down, where an
 # absent key is only a key nobody wrote. The one edit made to an existing
 # section is removing the fields the schema no longer has
-# (_claim_drop_catalogue_access, _claim_drop_catalogue_tenants).
+# (_claim_drop_catalogue_access, _claim_drop_catalogue_tenants). The same
+# pass removes the one field the schema lost outside this section
+# (_claim_drop_external_dns), whatever the claim says of the catalogue.
 ensure_claim_catalogue_section() {
     local claim="$1"
     [[ -f "${claim}" ]] || return 0
+    _claim_drop_external_dns "${claim}"
     if yq_get '.spec.catalogue' "${claim}" >/dev/null 2>&1; then
         _claim_drop_catalogue_access "${claim}"
         _claim_drop_catalogue_tenants "${claim}"
@@ -1905,6 +1894,31 @@ _claim_drop_catalogue_access() {
     ' "${claim}" > "${tmp}" && cat "${tmp}" > "${claim}"
     rm -f "${tmp}"
     info "claims/cluster.yaml: removed 'access' from its catalogue sources; the schema no longer has the field."
+}
+
+# _claim_drop_external_dns <claim file>
+#
+# certificates.externalDns was a field of the claim that nothing read:
+# external-dns is installed with the DNS provider and writes the records
+# whatever the field said. The schema no longer has it, and a claim that
+# still carries it is refused when it is applied, like the two fields above;
+# step 0 wrote it into every static-ip claim, so it is removed from a claim
+# written before. Removing it changes nothing on the cluster.
+_claim_drop_external_dns() {
+    local claim="$1" tmp
+    grep -qE '^    externalDns: *(true|false) *(#.*)?$' "${claim}" || return 0
+    tmp="$(mktemp)"
+    awk '
+        /^  certificates:/       { inside = 1; print; next }
+        inside && /^  [A-Za-z]/  { inside = 0 }
+        inside && /^    externalDns: *(true|false) *(#.*)?$/ { next }
+        { print }
+    ' "${claim}" > "${tmp}"
+    if ! cmp -s "${tmp}" "${claim}"; then
+        cat "${tmp}" > "${claim}"
+        info "claims/cluster.yaml: removed certificates.externalDns; nothing read it, and the schema no longer has the field. external-dns writes the records as before."
+    fi
+    rm -f "${tmp}"
 }
 
 # _claim_drop_catalogue_tenants <claim file>

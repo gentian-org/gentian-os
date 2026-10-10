@@ -134,6 +134,21 @@ if command -v yq >/dev/null 2>&1; then
     is "the claim itself is left as it is" "$(cat "${CLAIM}")" "${before}"
 fi
 
+# certificates.externalDns is no field of the claim any more, and step 0 wrote
+# it into every static-ip claim: it is removed from a claim written before,
+# and nothing else of the claim moves.
+printf 'apiVersion: gentianos.io/v1alpha1\nkind: Cluster\nspec:\n  certificates:\n    issuerMode: acme-dns01\n    dnsProvider: cloudflare\n    # Set false where something else already owns these records.\n    externalDns: true\n  catalogue:\n    sources:\n      - name: gentian\n        url: %s\n' "${RELEASED}" > "${CLAIM}"
+want="$(grep -v '^    externalDns: true$' "${CLAIM}")"
+said="$(run GENTIAN_OS_BRANCH=test-cb -- "ensure_claim_catalogue_section '${CLAIM}'")"
+is "a claim that carries certificates.externalDns loses that line and no other" "$(cat "${CLAIM}")" "${want}"
+is "and the installer says so" "$(grep -c 'removed certificates.externalDns' <<<"${said}")" "1"
+said="$(run GENTIAN_OS_BRANCH=test-cb -- "ensure_claim_catalogue_section '${CLAIM}'")"
+is "a second run finds nothing to remove" "$(grep -c 'externalDns' <<<"${said}")" "0"
+printf 'apiVersion: gentianos.io/v1alpha1\nkind: Cluster\nspec:\n  certificates:\n    issuerMode: acme-dns01\n    # externalDns: true         let external-dns write this zone.\n  catalogue: {}\n' > "${CLAIM}"
+before="$(cat "${CLAIM}")"
+run GENTIAN_OS_BRANCH=test-cb -- "ensure_claim_catalogue_section '${CLAIM}'" >/dev/null
+is "a claim that only mentions it in a comment is left as it is" "$(cat "${CLAIM}")" "${before}"
+
 echo ""
 if (( fail > 0 )); then
     printf '%s%d failed%s, %d passed\n' "${RED}" "${fail}" "${NC}" "${pass}"
