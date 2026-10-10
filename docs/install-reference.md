@@ -187,7 +187,8 @@ claims/cluster.yaml`) rather than reversing the precedence, because an operator
 who wrote it there meant something, but the claim is where it belongs. The
 template lists them at its end: `TENANCY_MODE`, `SECRET_MODE`, `NETWORK_MODE`,
 `NODE_IP`, `STORAGE_CLASS`, `PLATFORM`, `MAIL_SERVICE_MODE`, `DNS_PROVIDER`,
-`ACME_ENV`, `LETSENCRYPT_EMAIL`, `LLM_SUPPORT`, `GPU_ACCELERATION`. An
+`ACME_ENV`, `CERT_ISSUER_MODE`, `LETSENCRYPT_EMAIL`, `LLM_SUPPORT`,
+`GPU_ACCELERATION`. An
 unattended first run exports them for that run
 ([GETTING-STARTED.md](../GETTING-STARTED.md), *Installing unattended*).
 
@@ -742,13 +743,11 @@ spec:
     issuerMode: self-signed
 ```
 
-Choose it at step 0's issuer question on a first install. A claim edited by
-hand takes effect once it is applied (`C-01`): step `A-09`, which creates the
-issuers, reads the mode from the Cluster object on the cluster, and before
-that object exists from the environment variable `CERT_ISSUER_MODE`, not from
-the claim file. A first install that is run again before it has passed `C-01`
-therefore needs `CERT_ISSUER_MODE=self-signed` exported, or it takes the mode
-to be `acme-dns01` and asks for a DNS credential.
+Choose it at step 0's issuer question on a first install. Every later run reads
+the mode back from the claim file, so it decides which credentials are asked
+for (a DNS credential only under `acme-dns01`) and which issuers step `A-09`
+creates before the Cluster object exists; once that object exists (`C-01`),
+`A-09` reads the mode from it.
 
 Issuance is then offline and instant. The certificates are not publicly trusted,
 so anything validating a kernel hostname from outside the cluster needs the root

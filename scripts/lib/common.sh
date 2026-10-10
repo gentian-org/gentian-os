@@ -1108,7 +1108,8 @@ load_deployments_cluster_settings() {
              STORAGE_CLASS MAIL_SERVICE_MODE LB_PROVIDER LB_ANNOTATIONS \
              PLATFORM PLATFORM_PARAMS EDGE_ADDRESS_REF DNS_PROVIDER DNS_PARAMS \
              LLM_SUPPORT LLM_CONSOLE GPU_ACCELERATION GPU_TIME_SLICE_REPLICAS \
-             LETSENCRYPT_EMAIL KV_MOUNT ACME_ENV DNS01_RECURSIVE_NAMESERVERS; do
+             LETSENCRYPT_EMAIL KV_MOUNT ACME_ENV CERT_ISSUER_MODE \
+             DNS01_RECURSIVE_NAMESERVERS; do
         [[ -n "${!v:-}" ]] || continue
         [[ -r "${INSTALL_CONFIG_FILE:-}" ]] || continue
         grep -qE "^[[:space:]]*(export[[:space:]]+)?${v}=" "${INSTALL_CONFIG_FILE}" || continue
@@ -1137,6 +1138,11 @@ load_deployments_cluster_settings() {
         # unreadable at the moment the answer is needed. The claim is a file
         # before it is an object, which is exactly why it can serve both.
         claim_setting ACME_ENV          certificates.acmeEnv         "${claim_file}"
+        # Who issues the certificates. Step 0 asks once and writes the answer
+        # here; every later run reads it back, so a self-signed or HTTP-01
+        # cluster is not asked for a DNS credential and A-09 has the mode
+        # before the Cluster object exists to be asked.
+        claim_setting CERT_ISSUER_MODE  certificates.issuerMode      "${claim_file}"
         # Where cert-manager checks DNS-01 propagation. Read at A-02, which is
         # before the Cluster XR exists, for the same reason as ACME_ENV.
         claim_setting DNS01_RECURSIVE_NAMESERVERS certificates.dns01RecursiveNameservers "${claim_file}"
