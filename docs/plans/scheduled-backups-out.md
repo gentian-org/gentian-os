@@ -7,7 +7,8 @@ repository implements scheduled backups today, what stays, what an add-on
 needs from the OS to do the scheduling itself, and an order of work with what
 breaks at each step.
 
-It is a plan for a decision. Nothing in it has been changed in the code.
+Two of its decisions are made (2026-10-10; §3 and §7). The move itself is
+not started: nothing in it has been changed in the code.
 
 ## 1. What implements scheduled backups today
 
@@ -99,7 +100,10 @@ So removing `BackupPolicy` changes one-off exports, which are the OS's:
 | recipients other than the cluster's key | the cluster's key, or what the one export states |
 | whether a tenant may override the cluster | nothing to override |
 
-This needs a decision before any code moves. Three ways to make it:
+**Decided 2026-10-10: option 2.** After scheduled backups leave, the OS
+keeps a small "destination and key" setting, with no schedule and no
+retention in it, and an export a person asks for reads it. The three ways
+it could have been made:
 
 1. **The export keeps no standing arrangement.** `policy` is removed as a
    destination mode; an export goes to the cluster's storage or to what it
@@ -125,10 +129,10 @@ The concept's §5.2 describes how; none of it is built.
 | Need | State |
 |---|---|
 | **Install CRDs and a controller from a catalogue entry** — the `apiExtensions` privilege kind, with its approver | designed in the concept §5.2; no code. A profile bundle may carry companion objects today, and what the director admits among them decides whether a CRD can travel that way |
-| **A ClusterRole granted with the entry** — create `TenantExport`, read `Tenant`, delete finished exports | designed (§5.2); the grant path for cluster roles is the privilege mechanism of [target-component-structure.md](target-component-structure.md) §4.3, of which only the allowlist exists |
+| **A ClusterRole granted with the entry** — create `TenantExport`, read `Tenant`, delete finished exports | the grant path is built, and does not reach this far. A profile asks for a cluster role by name from a set the platform defines in this repository; the operator binds it to the ServiceAccount the profile names while the name is in the set, the cluster's allowlist permits it for the profile (`PlatformSecurityPolicy.spec.allowedClusterRoles`) and a live grant is on the install ([security.md §3.4](../design/security.md), 3a). The set is empty, and a test admits only roles with read verbs on named resources: a role that creates `TenantExport`s and deletes finished ones is a write role, so it needs that rule widened for it as well as an entry in the set. A profile's own rules are never made into a role |
 | **A way to write its own objects through the director** — a tenant's schedule is declared state, and the director is the only writer of git | not there. The director's routes are written per kind (`backup-policy`); there is no route that commits an object of a kind the OS does not know |
 | **A way to read its own objects' state for a console** | not there. The usher relays fixed paths to the operator; an add-on's console would ask the add-on's own backend instead, which then needs its own authorization check against the cluster's graph |
-| **A destination's keys for an export** (only under §3 option 3) | an export takes keys of its own (`transient`); where the add-on keeps a destination's keys between runs, and who may read them, is not designed |
+| **A destination's keys for an export** (only under §3 option 3, which was not chosen) | not needed: under option 2 the OS keeps the destination's keys, and an add-on's export reads the standing setting as a person's does |
 | **Run on a cluster as a service**, in a namespace of its own | the `service` class exists (AD-4) |
 
 ## 5. Order of work for v0.5, and what breaks at each step
@@ -138,19 +142,20 @@ nothing breaks until step 5.
 
 | # | Step | What breaks |
 |---|---|---|
-| 0 | **Decide §3**, and decide whether a cluster that upgrades keeps its schedules (step 6). | nothing |
-| 1 | **Make the export independent of the policy**, as §3 decided. Under option 1: remove the `policy` destination mode and default to `platform`. | exports that relied on the policy for an external destination or for recipients go to the cluster's storage under the cluster's key. A `TenantExport` in git or in a script that says `mode: policy` is refused by the schema |
-| 2 | **Build the `apiExtensions` privilege kind** and the grant for a cluster role (concept §5.2): schema, the director's admission of a bundle that carries CRDs, the approval route, the operator applying the grant. | nothing existing. This is new, security-relevant surface: a catalogue entry that extends the cluster's API |
+| 0 | **Decide §3**, and decide whether a cluster that upgrades keeps its schedules (step 6). Both decided 2026-10-10: option 2, and new installs only. | nothing |
+| 1 | **Make the export independent of the schedule**, as §3 decided (option 2): a kind that holds the standing destination and the recipients and nothing else, which the export controller reads where it reads `BackupPolicy` today, with the vault path, the ExternalSecrets and the credential check of §1.2 moved to it. | nothing for a manual export, if the new kind is read under the same destination mode. The director's and the usher's policy routes change shape: schedule and retention leave them |
+| 2 | **Build the `apiExtensions` privilege kind** (concept §5.2): schema, the director's admission of a bundle that carries CRDs, the approval route, the operator applying the grant. The grant of a cluster role is built (§4); what is left of it here is a role in the platform's set that a scheduler can work with, which is the first write role. | nothing existing. This is new, security-relevant surface: a catalogue entry that extends the cluster's API |
 | 3 | **Give an add-on a way to declare its objects through the director** (§4, third row), and decide where its console reads state from. | nothing existing |
 | 4 | **The add-on ships its controller and kinds** in a group of its own, creating `TenantExport`s. Outside this repository; listed because step 5 waits on it. | nothing here |
-| 5 | **Remove from the OS**: the two controllers and their registration; the two kinds and the leftover `TenantBackupPolicy` CRD, from `api/`, the three CRD directories and the ClusterRole; `internal/backup/policy.go` as far as step 1 left it; the director's three policy routes and `gitops/backup.go`; the usher's and the operator's policy and schedule reads; the vault policy lines and their lint and fixtures, unless §3 option 2 keeps them; the tests of §1.4. | a cluster with no add-on stops taking scheduled backups — the intended state. A console that calls the removed routes gets 404 until it calls the add-on's. `make verify` fails until the generated files, the RBAC table and the render fixtures are regenerated in the same change |
-| 6 | **Clusters that already have policies.** A `BackupPolicy` file in a deployments repository names a kind that no longer exists, so Argo CD's sync of that directory fails on it. Either the upgrade removes the files, or a one-time conversion writes the add-on's objects from them. Removing the CRDs deletes every `BackupPolicy` and `TenantExportSchedule` on the cluster; bundles already taken are untouched, because they belong to their `TenantExport`s. | scheduled backups stop on upgrade unless the add-on is installed first and the conversion has run |
+| 5 | **Remove from the OS**: the two controllers and their registration; the two kinds and the leftover `TenantBackupPolicy` CRD, from `api/`, the three CRD directories and the ClusterRole; `internal/backup/policy.go` as far as step 1 left it; the schedule and retention parts of the director's policy routes and of `gitops/backup.go`; the usher's and the operator's schedule reads. The vault policy lines, their lint and their fixtures stay, with the destination setting (§3, option 2); the tests of §1.4 as far as they are about schedules and retention. | a cluster with no add-on stops taking scheduled backups — the intended state. A console that calls the removed routes gets 404 until it calls the add-on's. `make verify` fails until the generated files, the RBAC table and the render fixtures are regenerated in the same change |
+| 6 | **Clusters that already have policies: not supported in v0.5** (decided 2026-10-10: new installs only). No conversion is written and no upgrade path is tested. What an upgrade would meet, for whoever tries one all the same: a `BackupPolicy` file in a deployments repository names a kind that no longer exists, so Argo CD's sync of that directory fails on it. Either the upgrade removes the files, or a one-time conversion writes the add-on's objects from them. Removing the CRDs deletes every `BackupPolicy` and `TenantExportSchedule` on the cluster; bundles already taken are untouched, because they belong to their `TenantExport`s. | scheduled backups stop on upgrade unless the add-on is installed first and the conversion has run |
 | 7 | **Documents**: the list in §1.4, rewritten so that the OS's guides describe export, download, import and restore, and say that scheduling is an add-on's. | nothing |
 
 ## 6. The riskiest step
 
-**Step 6, on a cluster that upgrades.** Everything before it is additive or
-is caught by the build. Step 6 is where a cluster that takes nightly backups
+**Step 6, on a cluster that upgrades** -- which v0.5 does not support
+(§7); the paragraph stands for a later release that does. Everything before
+it is additive or is caught by the build. Step 6 is where a cluster that takes nightly backups
 today silently takes none tomorrow: the kinds go, their objects go with
 them, nothing fails loudly, and the first sign is a missing bundle on the day
 one is needed. Whatever is decided, the upgrade has to say what it did — a
@@ -163,11 +168,16 @@ what every later add-on can ask for.
 
 ## 7. Open
 
-- §3: which of the three options.
-- Whether v0.5 supports upgrading a cluster that has policies, or only new
-  installs.
+Decided 2026-10-10:
+
+- §3: option 2. The platform keeps a small "destination and key" setting
+  without schedule or retention, which a manual export reads.
+- v0.5 does not support upgrading a cluster that already has schedules: new
+  installs only.
+- The move is not started.
+
+Still open:
+
 - Whether "delete finished exports beyond a count" stays available to the OS
   in some form — a tenant that exports by hand accumulates bundles in the
   cluster's storage with nothing to remove them but `delete-backup`.
-- Whether the cluster administrator's external destination for manual
-  exports (§3, option 1) is a loss the owner accepts.
