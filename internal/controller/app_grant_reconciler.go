@@ -36,8 +36,8 @@ const (
 //
 // It writes nothing to the authorization store. The director is the store's
 // only writer and projects grants from git when it starts, so a second writer
-// here would delete on its own schedule what the director wrote on its own
-// (WP-2). What remains is the object's lifecycle: a finalizer so a grant is
+// here would delete on its own schedule what the director wrote on its own.
+// What remains is the object's lifecycle: a finalizer so a grant is
 // observed leaving, and a status that says it was taken in.
 type AppGrantReconciler struct {
 	// Definitions holds this reconciler while the cluster's resource
