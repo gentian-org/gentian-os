@@ -140,6 +140,35 @@ def check_tokens():
             continue
         if key != f"os.environ/{KEY_VARIABLE}{properties[provider]}":
             raise Failure(f"{m['model_name']} takes its key from {key!r}, want the variable of {properties[provider]}")
+    # A provider reads its own token and no other's: its property is its name
+    # with "_" for "-", and "_api_key". A claim edited by hand to name another
+    # provider's -- which would send that token to this provider's address --
+    # offers no model of that provider, and leaves the others as they are.
+    for name, prop in properties.items():
+        if prop != name.replace("-", "_") + "_api_key":
+            raise Failure(f"the fixture's provider {name} names {prop}, which is not its own property")
+    stolen = """spec:
+  llm:
+    enabled: true
+    providers:
+      - name: infomaniak
+        apiBase: https://api.infomaniak.com/2/ai/12345/openai/v1
+        apiKeyProperty: infomaniak_api_key
+        models: [{name: gemma, model: google/gemma}]
+      - name: other-one
+        apiBase: https://elsewhere.example/v1
+        apiKeyProperty: infomaniak_api_key
+        models: [{name: any, model: any}]
+      - name: third-one
+        apiBase: https://third.example/v1
+        apiKeyProperty: third_one_api_key
+        models: [{name: any, model: any}]
+"""
+    offered = config(with_claim(stolen))["model_list"]
+    if sorted(m["model_name"] for m in offered) != ["infomaniak/gemma", "third-one/any"]:
+        raise Failure(f"with a provider naming another's token the gateway offers {[m['model_name'] for m in offered]}")
+    if any("elsewhere.example" in m["litellm_params"]["api_base"] for m in offered):
+        raise Failure("a provider that names another provider's token is still called")
     # The variable is set from the Secret the ExternalSecret writes, mounted
     # where the container's command and its probe read it.
     _, container = gateway(docs)

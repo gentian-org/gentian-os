@@ -259,14 +259,29 @@ func TestModelSettingsTheSchemaWouldRefuseAreRefused(t *testing.T) {
 		"an instance name that is no Kubernetes name": {func(m *gitops.ModelSettings) { m.Instances[0].Name = "Qwen_1" }, "spec.llm.instances[0].name"},
 		"an instance with no model id":                {func(m *gitops.ModelSettings) { m.Instances[0].ModelID = "" }, "spec.llm.instances[0].modelId is empty"},
 		"a provider reached without TLS":              {func(m *gitops.ModelSettings) { m.Providers[0].APIBase = "http://models.example.org/v1" }, "spec.llm.providers[0].apiBase"},
-		"a provider name with a slash":                {func(m *gitops.ModelSettings) { m.Providers[0].Name = "a/b" }, "spec.llm.providers[0].name"},
-		"a key property that is no property":          {func(m *gitops.ModelSettings) { m.Providers[0].APIKeyProperty = "Key-1" }, "spec.llm.providers[0].apiKeyProperty"},
-		"a mode the gateway has none of":              {func(m *gitops.ModelSettings) { m.Providers[0].Models[0].Mode = "vision" }, "spec.llm.providers[0].models[0].mode"},
-		"a model name with a space":                   {func(m *gitops.ModelSettings) { m.Providers[0].Models[0].Name = "gemma 4" }, "spec.llm.providers[0].models[0].name"},
-		"a model id over two lines":                   {func(m *gitops.ModelSettings) { m.Providers[0].Models[0].Model = "a\n    apiBase: https://elsewhere" }, "spec.llm.providers[0].models[0].model must be one line"},
-		"no tokens at all":                            {func(m *gitops.ModelSettings) { m.Providers[0].Models[0].MaxTokens = tokens(0) }, "maxTokens must be at least 1"},
-		"one provider twice":                          {func(m *gitops.ModelSettings) { m.Providers[1].Name = "infomaniak" }, "repeats the provider name"},
-		"one model name twice at a provider":          {func(m *gitops.ModelSettings) { m.Providers[0].Models[1].Name = "gemma-4-31b" }, "repeats the gateway model"},
+		"a provider name too long for its credential": {func(m *gitops.ModelSettings) {
+			m.Providers[0].Name = strings.Repeat("a", 41)
+			m.Providers[0].APIKeyProperty = gitops.ProviderKeyProperty(m.Providers[0].Name)
+		}, "spec.llm.providers[0].name"},
+		"a provider name with a slash":       {func(m *gitops.ModelSettings) { m.Providers[0].Name = "a/b" }, "spec.llm.providers[0].name"},
+		"a key property that is no property": {func(m *gitops.ModelSettings) { m.Providers[0].APIKeyProperty = "Key-1" }, "spec.llm.providers[0].apiKeyProperty"},
+		"a mode the gateway has none of":     {func(m *gitops.ModelSettings) { m.Providers[0].Models[0].Mode = "vision" }, "spec.llm.providers[0].models[0].mode"},
+		"a model name with a space":          {func(m *gitops.ModelSettings) { m.Providers[0].Models[0].Name = "gemma 4" }, "spec.llm.providers[0].models[0].name"},
+		"a model id over two lines":          {func(m *gitops.ModelSettings) { m.Providers[0].Models[0].Model = "a\n    apiBase: https://elsewhere" }, "spec.llm.providers[0].models[0].model must be one line"},
+		"another provider's token":           {func(m *gitops.ModelSettings) { m.Providers[1].APIKeyProperty = "infomaniak_api_key" }, "spec.llm.providers[1].apiKeyProperty must be staged_api_key"},
+		"a property of its own choosing":     {func(m *gitops.ModelSettings) { m.Providers[0].APIKeyProperty = "token" }, "spec.llm.providers[0].apiKeyProperty must be infomaniak_api_key"},
+		"a Service of the cluster": {func(m *gitops.ModelSettings) {
+			m.Providers[0].APIBase = "https://litellm.system-llm.svc.cluster.local/v1"
+		}, "spec.llm.providers[0].apiBase is refused: its host litellm.system-llm.svc.cluster.local is a name inside a cluster"},
+		"a single name":                      {func(m *gitops.ModelSettings) { m.Providers[0].APIBase = "https://openbao/v1" }, "apiBase is refused: its host openbao is a single name"},
+		"a private address":                  {func(m *gitops.ModelSettings) { m.Providers[0].APIBase = "https://10.0.0.7/v1" }, "apiBase is refused: its host is 10.0.0.7"},
+		"the node's metadata":                {func(m *gitops.ModelSettings) { m.Providers[0].APIBase = "https://169.254.169.254/latest" }, "which is not a public address"},
+		"another port":                       {func(m *gitops.ModelSettings) { m.Providers[0].APIBase = "https://models.example.org:8200/v1" }, "apiBase is refused: it names port 8200"},
+		"credentials in the address":         {func(m *gitops.ModelSettings) { m.Providers[0].APIBase = "https://user:pw@models.example.org/v1" }, "apiBase is refused"},
+		"a query in the address":             {func(m *gitops.ModelSettings) { m.Providers[0].APIBase = "https://models.example.org/v1?key=1" }, "apiBase is refused"},
+		"no tokens at all":                   {func(m *gitops.ModelSettings) { m.Providers[0].Models[0].MaxTokens = tokens(0) }, "maxTokens must be at least 1"},
+		"one provider twice":                 {func(m *gitops.ModelSettings) { m.Providers[1].Name = "infomaniak" }, "repeats the provider name"},
+		"one model name twice at a provider": {func(m *gitops.ModelSettings) { m.Providers[0].Models[1].Name = "gemma-4-31b" }, "repeats the gateway model"},
 		"two instances of one model": {func(m *gitops.ModelSettings) {
 			m.Instances = append(m.Instances, gitops.ModelInstance{Name: "again", ModelID: "qwen/qwen2.5-7b-instruct"})
 		}, "repeats the gateway model"},
@@ -280,5 +295,58 @@ func TestModelSettingsTheSchemaWouldRefuseAreRefused(t *testing.T) {
 	}
 	if after := claimText(t, g); after != before {
 		t.Errorf("a refusal changed the claim:\n%s", after)
+	}
+}
+
+// A provider's token is one property of the shared credential, and which one
+// follows from the provider's name alone.
+func TestAProvidersTokenPropertyFollowsFromItsName(t *testing.T) {
+	for name, want := range map[string]string{"infomaniak": "infomaniak_api_key", "acme-eu-1": "acme_eu_1_api_key"} {
+		if got := gitops.ProviderKeyProperty(name); got != want {
+			t.Errorf("%s reads %s, want %s", name, got, want)
+		}
+	}
+	// A claim somebody edited by hand to read another provider's token is
+	// shown for what the gateway makes of it: no model of that provider.
+	m := someModels()
+	m.Providers[0].APIKeyProperty = "staged_api_key"
+	for _, g := range m.GatewayModels() {
+		if g.Kind == "provider" && (g.State != gitops.ModelNotOffered || !strings.Contains(g.Reason, "not its own")) {
+			t.Errorf("%s = %s (%s)", g.Name, g.State, g.Reason)
+		}
+	}
+}
+
+// The gateway's console switch is read as off where the claim does not state
+// it, written when a write states it, and left alone when a write does not.
+func TestTheConsoleSwitchIsWrittenOnlyWhenStated(t *testing.T) {
+	g := claimWith(t, installedLLM)
+	ctx := context.Background()
+	have, err := g.ClusterModels(ctx)
+	if err != nil || have.Console == nil || have.Console.Enabled {
+		t.Fatalf("before: %+v %v", have.Console, err)
+	}
+	on := someModels()
+	on.Console = &gitops.GatewayConsole{Enabled: true}
+	if res, err := g.SetClusterModels(ctx, on, tenantMeta()); err != nil || !res.Changed {
+		t.Fatalf("on: %+v %v", res, err)
+	}
+	if text := claimText(t, g); !strings.Contains(text, "    console:\n      enabled: true\n") {
+		t.Fatalf("the claim does not switch the console on:\n%s", text)
+	}
+	// Unstated: no change, and no commit.
+	if res, err := g.SetClusterModels(ctx, someModels(), tenantMeta()); err != nil || res.Changed {
+		t.Fatalf("unstated: %+v %v", res, err)
+	}
+	if got, _ := g.ClusterModels(ctx); !got.Console.Enabled {
+		t.Fatal("a write that did not state the console switched it off")
+	}
+	off := someModels()
+	off.Console = &gitops.GatewayConsole{}
+	if res, err := g.SetClusterModels(ctx, off, tenantMeta()); err != nil || !res.Changed {
+		t.Fatalf("off: %+v %v", res, err)
+	}
+	if got, _ := g.ClusterModels(ctx); got.Console.Enabled {
+		t.Fatal("the console stayed on")
 	}
 }

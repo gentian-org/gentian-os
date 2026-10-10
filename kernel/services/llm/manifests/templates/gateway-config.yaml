@@ -14,6 +14,13 @@ Cluster claim's spec.llm and from nothing else.
   should say who serves what. It is called as an OpenAI-compatible endpoint
   whoever serves it.
 
+  A provider reads its own token and no other's. All providers' tokens are
+  properties of one credential, and a provider's is <name>_api_key ("-" in
+  the name as "_"). A provider whose apiKeyProperty says anything else would
+  have the gateway send another provider's token to its address, so no model
+  of it is offered. The director refuses to write such a provider; this is
+  for a claim edited by hand.
+
   A provider's token is not in this file. The entry names an environment
   variable of the gateway's container, LLM_PROVIDER_KEY_<apiKeyProperty>,
   which the container sets at its start from the Secret
@@ -40,6 +47,7 @@ pods.
 {{- end -}}
 {{- end -}}
 {{- range $p := $llm.providers -}}
+{{- if eq (toString $p.apiKeyProperty) (printf "%s_api_key" ($p.name | replace "-" "_")) -}}
 {{- range $m := $p.models -}}
 {{- $params := dict
       "model" (printf "openai/%s" $m.model)
@@ -48,6 +56,7 @@ pods.
 {{- $info := dict "mode" ($m.mode | default "chat") -}}
 {{- if $m.maxTokens }}{{ $_ := set $info "max_tokens" (int $m.maxTokens) }}{{ end -}}
 {{- $models = append $models (dict "model_name" (printf "%s/%s" $p.name $m.name) "litellm_params" $params "model_info" $info) -}}
+{{- end -}}
 {{- end -}}
 {{- end -}}
 {{- toYaml (dict "model_list" $models) -}}

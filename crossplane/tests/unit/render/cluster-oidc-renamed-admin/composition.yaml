@@ -1177,6 +1177,100 @@ spec:
               providerConfigRef:
                 name: kubernetes
 
+            {{- /* ── A model provider's credential, declared from the claim ────
+                 A provider under spec.llm.providers needs a place for its API
+                 token, which is a credential requirement the custodian lists
+                 and a probe that says whether the token is there. Both follow
+                 from the claim here, so that naming a provider is enough: no
+                 edit of the credential catalogue, no installer step.
+
+                 What a claim can make of this is narrow, and it is narrow
+                 here, not in what the claim is trusted to say. The
+                 requirement's name is llm-provider-<name>. Its vault path is
+                 the one path all providers share, written out below. Its one
+                 field is <name>_api_key ("-" as "_"), computed from the name:
+                 the claim's own apiKeyProperty is not read, so a claim cannot
+                 declare a field of another provider, another path, or any
+                 other requirement. A name that is not a short DNS label
+                 declares nothing. The gateway's chart computes the same
+                 property and offers no model of a provider that names
+                 another (kernel/services/llm/manifests, gateway-config.yaml).
+
+                 The custodian writes a token as the person, under that
+                 person's own OpenBao policy, so a requirement here gives
+                 nobody a right to write they did not have. */}}
+            {{- if dig "llm" "enabled" false $spec }}
+            {{- range $p := (dig "llm" "providers" list $spec) }}
+            {{- $pname := toString (dig "name" "" $p) }}
+            {{- if regexMatch "^[a-z0-9]([-a-z0-9]{0,38}[a-z0-9])?$" $pname }}
+            {{- $pprop := printf "%s_api_key" ($pname | replace "-" "_") }}
+            ---
+            apiVersion: gentianos.io/v1alpha1
+            kind: CredentialRequirement
+            metadata:
+              name: llm-provider-{{ $pname }}
+              labels:
+                gentianos.io/credential-phase: runtime
+                gentianos.io/credential-scope: cluster
+                gentianos.io/credential-provider: {{ $pname }}
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: credreq-llm-provider-{{ $pname }}
+                # A declaration: nothing writes conditions to it, so it is
+                # ready when it exists (see repository-default).
+                gotemplating.fn.crossplane.io/ready: "True"
+            spec:
+              displayName: {{ printf "%s API token" (default $pname (dig "displayName" "" $p)) | quote }}
+              description: {{ printf "Bearer token for the model provider %s, which the Cluster claim lists under spec.llm.providers. The model gateway sends it to the provider's address and nowhere else. Until it is supplied the provider's models are listed and answer an authentication error." $pname | quote }}
+              phase: runtime
+              scope: cluster
+              optional: true
+              vaultPath: gentian-os/kernel/llm-providers
+              fields:
+                - key: {{ $pprop }}
+                  format: token
+                  secret: true
+              validate:
+                type: noop
+              consumedBy:
+                - kind: XCluster
+                  name: {{ $name }}
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: credprobe-llm-provider-{{ $pname }}
+              name: {{ $name }}-credprobe-llm-provider-{{ $pname }}
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: external-secrets.io/v1
+                  kind: ExternalSecret
+                  metadata:
+                    name: credreq-llm-provider-{{ $pname }}
+                    namespace: {{ $controlNs }}
+                    labels:
+                      gentianos.io/credential-requirement: llm-provider-{{ $pname }}
+                      gentianos.io/credential-phase: runtime
+                      gentianos.io/credential-optional: "true"
+                  spec:
+                    refreshInterval: 1h
+                    secretStoreRef:
+                      name: openbao
+                      kind: ClusterSecretStore
+                    target:
+                      creationPolicy: None
+                    data:
+                      - secretKey: {{ $pprop }}
+                        remoteRef:
+                          key: gentian-os/kernel/llm-providers
+                          property: {{ $pprop }}
+              providerConfigRef:
+                name: kubernetes
+            {{- end }}
+            {{- end }}
+            {{- end }}
+
             {{- /* ── Certificate issuers: owned by step 05, not here ──────────
                  This composition used to emit a letsencrypt-http01
                  ClusterIssuer under that exact name, while A-06-cluster-issuers

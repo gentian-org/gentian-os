@@ -11,10 +11,14 @@ SPDX-License-Identifier: MPL-2.0
 package api_test
 
 import (
+	"context"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
 
+	"github.com/gentian-org/gentian-os/internal/director/api"
+	"github.com/gentian-org/gentian-os/internal/director/catalogue"
 	dt "github.com/gentian-org/gentian-os/internal/director/directortest"
 )
 
@@ -30,7 +34,7 @@ const modelsBody = `{"enabled": true, "gpuAcceleration": true,
 // asked as one relation of the cluster; the write is a commit in their name
 // that records the decision, and the claim then declares the models.
 func TestTheClustersAdministratorSetsTheModels(t *testing.T) {
-	h := start(t)
+	h := startSeeded(t, nil, nil, withFetcher(nil))
 	alice := h.token(t, "gentian", "alice")
 	cluster := "cluster:" + dt.Cluster
 
@@ -118,7 +122,7 @@ func TestATenantsAdministratorDoesNotReachTheModels(t *testing.T) {
 // and one that carries a token, or any field the settings have none of, is
 // not read at all. Neither commits.
 func TestModelSettingsAreHeldToTheSchemaBeforeAnythingIsWritten(t *testing.T) {
-	h := start(t)
+	h := startSeeded(t, nil, nil, withFetcher(nil))
 	alice := h.token(t, "gentian", "alice")
 	before := h.tip(t)
 
@@ -130,10 +134,89 @@ func TestModelSettingsAreHeldToTheSchemaBeforeAnythingIsWritten(t *testing.T) {
 	if code != http.StatusBadRequest || strings.Contains(out["error"].(string), "sk-secret") {
 		t.Errorf("a token in the body: %d %v", code, out)
 	}
-	if code, _ := h.do(t, "PUT", clusterModels, alice, `{"enabled": true, "console": {"enabled": true}}`); code != http.StatusBadRequest {
-		t.Errorf("the gateway's console switched on by this route: %d", code)
+	if code, _ := h.do(t, "PUT", clusterModels, alice, `{"enabled": true, "gpuTimeSliceReplicas": 4}`); code != http.StatusBadRequest {
+		t.Errorf("GPU time slicing set by this route: %d", code)
+	}
+	code, out = h.do(t, "PUT", clusterModels, alice, strings.Replace(modelsBody, `"infomaniak_api_key"`, `"other_api_key"`, 1))
+	if code != http.StatusUnprocessableEntity || !strings.Contains(out["error"].(string), "apiKeyProperty must be infomaniak_api_key") {
+		t.Errorf("another provider's token: %d %v", code, out)
+	}
+	code, out = h.do(t, "PUT", clusterModels, alice, strings.Replace(modelsBody, "https://api.infomaniak.com/2/ai/12345/openai/v1", "https://keycloak.kernel-authentication.svc/v1", 1))
+	if code != http.StatusUnprocessableEntity || !strings.Contains(out["error"].(string), "apiBase is refused") {
+		t.Errorf("a Service of the cluster: %d %v", code, out)
 	}
 	if h.tip(t) != before {
 		t.Error("a refused request committed")
+	}
+}
+
+// A provider's address is asked what it resolves to when it is new to the
+// claim, and one that resolves to something that is not public is refused. An
+// address the claim already carries is not asked again, and a director with
+// nothing to ask sets no new address.
+func TestANewProviderAddressMustResolvePublicly(t *testing.T) {
+	var vetted []string
+	refuse := ""
+	vet := func(cfg *api.Config) {
+		withFetcher(nil)(cfg)
+		cfg.Catalogue.Vet = func(_ context.Context, address string) error {
+			vetted = append(vetted, address)
+			if address == refuse {
+				return fmt.Errorf("%w: its host resolves to 10.0.0.7: it is in 10.0.0.0/8, which is not a public address", catalogue.ErrAddressRefused)
+			}
+			return nil
+		}
+	}
+	h := startSeeded(t, nil, nil, vet)
+	alice := h.token(t, "gentian", "alice")
+	const address = "https://api.infomaniak.com/2/ai/12345/openai/v1"
+
+	refuse = address
+	before := h.tip(t)
+	code, out := h.do(t, "PUT", clusterModels, alice, modelsBody)
+	if code != http.StatusUnprocessableEntity || !strings.Contains(out["error"].(string), "spec.llm.providers[0].apiBase is refused: its host resolves to 10.0.0.7") {
+		t.Fatalf("an address that resolves inside: %d %v", code, out)
+	}
+	if h.tip(t) != before {
+		t.Fatal("a refused address was committed")
+	}
+
+	refuse, vetted = "", nil
+	if code, out := h.do(t, "PUT", clusterModels, alice, modelsBody); code != http.StatusAccepted {
+		t.Fatalf("a public address: %d %v", code, out)
+	}
+	if len(vetted) != 1 || vetted[0] != address {
+		t.Fatalf("asked about %v", vetted)
+	}
+	// Another change with the same address asks nothing.
+	vetted = nil
+	if code, out := h.do(t, "PUT", clusterModels, alice, strings.Replace(modelsBody, `"maxTokens": 8192`, `"maxTokens": 4096`, 1)); code != http.StatusAccepted {
+		t.Fatalf("a change beside the address: %d %v", code, out)
+	}
+	if len(vetted) != 0 {
+		t.Fatalf("an address the claim carries was asked about again: %v", vetted)
+	}
+
+	// No checker, no new address.
+	bare := start(t)
+	if code, _ := bare.do(t, "PUT", clusterModels, bare.token(t, "gentian", "alice"), modelsBody); code != http.StatusServiceUnavailable {
+		t.Fatalf("a director that checks no address set one: %d", code)
+	}
+}
+
+// The console's switch is part of the settings: stated, it is committed.
+func TestTheGatewaysConsoleSwitchIsSetWithTheModels(t *testing.T) {
+	h := startSeeded(t, nil, nil, withFetcher(nil))
+	alice := h.token(t, "gentian", "alice")
+	body := strings.Replace(modelsBody, `"enabled": true,`, `"enabled": true, "console": {"enabled": true},`, 1)
+	if code, out := h.do(t, "PUT", clusterModels, alice, body); code != http.StatusAccepted {
+		t.Fatalf("set: %d %v", code, out)
+	}
+	_, out := h.do(t, "GET", clusterModels, alice, "")
+	if console, _ := out["settings"].(map[string]any)["console"].(map[string]any); console["enabled"] != true {
+		t.Fatalf("read back: %v", out["settings"])
+	}
+	if claim := dt.RemoteFile(t, h.remote, dt.ClaimPath); !strings.Contains(claim, "    console:\n      enabled: true") {
+		t.Fatalf("the claim:\n%s", claim)
 	}
 }

@@ -453,15 +453,6 @@ _requirement_applies() {
             # system mail the cluster runs its own MTA and derives its password.
             [[ "$(gentian_mail_service_mode)" == "external" ]]
             ;;
-        llm-provider-*)
-            # One per provider the claim lists under llm.providers, and only on
-            # a cluster that serves models at all.
-            [[ "${LLM_SUPPORT:-false}" == "true" ]] || return 1
-            local _claim _p
-            _claim="${GENTIAN_DEPLOYMENTS_PATH:-}/clusters/${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-}/kernel/claims/cluster.yaml"
-            _p="$(yq eval '.spec.llm.providers[].name' "${_claim}" 2>/dev/null || true)"
-            [[ $'\n'"${_p}"$'\n' == *$'\n'"${1#llm-provider-}"$'\n'* ]]
-            ;;
         argocd-github-webhook)
             # Nothing configures Argo CD's webhook from this credential yet, so
             # nothing on any cluster requests it. Applies again once something

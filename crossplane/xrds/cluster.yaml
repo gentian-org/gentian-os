@@ -580,8 +580,10 @@ spec:
                               Short provider id, used as the prefix of every
                               model name it registers (infomaniak/gemma-4-31b)
                               so the gateway's model list says where a model is
-                              served from.
+                              served from. Also the name of its credential,
+                              llm-provider-<name>, hence the length.
                             pattern: '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$'
+                            maxLength: 40
                           displayName:
                             type: string
                             description: Human name for the provider, for operator-facing output.
@@ -590,7 +592,11 @@ spec:
                             description: >
                               The OpenAI-compatible base URL, up to but not
                               including /chat/completions — the same value an
-                              OpenAI client would take. For Infomaniak AI
+                              OpenAI client would take. An address on the
+                              public internet: the director refuses one that
+                              is not (a name or an address inside the cluster
+                              or a private network, a port other than 443,
+                              credentials in the URL). For Infomaniak AI
                               Services that is
                               https://api.infomaniak.com/2/ai/<product-id>/openai/v1,
                               where the path segment is the AI Tools product id
@@ -599,12 +605,19 @@ spec:
                           apiKeyProperty:
                             type: string
                             description: >
-                              Which property of the llm-provider-credentials
-                              kernel credential holds this provider's API token
-                              (e.g. infomaniak_api_key). The property must exist
-                              in OpenBao at gentian-os/kernel/llm-providers
-                              before the models can answer: until it does they
-                              are listed and a call to one is answered with an
+                              The property of the shared provider credential
+                              (OpenBao, gentian-os/kernel/llm-providers) that
+                              holds this provider's API token. It is the
+                              provider's own and follows from its name: the
+                              name with "-" as "_", and "_api_key"
+                              (infomaniak_api_key). A provider that names
+                              anything else gets no model at the gateway, so
+                              that no provider reads another's token. The token
+                              is entered in the administration console under
+                              the credential llm-provider-<name>, which the
+                              Cluster composition declares for every provider
+                              listed here. Until it is supplied the models are
+                              listed and a call to one is answered with an
                               authentication error. The gateway restarts by
                               itself when the token is supplied or changed.
                             pattern: '^[a-z0-9_]+$'

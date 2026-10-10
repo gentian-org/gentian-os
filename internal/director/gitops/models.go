@@ -29,6 +29,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	"sigs.k8s.io/yaml"
 
+	"github.com/gentian-org/gentian-os/internal/director/catalogue"
 	"github.com/gentian-org/gentian-os/internal/schemacheck"
 )
 
@@ -41,9 +42,17 @@ import (
 // catalogue's sources are (sources.go). A comment written inside one of the
 // two lists is not kept when that list changes; one above or below it is.
 //
-// No provider's token is here, or passes through here. A provider names the
-// property of its credential that holds the token (apiKeyProperty); the token
-// is entered at the custodian, under llm-provider-<name>.
+// No provider's token is here, or passes through here. A provider's token is
+// one property of the shared provider credential, entered at the custodian
+// under llm-provider-<name>, and which property is not the claim's to choose:
+// it is <name>_api_key (ProviderKeyProperty). A provider that names another
+// would have the gateway send some other provider's token to its address, so
+// it is refused here, and the gateway's chart offers no model of one a
+// hand-edited claim carries.
+//
+// A provider's address is held to the rules a catalogue's is
+// (catalogue.CheckAddress): the gateway sends the provider's token and every
+// prompt there, so it is an address on the public internet or it is refused.
 
 // ErrInvalidModels is model settings the claim's schema would refuse, or that
 // would give the gateway two models of one name.
@@ -83,13 +92,22 @@ type ModelProvider struct {
 	Models         []ProviderModel `json:"models"`
 }
 
+// GatewayConsole is spec.llm.console: whether the gateway's own console has
+// a public route.
+type GatewayConsole struct {
+	Enabled bool `json:"enabled"`
+}
+
 // ModelSettings is the part of spec.llm that decides which models the gateway
-// offers.
+// offers, and whether the gateway's own console is served.
 type ModelSettings struct {
-	Enabled         bool            `json:"enabled"`
-	GPUAcceleration bool            `json:"gpuAcceleration"`
-	Instances       []ModelInstance `json:"instances"`
-	Providers       []ModelProvider `json:"providers"`
+	Enabled         bool `json:"enabled"`
+	GPUAcceleration bool `json:"gpuAcceleration"`
+	// Console is read as the claim has it, off when the claim does not say.
+	// In a write, nil leaves the claim's console setting as it is.
+	Console   *GatewayConsole `json:"console,omitempty"`
+	Instances []ModelInstance `json:"instances"`
+	Providers []ModelProvider `json:"providers"`
 }
 
 // The states a declared model is in, as far as the claim alone says.
@@ -125,6 +143,13 @@ type GatewayModel struct {
 // ProviderCredential is the name of the credential a provider's token is
 // entered under.
 func ProviderCredential(provider string) string { return "llm-provider-" + provider }
+
+// ProviderKeyProperty is the one property of the shared provider credential
+// that holds a provider's token: its name with "_" for "-", and "_api_key".
+// The gateway's chart and the Cluster composition compute the same.
+func ProviderKeyProperty(provider string) string {
+	return strings.ReplaceAll(provider, "-", "_") + "_api_key"
+}
 
 // instanceModelName is the name the gateway's chart gives an instance's model
 // (kernel/services/llm/manifests/templates/gateway-config.yaml).
@@ -162,8 +187,13 @@ func (m ModelSettings) GatewayModels() []GatewayModel {
 				Name: p.Name + "/" + pm.Name, Kind: "provider", Source: p.Name,
 				Credential: ProviderCredential(p.Name), APIKeyProperty: p.APIKeyProperty, State: ModelDeclared,
 			}
-			if !m.Enabled {
+			switch {
+			case !m.Enabled:
 				g.State, g.Reason = ModelNotOffered, off
+			case p.APIKeyProperty != ProviderKeyProperty(p.Name):
+				g.State = ModelNotOffered
+				g.Reason = "The provider names the token property " + p.APIKeyProperty + ", which is not its own (" +
+					ProviderKeyProperty(p.Name) + "). The gateway offers no model of such a provider."
 			}
 			out = append(out, g)
 		}
@@ -175,6 +205,10 @@ func (m ModelSettings) GatewayModels() []GatewayModel {
 // compared as an empty list wherever it came from.
 func (m ModelSettings) normalised() ModelSettings {
 	out := m
+	if m.Console != nil {
+		c := *m.Console
+		out.Console = &c
+	}
 	out.Instances = append([]ModelInstance{}, m.Instances...)
 	out.Providers = make([]ModelProvider, len(m.Providers))
 	for i, p := range m.Providers {
@@ -269,8 +303,12 @@ func ValidateModelSettings(m ModelSettings) error {
 		once("provider name", p.Name, at+".name")
 		line(at+".displayName", p.DisplayName, false)
 		line(at+".apiBase", p.APIBase, true)
-		if strings.ContainsAny(p.APIBase, " \t") {
-			problems = append(problems, at+".apiBase must not contain a space")
+		if err := catalogue.CheckAddress(p.APIBase); err != nil {
+			problems = append(problems, at+".apiBase is refused: "+AddressRefusal(err))
+		}
+		if own := ProviderKeyProperty(p.Name); p.APIKeyProperty != own {
+			problems = append(problems, fmt.Sprintf(
+				"%s.apiKeyProperty must be %s: a provider reads its own token and no other provider's", at, own))
 		}
 		for j, pm := range p.Models {
 			mat := fmt.Sprintf("%s.models[%d]", at, j)
@@ -287,6 +325,21 @@ func ValidateModelSettings(m ModelSettings) error {
 	return nil
 }
 
+// AddressRefusal is why an address was refused, without the words that say
+// it was a catalogue's.
+func AddressRefusal(err error) string {
+	return strings.TrimPrefix(err.Error(), catalogue.ErrAddressRefused.Error()+": ")
+}
+
+// withConsole is the settings as they are read: the console's switch always
+// stated, off where the claim does not carry it.
+func (m ModelSettings) withConsole() ModelSettings {
+	if m.Console == nil {
+		m.Console = &GatewayConsole{}
+	}
+	return m
+}
+
 // claimModels reads the model settings from the claim's text.
 func claimModels(text string) (ModelSettings, error) {
 	var claim struct {
@@ -297,7 +350,7 @@ func claimModels(text string) (ModelSettings, error) {
 	if err := yaml.Unmarshal([]byte(text), &claim); err != nil {
 		return ModelSettings{}, fmt.Errorf("parse cluster claim: %w", err)
 	}
-	return claim.Spec.LLM.normalised(), nil
+	return claim.Spec.LLM.normalised().withConsole(), nil
 }
 
 // ClusterModels reads the model settings the Cluster claim declares. A claim
@@ -311,7 +364,7 @@ func (g *GitOps) ClusterModels(ctx context.Context) (ModelSettings, error) {
 	if err := g.readClusterClaim(ctx, &claim); err != nil {
 		return ModelSettings{}, err
 	}
-	return claim.Spec.LLM.normalised(), nil
+	return claim.Spec.LLM.normalised().withConsole(), nil
 }
 
 // SetClusterModels makes the claim declare exactly these model settings, in
@@ -328,6 +381,11 @@ func (g *GitOps) SetClusterModels(ctx context.Context, want ModelSettings, meta 
 		have, err := claimModels(text)
 		if err != nil {
 			return text, "", false, err
+		}
+		// A write that does not state the console's switch leaves it.
+		want := want
+		if want.Console == nil {
+			want.Console = have.Console
 		}
 		if reflect.DeepEqual(have, want) {
 			return text, "unchanged", false, nil
@@ -352,6 +410,7 @@ func (g *GitOps) SetClusterModels(ctx context.Context, want ModelSettings, meta 
 		}{
 			{"llm.enabled", have.Enabled, want.Enabled},
 			{"llm.gpuAcceleration", have.GPUAcceleration, want.GPUAcceleration},
+			{"llm.console.enabled", have.Console.Enabled, want.Console.Enabled},
 		} {
 			if sw.have == sw.set {
 				continue
