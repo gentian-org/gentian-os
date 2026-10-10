@@ -1,7 +1,8 @@
 # Sovereignty concept: the tenant's data is the tenant's
 
 Gentian OS is open source. This document says what that gives a tenant, how
-much of it is built, and what the project commits to keep that way.
+much of it is built, and what the project commits to keep that way. It
+describes Gentian OS as of v0.5; where the code is not there yet, §9 says so.
 
 The promise is security and sovereignty: at any moment a tenant can take all
 of their data with them, and at any moment they can have all of it destroyed,
@@ -43,6 +44,11 @@ Each of these is stated in this repository already; the place is named beside
 it. Where a commitment is about something not yet built, the table above says
 so.
 
+The commitments cover the whole open platform, not this repository alone:
+the desktop and the Admin Console (gentian-ui) and the catalogue of
+open-source app profiles (gentian-apps) with it. An app in that catalogue
+keeps the license of the project it comes from.
+
 1. **The OS is open source, all of it.** The core is MPL-2.0; the resource
    types, the CRDs generated from them and the bundle format are Apache-2.0.
    No code the project writes for the OS is under a source-available or
@@ -71,14 +77,18 @@ so.
    that a tenant's files, contacts, calendars and mail stay readable by other
    products (§6).
 
+## An aim, not a commitment
+
+A bundle made by v0.5 or later is meant to stay importable by later versions,
+if need be with the help of a conversion tool. For bundles older than v0.5
+nothing is promised beyond what §7 says of schema 1.
+
 ## What is not part of the commitment
 
-- **Scheduled backups.** `TenantExportSchedule`, `BackupPolicy` and their
-  controllers are in this repository today and work
-  ([tenant-backup-guide.md](../tenant-backup-guide.md)). The plan is for them
-  to leave it for a separate component (§5, §7). What stays is the export
-  they schedule. Whoever runs a cluster can also schedule exports with
-  anything that can call the director.
+- **Scheduled backups.** Taking exports on a schedule, keeping them somewhere
+  other than the cluster and deciding how long they are kept are not part of
+  the OS. They are an add-on's work (§5), built on the export the OS
+  provides.
 - **A store.** The App Store app on a cluster shows the data of a store run
   outside it. A cluster with no store installs apps by command (AD-14). A
   cluster that has turned its licence report off has no App Store app
@@ -277,8 +287,8 @@ contract. The purge dialog in the console and `tenants retire --purge` in the
 CLI both expose the flag, off by default.
 
 Purge ends by writing a **deletion record**: tenant, who asked, request id,
-the inventory destroyed, signed by the director (work-packages WP-9
-`records.deletion`). A tenant leaving can be given that record; it is the proof
+the inventory destroyed, signed by the director (`records.deletion`;
+[open-items.md](open-items.md) §6). A tenant leaving can be given that record; it is the proof
 the promise was kept.
 
 ### 4.5 Offboarding is a flow, not a procedure
@@ -309,16 +319,12 @@ An add-on uses the OS the way every other client does:
   person was allowed to open.
 - It produces and consumes the bundle of §1 and no other format.
 
-**Scheduling is to move out of this repository.** `TenantExportSchedule`,
-`BackupPolicy` and their controllers exist in gentian-os today. They are to
-move to a separate component (§5.2). What stays is the primitive they
-schedule (`TenantExport`) and the director's routes that write a committed
-backup policy for a tenant. A cluster without such a component holds the
-policy file and nothing acts on it.
-
-This supersedes the 2026-09-22 backup split recorded in work-packages WP-9,
-which kept scheduling to the cluster's own storage in gentian-os. The line is
-at *scheduling*, not at *where the bundle goes*.
+**Scheduling is not the OS's.** The OS takes an export when it is asked to
+(`TenantExport`). When exports are taken without anyone asking, where else
+they are kept and when old ones are removed is an add-on's to decide, with a
+controller and resource kinds of its own (§5.2). The line is at *scheduling*,
+not at *where the bundle goes*: a cluster with no such add-on takes no export
+on its own, and every export a person asks for works as before.
 
 ### 5.1 What the Admin Console says about add-ons
 
@@ -487,10 +493,9 @@ materialises the default profiles into `clusters/<id>/catalogue/`
 4. **Offboard** flow and console action.
 5. **Canonical forms**: CRD field, hooks in the first profiles (Nextcloud
    files, contacts, calendar; mail).
-6. **Scheduling moves out**: `TenantExportSchedule`, `BackupPolicy` and
-   their controllers leave gentian-os for a separate component, with the
-   API-extension privilege kind of §5.2; the Admin Console's Export tab
-   keeps export and download.
+6. **Scheduling leaves the tree** (§9.2): the order of that work, and what
+   breaks at each step, is in
+   [scheduled-backups-out.md](scheduled-backups-out.md).
 
 ## 8. Open questions
 
@@ -503,9 +508,9 @@ materialises the default profiles into `clusters/<id>/catalogue/`
 
 ### 9.1 Built
 
-- CRDs `TenantExport`, `TenantExportSchedule`, `BackupPolicy`, `TenantRestore`
-  with `confirmTenant`, per-app quiesce, encryption modes recipient/passphrase,
-  destinations policy/platform/custom.
+- CRDs `TenantExport` and `TenantRestore` with `confirmTenant`, per-app
+  quiesce, encryption modes recipient/passphrase, destinations
+  policy/platform/custom.
 - Bundles as age-encrypted artefacts under an S3 prefix, `manifest.json.age`
   last, cleartext `bundle-info.json` with the decrypt command.
 - Capture of Postgres, MariaDB, S3 buckets, volumes, the Keycloak realm
@@ -513,18 +518,26 @@ materialises the default profiles into `clusters/<id>/catalogue/`
 - Restore into an existing tenant, admin-only, realm by partial import with
   `passwordResetRequired`.
 - Console: Export tab with key choice (platform / new / existing /
-  passphrase) and download; cluster and tenant `BackupPolicy` through the
-  director.
+  passphrase) and download.
 - Retire and, since 2026-10-02, purge through the director, behind a typed
   name in console and CLI.
 
-### 9.2 Not built
+### 9.2 Not built, and what is still in the tree
 
 Offboarding, the deletion record, the SCIM projection, credentials in the
 bundle, mail and secrets capture, canonical forms, the tenant's own key as
-the default of a manual export, the API-extension privilege kind and the
-scheduling controllers' move out of this repository. Built since the first
-draft: download, import (upload, inspect, declare from the manifest,
+the default of a manual export, and the API-extension privilege kind.
+
+**Scheduled backups are still in this repository.** The body of this
+document describes v0.5, in which they are not part of the OS. The code has
+not followed yet: the kinds `TenantExportSchedule` and `BackupPolicy`, their
+two controllers in the operator, and the director's and the usher's
+backup-policy and backup-schedule routes are all still here and working. A
+cluster built from this tree takes scheduled backups with no add-on
+installed. [scheduled-backups-out.md](scheduled-backups-out.md) lists every
+part and the order in which it is to leave.
+
+Built since the first draft: download, import (upload, inspect, declare from the manifest,
 restore), `keepBundles`, the default-profile materialisation.
 
 ### 9.3 Where capture and purge disagree

@@ -488,7 +488,9 @@ Specified by [sovereignty-concept.md](sovereignty-concept.md).
 - **Canonical forms** of an app's data in a bundle (`spec.backup.canonical`
   on a profile): no such field.
 - **`TenantExportSchedule` and `BackupPolicy` are still kinds of this
-  repository** (`api/v1alpha1`); the concept moves scheduling out of it.
+  repository** (`api/v1alpha1`); the concept has scheduling outside it, and
+  [scheduled-backups-out.md](scheduled-backups-out.md) is the plan for the
+  move.
 
 ### Not this repository's
 
