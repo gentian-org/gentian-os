@@ -660,6 +660,42 @@ gentian catalogues list --tenant demo
 has "list --tenant shows the directory too" "$(grep '^own' <<<"${OUT}" | tr -s ' ')" "own every tenant the cluster deployments repository: catalogue"
 
 echo ""
+echo "kubectl gentian models"
+echo ""
+
+MODELS='{"cluster":"c1","settings":{"enabled":true,"gpuAcceleration":true,"instances":[{"name":"qwen","modelId":"Qwen/Qwen2.5-7B-Instruct"}],"providers":[{"name":"acme","apiBase":"https://models.example/v1","apiKeyProperty":"acme_api_key","models":[{"name":"small","model":"acme/small"}]}]},"models":[{"name":"qwen-qwen2.5-7b-instruct","kind":"instance","source":"qwen","state":"not-served","reason":"The platform does not start the vLLM instance behind this model."},{"name":"acme/small","kind":"provider","source":"acme","credential":"llm-provider-acme","apiKeyProperty":"acme_api_key","state":"declared"}]}'
+
+fresh; reply GET /v1/clusters/c1/models 200 "${MODELS}"
+gentian models list
+has "list flags a model the cluster serves itself as not served" "$(grep '^qwen' <<<"${OUT}" | tr -s ' ')" "qwen-qwen2.5-7b-instruct instance qwen NOT SERVED The platform does not start"
+has "... and names where a provider's token belongs" "$(grep '^acme' <<<"${OUT}" | tr -s ' ')" "acme/small provider acme declared token: credential llm-provider-acme, property acme_api_key"
+is "... and only reads" "$(cat "${CALLS}")" "GET /v1/clusters/c1/models "
+
+gentian models show
+is "show prints the settings and nothing else" "$(jq -c 'keys' <<<"${OUT}")" '["enabled","gpuAcceleration","instances","providers"]'
+
+fresh
+gentian models set
+refused "set without a file is a usage error"
+gentian models set -f "${SANDBOX}/absent.json"
+refused "... and so is a file that is not there"
+echo 'providers: []' > "${SANDBOX}/models.yaml"
+gentian models set -f "${SANDBOX}/models.yaml"
+refused "... and one that is not JSON"
+is "... and none of them asks the director anything" "$(cat "${CALLS}")" ""
+
+fresh; reply PUT /v1/clusters/c1/models 202 '{"status":"updated","commit":"0123456789abcdef"}'
+echo '{"enabled": true, "gpuAcceleration": false, "instances": [], "providers": []}' > "${SANDBOX}/models.json"
+gentian models set -f "${SANDBOX}/models.json"
+is "set sends the file as the whole of the settings" "$(writes)" 'PUT /v1/clusters/c1/models {"enabled":true,"gpuAcceleration":false,"instances":[],"providers":[]}'
+has "... and names the commit" "${OUT}" "committed (01234567)"
+
+fresh; reply PUT /v1/clusters/c1/models 422 '{"error":"invalid model settings: spec.llm.providers[0].apiBase"}'
+gentian models set -f "${SANDBOX}/models.json"
+refused "a refusal of the director ends the command"
+has "... in the director's words" "${OUT}" "the director answered 422: invalid model settings: spec.llm.providers[0].apiBase"
+
+echo ""
 if [[ "${fail}" -gt 0 ]]; then
     printf '%s%d failed%s, %d passed\n' "${RED}" "${fail}" "${NC}" "${pass}"
     exit 1

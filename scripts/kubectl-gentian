@@ -42,6 +42,11 @@
 #   kubectl gentian catalogues residue
 #   kubectl gentian catalogues residue remove <kind>/<name> [--namespace <ns>] [--yes]
 #
+#   kubectl gentian models list                  the models the gateway offers, and what the claim says of each
+#   kubectl gentian models show                  the Cluster claim's model settings, as JSON
+#   kubectl gentian models set -f <file.json>    make the claim declare exactly these settings
+#                                                (no provider's token: that is a credential)
+#
 #   kubectl gentian apps list --tenant <tenant> [--available]
 #   kubectl gentian apps install <app> --tenant <tenant> [--from <source>] [--digest sha256:<hex>] [--for-everyone]
 #   kubectl gentian apps uninstall <app> --tenant <tenant> [--purge]
@@ -1113,6 +1118,70 @@ ${add_usage}"
     esac
 }
 
+# models: the models the cluster's gateway offers. They are the Cluster
+# claim's (spec.llm) and the cluster administrator's to change: `set` sends
+# the whole of the settings, so a model the file does not name is removed.
+# `show` prints what `set` takes, so the two make an edit:
+#
+#   kubectl gentian models show > models.json; $EDITOR models.json
+#   kubectl gentian models set -f models.json
+#
+# The state is what the claim alone says. A model the cluster serves itself is
+# NOT SERVED, because the platform starts no instance for it. Whether a
+# provider's token has been supplied is not known here; the admin console
+# shows it, under Models and under Credentials.
+cmd_models() {
+    local sub="${1:-}" answer
+    shift || true
+    case "${sub}" in
+        list)
+            _discover
+            answer="$(_call GET "/v1/clusters/${_CLUSTER}/models")" || exit 1
+            if [[ "$(printf '%s' "${answer}" | jq -r '.models | length')" == "0" ]]; then
+                echo "The claim declares no models."
+            else
+                printf '%s' "${answer}" | jq -r '
+                    (["MODEL","FROM","STATE","NOTE"] | @tsv),
+                    (.models[] | [.name,
+                        (if .kind == "instance" then "instance " + .source else "provider " + .source end),
+                        (if .state == "not-served" then "NOT SERVED" elif .state == "not-offered" then "not offered" else "declared" end),
+                        (.reason // ("token: credential " + .credential + ", property " + .apiKeyProperty))] | @tsv)' |
+                    column -t -s $'\t'
+            fi
+            printf '%s' "${answer}" | jq -r '"Model serving is " + (if .settings.enabled then "on" else "off" end) +
+                ", GPU serving " + (if .settings.gpuAcceleration then "on" else "off" end) + "."'
+            ;;
+        show)
+            _discover
+            _call GET "/v1/clusters/${_CLUSTER}/models" | jq '.settings'
+            ;;
+        set)
+            local file="" body status
+            while [[ $# -gt 0 ]]; do
+                case "$1" in
+                    -f|--file) file="${2:?usage: kubectl gentian models set -f <file.json>}"; shift 2 ;;
+                    *) die "usage: kubectl gentian models set -f <file.json>" ;;
+                esac
+            done
+            [[ -n "${file}" ]] || die "usage: kubectl gentian models set -f <file.json>"
+            [[ -r "${file}" ]] || die "cannot read ${file}"
+            need jq
+            body="$(jq -c 'if type == "object" then . else error("not an object") end' "${file}" 2>/dev/null)" ||
+                die "${file} is not a JSON object; start from: kubectl gentian models show"
+            _discover
+            answer="$(_call PUT "/v1/clusters/${_CLUSTER}/models" "${body}")" || exit 1
+            status="$(printf '%s' "${answer}" | jq -r '.status // ""')"
+            if [[ "${status}" == "unchanged" ]]; then
+                echo "The claim already declares these models; nothing was committed."
+            else
+                echo "Model settings committed ($(_committed "${answer}")). The gateway restarts with them once Argo CD has synced."
+                echo "  kubectl gentian models list"
+            fi
+            ;;
+        *) die "usage: kubectl gentian models list|show|set -f <file.json>" ;;
+    esac
+}
+
 # tenants delegate-catalogues: whether a tenant's own administrators may add
 # catalogues for their tenant. The cluster administrator's to say.
 cmd_tenants_delegate_catalogues() {
@@ -1710,6 +1779,7 @@ main() {
             ;;
         app|apps) cmd_apps "$@" ;;
         catalogue|catalogues) cmd_catalogues "$@" ;;
+        model|models) cmd_models "$@" ;;
         exposure|exposures) cmd_exposures "$@" ;;
         resource|resources) cmd_resources "$@" ;;
         version|--version|-v) cmd_version ;;

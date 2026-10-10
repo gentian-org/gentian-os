@@ -74,6 +74,8 @@ type Repository interface {
 	TenantPlacement(ctx context.Context, tenant string) (gitops.TenantPlacement, error)
 	ClusterBranding(ctx context.Context) (*gentianov1alpha1.BrandingSpec, bool, error)
 	SetClusterBranding(ctx context.Context, spec gentianov1alpha1.BrandingSpec, meta gitops.Meta) (gitops.Result, error)
+	ClusterModels(ctx context.Context) (gitops.ModelSettings, error)
+	SetClusterModels(ctx context.Context, want gitops.ModelSettings, meta gitops.Meta) (gitops.Result, error)
 	SetResourcePlan(ctx context.Context, tenant string, plan gitops.Plan, meta gitops.Meta) (gitops.Result, error)
 	SetTenantBackupPolicy(ctx context.Context, tenant string, policy gitops.BackupPolicy, meta gitops.Meta) (gitops.Result, error)
 	ClearTenantBackupPolicy(ctx context.Context, tenant string, meta gitops.Meta) (gitops.Result, error)
@@ -438,6 +440,13 @@ func (s *Server) routes() {
 		// never this route.
 		s.guarded("GET /v1/clusters/{c}/branding", "can_audit", s.clusterObject, s.clusterBranding)
 		s.guarded("PUT /v1/clusters/{c}/branding", "can_configure", s.clusterObject, s.setClusterBranding)
+		// The models the gateway offers, which are the claim's and nobody
+		// else's: read like a setting, written like one, and under
+		// /v1/clusters only, so that no relation on a tenant reaches them --
+		// a model spends the cluster's GPUs or a provider's account, for
+		// every tenant. No provider's token is read or written here.
+		s.guarded("GET /v1/clusters/{c}/models", "can_audit", s.clusterObject, s.clusterModels)
+		s.guarded("PUT /v1/clusters/{c}/models", "can_configure", s.clusterObject, s.setClusterModels)
 		// Bringing a tenant on is the errand the console exists for, and it
 		// is one commit. Listing is can_audit because seeing which customers
 		// a cluster carries is a read; creating and retiring are
