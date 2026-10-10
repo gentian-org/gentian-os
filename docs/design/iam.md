@@ -447,7 +447,8 @@ cookie. The security side of all of this is [security.md §2.15](security.md).
 | Concern | Where |
 |---|---|
 | People and groups, app access | The administration console, `admin.<tenant domain>`: *Members*, *Groups*, *Apps*. It holds no Keycloak credential: the registrar does, one per realm, and checks the caller against OpenFGA |
-| Realm password, session and lockout policy | The console's *Security* screen; a commit by the director, applied by `tenant-default` |
+| Realm session and lockout policy | The console's *Security* screen; a commit by the director, applied by `tenant-default` |
+| Realm password policy | The same screen; the registrar's action `set-password-policy` on the realm (`can_set_policy`), in force at once. It is not in git: a realm that is rebuilt comes back without it, and it is then set again |
 | Notices to a tenant's people | The console's *Notifications* screen |
 
 Full description: [admin-console.md](admin-console.md).

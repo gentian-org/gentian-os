@@ -43,7 +43,7 @@ service's answer from OpenFGA.
 | **Apps** | The tenant's installed apps. Per app: state, who has access and whether it is for everyone, integrations, what it asked of the platform and what was approved, public addresses and their approval, uninstall, purge. Uninstall keeps the app's data; purge destroys the data of an app that is no longer installed ([store-contract.md](store-contract.md) §8) | director, usher |
 | **Resources** | Plan, ceiling, usage history (§4.8) | usher (read), director (write) |
 | **Export** | Take one export now, list and download what exists | usher (read), director |
-| **Security** | The realm's password, session and lockout policy (§4.5) | director |
+| **Security** | The realm's password, session and lockout policy (§4.5) | registrar (password), director (session, lockout) |
 | **Integrations** | What the tenant's apps consume from each other, and the grants | director |
 | **Credentials** | Repository credentials, backup identity | custodian, director |
 | **Notifications** | Publish a notice to the tenant's people (§5) | director, usher (read) |
@@ -166,10 +166,19 @@ configured.
 | **Session** | Idle time, maximum length, remember-me |
 | **Lockout** | On or off, failures allowed, lockout duration |
 
-The policy is declared state: the director commits it as
+Session and lockout are declared state: the director commits them as
 `security-policy.yaml` beside the tenant's manifest (`can_set_policy`), and the
-tenant Composition writes it into the realm. Nothing in this path holds a
-Keycloak credential, and a realm rebuilt from scratch comes back with its policy.
+tenant Composition writes them into the realm. Nothing in this path holds a
+Keycloak credential, and a realm rebuilt from scratch comes back with them.
+
+The password policy is set in one place: the registrar's action
+`set-password-policy` on the realm (`can_set_policy`), with the caller's own
+token. It is in force at once and is not in git, so a realm rebuilt from
+scratch comes back without it. The screen reads the realm's policy, shows the
+parts it has a control for, and names the clauses it has none for; saving
+keeps those, and keeps a clause the form did not change as the realm has it.
+A caller who may not read the realm's policy is shown the rest of the screen
+and cannot change the password part. The director takes no password block.
 
 ### 4.6 Sessions
 
@@ -311,7 +320,7 @@ a control that exists.
 | Creating and removing accounts inside apps (SCIM or events) | Not built (§6) |
 | Group-scoped and mailed notices | Not built (§5) |
 | A model's health as the gateway sees it; a credential for a provider the platform ships none for | Not built (§6a; [llms.md](llms.md) §5) |
-| Minting a backup key in the console | Not built: the console must not hold a key |
+| Making a backup key in the console | Not offered: the console must not hold a key. A person makes one with `age-keygen` and gives the console the public half ([tenant-backup-guide.md](../tenant-backup-guide.md)) |
 | Agents and delegation, access requests, break-glass workflow | Not built |
 | A tenant's own upstream identity provider, service-account registry, dynamic groups, guests with an end date, access certification | Not built |
 

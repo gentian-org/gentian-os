@@ -270,40 +270,26 @@ Choosing your own key means what it says: every bundle from the next run onwards
 is written in a form nobody at the platform can open, so nobody there can help
 you restore one. Lose the private key and those bundles are gone.
 
-Get a key pair one of two ways:
+Make the key pair yourself, on your own machine:
 
-- **Generate it yourself**, which is the stronger route:
+```bash
+age-keygen -o backup-identity.txt
+age-keygen -y backup-identity.txt        # the public key — paste this one
+```
 
-  ```bash
-  age-keygen -o backup-identity.txt
-  age-keygen -y backup-identity.txt        # the public key — paste this one
-  ```
-
-  The private key never reaches the platform at all.
-
-- **Ask the console to generate one**, with *Generate backup key*. The private
-  key is shown once and stored nowhere, but it was made on the server, so it is
-  only as private as the server is.
+The private key never reaches the platform at all. The console does not make a
+key for you: a key made on the server is only as private as the server is, and
+the console is built to hold none.
 
 Give the **public** key — the line starting `age1` — to whoever sets the
 schedule, or paste it into the Export screen for a single backup. Keep the
 private key, the line starting `AGE-SECRET-KEY-`, offline; a copy on the cluster
-you would be restoring *from* is no copy at all.
-
-**Keep a copy in the vault** is ticked by default when the console generates a
-key for you. It stores the private key in your workspace's own area of the
-platform's vault, so a download you never got round to saving is not fatal: you
-can read the key back and restore. It is readable by a workspace administrator
-and by nobody else — not other workspaces, and not the platform, which is
-refused it explicitly.
-
-Untick it and the download is the only copy in existence. That is the stronger
-position and the one to choose if the point of holding your own key is that no
-copy should sit on the platform at all. It also means losing the file loses the
+you would be restoring *from* is no copy at all. Losing the file loses the
 backups, with nothing anyone can do.
 
-Either way, save the download. The vault copy lives on the same cluster as the
-backups; a disaster that takes the cluster takes it too.
+Where a workspace already has a key in the platform's vault, the Export screen
+offers it again as *The key this workspace already has*, so one key opens every
+backup the workspace makes.
 
 You can name more than one key, one per line. Every listed key opens the bundle
 independently, so naming your provider's alongside your own is how you keep a key

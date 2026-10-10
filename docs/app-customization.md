@@ -317,7 +317,9 @@ writes an `IntegrationBinding`, and that is a request. The tenant's administrato
 consumer (`PUT /v1/tenants/{t}/grants/{app}` at the director, `{"consume": [{"contract":
 "erp-core", "granted": ["read", "write"]}]}`). Only then are the two network policies written: the
 companion's pods may reach the target's, and the target's admit them. Withdrawing the grant takes
-both away. That is all the platform does for a contract today: the path is to the target's pods as
+both away. The operator grants nothing by itself and never changes a grant, so a grant narrower
+than the declaration is what holds; the binding's `Granted` condition names what was asked for and
+not granted. That is all the platform does for a contract today: the path is to the target's pods as
 a whole, the granted capabilities are recorded and not enforced, and the target is not told which
 app is calling. What a consumer may do there is the target's to check.
 
