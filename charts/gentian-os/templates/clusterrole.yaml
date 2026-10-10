@@ -277,24 +277,11 @@ rules:
     - gentianos.io
     resources:
     - appgrants
-    - apps
-    - backuppolicies
-    - components
-    - credentialrequirements
-    - integrationbindings
-    - platformsecuritypolicies
-    - tenantexports
-    - tenantexportschedules
-    - tenantrestores
-    - tenants
-    - xtenants
     verbs:
     - get
     - list
     - watch
-    - create
     - update
-    - patch
     - delete
   - apiGroups:
     - gentianos.io
@@ -328,6 +315,28 @@ rules:
     - get
     - update
     - patch
+  - apiGroups:
+    - gentianos.io
+    resources:
+    - apps
+    - backuppolicies
+    - components
+    - credentialrequirements
+    - integrationbindings
+    - platformsecuritypolicies
+    - tenantexports
+    - tenantexportschedules
+    - tenantrestores
+    - tenants
+    - xtenants
+    verbs:
+    - get
+    - list
+    - watch
+    - create
+    - update
+    - patch
+    - delete
   - apiGroups:
     - gentianos.io
     resources:

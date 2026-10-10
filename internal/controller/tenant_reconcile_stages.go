@@ -443,10 +443,8 @@ func (r *TenantReconciler) reconcileTenantStageIntegrations(ctx context.Context,
 		r.updateBlockedStatus(ctx, tenant)
 		return ctrl.Result{}, err
 	}
-	if _, err := r.ensureAppGrants(ctx, tenant); err != nil {
-		r.updateBlockedStatus(ctx, tenant)
-		return ctrl.Result{}, fmt.Errorf("ensure app grants: %w", err)
-	}
+	// A binding is a request and stays one here: the grant that answers it
+	// is an administrator's, and this stage writes none.
 	return ctrl.Result{}, nil
 }
 

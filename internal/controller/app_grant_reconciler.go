@@ -14,15 +14,12 @@ import (
 	"context"
 	"fmt"
 
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
-	"github.com/gentian-org/gentian-os/internal/catalogue"
 	"github.com/gentian-org/gentian-os/internal/schemacheck/crdcheck"
 )
 
@@ -31,7 +28,7 @@ const (
 	conditionAppGrantReady = "AppGrantReady"
 )
 
-// +kubebuilder:rbac:groups=gentianos.io,resources=appgrants,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=gentianos.io,resources=appgrants,verbs=get;list;watch;update;delete
 // +kubebuilder:rbac:groups=gentianos.io,resources=appgrants/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=gentianos.io,resources=appgrants/finalizers,verbs=update
 
@@ -105,114 +102,20 @@ func setAppGrantCondition(grant *gentianov1alpha1.AppGrant, typ string, status m
 	})
 }
 
-// ensureAppGrants creates or updates default AppGrant CRs for installed apps.
-func (r *TenantReconciler) ensureAppGrants(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ctrl.Result, error) {
+// The tenant reconciler writes no AppGrant.
+//
+// What a profile lists under integrations is a request. A grant is the
+// answer, and the answer is an administrator's: the director commits it for
+// somebody who may grant in the tenant. A reconciler that wrote a grant from
+// the profile would answer the request with the request, and one that kept
+// its copy in step with the profile would put back what an administrator
+// took away. So a declared capability nobody granted stays closed, and the
+// binding says so in its status (conditionBindingGranted).
+
+// deleteAppGrants removes, as a tenant is taken down, the grants that carry
+// the operator's label. Nothing else here deletes one.
+func (r *TenantReconciler) deleteAppGrants(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
 	nsName := tenantNamespaceName(tenant)
-	desired, err := r.collectDesiredAppGrants(ctx, tenant)
-	if err != nil {
-		return ctrl.Result{}, err
-	}
-
-	if len(desired) == 0 {
-		if err := r.gcStaleAppGrants(ctx, nsName, nil); err != nil {
-			return ctrl.Result{}, err
-		}
-		return ctrl.Result{}, nil
-	}
-
-	desiredMap := make(map[string]*gentianov1alpha1.AppGrant, len(desired))
-	for _, g := range desired {
-		desiredMap[g.Name] = g
-		existing := &gentianov1alpha1.AppGrant{}
-		err := r.Get(ctx, types.NamespacedName{Name: g.Name, Namespace: g.Namespace}, existing)
-		if apierrors.IsNotFound(err) {
-			if err := r.Create(ctx, g); err != nil {
-				return ctrl.Result{}, fmt.Errorf("create AppGrant %s: %w", g.Name, err)
-			}
-			continue
-		}
-		if err != nil {
-			return ctrl.Result{}, fmt.Errorf("get AppGrant %s: %w", g.Name, err)
-		}
-		patch := client.MergeFrom(existing.DeepCopy())
-		existing.Spec = g.Spec
-		existing.Labels = g.Labels
-		if err := r.Patch(ctx, existing, patch); err != nil {
-			return ctrl.Result{}, fmt.Errorf("patch AppGrant %s: %w", g.Name, err)
-		}
-	}
-
-	if err := r.gcStaleAppGrants(ctx, nsName, desiredMap); err != nil {
-		return ctrl.Result{}, err
-	}
-	return ctrl.Result{}, nil
-}
-
-func (r *TenantReconciler) collectDesiredAppGrants(ctx context.Context, tenant *gentianov1alpha1.Tenant) ([]*gentianov1alpha1.AppGrant, error) {
-	nsName := tenantNamespaceName(tenant)
-	bindings, err := r.collectDesiredIntegrationBindings(ctx, tenant)
-	if err != nil {
-		return nil, err
-	}
-	consumeByApp := map[string][]gentianov1alpha1.ConsumeGrantSpec{}
-	for _, ib := range bindings {
-		granted := ib.Spec.Capabilities
-		if len(granted) == 0 {
-			continue
-		}
-		consumeByApp[ib.Spec.Consumer.App] = append(consumeByApp[ib.Spec.Consumer.App], gentianov1alpha1.ConsumeGrantSpec{
-			Contract: ib.Spec.Contract,
-			Granted:  append([]string(nil), granted...),
-		})
-	}
-
-	var out []*gentianov1alpha1.AppGrant
-	for _, app := range tenant.Spec.Apps {
-		profileName, err := catalogue.ResolveTenantAppProfile(ctx, r.Client, app)
-		if err != nil {
-			return nil, err
-		}
-		consume := consumeByApp[profileName]
-		if len(consume) == 0 {
-			continue
-		}
-		out = append(out, buildAppGrant(nsName, tenant.Name, profileName, consume, nil))
-	}
-	return out, nil
-}
-
-func buildAppGrant(
-	nsName, tenantName, app string,
-	consume []gentianov1alpha1.ConsumeGrantSpec,
-	allow []gentianov1alpha1.AllowConsumerSpec,
-) *gentianov1alpha1.AppGrant {
-	return &gentianov1alpha1.AppGrant{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      appGrantName(app),
-			Namespace: nsName,
-			Labels: map[string]string{
-				tenantLabel:    tenantName,
-				appLabel:       app,
-				managedByLabel: managedByValue,
-			},
-		},
-		Spec: gentianov1alpha1.AppGrantSpec{
-			App:            app,
-			Consume:        consume,
-			AllowConsumers: allow,
-		},
-	}
-}
-
-func appGrantName(app string) string {
-	return app
-}
-
-func (r *TenantReconciler) gcStaleAppGrants(
-	ctx context.Context,
-	nsName string,
-	desired map[string]*gentianov1alpha1.AppGrant,
-) error {
 	existing := &gentianov1alpha1.AppGrantList{}
 	if err := r.List(ctx, existing,
 		client.InNamespace(nsName),
@@ -221,19 +124,9 @@ func (r *TenantReconciler) gcStaleAppGrants(
 		return fmt.Errorf("list AppGrants in %s: %w", nsName, err)
 	}
 	for i := range existing.Items {
-		ag := &existing.Items[i]
-		if desired != nil {
-			if _, keep := desired[ag.Name]; keep {
-				continue
-			}
-		}
-		if err := r.Delete(ctx, ag); client.IgnoreNotFound(err) != nil {
-			return fmt.Errorf("delete stale AppGrant %s: %w", ag.Name, err)
+		if err := r.Delete(ctx, &existing.Items[i]); client.IgnoreNotFound(err) != nil {
+			return fmt.Errorf("delete AppGrant %s: %w", existing.Items[i].Name, err)
 		}
 	}
 	return nil
-}
-
-func (r *TenantReconciler) deleteAppGrants(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
-	return r.gcStaleAppGrants(ctx, tenantNamespaceName(tenant), nil)
 }
