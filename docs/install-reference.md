@@ -181,6 +181,11 @@ files of the platform's own chart and renders nothing when one is missing, so
 an install into a repository without them stops at `D-01` with no operator.
 Step 0 warns about a missing one and does not write it.
 
+A value exported in the environment `install.sh` is started from beats the
+same variable in `install.env`, whichever variable it is, and the run says so
+when the two differ (`… is set in the environment; that value is used`). An
+exported empty value is not a value. Below that:
+
 A cluster property set in `install.env` beats the claim — the file is loaded
 first. The installer warns (`… is set in install.env — it overrides
 claims/cluster.yaml`) rather than reversing the precedence, because an operator

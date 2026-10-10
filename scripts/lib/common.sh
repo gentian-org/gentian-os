@@ -498,57 +498,19 @@ INSTALL_STATE_FILE="${INSTALL_STATE_FILE:-${SCRIPT_DIR}/.install-state.env}"
 CERT_MANAGER_NAMESPACE="${CERT_MANAGER_NAMESPACE:-$(ns_kernel edge)}"
 
 # Input precedence (highest -> lowest):
-#   1) CLI flags / existing shell environment
-#   2) installer config files (install.env, install.secrets.env)
-#   3) local caches (.install-secrets.env, .install-state.env)
-#   4) gentian-deployments cluster-settings.env (overrides 3 for cluster runtime)
-#   5) OpenBao backfill for missing values
-#   6) interactive prompts for missing required values
+#   1) CLI flags / the exported environment install.sh was started with (and
+#      what --recover loaded from a kit)
+#   2) the installer config file (install.env)
+#   3) the Cluster claim in the deployments repository
+#      (clusters/<cluster>/kernel/claims/cluster.yaml), for the settings of the
+#      cluster; a cluster-settings.env left by an older install still overrides
+#   4) OpenBao backfill for missing values
+#   5) interactive prompts for missing required values
 #
-# Cluster runtime vars (KERNEL_DOMAIN, MAIL_SERVICE_MODE, …) belong in
-# clusters/<cluster>/kernel/cluster-settings.env; .install-state.env keeps only
-# installer-local state (see save_install_state).
-INPUT_HIERARCHY_VARS=(
-    MASTER_PASSWORD
-    SMTP_RELAY_USERNAME
-    SMTP_RELAY_PASSWORD
-    MAIL_SERVICE_MODE
-    EXTERNAL_SMTP_HOST
-    EXTERNAL_SMTP_PORT
-    EXTERNAL_SMTP_SSL
-    EXTERNAL_SMTP_STARTTLS
-    KERNEL_DOMAIN
-    TENANCY_MODE
-    NODE_IP
-    NETWORK_MODE
-    SKIP_TOOLS
-    OPENBAO_INIT_FILE
-    LETSENCRYPT_EMAIL
-    ROUTING_MODE
-    GENTIAN_DEPLOYMENTS_REPO
-    GENTIAN_DEPLOYMENTS_BRANCH
-    GENTIAN_UI_REPO GENTIAN_UI_BRANCH
-    GENTIAN_OS_AUTH GENTIAN_UI_AUTH GENTIAN_DEPLOYMENTS_AUTH
-    EDGE_INGRESS
-    GENTIAN_DEPLOYMENTS_PATH
-    GENTIAN_DEPLOYMENTS_CLUSTER_ID
-    GENTIAN_DEPLOYMENTS_STAGE
-    GENTIAN_DEPLOYMENTS_GIT_TOKEN
-    GENTIAN_DEPLOYMENTS_GIT_USERNAME
-    GENTIAN_NONINTERACTIVE
-    INSTALL_CLUSTER_INFRA
-    GENTIAN_DISABLE_API_EXTENSIONS
-    GENTIAN_NO_LICENCE_REPORT
-    GENTIAN_LICENCE_REPORT_URL
-    GENTIAN_DEFAULT_PROFILES
-    GENTIAN_MANAGED_CERT_MANAGER
-    CF_API_TOKEN
-    CF_ZONE_NAME
-    SECRET_MODE
-    INFRA_CHART_PRIVATE
-    INFRA_CHART_REPO
-    STORAGE_CLASS
-)
+# 1 over 2 is load_env_file's doing, for every variable and not for a list of
+# them: a value exported for one run beats the file. 2 over 3 is reported on
+# every run (load_deployments_cluster_settings), because the claim is where a
+# cluster setting belongs.
 
 # ─── Versions ────────────────────────────────────────────────────────────────
 # Pinned in versions.yaml, read here. See scripts/lib/versions.sh for why the
@@ -602,14 +564,22 @@ load_env_file() {
     [[ "${file}" == "/dev/null" ]] && return 0
     [[ -r "${file}" ]] || return 0
 
-    # Do not let a lower-precedence source override values that are already
-    # set by higher-precedence sources.
-    for var in "${INPUT_HIERARCHY_VARS[@]}"; do
-        if [[ -n "${!var+x}" ]]; then
-            before_keys+=("${var}")
-            before_vals+=("${!var}")
-        fi
-    done
+    # The exported environment beats the file: every variable that is exported
+    # with a value now has that value afterwards, whatever the file says.
+    #
+    # Every variable, not a list of them. This kept a list, and a setting that
+    # was not on it went the other way round -- GENTIAN_OS_BRANCH, the stage,
+    # the issuer mode -- so an export for one run was silently undone by the
+    # file. Exported and non-empty, not merely set: the installer's own
+    # defaults (GENTIAN_DISABLE_API_EXTENSIONS, GENTIAN_NO_LICENCE_REPORT, ...)
+    # are assigned before this runs and are not exported, and a default that
+    # counted as "already set" was a setting the file could never change.
+    while IFS= read -r var; do
+        # $_ is the shell's own and changes with every command.
+        [[ "${var}" != "_" && -n "${!var:-}" ]] || continue
+        before_keys+=("${var}")
+        before_vals+=("${!var}")
+    done < <(compgen -e)
 
     set -a
     # shellcheck disable=SC1090
@@ -622,7 +592,11 @@ load_env_file() {
 
     local i
     for i in "${!before_keys[@]}"; do
-        declare -gx "${before_keys[$i]}=${before_vals[$i]}"
+        var="${before_keys[$i]}"
+        [[ "${!var:-}" == "${before_vals[$i]}" ]] && continue
+        export "${var}=${before_vals[$i]}"
+        # The name only: an exported value may be a credential.
+        info "${var} is set in the environment; that value is used, not the one in ${file}."
     done
 
     info "Loaded ${label} from ${file}."
