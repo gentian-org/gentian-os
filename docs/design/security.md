@@ -1235,15 +1235,21 @@ Who may read what:
     one in any tenant's namespace could before. Closing it needs that one
     password delivered another way; open
     ([open-items.md](../plans/open-items.md)).
-  - *Both roles are bound to ESO's own ServiceAccount.* Whoever controls the
-    ESO pod signs in as either and reads what `eso-read` reads.
+  - *Every one of these roles is bound to ESO's own ServiceAccount.* Whoever
+    controls the ESO pod signs in as any of them and reads what `eso-read`
+    reads.
+  - *The conditions go by the namespace an `ExternalSecret` is in.* Whoever
+    can write one into a kernel or system namespace, and read the Secret it
+    makes there, reaches the kernel's paths. A tenant's administrator cannot;
+    a chart can, because it is installed with the rights of the whole
+    cluster (provider-helm) and may place its objects in any namespace.
   - *Nothing at admission refuses a store.* Any `ClusterSecretStore` may sign
     in as `eso` with ESO's ServiceAccount, and one without conditions is
     usable from every namespace. The API server lets only a cluster
     administrator and the platform's own controllers create one; a chart
-    is installed with the rights of the whole cluster (provider-helm) and a
-    catalogue's Composition with Crossplane's, so either can. Neither is
-    inspected ([custom-catalogues.md §7](../custom-catalogues.md)).
+    has those rights too, and a catalogue's Composition has Crossplane's, so
+    either can. Neither is inspected
+    ([custom-catalogues.md §7](../custom-catalogues.md)).
   - *The master password is still readable by ESO*, in the kernel's
     namespaces, because the probe `credreq-master-password` reads it (§6.1).
   - *Within a tenant* every app's credentials are readable from the tenant's
