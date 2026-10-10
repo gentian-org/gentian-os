@@ -361,6 +361,33 @@ expect "${TENANT_ESO_TOKEN}" "DENIED listing the tenants" \
     "secret/metadata/gentian-os/tenants" "deny"
 expect "${TENANT_ESO_TOKEN}" "DENIED paths outside gentian-os" \
     "secret/data/identity/portal-admin" "deny"
+# The platform tenant's store is a tenant's store like any other: the kernel's
+# store does not admit its namespace. Its desktop's database is on the
+# kernel's PostgreSQL, and the password of that role is at the tenant's own
+# path, so this policy reads it and still nothing of the kernel. From the
+# golden render of the platform tenant.
+PLATFORM_GOLDEN="crossplane/tests/unit/render/tenant-platform/expected.yaml"
+platform_eso_body="$(policy_body "${PLATFORM_GOLDEN}" "eso-tenant-platform")"
+if [[ -z "${platform_eso_body}" || "${platform_eso_body}" == "null" ]]; then
+    echo "  ${RED}✗${NC} eso-tenant-platform — not present in ${PLATFORM_GOLDEN}"
+    exit 1
+fi
+printf '%s\n' "${platform_eso_body}" > "${WORKDIR}/eso-tenant-platform.hcl"
+bao policy write "eso-tenant-platform" "${WORKDIR}/eso-tenant-platform.hcl" >/dev/null 2>&1 || {
+    echo "  ${RED}✗${NC} eso-tenant-platform — OpenBao rejected the policy"; exit 1; }
+PLATFORM_ESO_TOKEN="$(bao token create -policy="eso-tenant-platform" -field=token 2>/dev/null)"
+
+echo ""
+echo "  eso-tenant-platform ${DIM}(what ESO holds for the platform tenant's namespace)${NC}"
+expect "${PLATFORM_ESO_TOKEN}" "allowed reading its desktop's database credential" \
+    "secret/data/gentian-os/tenants/platform/apps/shell/database" "read"
+expect "${PLATFORM_ESO_TOKEN}" "DENIED the kernel's database passwords" \
+    "secret/data/gentian-os/kernel/database/postgresql" "deny"
+expect "${PLATFORM_ESO_TOKEN}" "DENIED the master password and the salt" \
+    "secret/data/gentian-os/kernel/internal/master-password" "deny"
+expect "${ESO_TOKEN}" "eso-read reads that credential too — the kernel's database sets the role's password from it" \
+    "secret/data/gentian-os/tenants/platform/apps/shell/database" "read"
+
 # The other half of the same statement: the kernel's store still reads the
 # master password, because the probe that reports whether it was supplied
 # reads it. What keeps that from a tenant is which namespaces may name the

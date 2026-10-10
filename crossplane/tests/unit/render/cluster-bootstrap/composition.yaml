@@ -967,6 +967,35 @@ spec:
                 name: openbao
             {{- end }}
 
+            {{- /* The platform tenant's desktop keeps its data on the kernel's
+                 PostgreSQL, in a database and under a role of its own. That
+                 role's credential is the tenant's, so it is seeded under the
+                 tenant's paths, laid out as any tenant's desktop database
+                 credential is: the desktop reads it through the platform
+                 tenant's own store, and the kernel's database chart reads the
+                 same path for the role's password. Created once and never
+                 overwritten, like the kernel paths above. */}}
+            ---
+            apiVersion: kv.vault.upbound.io/v1alpha1
+            kind: SecretV2
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: vault-kv-platform-desktop-database
+              name: {{ $name }}-kv-platform-desktop-database
+            spec:
+              managementPolicies:
+                - Observe
+                - Create
+              forProvider:
+                mount: {{ $kvMount }}
+                name: gentian-os/tenants/platform/apps/shell/database
+                dataJsonSecretRef:
+                  name: gentian-os-tenants-platform-apps-shell-database
+                  namespace: {{ $provisioningNs }}
+                  key: data.json
+              providerConfigRef:
+                name: openbao
+
             {{- /* ── ArgoCD AppProject for tenant workloads ───────────────────── */}}
             ---
             apiVersion: kubernetes.crossplane.io/v1alpha2
@@ -1160,16 +1189,9 @@ spec:
                  and never by a list of names. A tenant's namespace reads
                  through the store its own Composition makes for it
                  (openbao-tenant-<tenant>, tenant-default.yaml), whose role
-                 sees that tenant's paths and nothing of the kernel.
-
-                 One tenant namespace is named: the platform tenant's. Its
-                 desktop keeps its data on the kernel's PostgreSQL, and the
-                 password of that database role is a property of the kernel
-                 path gentian-os/kernel/database/postgresql, which the
-                 operator's ExternalSecret reads from that namespace
-                 (component_desktop.go). The name is
-                 layout.Tenant(PlatformTenantName); a test holds the two
-                 together.
+                 sees that tenant's paths and nothing of the kernel. That
+                 holds for the platform tenant too: no tenant's namespace is
+                 named here.
 
                  kernel/services/_globals/eso-cluster-secret-store.yaml is the
                  installer's copy of this object and carries the same
@@ -1197,8 +1219,6 @@ spec:
                               values:
                                 - kernel
                                 - system
-                      - namespaces:
-                          - tenant-platform
                     provider:
                       vault:
                         server: {{ $openbaoServer }}

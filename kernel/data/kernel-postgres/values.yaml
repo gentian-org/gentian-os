@@ -36,7 +36,12 @@ databases:
     # the other's rules.
     database: portal_shell
     role: portal_shell_user
-    passwordKey: portal_shell_user_password
+    # The platform tenant's desktop is the one user of this database, so the
+    # role's password is kept under that tenant's paths, laid out as any
+    # tenant's desktop database credential is. The desktop reads it there
+    # through its tenant's own store, and so needs no kernel path.
+    passwordPath: gentian-os/tenants/platform/apps/shell/database
+    passwordKey: password
 
 # Who may open a connection to the server's pods (templates/networkpolicy.yaml).
 # On by default; needs a CNI that enforces NetworkPolicy, and has no effect on

@@ -19,8 +19,7 @@ const StoreKind = "ClusterSecretStore"
 
 // KernelStore is the kernel's store, which the Cluster Composition makes. Its
 // role in OpenBao reads every kernel path and every tenant's. It is usable
-// from the kernel and system namespaces, and from the platform tenant's for
-// the one kernel credential that tenant's desktop is given.
+// from the kernel and system namespaces, and from no tenant's.
 const KernelStore = "openbao"
 
 // TenantStore is a tenant's own store, which the Tenant Composition makes. Its

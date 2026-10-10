@@ -307,6 +307,17 @@ create_crossplane_secrets() {
             || warn "  ${path}: could not add the missing keys"
     }
 
+    # _kv_held <kv path> <key> — the value the vault holds there, or nothing:
+    # no bao, no token, no such path and no such key all answer nothing. It
+    # looks for no access of its own: _kv_add_missing has resolved the token
+    # and the address by the time this is asked, where they can be had.
+    _kv_held() {
+        command -v bao >/dev/null 2>&1 || return 0
+        [[ -n "${BAO_TOKEN:-}" && -n "${BAO_ADDR:-}" ]] || return 0
+        bao kv get -mount="${KV_MOUNT:-secret}" -format=json "$1" 2>/dev/null \
+            | jq -r --arg k "$2" '.data.data[$k] // empty' 2>/dev/null || true
+    }
+
     # master-password Secret (referenced by spec.masterPasswordSecretRef in the Cluster claim)
     kubectl create secret generic gentian-os-master-password \
         -n "${CROSSPLANE_NAMESPACE}" \
@@ -322,10 +333,30 @@ create_crossplane_secrets() {
             --arg b "$(_derive postgres keycloak_user)" \
             --arg c "$(_derive postgres keycloak_extensions_user)" \
             --arg h "$(_derive postgres openfga_user)" \
-            --arg p "$(_derive postgres portal_shell_user)" \
             --arg d "$(_derive postgres registrar_user)" \
-            '{postgres_password:$a,keycloak_user_password:$b,keycloak_extensions_user_password:$c,openfga_user_password:$h,portal_shell_user_password:$p,registrar_user_password:$d}')" \
+            '{postgres_password:$a,keycloak_user_password:$b,keycloak_extensions_user_password:$c,openfga_user_password:$h,registrar_user_password:$d}')" \
         "gentian-os/kernel/database/postgresql"
+
+    # ── the platform tenant's desktop database ────────────────────────────────
+    # A role of its own on the kernel's PostgreSQL, owning the one database
+    # the desktop uses. Its credential is the platform tenant's and is kept
+    # under that tenant's paths, laid out as any tenant's desktop database
+    # credential is, so the desktop reads it through its tenant's own store
+    # and needs no kernel path (kernel/data/kernel-postgres reads the same
+    # path for the role's password).
+    #
+    # The password was a property of the kernel's database path before. A
+    # cluster that has it there keeps that value: the role is set to it, and
+    # under secretMode random nothing else could reproduce it.
+    local desktop_db_password
+    desktop_db_password="$(_kv_held "gentian-os/kernel/database/postgresql" portal_shell_user_password)"
+    [[ -n "${desktop_db_password}" ]] || desktop_db_password="$(_derive postgres portal_shell_user)"
+    _kv_secret "gentian-os-tenants-platform-apps-shell-database" \
+        "$(jq -nc \
+            --arg h "kernel-postgres-rw.$(ns_kernel data).svc.cluster.local" \
+            --arg p "${desktop_db_password}" \
+            '{host:$h,port:"5432",name:"portal_shell",user:"portal_shell_user",password:$p}')" \
+        "gentian-os/tenants/platform/apps/shell/database"
 
     # ── database/mariadb ──────────────────────────────────────────────────────
     _kv_secret "gentian-os-kernel-database-mariadb" \

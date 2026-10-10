@@ -24,7 +24,6 @@ import (
 
 	utilyaml "k8s.io/apimachinery/pkg/util/yaml"
 
-	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"github.com/gentian-org/gentian-os/internal/layout"
 )
@@ -38,8 +37,8 @@ import (
 //
 //   - an ExternalSecret in a tenant's namespace names that tenant's store,
 //   - an ExternalSecret in a kernel or system namespace names the kernel's,
-//   - the kernel's store admits the kernel and system tiers and the platform
-//     tenant's namespace, a tenant's store its own namespace only,
+//   - the kernel's store admits the kernel and system tiers and no tenant's
+//     namespace, a tenant's store its own namespace only,
 //   - a tenant's store signs in with a role whose policy grants nothing
 //     outside that tenant's paths.
 //
@@ -223,7 +222,6 @@ func kernelStoreConditions() []interface{} {
 				string(layout.TierKernel), string(layout.TierSystem),
 			}},
 		}}},
-		object{"namespaces": []interface{}{layout.Tenant(gentianov1alpha1.PlatformTenantName)}},
 	}
 }
 

@@ -826,20 +826,17 @@ mappers and flow, nor the broker client is made any more
 * **Context**: A tenant's namespace reads OpenBao through a store of its own
   (`openbao-tenant-<tenant>`), whose role is denied every kernel path and
   sees no other tenant's, and the kernel's store is refused from a tenant's
-  namespace ([security.md §5](design/security.md)). Four things are left
-  open by that: the platform tenant's namespace is still admitted to the
-  kernel's store; nothing refuses a store somebody else makes; ESO still
+  namespace ([security.md §5](design/security.md)). Three things are left
+  open by that: nothing refuses a store somebody else makes; ESO still
   reads the master password in the kernel's namespaces; and within a tenant
   one role reads every app's credentials.
-* **Proposed Solution**: Deliver the platform tenant's desktop its database
-  password without the kernel's store, and take that namespace off the
-  store's conditions. Refuse at admission every store and every
+* **Proposed Solution**: Refuse at admission every store and every
   cluster-wide secret object the platform did not make, tried in audit on a
   cluster first. Replace the master password's probe, then deny the path to
   ESO. Give each app a store or a role of its own once a tenant's apps run
   in namespaces of their own.
 * **Backlog Items**:
-  - `[ ]` Decide how the platform tenant's desktop gets its database password ([open-items.md](plans/open-items.md) decision 27), build it, and remove `tenant-platform` from the kernel store's conditions.
+  - `[x]` The platform tenant's desktop reads its database password at a path of its own under the tenant, through the tenant's store, and `tenant-platform` is off the kernel store's conditions ([open-items.md](plans/open-items.md) decision 27).
   - `[ ]` Name the identities that write secret objects for the platform, and give provider-kubernetes a ServiceAccount name that does not change.
   - `[ ]` An admission rule, in audit: `SecretStore`, `ClusterSecretStore`, `ClusterExternalSecret` and `PushSecret` only from those identities; in a tenant's namespace an `ExternalSecret` names the tenant's store or none.
   - `[ ]` Enforce it once a cluster has run it without a finding against the platform's own objects.

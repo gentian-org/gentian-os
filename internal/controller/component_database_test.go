@@ -269,11 +269,10 @@ func TestTheUsageStoreReadsTheDesktopComponentsDatabaseSecret(t *testing.T) {
 }
 
 // The platform tenant's desktop keeps its data on the kernel's PostgreSQL,
-// and the password of that role is a property of a kernel path. It is the
-// one ExternalSecret in a tenant's namespace that reads through the kernel's
-// store, which admits that namespace by name; every other tenant's reads
-// through the tenant's own.
-func TestOnlyThePlatformTenantsDesktopReadsThroughTheKernelStore(t *testing.T) {
+// under a role of its own. The password of that role is at the platform
+// tenant's own path and is read through that tenant's own store, as every
+// tenant's is: the kernel's store admits no tenant's namespace.
+func TestThePlatformTenantsDesktopReadsItsPasswordThroughItsOwnStore(t *testing.T) {
 	ctx := context.Background()
 	s := componentDatabaseScheme(t)
 	c := fake.NewClientBuilder().WithScheme(s).Build()
@@ -290,8 +289,8 @@ func TestOnlyThePlatformTenantsDesktopReadsThroughTheKernelStore(t *testing.T) {
 	if comp.Namespace != layout.Tenant(gentianov1alpha1.PlatformTenantName) {
 		t.Fatalf("the platform tenant's desktop is in %q", comp.Namespace)
 	}
-	if store, _, _ := unstructured.NestedString(es.Object, "spec", "secretStoreRef", "name"); store != secrets.KernelStore {
-		t.Errorf("read through the store %q, want the kernel's", store)
+	if store, _, _ := unstructured.NestedString(es.Object, "spec", "secretStoreRef", "name"); store != secrets.TenantStore(gentianov1alpha1.PlatformTenantName) {
+		t.Errorf("read through the store %q, want the platform tenant's own", store)
 	}
 	refs, _, _ := unstructured.NestedSlice(es.Object, "spec", "data")
 	if len(refs) != 1 {
@@ -299,7 +298,7 @@ func TestOnlyThePlatformTenantsDesktopReadsThroughTheKernelStore(t *testing.T) {
 	}
 	key, _, _ := unstructured.NestedString(refs[0].(map[string]interface{}), "remoteRef", "key")
 	property, _, _ := unstructured.NestedString(refs[0].(map[string]interface{}), "remoteRef", "property")
-	if key != "gentian-os/kernel/database/postgresql" || property != "portal_shell_user_password" {
+	if key != "gentian-os/tenants/platform/apps/shell/database" || property != "password" {
 		t.Errorf("the credential reads %s#%s", key, property)
 	}
 }

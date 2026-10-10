@@ -782,7 +782,7 @@ the code does.
 | A tenant's backup and deletion | Implemented | A bundle (format 4) holds what a deletion destroys, mailboxes included, and a deletion destroys the mailboxes. It holds each app's own secrets, encrypted by the operator, and a restore sets them at the app's own paths; a bundle is not signed (§6.4). Rights recorded as granted are not written into a tenant made new for the restore (`TenantRestore.spec.intoNewTenant`); they are named instead ([data-lifecycle.md](data-lifecycle.md)) |
 | Approval path for profile-declared egress | Implemented | `requires.privileges.egress` is a request. A rule reaches the NetworkPolicy only once it was granted by name on the install (`internal/security/privilege.go`, `GrantedEgressRules`). The tenant's administrator approves it (`can_approve_privilege`) and the director writes the grant as a commit (`internal/director/api/privileges.go`). A pod-security waiver takes effect only where the cluster's allowlist names it (`PlatformSecurityPolicy`) and the security officer granted it on the install (`mac_waiver_reconciler.go`): either alone waives nothing, and the tenant's `MacWaiversReady` condition says which of the two is missing. A grant that is withdrawn or has expired takes the namespace label away at the tenant's next reconcile; nothing reconciles at the moment of expiry. A cluster role is asked for by name, from a set the platform defines, and is bound only where the platform has it, the allowlist permits it for the profile and it was granted on the install (§3.4a). The set is empty, so no role is bound on any cluster today |
 | Pod-security admission (privileged, host ns, non-root, hostPath, caps, priv-esc) | Implemented | `kernel/security/kyverno/policies/` |
-| What ESO reads for a tenant's namespace | Implemented; shown by rendering and against a local OpenBao, not on a cluster | A store, a role and a policy per tenant (`tenant-default.yaml`): that tenant's app, repository and contract credentials, no kernel path, no other tenant's. The kernel's store is usable from kernel and system namespaces and from the platform tenant's, which is the open part (§5). No admission rule on `ExternalSecret`, `SecretStore` or `ClusterSecretStore`: **Target** |
+| What ESO reads for a tenant's namespace | Implemented; shown by rendering and against a local OpenBao, not on a cluster | A store, a role and a policy per tenant (`tenant-default.yaml`): that tenant's app, repository and contract credentials, no kernel path, no other tenant's. The kernel's store is usable from kernel and system namespaces and from no tenant's, the platform tenant's included: its desktop's database password is at `tenants/platform/apps/shell/database` and read through that tenant's own store (§5). No admission rule on `ExternalSecret`, `SecretStore` or `ClusterSecretStore`: **Target** |
 | Gateway rate limit | **Partial**: sign-in posts only | Envoy's local limit per client address on the identity provider's sign-in pages and on a sign-in sidecar's answer path (`edge_rate_limit.go`, §2.14). Routes behind a session, the token endpoint and WebSocket duration: **Target** |
 | Service mesh, SPIFFE/SPIRE, workload identity | **Target**, with one exception | The operator's app-lifecycle listener admits its two callers, the director and the usher, by ServiceAccount: each presents a projected token for the audience `gentian-os-operator` and the operator asks the API server whose it is (`internal/applifecycle/auth.go`). Every other call between platform services still rests on a shared key or on the person's token |
 | One credential per process at the rights store | **Target** | OpenFGA has one preshared key. The operator, the director, the bouncer, the usher, the custodian and the registrar all present it, and it can write |
@@ -1205,10 +1205,9 @@ Who may read what:
     the salt included, and every tenant's `apps/`, `repositories/`,
     `contracts/` and `backup/`; only the backup identities are denied to it.
     The store's `conditions` admit the namespaces labelled
-    `gentianos.io/tier` `kernel` or `system`, and one more by name: the
-    platform tenant's, `tenant-platform` (below). ESO refuses an
-    `ExternalSecret` that names it from anywhere else, before OpenBao is
-    asked.
+    `gentianos.io/tier` `kernel` or `system`, and no namespace by name. ESO
+    refuses an `ExternalSecret` that names it from anywhere else, before
+    OpenBao is asked.
   - *A store per tenant*, `openbao-tenant-<tenant>` (`tenant-default.yaml`),
     with a role and a policy of its own, `eso-tenant-<tenant>`. The policy
     reads that tenant's `apps/`, `repositories/` and `contracts/`. It denies
@@ -1217,6 +1216,16 @@ Who may read what:
     `gentianos.io/tier: tenant` and `gentianos.io/tenant: <tenant>`. Every
     `ExternalSecret` the Compositions and the operator put in a tenant's
     namespace names it.
+
+  The platform tenant is no exception. Its desktop keeps its data on the
+  kernel's PostgreSQL, in a database of its own (`portal_shell`) under a role
+  of its own that owns that database and nothing else. The role's password is
+  at `gentian-os/tenants/platform/apps/shell/database`, laid out as any
+  tenant's desktop database credential: the installer seeds it with the
+  kernel's credentials, the kernel's database chart sets the role's password
+  from it, and the operator's `ExternalSecret` in `tenant-platform` reads it
+  through `openbao-tenant-platform`. The platform tenant's administrators'
+  policy covers the path, as it covers every credential of that tenant.
 
   So an `ExternalSecret` in a tenant's namespace, whoever wrote it, reaches
   that tenant's app, repository and contract credentials and nothing else:
@@ -1227,14 +1236,6 @@ Who may read what:
   on a cluster yet.
 
   What this does not close:
-  - *The platform tenant's namespace can still name the kernel's store.* Its
-    desktop keeps its data on the kernel's PostgreSQL, and the password of
-    that role is a property of `gentian-os/kernel/database/postgresql`, which
-    the operator's `ExternalSecret` reads from `tenant-platform`. An
-    `ExternalSecret` in that namespace can therefore read any kernel path, as
-    one in any tenant's namespace could before. Closing it needs that one
-    password delivered another way; open
-    ([open-items.md](../plans/open-items.md)).
   - *Every one of these roles is bound to ESO's own ServiceAccount.* Whoever
     controls the ESO pod signs in as any of them and reads what `eso-read`
     reads.
@@ -1456,6 +1457,12 @@ Properties:
   `gentian-os/kernel/*`, derived or random as the mode says. Credentials a
   person supplies (a DNS token, a mail relay's password, a registry login) are
   stored as given, by the installer or, once the cluster runs, by the custodian.
+- **The platform tenant's desktop database password** — written at cluster
+  install with the kernel credentials, derived or random as the mode says,
+  into `gentian-os/tenants/platform/apps/shell/database`. A cluster that
+  held it as a property of `kernel/database/postgresql` keeps that value at
+  the new path where the installer can read the vault; where it cannot, the
+  value is made again by the mode and the role is set to it.
 - **Per-app credentials** — created by the operator when a tenant installs an
   app, in `gentian-os/tenants/<tenant>/apps/<app>/*`, and likewise derived or
   random as the mode says: the database password, the bucket's key pair, the
@@ -1625,7 +1632,9 @@ Nothing the platform generates overwrites a credential that is already there.
 - **Kernel paths the `Cluster` Composition makes** (`database/postgresql`,
   `database/mariadb`, `cache/redis`, `storage/minio`,
   `identity/keycloak-bootstrap`, `authz/openfga`, `mail/postfix`,
-  `mail/dovecot`, `oidc/openbao`) are managed with
+  `mail/dovecot`, `oidc/openbao`) and the platform tenant's desktop database
+  credential beside them (`tenants/platform/apps/shell/database`) are managed
+  with
 
   ```yaml
   managementPolicies: ["Observe", "Create"]

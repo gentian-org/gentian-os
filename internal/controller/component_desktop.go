@@ -214,9 +214,10 @@ func (r *ComponentReconciler) componentDatabaseNamespace(tenant *gentianov1alpha
 //
 // The platform tenant's data plane is the kernel's (namespace-cleanup.md §2):
 // its desktop's database is the portal_shell database kernel-data declares
-// on kernel-postgres, and the credential is the one the kernel keeps in the
-// vault. Every other tenant's desktop database lives on the tenant postgres
-// of the system tier, provisioned here the way a tenant app's is: the
+// on kernel-postgres, under a role of its own whose password the installer
+// seeds at the tenant's own path. Every other tenant's desktop database
+// lives on the tenant postgres of the system tier, provisioned here the way
+// a tenant app's is: the
 // credential seeded in the vault, the role and database made by a psql Job,
 // the database declared as a CloudNativePG Database so a purge finds and
 // drops it. The name is the one exports and restores already address.
@@ -225,22 +226,21 @@ func (r *ComponentReconciler) componentDatabaseNamespace(tenant *gentianov1alpha
 func (r *ComponentReconciler) ensureDatabaseRequirement(ctx context.Context, comp *gentianov1alpha1.Component, tenant *gentianov1alpha1.Tenant) (ready bool, reason, message string, err error) {
 	var target map[string]interface{}
 	var data []interface{}
-	// The tenant's own store, as for everything read into a tenant's
-	// namespace.
+	// The tenant's own store and the tenant's own path, for every tenant:
+	// nothing of the kernel's is read into a tenant's namespace.
 	store := secrets.TenantStore(tenant.Name)
+	path := secrets.CategoryPath(tenant.Name, portalShellAppName, "database")
 	if tenantAdoptsKernelRealm(tenant, r.KernelRealm) {
-		// The one kernel path read from a tenant's namespace: only the
-		// kernel's store reads it, and that store admits the platform
-		// tenant's namespace for this.
-		store = secrets.KernelStore
 		// The names the kernel's chart declares, which a backup of this
-		// tenant captures by too (backup/desktop.go).
+		// tenant captures by too (backup/desktop.go). Only the password is
+		// read: the role is the desktop's alone, and its password is seeded
+		// at this path, which the kernel's chart sets the role to.
 		target = databaseSecretTemplate(backup.KernelPostgresHost(), backup.KernelPostgresPort,
 			backup.KernelDesktopDatabase, backup.KernelDesktopRole, "{{ .password }}")
 		data = []interface{}{
 			map[string]interface{}{
 				"secretKey": "password",
-				"remoteRef": map[string]interface{}{"key": "gentian-os/kernel/database/postgresql", "property": "portal_shell_user_password"},
+				"remoteRef": map[string]interface{}{"key": path, "property": "password"},
 			},
 		}
 	} else {
@@ -249,7 +249,6 @@ func (r *ComponentReconciler) ensureDatabaseRequirement(ctx context.Context, com
 			return false, reason, message, err
 		}
 		target = databaseSecretTemplate("{{ .host }}", "{{ .port }}", "{{ .name }}", "{{ .user }}", "{{ .password }}")
-		path := secrets.CategoryPath(tenant.Name, portalShellAppName, "database")
 		for _, p := range []string{"host", "port", "name", "user", "password"} {
 			data = append(data, map[string]interface{}{
 				"secretKey": p,
