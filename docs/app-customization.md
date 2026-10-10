@@ -513,10 +513,9 @@ The namespace, not the profile, is the test: "one instance per tenant" is an int
 Odoo per tenant, `databasePerTenant: true`); a shared-runtime app would not.
 
 Sharing a runtime across tenants and then loading tenant-specific code into it is the single
-fastest way to turn a customization into a cross-tenant data leak. **The check is written and
-not yet applied**: `customization.ValidateNamespaceScoping` states the rule for a record with
-`rung: L3` and `scope: tenant`, and the controller that judges records does not call it, so
-today this is a review-time rule.
+fastest way to turn a customization into a cross-tenant data leak. **Nothing checks this
+today**: for a record with `rung: L3` and `scope: tenant` it is a review-time rule, and the
+controller that judges records does not look at where the app runs.
 
 **Obligations:** declare the addon repo + delivery in `spec.customization.extension`; pin the
 addon version alongside `spec.package.chart.version`; a `Customization` record (§5) is **required** from

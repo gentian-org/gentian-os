@@ -200,24 +200,6 @@ func TestValidateRecordRejectsTenantScopeWithoutTenants(t *testing.T) {
 	}
 }
 
-func TestValidateNamespaceScopingEnforcesTenantNamespace(t *testing.T) {
-	record := &gentianov1alpha1.Customization{
-		Spec: gentianov1alpha1.CustomizationSpec{
-			Target:  gentianov1alpha1.CustomizationTarget{Profile: "odoo-cb-base"},
-			Rung:    gentianov1alpha1.RungExtension,
-			Scope:   gentianov1alpha1.ScopeTenant,
-			Tenants: []string{"acme"},
-		},
-	}
-	if err := ValidateNamespaceScoping(record, "tenant-acme", []string{"tenant-acme"}); err != nil {
-		t.Fatalf("expected dedicated namespace to pass, got %v", err)
-	}
-	err := ValidateNamespaceScoping(record, "shared-erp", []string{"tenant-acme"})
-	if err == nil || !strings.Contains(err.Error(), "shared runtime are") {
-		t.Fatalf("expected shared-namespace rejection, got %v", err)
-	}
-}
-
 func TestGradeForScoreBanding(t *testing.T) {
 	cases := map[int32]gentianov1alpha1.CustomizationGrade{
 		8: gentianov1alpha1.GradeA,

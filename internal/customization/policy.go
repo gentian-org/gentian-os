@@ -21,9 +21,9 @@ import (
 // to a Customization record. It returns every violation rather than the first, so
 // an author fixes the record in one pass.
 //
-// The checks that need cluster state — does the target profile exist, does the app
-// actually run in the tenant's own namespace — are layered on top by the caller
-// (see ValidateNamespaceScoping).
+// The check that needs cluster state — does the target profile exist — is
+// layered on top by the caller. Whether the app actually runs in the tenant's
+// own namespace (docs/app-customization.md §2.4) is not checked anywhere.
 func ValidateRecord(record *gentianov1alpha1.Customization) []error {
 	if record == nil {
 		return nil
@@ -156,38 +156,4 @@ func lowerSupportedRung(
 		}
 	}
 	return best, bestIdx != -1
-}
-
-// RequiresTenantNamespace reports whether a record must be checked against the
-// §2.4 namespace test: per-tenant modules are only safe when the app instance runs
-// in that tenant's own namespace. Loading tenant-specific code into a runtime
-// shared by several tenants is a cross-tenant data leak waiting to happen.
-func RequiresTenantNamespace(record *gentianov1alpha1.Customization) bool {
-	if record == nil {
-		return false
-	}
-	return record.Spec.Rung == gentianov1alpha1.RungExtension &&
-		record.Spec.Scope == gentianov1alpha1.ScopeTenant
-}
-
-// ValidateNamespaceScoping applies the §2.4 namespace test given the namespace the
-// target app was actually found in.
-func ValidateNamespaceScoping(
-	record *gentianov1alpha1.Customization,
-	resolvedNamespace string,
-	expectedTenantNamespaces []string,
-) error {
-	if !RequiresTenantNamespace(record) {
-		return nil
-	}
-	for _, ns := range expectedTenantNamespaces {
-		if ns == resolvedNamespace {
-			return nil
-		}
-	}
-	return fmt.Errorf(
-		"rung L3 at tenant scope requires the app to run in the tenant's own namespace, "+
-			"but %q resolved to namespace %q: per-tenant modules in a shared runtime are "+
-			"forbidden (docs/app-customization.md §2.4)",
-		record.Spec.Target.Profile, resolvedNamespace)
 }
