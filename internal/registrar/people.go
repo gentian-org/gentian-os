@@ -27,7 +27,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/registrar/record"
 )
 
-// People, groups and the realm's password policy — the registrar speaking for
+// People and groups — the registrar speaking for
 // Keycloak on a caller's behalf (S7A.17).
 //
 // The rule is the same as for git and for the authorization graph: a write
@@ -267,17 +267,12 @@ func (s *Server) listGroups(w http.ResponseWriter, r *http.Request, _ call) {
 	s.json(w, http.StatusOK, map[string]any{"tenant": r.PathValue("t"), "groups": groups})
 }
 
-// tenantIdentitySettings answers the realm settings a tenant administrator
-// may see. The password policy today; this is the screen the rest of the
-// realm's own settings arrive on.
+// tenantIdentitySettings answers what the member screens need to know about
+// a tenant's realm. How strong a password has to be is not here: it is
+// declared in git and the director answers it.
 func (s *Server) tenantIdentitySettings(w http.ResponseWriter, r *http.Request, _ call) {
 	realm, ok := s.realmFor(w, r)
 	if !ok {
-		return
-	}
-	policy, err := s.cfg.Identity.PasswordPolicy(identityContext(r), realm)
-	if err != nil {
-		s.identityError(w, r, err)
 		return
 	}
 	// The domain a login is composed under, so the invitation form can show
@@ -288,11 +283,10 @@ func (s *Server) tenantIdentitySettings(w http.ResponseWriter, r *http.Request, 
 		domain = tenant.LoginDomain
 	}
 	s.json(w, http.StatusOK, map[string]any{
-		"tenant":         r.PathValue("t"),
-		"realm":          realm.Name(),
-		"passwordPolicy": policy,
-		"loginDomain":    domain,
-		"templates":      s.cfg.DesktopAPI != "",
+		"tenant":      r.PathValue("t"),
+		"realm":       realm.Name(),
+		"loginDomain": domain,
+		"templates":   s.cfg.DesktopAPI != "",
 	})
 }
 
@@ -919,34 +913,6 @@ func (s *Server) sendPasswordReset(w http.ResponseWriter, r *http.Request, c cal
 	}
 	s.recordIdentityAction(r, c, "send-password-reset", realm, body.Person)
 	s.json(w, http.StatusAccepted, map[string]any{"person": body.Person, "mailed": true})
-}
-
-// setPasswordPolicy writes the realm's policy.
-//
-// can_set_policy rather than can_manage_users: this is a statement about the
-// tenant rather than about a person, and it sits with the other policies a
-// tenant administrator sets.
-func (s *Server) setPasswordPolicy(w http.ResponseWriter, r *http.Request, c call) {
-	realm, ok := s.realmFor(w, r)
-	if !ok {
-		return
-	}
-	var body struct {
-		PasswordPolicy *string `json:"passwordPolicy"`
-	}
-	if !s.decode(w, r, &body) {
-		return
-	}
-	if body.PasswordPolicy == nil {
-		s.fail(w, r, http.StatusBadRequest, "passwordPolicy is required; send an empty string to clear it")
-		return
-	}
-	if err := s.cfg.Identity.SetPasswordPolicy(identityContext(r), realm, *body.PasswordPolicy); err != nil {
-		s.identityError(w, r, err)
-		return
-	}
-	s.recordIdentityAction(r, c, "set-password-policy", realm, realm.Name())
-	s.json(w, http.StatusOK, map[string]any{"realm": realm.Name(), "passwordPolicy": *body.PasswordPolicy})
 }
 
 // recordIdentityAction writes the registrar's half of the record: the caller,

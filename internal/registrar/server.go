@@ -69,8 +69,6 @@ type Identity interface {
 	Groups(ctx context.Context, r identity.Realm) ([]identity.Group, error)
 	Invite(ctx context.Context, r identity.Realm, inv identity.Invitation) (identity.Person, error)
 	SetMembership(ctx context.Context, r identity.Realm, userID, groupPath string, member bool) error
-	PasswordPolicy(ctx context.Context, r identity.Realm) (string, error)
-	SetPasswordPolicy(ctx context.Context, r identity.Realm, policy string) error
 	ZoneLanding(ctx context.Context, r identity.Realm, clientID string) string
 	SendPasswordReset(ctx context.Context, r identity.Realm, userID, clientID, redirectURI string) error
 	UpdatePerson(ctx context.Context, r identity.Realm, id string, u identity.PersonUpdate) (identity.Person, error)
@@ -374,10 +372,8 @@ func (s *Server) action(pattern, relation string, obj object, h func(http.Respon
 // Every write is an ACTION and none is a PUT. A commit says what should be
 // true from now on and is reviewable in git for ever; inviting somebody
 // happens once, and people do not belong in an append-only history.
-// can_manage_users throughout, except the password policy, which is a
-// statement about the tenant rather than about a person and sits with
-// can_set_policy, and a person's link to a component that vouches for them,
-// which is theirs to make and so sits with can_enter.
+// can_manage_users throughout, except a person's link to a component that
+// vouches for them, which is theirs to make and so sits with can_enter.
 func (s *Server) routes() {
 	s.mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
@@ -391,7 +387,6 @@ func (s *Server) routes() {
 	s.action("POST /v1/tenants/{t}/actions/invite-person", "can_manage_users", tenantObject, s.invitePerson)
 	s.action("POST /v1/tenants/{t}/actions/set-membership", "can_manage_users", tenantObject, s.setMembership)
 	s.action("POST /v1/tenants/{t}/actions/send-password-reset", "can_manage_users", tenantObject, s.sendPasswordReset)
-	s.action("POST /v1/tenants/{t}/actions/set-password-policy", "can_set_policy", tenantObject, s.setPasswordPolicy)
 
 	// Editing somebody, and the groups they are put in. can_manage_users
 	// throughout, like the invitation they extend.

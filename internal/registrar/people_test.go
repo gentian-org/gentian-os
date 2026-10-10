@@ -135,16 +135,6 @@ func (f *fakeIdentity) SetMembership(ctx context.Context, r identity.Realm, _, g
 	return nil
 }
 
-func (f *fakeIdentity) PasswordPolicy(ctx context.Context, r identity.Realm) (string, error) {
-	f.note(ctx, r)
-	return "length(8)", nil
-}
-
-func (f *fakeIdentity) SetPasswordPolicy(ctx context.Context, r identity.Realm, _ string) error {
-	f.note(ctx, r)
-	return nil
-}
-
 func (f *fakeIdentity) SendPasswordReset(ctx context.Context, r identity.Realm, userID, _, _ string) error {
 	f.note(ctx, r)
 	if userID != "u1" {
@@ -284,22 +274,6 @@ func TestSetMembershipRequiresSayingWhich(t *testing.T) {
 		h.token(t, "tenant-demo", "tom"), `{"person":"u1","group":"gentian:tenant:demo:members"}`)
 	if status != http.StatusBadRequest {
 		t.Fatalf("status %d, want 400", status)
-	}
-}
-
-func TestThePasswordPolicyIsReadAndWritten(t *testing.T) {
-	f := newFakeIdentity("demo")
-	h := startWithIdentity(t, f)
-	tok := h.token(t, "tenant-demo", "tom")
-
-	status, body := h.do(t, http.MethodGet, "/v1/tenants/demo/identity", tok, "")
-	if status != http.StatusOK || body["passwordPolicy"] != "length(8)" {
-		t.Fatalf("read: %d %v", status, body)
-	}
-	status, _ = h.do(t, http.MethodPost, "/v1/tenants/demo/actions/set-password-policy", tok,
-		`{"passwordPolicy":"length(12)"}`)
-	if status != http.StatusOK {
-		t.Fatalf("write: %d", status)
 	}
 }
 

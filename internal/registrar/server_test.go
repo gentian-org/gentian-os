@@ -204,7 +204,6 @@ func routes() []route {
 		{"POST", "/v1/tenants/demo/actions/invite-person", `{"email":"ada@example.com"}`, "can_manage_users", tenant},
 		{"POST", "/v1/tenants/demo/actions/set-membership", `{"person":"u1","group":"gentian:tenant:demo:members","member":true}`, "can_manage_users", tenant},
 		{"POST", "/v1/tenants/demo/actions/send-password-reset", `{"person":"u1"}`, "can_manage_users", tenant},
-		{"POST", "/v1/tenants/demo/actions/set-password-policy", `{"passwordPolicy":"length(12)"}`, "can_set_policy", tenant},
 		{"POST", "/v1/tenants/demo/actions/update-person", `{"person":"u1"}`, "can_manage_users", tenant},
 		{"POST", "/v1/tenants/demo/actions/remove-person", `{"person":"u1"}`, "can_manage_users", tenant},
 		{"POST", "/v1/tenants/demo/actions/require-totp", `{"person":"u1"}`, "can_manage_users", tenant},

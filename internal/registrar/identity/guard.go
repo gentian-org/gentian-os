@@ -153,9 +153,6 @@ func classify(realm, rel string) (w change, ok bool) {
 	admin := "/admin/realms/" + url.PathEscape(realm)
 	activation := "/realms/" + url.PathEscape(realm) + "/gentian-activation/users/"
 	switch {
-	case rel == admin:
-		// The realm's own settings: the password policy.
-		return change{}, true
 	case strings.HasPrefix(rel, activation):
 		rest := strings.Split(strings.TrimPrefix(rel, activation), "/")
 		if len(rest) == 2 && rest[0] != "" && rest[1] == "link" {

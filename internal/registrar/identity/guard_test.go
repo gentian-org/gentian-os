@@ -180,13 +180,6 @@ func TestAnAdministratorsOtherGroupsMayStillChange(t *testing.T) {
 	}
 }
 
-func TestTheRealmsOwnSettingsAreNotAboutAnybody(t *testing.T) {
-	_, c, r := guardedRealm(t)
-	if err := c.SetPasswordPolicy(context.Background(), r, "length(12)"); err != nil {
-		t.Fatalf("password policy: %v", err)
-	}
-}
-
 // A rule that cannot be applied refuses. The alternative is a write judged
 // against no group at all, which lets everything through.
 func TestWithoutTheGroupsNameNothingIsWritten(t *testing.T) {
@@ -205,8 +198,7 @@ func TestWithoutTheGroupsNameNothingIsWritten(t *testing.T) {
 	r, _ := c.Realm("kernel")
 	ctx := context.Background()
 	for name, err := range map[string]error{
-		"remove-person":   c.RemovePerson(ctx, r, "user1"),
-		"password policy": c.SetPasswordPolicy(ctx, r, "length(12)"),
+		"remove-person": c.RemovePerson(ctx, r, "user1"),
 	} {
 		if !errors.Is(err, ErrGuardUnavailable) {
 			t.Errorf("%s: got %v, want ErrGuardUnavailable", name, err)
@@ -250,7 +242,6 @@ func TestAWriteWithNoRuleIsRefused(t *testing.T) {
 
 func TestClassifyReadsEveryWriteThisPackageMakes(t *testing.T) {
 	for rel, want := range map[string]change{
-		"/admin/realms/kernel":                                {},
 		"/admin/realms/kernel/users":                          {},
 		"/admin/realms/kernel/users/u1":                       {user: "u1"},
 		"/admin/realms/kernel/users/u1/execute-actions-email": {user: "u1"},

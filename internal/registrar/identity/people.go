@@ -823,32 +823,6 @@ func containsString(list []string, s string) bool {
 	return false
 }
 
-// PasswordPolicy reads the realm's policy, in Keycloak's own spelling
-// ("length(12) and notUsername(undefined)"). Returned as written rather than
-// parsed: the console shows it and the platform does not interpret it, and a
-// parse would have to be kept in step with a vocabulary Keycloak extends.
-func (c *Client) PasswordPolicy(ctx context.Context, r Realm) (string, error) {
-	var rep struct {
-		PasswordPolicy string `json:"passwordPolicy"`
-	}
-	if err := c.call(ctx, r, http.MethodGet, "", nil, nil, &rep); err != nil {
-		return "", err
-	}
-	return rep.PasswordPolicy, nil
-}
-
-// SetPasswordPolicy writes it.
-//
-// A partial representation, not a read-modify-write of the whole realm.
-// Keycloak applies the fields a representation names and leaves the rest, so
-// sending the whole realm back would make every unrelated setting this
-// registrar happens to have read a setting it now asserts -- and a field it
-// did not understand would be rewritten with whatever it decoded.
-func (c *Client) SetPasswordPolicy(ctx context.Context, r Realm, policy string) error {
-	body := map[string]any{"realm": r.name, "passwordPolicy": policy}
-	return c.call(ctx, r, http.MethodPut, "", nil, body, nil)
-}
-
 // resolveGroups turns group paths into groups, refusing any outside scope.
 //
 // The scope check happens here, once, rather than in each caller: every write

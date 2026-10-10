@@ -55,21 +55,18 @@ const RegistrarClientID = identity.ClientID
 //
 //   - view-users, query-users, query-groups — the people and group screens.
 //   - manage-users — inviting somebody and changing a membership.
-//   - manage-realm — the password policy, which is a realm setting. This is
-//     the broad one, and it is here because Keycloak has no narrower role for
-//     a realm setting. If that becomes uncomfortable, the policy screen moves
-//     to a second client and this list loses its last broad entry.
 //
-// Deliberately NOT here: manage-clients, manage-identity-providers,
-// manage-authorization, impersonation, view-events. The registrar configures no
-// clients (compositions do), brokers no identities, and reads events through
-// its own read path rather than by holding the role that can also clear them.
+// Deliberately NOT here: manage-realm, manage-clients, manage-identity-providers,
+// manage-authorization, impersonation, view-events. The registrar sets no realm
+// setting (the password policy is declared in git and the composition applies
+// it), configures no clients (compositions do), brokers no identities, and
+// reads events through its own read path rather than by holding the role
+// that can also clear them.
 var registrarRealmRoles = []string{
 	"view-users",
 	"query-users",
 	"query-groups",
 	"manage-users",
-	"manage-realm",
 }
 
 // RegistrarRealmRoles is the list, for a caller that wants to report or assert
@@ -212,7 +209,7 @@ func (c *KeycloakAdminClient) assertRegistrarClientShape(ctx context.Context, to
 //
 // Additive against what is already there, by design: Keycloak's grant endpoint
 // adds, and a role somebody granted by hand is not this function's to remove
-// silently. What it guarantees is that the five are present.
+// silently. What it guarantees is that the four are present.
 func (c *KeycloakAdminClient) grantRegistrarRoles(ctx context.Context, token, realm, clientUUID string) error {
 	// The client that PROVIDES the roles. Its internal id is generated with
 	// the realm, which is why this whole operation is a runtime step and not
@@ -273,8 +270,8 @@ func (c *KeycloakAdminClient) grantRegistrarRoles(ctx context.Context, token, re
 // Holding a role is not enough. The client is fullScopeAllowed: false, on
 // purpose, and a client without a full scope mints tokens holding only the
 // roles in its scope mappings -- none, until this runs. Keycloak's admin API
-// reads roles from the token, so the service account held all five and every
-// People call answered 403. Mapped here are exactly the granted five, which
+// reads roles from the token, so the service account held all its roles and every
+// People call answered 403. Mapped here are exactly the granted roles, which
 // keeps the narrow scope the flag exists for.
 func (c *KeycloakAdminClient) scopeRegistrarRoles(ctx context.Context, token, realm, clientUUID, managementUUID string) error {
 	base := fmt.Sprintf("/admin/realms/%s/clients/%s/scope-mappings/clients/%s",

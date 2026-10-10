@@ -49,7 +49,7 @@ func newFakeRealm() *fakeRealm {
 }
 
 // allRealmManagementRoles is what a real realm offers; the registrar must take
-// only its five from it.
+// only its four from it.
 var allRealmManagementRoles = []string{
 	"view-users", "query-users", "query-groups", "manage-users", "manage-realm",
 	"manage-clients", "manage-identity-providers", "impersonation", "view-events",
@@ -324,8 +324,8 @@ func TestEnsureRegistrarRealmClient_IsIdempotent(t *testing.T) {
 
 // Holding a role is not carrying it. The client is fullScopeAllowed: false, so
 // its tokens carry only what its scope maps; without the mapping the service
-// account held all five roles and Keycloak answered every People call 403.
-// The scope must carry exactly the granted five -- realm-admin in it would
+// account held all its roles and Keycloak answered every People call 403.
+// The scope must carry exactly the granted four -- realm-admin in it would
 // undo the point of the narrow scope.
 func TestEnsureRegistrarRealmClient_TokensCarryTheGrantedRoles(t *testing.T) {
 	t.Parallel()

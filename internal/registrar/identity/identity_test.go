@@ -36,8 +36,6 @@ type fakeKeycloak struct {
 	users  map[string][]userRep
 	// status overrides a path's answer, for the failure cases.
 	status map[string]int
-	// policy per realm.
-	policy map[string]string
 	// clients per realm, for the zone-landing read.
 	clients map[string][]clientRep
 	// mints counts token requests per realm, for the cache test.
@@ -64,7 +62,6 @@ func newFake(t *testing.T) (*fakeKeycloak, *httptest.Server) {
 		groups:  map[string][]groupRep{},
 		users:   map[string][]userRep{},
 		status:  map[string]int{},
-		policy:  map[string]string{},
 		clients: map[string][]clientRep{},
 		mints:   map[string]int{},
 		creds:   map[string][]map[string]string{},
@@ -127,7 +124,6 @@ func (f *fakeKeycloak) serve(w http.ResponseWriter, r *http.Request) {
 	}
 	groups := append([]groupRep(nil), f.groups[realm]...)
 	users := append([]userRep(nil), f.users[realm]...)
-	policy := f.policy[realm]
 	f.mu.Unlock()
 
 	w.Header().Set("Content-Type", "application/json")
@@ -195,8 +191,6 @@ func (f *fakeKeycloak) serve(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		w.WriteHeader(http.StatusNotFound)
-	case r.Method == http.MethodGet && path == "":
-		_ = json.NewEncoder(w).Encode(map[string]any{"realm": realm, "passwordPolicy": policy})
 	default:
 		w.WriteHeader(http.StatusNoContent)
 	}
@@ -453,37 +447,6 @@ func TestSetMembershipAddsAndRemoves(t *testing.T) {
 	}
 	if len(methods) != 2 || methods[0] != http.MethodPut || methods[1] != http.MethodDelete {
 		t.Fatalf("membership calls: %v, want PUT then DELETE", methods)
-	}
-}
-
-func TestThePasswordPolicyIsWrittenAsAPartialRealm(t *testing.T) {
-	f, srv := newFake(t)
-	f.policy["demo"] = "length(8)"
-	c := clientFor(t, srv, StaticSource{"demo": {Realm: "demo", ClientID: "a", ClientSecret: "s"}})
-	r, _ := c.Realm("demo")
-
-	got, err := c.PasswordPolicy(context.Background(), r)
-	if err != nil || got != "length(8)" {
-		t.Fatalf("read: %q, %v", got, err)
-	}
-	if err := c.SetPasswordPolicy(context.Background(), r, "length(12) and notUsername(undefined)"); err != nil {
-		t.Fatal(err)
-	}
-	var write *recorded
-	for i, call := range f.recorded() {
-		if call.method == http.MethodPut && strings.HasSuffix(call.path, "/admin/realms/demo") {
-			write = &f.calls[i]
-		}
-	}
-	if write == nil {
-		t.Fatalf("no realm write: %+v", f.recorded())
-	}
-	var body map[string]any
-	if err := json.Unmarshal([]byte(write.body), &body); err != nil {
-		t.Fatal(err)
-	}
-	if len(body) != 2 || body["passwordPolicy"] != "length(12) and notUsername(undefined)" {
-		t.Fatalf("a partial representation, not the whole realm: %v", body)
 	}
 }
 
