@@ -1669,7 +1669,7 @@ _remove_retired_apps_repository_claim() {
 # gentian-apps publishes two: the released catalogue, built from its main, and
 # the development one, built from its develop. Which a cluster reads follows
 # from which gentian-os it is installed from, the ref in GENTIAN_OS_BRANCH (or,
-# unset, this checkout's branch -- resolve_gentian_os_branch): a release tag or
+# unset, this checkout's branch -- gentian_os_ref): a release tag or
 # main is released software and reads the released catalogue; any other branch
 # is software under development and reads the catalogue under development,
 # whose profiles may need what only that platform has. A ref that cannot be
@@ -1683,7 +1683,7 @@ gentian_catalogue_url() {
         printf '%s\n' "${GENTIAN_CATALOGUE_URL}"
         return 0
     fi
-    case "$(_gentian_catalogue_ref)" in
+    case "$(gentian_os_ref)" in
         v[0-9]*.[0-9]*.[0-9]* | main | "")
             printf '%s\n' "https://gentian-org.github.io/gentian-apps" ;;
         *)
@@ -1701,7 +1701,7 @@ gentian_catalogue_reason() {
         printf '%s\n' "Set by GENTIAN_CATALOGUE_URL when this claim was written."
         return 0
     fi
-    ref="$(_gentian_catalogue_ref)"
+    ref="$(gentian_os_ref)"
     case "${ref}" in
         v[0-9]*.[0-9]*.[0-9]* | main)
             printf '%s\n' "The released catalogue: this cluster was installed from gentian-os ${ref}." ;;
@@ -1710,17 +1710,6 @@ gentian_catalogue_reason() {
         *)
             printf '%s\n' "The development catalogue: this cluster was installed from the gentian-os branch ${ref}, not from a release." ;;
     esac
-}
-
-# The gentian-os ref being installed, read without the network: the setting,
-# else this checkout's branch, else nothing.
-_gentian_catalogue_ref() {
-    local ref="${GENTIAN_OS_BRANCH:-}"
-    if [[ -z "${ref}" ]]; then
-        ref="$(git -C "${SCRIPT_DIR:-.}" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
-        [[ "${ref}" != "HEAD" ]] || ref=""
-    fi
-    printf '%s\n' "${ref}"
 }
 
 # _claim_catalogue_section
@@ -2076,6 +2065,16 @@ scaffold_cluster_deployment() {
     local domain="${KERNEL_DOMAIN:?KERNEL_DOMAIN must be resolved before scaffold_cluster_deployment}"
     local generated=0
 
+    # Before anything is written: the gentian-os Repository claim names the
+    # ref this cluster follows, and a detached checkout with no
+    # GENTIAN_OS_BRANCH has none to name. This wrote "main" there.
+    if [[ ! -f "${kernel_dir}/claims/gentian-os-repository.yaml" && -z "$(gentian_os_ref)" ]]; then
+        error "GENTIAN_OS_BRANCH is not set and this checkout has no branch to read,"
+        error "  so the gentian-os Repository claim cannot name the ref this cluster follows."
+        error "  Set GENTIAN_OS_BRANCH in install.env (a branch, or a release tag such as v0.4.0)."
+        return 1
+    fi
+
     if [[ ! -f "${GENTIAN_DEPLOYMENTS_PATH}/profiles/${stage}.yaml" ]]; then
         warn "profiles/${stage}.yaml does not exist in the deployments repository."
         warn "  Argo CD reads it as a values file of the platform's own chart and cannot"
@@ -2215,12 +2214,12 @@ EOF
         case "${_repo_role}" in
             gentian-os)
                 _repo_url="${GENTIAN_OS_REPO:-https://github.com/gentian-org/gentian-os}"
-                _repo_branch="${GENTIAN_OS_BRANCH:-main}"
+                _repo_branch="$(gentian_os_ref)"
                 _repo_auth="${GENTIAN_OS_AUTH:-none}"
                 _repo_auth_var=GENTIAN_OS_AUTH ;;
             gentian-ui)
                 _repo_url="${GENTIAN_UI_REPO:-https://github.com/gentian-org/gentian-ui}"
-                _repo_branch="${GENTIAN_UI_BRANCH:-main}"
+                _repo_branch="$(gentian_ui_branch)"
                 _repo_auth="${GENTIAN_UI_AUTH:-none}"
                 _repo_auth_var=GENTIAN_UI_AUTH ;;
         esac

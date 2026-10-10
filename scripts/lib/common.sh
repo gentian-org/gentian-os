@@ -2338,12 +2338,12 @@ gentian_suze_claim_name()      { gentian_claim_name suze       dev-suze;       }
 # resolve_gentian_os_branch — the git ref every in-cluster Application tracks
 # back to this repo.
 #
-# Exports GENTIAN_OS_BRANCH for apply_bootstrap_application, which passes it to
-# the bootstrap chart as gentianOsBranch. install.env states it; the template
-# ships it uncommented so that choosing is an act rather than an omission.
+# Exports GENTIAN_OS_BRANCH, which B-01 passes to the bootstrap chart as
+# gentianOsBranch. install.env may state it, and has to for a release tag.
 #
-# Where it is unset, the checkout's own branch answers — an observation, not a
-# guess, and it cannot disagree with the code doing the installing.
+# Where it is unset, the checkout's own branch answers (gentian_os_ref) — an
+# observation, not a guess, and it cannot disagree with the code doing the
+# installing.
 #
 # What this refuses to do is guess. A detached checkout — which is what `git
 # checkout v0.4.0` gives you — returns the literal "HEAD" from rev-parse, and
@@ -2367,13 +2367,38 @@ gentian_suze_claim_name()      { gentian_claim_name suze       dev-suze;       }
 # An unpublished local branch reads from rev-parse exactly like a real one and
 # fails identically, so both paths are checked, not just the typo-able one.
 # =============================================================================
+# gentian_os_ref — the gentian-os ref this run installs, read without the
+# network: GENTIAN_OS_BRANCH, else the branch of the checkout the installer is
+# run from, else nothing (a detached checkout, or no .git).
+#
+# The one place that default lives. The Repository claim step 0 writes, the
+# bootstrap chart B-01 renders and the catalogue a new claim names each had
+# their own -- main, develop and the checkout's branch -- so a run with
+# GENTIAN_OS_BRANCH unset could describe three different refs.
+gentian_os_ref() {
+    local ref="${GENTIAN_OS_BRANCH:-}"
+    if [[ -z "${ref}" ]]; then
+        ref="$(git -C "${SCRIPT_DIR:-.}" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+        [[ "${ref}" != "HEAD" ]] || ref=""
+    fi
+    printf '%s\n' "${ref}"
+}
+
+# The gentian-ui ref a cluster follows when install.env names none: the branch
+# gentian-ui publishes its charts from (it has no main). GENTIAN_UI_BRANCH is
+# the branch written to the gentian-ui Repository claim, PORTAL_IMAGE_TAG the
+# branch whose charts are installed; both default to this one name.
+GENTIAN_UI_DEFAULT_REF="develop"
+gentian_ui_branch()        { printf '%s\n' "${GENTIAN_UI_BRANCH:-${GENTIAN_UI_DEFAULT_REF}}"; }
+gentian_ui_chart_branch()  { printf '%s\n' "${PORTAL_IMAGE_TAG:-${GENTIAN_UI_DEFAULT_REF}}"; }
+
 resolve_gentian_os_branch() {
     local branch
     if [[ -n "${GENTIAN_OS_BRANCH:-}" ]]; then
         branch="${GENTIAN_OS_BRANCH}"
     else
-        branch="$(git -C "${SCRIPT_DIR}" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
-        if [[ -z "${branch}" || "${branch}" == "HEAD" ]]; then
+        branch="$(gentian_os_ref)"
+        if [[ -z "${branch}" ]]; then
             error "GENTIAN_OS_BRANCH is not set and this checkout has no branch to read."
             error "  Every in-cluster Application tracks this ref, so it decides which"
             error "  gentian-os a cluster runs. It cannot be inferred from a detached"
@@ -2522,6 +2547,10 @@ _verify_gentian_os_ref_exists() {
 # advances the pin, which is one command and is honest about what it does.
 # =============================================================================
 resolve_gentian_os_image_tag() {
+    # The ref first, whether or not the tag is given: every Application
+    # follows it either way. With GENTIAN_OS_IMAGE_TAG set this returned
+    # before the ref was settled, and B-01 then rendered its own default.
+    resolve_gentian_os_branch
     if [[ -n "${GENTIAN_OS_IMAGE_TAG:-}" ]]; then
         export GENTIAN_OS_IMAGE_TAG
         case "${GENTIAN_OS_IMAGE_TAG}" in
@@ -2535,7 +2564,6 @@ resolve_gentian_os_image_tag() {
         esac
         return 0
     fi
-    resolve_gentian_os_branch
     case "${GENTIAN_OS_BRANCH}" in
         v[0-9]*.[0-9]*.[0-9]*)
             export GENTIAN_OS_IMAGE_TAG="${GENTIAN_OS_BRANCH#v}"

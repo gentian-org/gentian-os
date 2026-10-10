@@ -139,7 +139,7 @@ _v5_render() {
         --set-string "cluster=${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-}" \
         --set-string "networkMode=${NETWORK_MODE:-tunnel}" \
         --set-string "osRepo=${GENTIAN_OS_REPO:-https://github.com/gentian-org/gentian-os}" \
-        --set-string "gentianOsBranch=${GENTIAN_OS_BRANCH:-develop}" \
+        --set-string "gentianOsBranch=$(gentian_os_ref)" \
         --set-string "storageClass=${STORAGE_CLASS:-}" \
         --set-string "stage=${GENTIAN_DEPLOYMENTS_STAGE:-dev}" \
         --set-string "deployments.repo=${GENTIAN_DEPLOYMENTS_REPO:-}" \
@@ -150,13 +150,13 @@ _v5_render() {
         --set-string "operator.tag=${GENTIAN_OS_IMAGE_TAG:-}" \
         --set-string "headlamp.oidc.enabled=${V5_HEADLAMP_OIDC:-$(_v5_reached headlamp-oidc)}" \
         --set-string "kernelRealm=${KERNEL_REALM:-kernel}" \
-        --set-string "desktop.chartBranch=${PORTAL_IMAGE_TAG:-develop}" \
+        --set-string "desktop.chartBranch=$(gentian_ui_chart_branch)" \
         --set-string "desktop.chartVersion=$(_v5_keep_chart_version desktop "${DESKTOP_CHART_VERSION:-}")" \
-        --set-string "adminConsole.chartBranch=${PORTAL_IMAGE_TAG:-develop}" \
+        --set-string "adminConsole.chartBranch=$(gentian_ui_chart_branch)" \
         --set-string "adminConsole.chartVersion=$(_v5_keep_chart_version admin-console "${ADMIN_CONSOLE_CHART_VERSION:-}")" \
-        --set-string "concierge.chartBranch=${PORTAL_IMAGE_TAG:-develop}" \
+        --set-string "concierge.chartBranch=$(gentian_ui_chart_branch)" \
         --set-string "concierge.chartVersion=$(_v5_keep_chart_version concierge "${CONCIERGE_CHART_VERSION:-}")" \
-        --set-string "appStore.chartBranch=${PORTAL_IMAGE_TAG:-develop}" \
+        --set-string "appStore.chartBranch=$(gentian_ui_chart_branch)" \
         --set-string "appStore.chartVersion=$(_v5_keep_chart_version app-store "${APP_STORE_CHART_VERSION:-}")" \
         --set-string "llmEnabled=${LLM_SUPPORT:-false}" \
         --set-string "llmConsoleEnabled=${LLM_CONSOLE:-false}" \

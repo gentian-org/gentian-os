@@ -270,7 +270,7 @@ Edit it. These are the values that matter for a first install:
 | `GENTIAN_DEPLOYMENTS_REPO` / `_BRANCH` | Your deployments repository |
 | `GENTIAN_DEPLOYMENTS_CLUSTER_ID` | This cluster's ID. It names the directory under `clusters/` and, with the stage, the Cluster claim — get it right before step 4, which pushes the tree it names |
 | `GENTIAN_DEPLOYMENTS_STAGE` | `dev`, `staging` or `prod` — the one whose `profiles/<stage>.yaml` you committed in step 1 |
-| `GENTIAN_OS_BRANCH` | The gentian-os branch or release tag this checkout is on (`git branch --show-current`). The cluster follows it |
+| `GENTIAN_OS_BRANCH` | Leave it unset to follow the branch this checkout is on (`git branch --show-current`). Set it to follow a release tag (`v1.2.3`): a checked-out tag has no branch to read, and the install stops and asks |
 | `GENTIAN_DEPLOYMENTS_AUTH` | `basic`, the default: a user name and a token, which a private repository needs. `none` for a public one |
 
 Leave `GENTIAN_OS_IMAGE_TAG` and `GENTIAN_DEFAULT_PROFILES` unset, and remove

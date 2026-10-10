@@ -306,11 +306,10 @@ references.** In order of strength:
 `GENTIAN_OS_BRANCH` (`install.env`) is the ref every in-cluster Application
 tracks — the kernel ApplicationSets, the operator Application and the
 bootstrap Applications all follow it. It decides which gentian-os a cluster
-**runs**, which need not be the one you are installing **from**, so the
-template states it rather than leaving it to be inferred.
+**runs**, which need not be the one you are installing **from**.
 
-Left unset it falls back to the branch of the checkout `install.sh` runs from —
-an observation, not a guess. Where there is no branch to read, which is exactly
+Left unset it is the branch of the checkout `install.sh` runs from, in every
+place the installer uses it — an observation, not a guess. Where there is no branch to read, which is exactly
 what `git checkout v0.4.0` leaves behind, the installer stops and asks rather
 than answering `develop` for a cluster somebody meant to pin. **Pinning a
 cluster to a release means naming the tag**, not checking it out. See §5.4.

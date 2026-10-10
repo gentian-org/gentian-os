@@ -132,12 +132,12 @@ apply() {
     # there is no realm to sign in against, which is why a fresh cluster
     # starts on token login. The same render pins the desktop chart.
     local desktop_chart_version admin_console_chart_version concierge_chart_version
-    desktop_chart_version="$(_d02_component_chart_version gentian-org/charts/gentian-portal "0.1.0-${PORTAL_IMAGE_TAG:-develop}")" || return 1
+    desktop_chart_version="$(_d02_component_chart_version gentian-org/charts/gentian-portal "0.1.0-$(gentian_ui_chart_branch)")" || return 1
     info "Desktop chart: ${desktop_chart_version}"
     # Both from gentian-ui, so both follow its branch.
-    admin_console_chart_version="$(_d02_component_chart_version gentian-org/charts/admin-console "0.1.1-${PORTAL_IMAGE_TAG:-develop}")" || return 1
+    admin_console_chart_version="$(_d02_component_chart_version gentian-org/charts/admin-console "0.1.1-$(gentian_ui_chart_branch)")" || return 1
     info "Administration console chart: ${admin_console_chart_version}"
-    concierge_chart_version="$(_d02_component_chart_version gentian-org/charts/concierge "0.1.0-${PORTAL_IMAGE_TAG:-develop}")" || return 1
+    concierge_chart_version="$(_d02_component_chart_version gentian-org/charts/concierge "0.1.0-$(gentian_ui_chart_branch)")" || return 1
     info "Concierge chart: ${concierge_chart_version}"
     # The App Store app's chart, resolved the same way and pinned by the same
     # render. Unlike the three above it is not something an install fails
@@ -146,11 +146,11 @@ apply() {
     # keeps the version it has (_v5_keep_chart_version), or the branch's
     # moving one on a cluster that never had it.
     local app_store_chart_version=""
-    if app_store_chart_version="$(_d02_component_chart_version gentian-org/charts/app-store "0.1.0-${PORTAL_IMAGE_TAG:-develop}" 2>/dev/null)"; then
+    if app_store_chart_version="$(_d02_component_chart_version gentian-org/charts/app-store "0.1.0-$(gentian_ui_chart_branch)" 2>/dev/null)"; then
         info "App Store chart: ${app_store_chart_version}"
     else
         app_store_chart_version=""
-        warn "App Store chart 0.1.0-${PORTAL_IMAGE_TAG:-develop} names no immutable version on ghcr.io; its profile keeps the version it has. The install continues."
+        warn "App Store chart 0.1.0-$(gentian_ui_chart_branch) names no immutable version on ghcr.io; its profile keeps the version it has. The install continues."
     fi
     DESKTOP_CHART_VERSION="${desktop_chart_version}" \
         ADMIN_CONSOLE_CHART_VERSION="${admin_console_chart_version}" \
