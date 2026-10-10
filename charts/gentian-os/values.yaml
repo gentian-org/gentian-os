@@ -87,11 +87,11 @@ tenantProvisioning:
 # Plumbed into the operator as the KERNEL_REALM env var.
 kernelRealm: ""
 
-# Stage 1 authz bridge (Keycloak → OpenFGA tuple sync). OpenFGA is a
-# standard, always-deployed kernel component (see openfgaURL below), so
-# this defaults on; a deployer without Suze/OpenFGA can still disable it.
+# Where OpenFGA answers and the credential for it. The operator projects the
+# authorization graph's structure with them, and the director's services read
+# the same address. (The key keeps the name of the Keycloak-to-OpenFGA bridge
+# these settings were first written for.)
 authzBridge:
-  enabled: true
   openfgaURL: "http://gentian-openfga.kernel-authorization.svc.cluster.local:8080"
   # The token is read from a Secret, never given here. A literal value used to
   # be accepted and was rendered straight into the Deployment as an env value,

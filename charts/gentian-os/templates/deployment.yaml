@@ -167,20 +167,6 @@ spec:
             - name: BACKUP_AGE_RECIPIENTS
               value: {{ join "," .Values.backupRecipients | quote }}
             {{- end }}
-            {{- if .Values.authzBridge.enabled }}
-            - name: AUTHZ_BRIDGE_ENABLED
-              value: "true"
-            {{- end }}
-            {{- /*
-              Not gated on the retired bridge.
-
-              The operator projects the authorization graph's structure -- the
-              cluster's roles and its tenants -- whether or not the bridge that
-              used to sync app grants is on. Leaving these behind
-              authzBridge.enabled meant that turning the bridge off, which v5
-              does, also took away the address the projection needs, and
-              nobody would administer the cluster.
-            */}}
             {{- if .Values.authzBridge.openfgaURL }}
             - name: OPENFGA_API_URL
               value: {{ .Values.authzBridge.openfgaURL | quote }}
