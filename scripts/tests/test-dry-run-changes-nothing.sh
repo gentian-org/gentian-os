@@ -395,6 +395,7 @@ says "  it says ~/.gentian/config would be written" "Would save the deployments 
 says "  it says the default profile would be placed only at the digest the catalogue's index lists" "place operations-console only if"
 says "  it says an install would stop: the break-glass key keys.env records is not on this host" "Recorded:  2222222222222222"
 says "    and that the preview goes on" "Would stop here for that reason; this preview goes on"
+says "  it says an install would stop on a tunnel cluster that does not hold the tunnel" "kubectl create secret generic cf-tunnel -n default"
 n="$(steps_checked)"
 if (( n >= 25 )); then ok "  it ran the check() of ${n} steps"; else bad "  it ran the check() of only ${n} steps" "${LAST_OUT}"; fi
 if [[ ! -e "${HOME_DIR}/.gentian/gnupg" && ! -e "${HOME_DIR}/.gentian/config" && ! -e "${HOME_DIR}/.local" ]]; then

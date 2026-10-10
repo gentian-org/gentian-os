@@ -1862,6 +1862,41 @@ check_prereqs() {
             cleanup_orphaned_kyverno_webhooks
             force_reconcile_failed_helm_releases
         fi
+
+        # ── The tunnel, on a cluster that is reached through one ─────────────
+        # The installer neither creates the Cloudflare Tunnel nor runs
+        # cloudflared. All it has of the tunnel is its id, read at B-08 from
+        # the Secret cloudflared runs with, and that is the only source there
+        # is: the operator is given <id>.cfargotunnel.com and, without it,
+        # programs no edge at all -- no route and no DNS record for any
+        # hostname. That used to be one warning in the middle of B-08, and the
+        # install went on to wait at D-02 and fail at D-03 on a sign-in address
+        # that never resolved. Asked here, before the first step.
+        if [[ "${GENTIAN_DIRECTION:-forward}" == "forward" && "$(_edge_ingress_provider)" == "cf-tunnel" ]]; then
+            if [[ -n "$(_cloudflare_tunnel_id)" ]]; then
+                success "Cloudflare Tunnel found (its Secret in the namespace default)"
+            else
+                local _say=error
+                gentian_read_only && _say=warn
+                "${_say}" "This cluster's network mode is tunnel, and the cluster does not hold the tunnel."
+                "${_say}" "  The installer does not create the Cloudflare Tunnel and does not run"
+                "${_say}" "  cloudflared. It reads the tunnel's id from the Secret cloudflared runs"
+                "${_say}" "  with, in the namespace default, and found neither of the two it knows."
+                "${_say}" "  Without the id no hostname of this cluster gets a route or a DNS record."
+                "${_say}" "  Create the tunnel in the Cloudflare account, then one of:"
+                "${_say}" "    kubectl create secret generic cf-tunnel -n default \\"
+                "${_say}" "        --from-literal=token=<the tunnel's token>"
+                "${_say}" "    kubectl create secret generic tunnel-credentials -n default \\"
+                "${_say}" "        --from-file=<tunnel-id>.json=<the tunnel's credentials file>"
+                "${_say}" "  and run cloudflared in the cluster with it. If this cluster has no"
+                "${_say}" "  tunnel, set networkMode: static-ip on the Cluster claim."
+                if gentian_read_only; then
+                    warn "  An install stops here for that reason; this run goes on."
+                else
+                    missing=$((missing + 1))
+                fi
+            fi
+        fi
     fi
 
     # ── MicroK8s kubelet max-pods ─────────────────────────────────────────────
