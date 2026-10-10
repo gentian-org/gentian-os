@@ -802,7 +802,10 @@ platform creates. The operator's image is not: the cluster pulls
 `ghcr.io/gentian-org/gentian-os` whatever `install.env` says, and the
 pre-flight looks the tag up there. Nor are the infrastructure charts: there is
 no setting that redirects them, and the installer asks for no chart registry
-credential.
+credential. The credential `infra-chart-registry` is declared all the same,
+as optional: it has a form in the Credentials screen and a path in OpenBao
+(`gentian-os/kernel/storage/registry`), an install without it is complete,
+and no chart is pulled through it yet.
 
 App profiles are not part of this: they are fetched from a catalogue, which is
 a public https address (`GENTIAN_CATALOGUE_URL` for the default one). A

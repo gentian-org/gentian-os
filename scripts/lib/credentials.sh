@@ -456,6 +456,19 @@ _requirement_applies() {
     esac
 }
 
+# _requirement_entered_later <req> — a credential this cluster may use and the
+# installer neither asks for, checks nor stores.
+#
+# It applies, so its declaration and probe are on the cluster and the
+# Credentials screen has a form for it; whoever needs it enters it there, and
+# the custodian checks it. An install without it is complete.
+_requirement_entered_later() {
+    case "$1" in
+        infra-chart-registry) return 0 ;;
+        *)                    return 1 ;;
+    esac
+}
+
 # =============================================================================
 # Validation
 # =============================================================================
@@ -692,6 +705,10 @@ collect_bootstrap_credentials() {
             info "${req}: not required by this cluster's configuration."
             continue
         fi
+        if _requirement_entered_later "${req}"; then
+            info "${req}: optional and not asked for here; entered in the Credentials screen once the cluster runs."
+            continue
+        fi
         for key in $(catalogue_field_keys "${req}"); do
             _prompt_field "${req}" "${key}"
         done
@@ -706,6 +723,7 @@ collect_bootstrap_credentials() {
     local failed=0
     for req in $(catalogue_names bootstrap); do
         _requirement_applies "${req}" || continue
+        _requirement_entered_later "${req}" && continue
         if _validate_requirement "${req}"; then
             success "${req}"
             continue
