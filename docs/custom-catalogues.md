@@ -822,6 +822,18 @@ directory of the deployments repository, which is held to the same checks.
   `chart: {repository, name, version}`; what that registry serves under that version is the
   registry's to decide. Use immutable chart versions and image digests in your chart if you need the
   same guarantee further down.
+- **What a chart contains is not inspected, and it is installed with the rights of the whole
+  cluster.** Nothing reads the templates of the chart a profile names; the pods it starts are held
+  to the admission policies, its other objects to nothing. Two things follow for secrets. An
+  `ExternalSecret` a chart puts in the tenant's namespace can name only that tenant's store,
+  `openbao-tenant-<tenant>`: it reads that tenant's app, repository and contract credentials, no
+  path of the kernel and none of another tenant
+  ([security.md §5](design/security.md)). That holds for the stores that exist. A chart can still
+  create objects of its own anywhere in the cluster, a secret store included, and can read a
+  Kubernetes Secret directly, so a chart is trusted like the platform itself, and so is whoever can
+  add the catalogue it comes from. A Composition of your own that writes an `ExternalSecret` into
+  the tenant's namespace names the tenant's store, as `app-default` does; one that names `openbao`
+  there gets no Secret.
 - **The address is checked**, when the catalogue is added and again on every fetch: https only,
   port 443, no user name or password, and a host that resolves to public addresses only. Loopback,
   private and link-local ranges, carrier-grade NAT, metadata addresses, and names inside a cluster

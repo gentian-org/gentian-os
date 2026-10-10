@@ -462,9 +462,10 @@ OpenBao must be initialised before ESO or Crossplane can authenticate to
 it. The installer does this once, in its `B` phase: it initialises the
 transit seal and the vault (`B-02`, `B-03`), creates the KV mount and
 Crossplane's policy and token (`B-04`), and seeds the kernel's paths
-(`B-07`, `B-08`). Everything after that — Kubernetes auth, roles, the ESO
-`ClusterSecretStore`, policies per tenant — is composed from the Cluster
-claim and the tenant composites through `provider-vault`.
+(`B-07`, `B-08`). Everything after that — Kubernetes auth, roles, the
+kernel's ESO `ClusterSecretStore`, and for each tenant a policy, a role and
+a store of its own — is composed from the Cluster claim and the tenant
+composites through `provider-vault`.
 
 The path layout, the derivation, rotation and the recovery kit are in
 [design/security.md](design/security.md) §4–6 and

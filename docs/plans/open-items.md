@@ -123,6 +123,13 @@ been seen working on a cluster. Until it has, it is not done.
 - The App Store app placed on tenants where the cluster offers a store.
 - The model gateway as a requirement an app declares, with its image named by
   tag and digest.
+- A store, a role and a policy in OpenBao per tenant, and the kernel's store
+  refused from a tenant's namespace. The policies are run against a local
+  OpenBao and the store each `ExternalSecret` names is held by a test of the
+  rendered Compositions; that ESO refuses the kernel's store from a tenant's
+  namespace is read from ESO's code at the pinned version, not seen.
+- A key a profile declares under `secrets.derived`, made by the cluster's
+  secret mode and kept in the vault.
 
 ### Data
 
@@ -213,6 +220,8 @@ Each is true of the code today.
 | 24 | **Closed in the code on 2026-10-10, not yet shown on a cluster: a granted cluster role created nothing.** A profile asks for a cluster role by name; the operator binds it where the platform's set has it, the allowlist permits it for the profile and it was granted on the install. The set is empty and the operator has no permission on RBAC objects, so the path that binds has run in tests only. The first role brings those permissions with it. [roles-and-authorizations.md](roles-and-authorizations.md) §2 still states that no workload's ServiceAccount is bound to any role, which the first role of the set ends | [security.md §3.4](../design/security.md) |
 | 25 | **The password policy is not in git, and a second change of it is probably undone.** Since 2026-10-10 the registrar's action is the one way to set it and the director commits no password block. A realm that is rebuilt comes back without the policy. The tenant Composition declares the realm without `passwordPolicy` unless the manifest carries `spec.security.password`, and leaves the provider to fill undeclared fields from what it observes: the first policy the registrar sets is then copied into the realm resource and held, and a later change is set back to it. That is what the same resource did to the realm's mail server until every field of it was declared (the note at `smtpServer` in `tenant-default.yaml`); for the password policy it has not been run on a cluster. A manifest that still carries `spec.security.password` has the Composition write that over what the registrar set; the director drops the block from `security-policy.yaml` the next time it writes that file | [admin-console.md §4.5](../design/admin-console.md) |
 | 26 | **Closed in the code on 2026-10-10, not yet shown on a cluster: the operator granted integrations by itself, and a waiver needed no grant.** The operator writes no `AppGrant` and cannot (its role has neither create nor patch); a binding reports what was granted. A pod-security waiver needs the allowlist and the grant on the install. Grants the operator wrote before stay in the cluster | [security.md §3.4](../design/security.md) |
+| 27 | **The catalogue's Element and Odoo cannot be given their credentials until their bundles are rebuilt.** Each brings a Composition of its own that writes the app's `ExternalSecret` into the tenant's namespace naming the kernel's store, `openbao`, which is not usable from there since 2026-10-10: ESO refuses it and the app's Secret is never made. Both have to name `openbao-tenant-<tenant>`, as `app-default` does, and be published again; the copies in `internal/profilebundle/testdata/bundles` follow. An app rendered by `app-default` is not affected. Element's database Job also signs in to OpenBao as a role `app-init` that nothing creates | [security.md §5, §6.1](../design/security.md), the catalogue repository |
+| 28 | **An `ExternalSecret` in the platform tenant's namespace can read any kernel path.** The kernel's store admits `tenant-platform` by name, because the platform tenant's desktop is given the password of its database role from `gentian-os/kernel/database/postgresql` through an `ExternalSecret` there. Every other tenant's namespace is refused. Decision 27 | [security.md §5](../design/security.md) |
 
 ## 4. Decisions waiting for the owner
 
@@ -318,7 +327,12 @@ Each is true of the code today.
     the custodian and `make check-credentials` report the master password as
     missing. It needs a requirement that has no probe, and something else the
     installer's catalogue step, the custodian and the check take as the
-    answer.
+    answer. **Narrowed 2026-10-10**, as decided: the store that reads the
+    path is usable from the kernel and system namespaces and no longer from
+    a tenant's, which reads through a store of its own that is denied every
+    kernel path (security.md §5). The question itself stands, for ESO in the
+    kernel's namespaces; what else still reaches the master password is
+    decisions 27 and 28 and security.md §6.1.
 16. **Whether the platform snapshots OpenBao.** Under `secretMode: random`
     OpenBao holds the only copy of what was drawn at random, no bundle and no
     recovery kit carries it, and nothing takes a snapshot. **Decided
@@ -377,6 +391,42 @@ Each is true of the code today.
     (`purge_delete_volumes`, `scripts/lib/teardown.sh`), which takes the
     volumes of the kernel and system namespaces by name and every tenant's
     by prefix.
+27. **How the platform tenant's desktop gets its database password.** It is
+    a property of the kernel path `gentian-os/kernel/database/postgresql`,
+    beside the passwords of Keycloak's and OpenFGA's roles, and the
+    operator's `ExternalSecret` reads it from `tenant-platform`. So that the
+    desktop still starts, the kernel's store admits that one tenant
+    namespace, and an `ExternalSecret` there reaches every kernel path
+    (defect 28). Closing it means one of: the operator writes that Secret
+    itself, from the value it can already read; the password gets a path of
+    its own under `tenants/platform/`, where the tenant's own store reads
+    it and the platform tenant's administrators' policy does too; or the
+    platform tenant's desktop gets a database on the tenant PostgreSQL like
+    every other tenant's. Each changes where a kernel credential is held or
+    who handles it.
+28. **Whether admission refuses a secret store the platform did not make.**
+    The stores' conditions hold only for the stores that exist. A
+    `ClusterSecretStore` made by anything else can sign in as `eso` and
+    carries no conditions, and a chart or a catalogue's Composition can make
+    one. A rule would refuse `SecretStore`, `ClusterSecretStore`,
+    `ClusterExternalSecret` and `PushSecret` from anybody but the
+    platform, and in a tenant's namespace an `ExternalSecret` that names
+    another store than the tenant's. Not built: who "the platform" is at
+    admission is five identities (provider-kubernetes, the operator, ESO's
+    own controller for the objects a `ClusterExternalSecret` makes, Argo
+    CD, the installer), one of which carries a generated name, and a rule
+    that gets one wrong stops every app's credentials. It needs a cluster
+    to be tried on, in audit first. It does not stop a chart that reads the
+    master password's Kubernetes Secret directly; that needs provider-helm
+    without the rights of the whole cluster (roadmap 1.16).
+29. **Whether the cluster's own registry credential may reach a tenant's
+    namespace.** A `Repository` without a tenant delivers its pull Secret to
+    the namespaces its `namespaceSelector` matches. The credential is a
+    kernel path, so in a tenant's namespace that Secret is no longer made.
+    Nothing the platform renders selects one (the default label,
+    `gentianos.io/pull-secrets`, is set by nothing). Either it stays so, and
+    the selector is documented as kernel and system namespaces only, or the
+    credential is copied by the operator, as `registry-credentials` is.
 
 ## 5. Known and deliberately not now
 

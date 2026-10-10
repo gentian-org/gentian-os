@@ -782,6 +782,7 @@ the code does.
 | A tenant's backup and deletion | Implemented | A bundle (format 3) holds what a deletion destroys, mailboxes included, and a deletion destroys the mailboxes. Rights recorded as granted are not written into a tenant made new for the restore (`TenantRestore.spec.intoNewTenant`); they are named instead ([data-lifecycle.md](data-lifecycle.md)) |
 | Approval path for profile-declared egress | Implemented | `requires.privileges.egress` is a request. A rule reaches the NetworkPolicy only once it was granted by name on the install (`internal/security/privilege.go`, `GrantedEgressRules`). The tenant's administrator approves it (`can_approve_privilege`) and the director writes the grant as a commit (`internal/director/api/privileges.go`). A pod-security waiver takes effect only where the cluster's allowlist names it (`PlatformSecurityPolicy`) and the security officer granted it on the install (`mac_waiver_reconciler.go`): either alone waives nothing, and the tenant's `MacWaiversReady` condition says which of the two is missing. A grant that is withdrawn or has expired takes the namespace label away at the tenant's next reconcile; nothing reconciles at the moment of expiry. A cluster role is asked for by name, from a set the platform defines, and is bound only where the platform has it, the allowlist permits it for the profile and it was granted on the install (§3.4a). The set is empty, so no role is bound on any cluster today |
 | Pod-security admission (privileged, host ns, non-root, hostPath, caps, priv-esc) | Implemented | `kernel/security/kyverno/policies/` |
+| What ESO reads for a tenant's namespace | Implemented; shown by rendering and against a local OpenBao, not on a cluster | A store, a role and a policy per tenant (`tenant-default.yaml`): that tenant's app, repository and contract credentials, no kernel path, no other tenant's. The kernel's store is usable from kernel and system namespaces and from the platform tenant's, which is the open part (§5). No admission rule on `ExternalSecret`, `SecretStore` or `ClusterSecretStore`: **Target** |
 | Gateway rate limit | **Partial**: sign-in posts only | Envoy's local limit per client address on the identity provider's sign-in pages and on a sign-in sidecar's answer path (`edge_rate_limit.go`, §2.14). Routes behind a session, the token endpoint and WebSocket duration: **Target** |
 | Service mesh, SPIFFE/SPIRE, workload identity | **Target**, with one exception | The operator's app-lifecycle listener admits its two callers, the director and the usher, by ServiceAccount: each presents a projected token for the audience `gentian-os-operator` and the operator asks the API server whose it is (`internal/applifecycle/auth.go`). Every other call between platform services still rests on a shared key or on the person's token |
 | One credential per process at the rights store | **Target** | OpenFGA has one preshared key. The operator, the director, the bouncer, the usher, the custodian and the registrar all present it, and it can write |
@@ -1178,7 +1179,8 @@ gentian-os/
         │       ├── smtp              #   host, user, password
         │       ├── imap              #   host, port
         │       ├── llm               #   base URL and key at the model gateway
-        │       └── internal/{name}   #   a secret the profile asks to have generated
+        │       ├── internal/{name}   #   a secret the profile asks to have generated
+        │       └── derived/{key}     #   a key the profile declares under secrets.derived
         ├── repositories/
         │   └── {repository-name}     #   username, password of a declared repository
         ├── contracts/
@@ -1196,15 +1198,59 @@ Who may read what:
 
 - **A policy per tenant**, `<tenant>-tenant-policy` (`tenant-default.yaml`),
   covers `gentian-os/tenants/<tenant>/*` and nothing of another tenant.
-- **ESO** reads through one `ClusterSecretStore`, `openbao`, whose policy
-  `eso-read` (`cluster-default.yaml`) covers every tenant's `apps/`,
-  `repositories/`, `contracts/` and `backup/` and all of `gentian-os/kernel/*`,
-  the master password and the salt included. Only the backup identities are
-  denied to it. The master password's path is not denied in the same way,
-  because one `ExternalSecret` reads it: the probe that reports whether it was
-  supplied (§6.1).
-  What keeps a secret to its namespace is therefore which `ExternalSecret` the
-  Compositions write, not the store.
+- **ESO reads through two kinds of store**, and which one an `ExternalSecret`
+  may name follows from its namespace.
+  - *The kernel's store*, `openbao` (`cluster-default.yaml`). Its policy
+    `eso-read` covers all of `gentian-os/kernel/*`, the master password and
+    the salt included, and every tenant's `apps/`, `repositories/`,
+    `contracts/` and `backup/`; only the backup identities are denied to it.
+    The store's `conditions` admit the namespaces labelled
+    `gentianos.io/tier` `kernel` or `system`, and one more by name: the
+    platform tenant's, `tenant-platform` (below). ESO refuses an
+    `ExternalSecret` that names it from anywhere else, before OpenBao is
+    asked.
+  - *A store per tenant*, `openbao-tenant-<tenant>` (`tenant-default.yaml`),
+    with a role and a policy of its own, `eso-tenant-<tenant>`. The policy
+    reads that tenant's `apps/`, `repositories/` and `contracts/`. It denies
+    every kernel path and the tenant's `backup/`, and grants nothing of
+    another tenant. The store admits the one namespace that carries
+    `gentianos.io/tier: tenant` and `gentianos.io/tenant: <tenant>`. Every
+    `ExternalSecret` the Compositions and the operator put in a tenant's
+    namespace names it.
+
+  So an `ExternalSecret` in a tenant's namespace, whoever wrote it, reaches
+  that tenant's app, repository and contract credentials and nothing else:
+  no kernel path, no other tenant's path, whatever key it names. What the
+  policies mean is run against an OpenBao by `make test-policy-openbao`;
+  which store each rendered `ExternalSecret` names is held by a test over the
+  Compositions' golden files (`internal/kernel/secrets`). None of it has run
+  on a cluster yet.
+
+  What this does not close:
+  - *The platform tenant's namespace can still name the kernel's store.* Its
+    desktop keeps its data on the kernel's PostgreSQL, and the password of
+    that role is a property of `gentian-os/kernel/database/postgresql`, which
+    the operator's `ExternalSecret` reads from `tenant-platform`. An
+    `ExternalSecret` in that namespace can therefore read any kernel path, as
+    one in any tenant's namespace could before. Closing it needs that one
+    password delivered another way; open
+    ([open-items.md](../plans/open-items.md)).
+  - *Both roles are bound to ESO's own ServiceAccount.* Whoever controls the
+    ESO pod signs in as either and reads what `eso-read` reads.
+  - *Nothing at admission refuses a store.* Any `ClusterSecretStore` may sign
+    in as `eso` with ESO's ServiceAccount, and one without conditions is
+    usable from every namespace. The API server lets only a cluster
+    administrator and the platform's own controllers create one; a chart
+    is installed with the rights of the whole cluster (provider-helm) and a
+    catalogue's Composition with Crossplane's, so either can. Neither is
+    inspected ([custom-catalogues.md §7](../custom-catalogues.md)).
+  - *The master password is still readable by ESO*, in the kernel's
+    namespaces, because the probe `credreq-master-password` reads it (§6.1).
+  - *Within a tenant* every app's credentials are readable from the tenant's
+    one namespace.
+  - *The cluster's own registry credential* (`Repository` without a tenant,
+    with a `namespaceSelector`) is a kernel path. Where its selector matches
+    a tenant's namespace, no pull Secret arrives there any more.
 - Per-`(tenant, app)` policies, so that no app can read a sibling app's paths,
   are a target — the layout above is shaped for them.
 
@@ -1227,13 +1273,15 @@ repository's path a prefix by whole segments), and in `imagePullSecrets` /
 `global.imagePullSecrets` of every chart the tenant installs, after
 `registry-credentials`.
 
+The pull Secret is read through the tenant's own store,
+`openbao-tenant-{tenant}` (§5), whose role reads that tenant's
+`repositories/*` and no other's. The Composition also refuses to make a pull
+Secret for a tenant's repository whose path is outside that tenant's
+`repositories/`, so a wrong path yields no object instead of one that never
+syncs.
+
 What this does not give:
 
-- **The store is not the boundary.** ESO reads through the one
-  `ClusterSecretStore`, whose role reads every tenant's `repositories/*`.
-  What keeps a credential to its tenant is the Composition: the selector
-  above, and its refusal to make a pull Secret for a tenant's repository
-  whose path is outside that tenant's `repositories/`.
 - **provider-helm is one process for all tenants**, and runs as
   cluster-admin. It keeps pulled charts in a cache keyed by chart name and
   version and stays logged in to a registry host once any Release has
@@ -1347,18 +1395,27 @@ password. An app uninstalled and installed again gets the same credentials.
 
 What still reaches the master password, and should not:
 
-- ESO's policy reads all of `gentian-os/kernel/*` (§5), so the store ESO uses
-  can read this path too. One `ExternalSecret` does read it:
-  `credreq-master-password`, the probe that tells the custodian and
-  `make check-credentials` whether the master password has been supplied. It
-  creates no Secret, but ESO fetches the value to answer. The path cannot be
-  denied to ESO, as the backup key's is, until that one credential's presence
-  is established some other way. The salt is a field of the same path, so it
-  is readable wherever the master password is.
+- ESO's kernel policy reads all of `gentian-os/kernel/*` (§5), this path
+  with it. One `ExternalSecret` does read it: `credreq-master-password`, the
+  probe that tells the custodian and `make check-credentials` whether the
+  master password has been supplied. It creates no Secret, but ESO fetches
+  the value to answer. The path cannot be denied to ESO, as the backup key's
+  is, until that one credential's presence is established some other way.
+  The salt is a field of the same path, so it is readable wherever the master
+  password is. The store that reads it is usable from the kernel and system
+  namespaces and from the platform tenant's, and from no other tenant's
+  (§5): an `ExternalSecret` in a tenant's namespace no longer reaches it.
+- A chart is installed with the rights of the whole cluster, and a
+  catalogue's Composition is rendered with Crossplane's. Either can read the
+  Secret `gentian-os-master-password`, or make a store of its own (§5). What
+  a chart contains is not inspected.
 - The catalogue's Element profile brings a Composition of its own whose
-  database Job reads the master password and derives in shell.
+  database Job signs in to OpenBao as the role `app-init`, from the tenant's
+  namespace, to read the master password and derive in shell. Nothing in
+  this repository makes that role, so on a cluster installed from it the
+  sign-in is refused.
 
-Narrowing both, and moving the master password to a KMS or HSM, are target.
+Narrowing these, and moving the master password to a KMS or HSM, are target.
 
 The Secret `gentian-os-master-password` in `kernel-provisioning` is not made
 by ESO: the installer writes it directly (step `B-07-crossplane-secrets`).
@@ -1397,15 +1454,45 @@ Properties:
 - **Per-app credentials** — created by the operator when a tenant installs an
   app, in `gentian-os/tenants/<tenant>/apps/<app>/*`, and likewise derived or
   random as the mode says: the database password, the bucket's key pair, the
-  cache password, the sign-in client's secret, the model gateway key and the
-  password of a contract between two apps.
+  cache password, the sign-in client's secret, the model gateway key, the
+  password of a contract between two apps, and each key a profile declares
+  under `secrets.derived` (below).
 - **Where the operator cannot learn the mode** — the ConfigMap unreadable, or
   holding a value that is neither mode — it makes no credential and the
   reconcile is tried again. A ConfigMap that is not there yet, or that was
   written before it carried the mode, reads as `derived`, which is what every
   cluster did before the operator read the mode. Under `derived`, the
   operator generates random values only when it finds no master password at
-  start.
+  start; a key declared under `secrets.derived` is the exception and is not
+  made at all then.
+- **A key a profile declares under `secrets.derived`** (Open WebUI's
+  `WEBUI_SECRET_KEY` is the one in the catalogue) is stored at
+  `…/apps/<app>/derived/<key>` and delivered where it always was: in the
+  Secret `llm-credentials-<app>` the operator writes into the tenant's
+  namespace for an app that declares the model gateway. Under `derived` it is
+  computed from the master password and the salt, with that path as the
+  context, so it differs per tenant, app and key; under `random` it is drawn
+  at random. Either way it is stored once and read back, and never made
+  again while it is stored. Without the master password under `derived`, no
+  value is made, the app's Secret is not written and its release waits; the
+  operator reads the master password at start only, so it has to be
+  restarted once the master password is readable.
+
+  Until this was built the value was SHA-256 of
+  `<tenant>-<app>-secret-salt-value`, the same for every key of an app, and
+  anybody who knew the two names could compute it. **A cluster that
+  installed an app with such a key before gets a new value at the
+  operator's first pass**; there is no migration. The Secret changes then,
+  and a running pod reads it at its next start, so the app has to be
+  restarted before anything else that takes the key from the Secret (a
+  post-install Job) agrees with it again. For Open WebUI every
+  session signed with the old key ends, and what the app encrypted with it
+  in its own database (it encrypts the sign-in tokens it keeps for a
+  person, and those of connected tool servers, with this key unless given
+  another) is no longer readable: people sign in again and connect such
+  servers again. A bundle carries no stored credential, so under `random`
+  the same holds for a tenant restored into a cluster that does not hold
+  the stored key.
 
 Still derived under `random`, because making each random needs a decision
 that has not been taken:
