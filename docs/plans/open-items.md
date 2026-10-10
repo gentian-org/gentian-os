@@ -366,6 +366,15 @@ Each is true of the code today.
     reads or keeps the workspace's key, and no platform service makes one. A
     person makes a key with `age-keygen` and pastes the public half.
 
+26. **What a purge does with the kernel's volumes.** **Decided 2026-10-10**:
+    the behaviour as built stands, and nothing is to change. A purge does
+    not drain the claims of any kernel namespace before the reverse pass:
+    the vault and the kernel's database stay up through it, and their claims
+    go with their namespaces. The volumes are deleted in the pass after it
+    (`purge_delete_volumes`, `scripts/lib/teardown.sh`), which takes the
+    volumes of the kernel and system namespaces by name and every tenant's
+    by prefix.
+
 ## 5. Known and deliberately not now
 
 - **Moving a tenant to another cluster goes through export and import**, which
@@ -391,3 +400,100 @@ Each is true of the code today.
   it reports, it does not repair. A store that has diverged is a question,
   because rewriting it would erase the grants and revocations that are
   nobody's default.
+
+## 6. Carried over from the work packages
+
+The work packages were a list of what the architecture cleanup had to build,
+and the list is gone. This is what was still open on it and is recorded
+nowhere else in this file or on the [roadmap](../roadmap.md). Each line was
+checked against the code on 2026-10-10 for whether the thing exists, not for
+whether it works. Where a plan specifies the item, the plan is named.
+
+### The director and its callers
+
+- **Tokens bound to their holder for callers that are not a browser** (DPoP,
+  RFC 9449): the command line, an install asked for by a store, an agent.
+  Nothing implements it.
+- **One account that is both an administrator and a member** is not refused
+  anywhere ([roles-and-authorizations.md](roles-and-authorizations.md) §1).
+- **The operator still carries the install paths the director replaced**:
+  `cmd/main.go` links `internal/applifecycle`. Removing them was the last
+  step of the split ([operator-split-plan.md](operator-split-plan.md)).
+- **A read for every write** on the director's API has not been checked
+  route by route.
+
+### Rights
+
+- **The comparison of the rights store with Keycloak** — at start, after a
+  failed event, and as a pass over every realm within fifteen minutes — and
+  the alert when none has completed
+  ([authorization-model.md](authorization-model.md) §2). The membership
+  listener applies events; nothing re-reads. A lost *removal* leaves access
+  in place until the person's next event.
+
+### Network and publishing
+
+- **Outgoing connections declared on the claims**
+  (`Cluster.spec.network.egressAllow`, `Tenant.spec.network.egressAllow`
+  and `denyKernel`, a tenant's list bounded by the cluster's): no such
+  fields exist.
+- **A filter for request content on a public entry that checks no caller**
+  (a web application firewall on `authMode: none`): not built
+  ([networking.md](networking.md)).
+- **The publishing contract an app implements** (`exposure-policy`, and the
+  cluster switch that would require it before an entry of `authMode: none`
+  is enabled): not built ([target-component-structure.md](target-component-structure.md) §5.2).
+- **A job that compares listeners, DMZ routes, DNS records and certificates
+  with the approved entries**, and **the view of a public entry's traffic**
+  (summary, condensed log, complete log): not built
+  ([networking.md](networking.md) §8).
+- **Proxy access logs with tokens hashed, in a log store with a retention
+  the security officer sets**: waits on the log store
+  ([security-gap-closing.md](security-gap-closing.md) G10).
+
+### Catalogue
+
+- **Admission rules for who may create which class of component in which
+  tier of namespace**: not checked.
+- **`credential.appliesWhen` on a `Repository` claim**, from which the
+  credential requirements and the installer's own test of whether one
+  applies would both be generated: no such field.
+- **`AppPackage` is still a kind of the cluster**
+  (`api/v1alpha1/apppackage_types.go`); the plan retired it with the
+  catalogue that lived in the cluster.
+
+### Installer and cluster
+
+- **API-server audit logging.** The installer ships no audit policy. Until
+  it does, what somebody does with a kubeconfig — break-glass above all —
+  is recorded nowhere: it raises no Keycloak event and passes no service of
+  the platform.
+- **Kubernetes identities for the platform's roles**, with break-glass bound
+  to `cluster-admin` by group, and **a second sign-in step for the acts
+  that matter most**
+  ([artefacts/roadmap-additions.md](artefacts/roadmap-additions.md)).
+- **Tests that try to break each control** after a fresh install, as
+  scripts.
+- **A place in the deployments repository for the cluster's security
+  policy and its exceptions** (`clusters/<c>/kernel/security/`), synced by
+  an Application of its own.
+- **The threat model run again against the code.**
+
+### Export, import and purge
+
+Specified by [sovereignty-concept.md](sovereignty-concept.md).
+
+- **Offboarding as one act**: export to the tenant's key, hand over, purge,
+  with the signed record of the deletion (roadmap item 5.5).
+- **Canonical forms** of an app's data in a bundle (`spec.backup.canonical`
+  on a profile): no such field.
+- **`TenantExportSchedule` and `BackupPolicy` are still kinds of this
+  repository** (`api/v1alpha1`); the concept moves scheduling out of it.
+
+### Not this repository's
+
+The desktop and the administration console, and a store outside the
+cluster, had work packages of their own. What was open there — the second
+sign-in on the Cluster tile, the Identity tile behind
+two hostnames, a store's confirmation of an install, the license shown per
+entry — belongs with those programs and is not carried here.

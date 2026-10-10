@@ -11,8 +11,9 @@ made while closing gaps are recorded in
 
 The *Gap* and *Evidence* columns record the code as it was when each gap was
 found: the file names, line numbers, the `AppProfile` kind and the single
-console with its BFF are of that tree, and several of them are gone. Which
-gaps are closed is tracked in [work-packages.md](work-packages.md), not here.
+console with its BFF are of that tree, and several of them are gone. What is
+still open is in [open-items.md](open-items.md) and on the
+[roadmap](../roadmap.md), not here.
 
 ## 1. Gaps, from code
 
@@ -20,7 +21,7 @@ gaps are closed is tracked in [work-packages.md](work-packages.md), not here.
 | --- | --- | --- | --- | --- | --- |
 | G1 | App lifecycle API is unauthenticated and holds git-push authority | `internal/applifecycle/http.go` — no auth middleware; caller sets `X-Gentian-Actor` | 1, 3 | Director (see [operator-split-plan.md](operator-split-plan.md)); token verified, FGA checked, header removed | 0 |
 | G2 | No policy-enforcement point calls OpenFGA. Tuples are written (bridge, `app_grant_reconciler`) and never read | BFF: `app/core/openfga_client.py` has `check()`, no route calls it; operator: `Check` exists in `internal/authz/openfga_client.go`, one caller in tests | 3, 4 | Director checks on every write (wave 1); gateway ext-auth checks on every route (wave 1). The desktop and the administration console check nothing: they render what the director returns for the caller's relations ([ui-restructure.md](ui-restructure.md)) | 1 |
-| G3 | No gateway authentication. Every app authenticates itself or not at all; `llm.<domain>` is public. The only `authMode` in the tree is on `BrowserProxyRoute`, a shell-proxy field with two values and a default | no `SecurityPolicy` in `kernel/`, `crossplane/`, `internal/`; `BackendTrafficPolicy` carries timeouts only; `AppProfile.spec.ingress` (`IngressSpec`) has no `authMode` field; `appprofile_types.go` `BrowserProxyRoute.AuthMode` is `+kubebuilder:default=forward-bearer` | 3, 6 | Envoy Gateway `SecurityPolicy` per HTTPRoute: JWT (Keycloak JWKS) + ext-auth to an AuthZEN bouncer over OpenFGA (roadmap 1.15). The field is `ComponentProfile.spec.expose[].authMode`, mandatory and defaultless, on **both** surfaces (AD-6): a `gateway` entry gets the `SecurityPolicy`, a `perimeter` entry carries its `authMode` into the DMZ proxy, which is where `none`, `basic` and `signature` actually live ([namespace-cleanup.md](namespace-cleanup.md) §2.6). A fix scoped to `ingress` would reach neither | 1 |
+| G3 | No gateway authentication. Every app authenticates itself or not at all; `llm.<domain>` is public. The only `authMode` in the tree is on `BrowserProxyRoute`, a shell-proxy field with two values and a default | no `SecurityPolicy` in `kernel/`, `crossplane/`, `internal/`; `BackendTrafficPolicy` carries timeouts only; `AppProfile.spec.ingress` (`IngressSpec`) has no `authMode` field; `appprofile_types.go` `BrowserProxyRoute.AuthMode` is `+kubebuilder:default=forward-bearer` | 3, 6 | Envoy Gateway `SecurityPolicy` per HTTPRoute: JWT (Keycloak JWKS) + ext-auth to an AuthZEN bouncer over OpenFGA (roadmap 1.15). The field is `ComponentProfile.spec.expose[].authMode`, mandatory and defaultless, on **both** surfaces (AD-6): a `gateway` entry gets the `SecurityPolicy` (the zone's session and the bouncer), a `perimeter` entry is `authMode: none` or `app` and the DMZ proxy checks no caller under either: `none` passes no credential on, `app` hands the caller's `Authorization` header to the app, which checks it ([namespace-cleanup.md](namespace-cleanup.md) §2.6). Checks of `basic`, `bearer` and `signature` at the proxy were planned here and are withdrawn; the schema refuses those values on a perimeter entry. A fix scoped to `ingress` would reach neither | 1 |
 | G4 | LiteLLM virtual keys are predictable and unauthenticated at the edge | `app_reconciler.go:242` — `sk-gentian-<tenant>-<app>` | 1, 8 | Random keys from OpenBao; route behind G3; per-key budgets (roadmap 2.15 decides ownership) | 0 |
 | G5 | Redis ACL grants every tenant app every key and channel | `cache_reconciler.go:405` — `allkeys allchannels` | 6, 8 | `~<tenant>:<app>:*` key pattern + `&<tenant>:<app>:*` channels; prefix injected through `valueMapping.cache`; apps that cannot prefix get a dedicated instance | 0 |
 | G6 | MariaDB dynamic-creation grant is root | `mariadb_reconciler.go:200` — `GRANT ALL ON *.* … WITH GRANT OPTION` | 8 | wildcard grant on the tenant prefix: ``GRANT ALL ON `<prefix>\_%`.*``; no `GRANT OPTION` | 0 |
@@ -69,8 +70,8 @@ shows no `*.*`; a guessed `sk-gentian-…` key → 401.
 ### Wave 1 — the enforcement points (principles 2, 3, 4)
 
 Director with FGA `Check` on every write (G1, G2); gateway `SecurityPolicy`
-with JWT + ext-auth on every tenant route, `authMode` mandatory on every
-`expose[]` entry with `none` as an explicit value (G3); desktop and
+with the zone's session and ext-auth on every tenant route, `authMode`
+mandatory on every `expose[]` entry with `none` as an explicit value (G3); desktop and
 administration console with no Kubernetes identity — reads and writes through
 the director (G7). Model v1
 as [authz/model/v1/model.fga](../../authz/model/v1/model.fga) with its tests. Privileges —

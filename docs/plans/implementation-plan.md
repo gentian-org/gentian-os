@@ -1,8 +1,8 @@
 # Implementation plan
 
 The order things get built in, and where each one stands.
-[work-packages.md](work-packages.md) says *what* each package is; this says
-*when*, what blocks what, and what is true today.
+This says *when*, what blocks what, and what is true today; what is still
+open is [open-items.md](open-items.md).
 
 Status is one of three things, and nothing is called done on the strength of a
 build alone:
@@ -43,7 +43,7 @@ the platform needs and leaves the cluster in a state where M2 can begin. S8 is
 what proves that, and S7A is what has to be true before S8 is worth running.
 
 The steps below (`S1`…`S8`, `S7A.*`) are all M1. M2 onward are not broken into
-steps yet; `work-packages.md` is where their content lives until they are.
+steps yet; [open-items.md](open-items.md) is where what they still need is listed.
 
 ### M1 — the platform administrator signs in and sees the cluster
 
@@ -109,7 +109,7 @@ steps yet; `work-packages.md` is where their content lives until they are.
    cluster, and the checks that pass on it — renders, goldens, lints, tests —
    did not catch the one ordering bug that a fresh install would have hit in
    its first five minutes.
-5. **After M1**, the work packages in the order in §6.
+5. **After M1**, the areas of work in the order in §6.
 
 ---
 
@@ -1522,22 +1522,23 @@ rather than from use.
 
 ## 6. After M1
 
-The work packages in order. Each is specified in `work-packages.md`.
+The areas of work in order. What is still open in each is in
+[open-items.md](open-items.md).
 
-| Order | Package | Why here |
+| Order | Area | Why here |
 |---|---|---|
-| 1 | WP-1 Director | S7A.2 is its first item; the rest of the API follows |
-| 2 | WP-3 Authorization | who projects into OpenFGA, and the naming rule |
-| 3 | WP-7 UI | the admin console and the desktop, on the director's API |
-| 4 | WP-5 Catalogue | `ComponentProfile` for everything, not only the desktop |
-| 5 | WP-2 Operator | what the operator gives up and what it takes on |
-| 6 | WP-4 Networking | tenant zones, the DMZ and exposure |
-| 7 | WP-8 Namespaces | the fresh-install layout |
-| 8 | WP-6, WP-14 Store | the external service and its reference implementation |
-| 9 | WP-9 Security gaps | audit logging, break-glass |
-| 10 | WP-11, WP-12, WP-13 | repository layout, documentation, certification |
+| 1 | The director | S7A.2 is its first item; the rest of the API follows |
+| 2 | Authorization | who projects into OpenFGA, and the naming rule |
+| 3 | The UIs | the admin console and the desktop, on the director's API |
+| 4 | The catalogue | `ComponentProfile` for everything, not only the desktop |
+| 5 | The operator | what the operator gives up and what it takes on |
+| 6 | Networking | tenant zones, the DMZ and exposure |
+| 7 | Namespaces | the fresh-install layout |
+| 8 | A store | the external service and its reference implementation |
+| 9 | Security gaps | audit logging, break-glass |
+| 10 | Repository layout, documentation, certification | |
 
-**WP-5 has a concrete first step.** `ComponentProfile` now carries everything
+**The catalogue has a concrete first step.** `ComponentProfile` now carries everything
 an app needs — tenancy, trust tier, exposures, tiles, a platform value
 mapping, `defaultForTenants` — and the administration console proves a
 component can be built, published and installed through it end to end. But

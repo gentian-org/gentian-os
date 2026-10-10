@@ -21,7 +21,7 @@ built is `kernel/namespaces.yaml`.
 | `system-<function>-dmz` | the internet-facing edge of a system service whose protocol needs one: a stateless listener holding one credential to its backend, no data | kernel services, from the Cluster claim | platform admin through the director | the service's backend; every tenant |
 | `shared-<app>` | one instance with `class: shared-app`, serving several tenants; the profile must list `shared-app` in `spec.classes` and carry `trustTier: platform` | director, from a Component whose profile lists `shared-app` | platform admin through the director | only what the component's own code enforces |
 | `tenant-<t>` | the tenant's instances with `class: app`, including its desktop (frontend and BFF) | operator, from `Tenant.spec.apps` | tenant admin through the director | every other tenant; the kernel; system services beyond declared contracts |
-| `tenant-<t>-dmz` | the tenant's perimeter: one publishing proxy per `surface: perimeter` entry a perimeter approver has enabled, each with its own least-privilege credential and the entry's mandatory `authMode` | operator, from the tenant's enabled perimeter entries | perimeter approver through the director, within cluster policy — held by the tenant's admins by default (roles §1) | the tenant's own instances |
+| `tenant-<t>-dmz` | the tenant's perimeter: one publishing proxy per `surface: perimeter` entry a perimeter approver has enabled, each with the entry's mandatory `authMode` (`none` or `app`, §2.6) | operator, from the tenant's enabled perimeter entries | perimeter approver through the director, within cluster policy: the members of the tenant's `perimeter` group and the cluster's administrator; the tenant's admins only where `spec.perimeter.adminsApprove` is on, which is the default only for the `user` tenant of a single-tenancy cluster (roles §1) | the tenant's own instances |
 
 A new namespace inside a category needs a different exposure, credential
 set, upgrade owner or quota than its neighbour. None of the four → same
@@ -148,20 +148,27 @@ the proxy; nothing is published by default. Shared and public are
 independent: a `shared-app` instance is published through a tenant's DMZ only
 where that tenant enabled it, with that tenant's credential.
 
-The column *authMode* is the field's enum — `oidc | jwt | bearer | basic |
-signature | none` — so this table and the schema cannot drift. Entries
-present in today's profiles, each to be confirmed against the app before it
-is written as an `expose[]` entry:
+A perimeter entry is `authMode: none` or `authMode: app`, and the schema
+refuses any other (`api/v1alpha1/componentprofile_types.go`). The publishing
+proxy checks no caller under either. `none` publishes the declared paths to
+anyone and passes no credential on. `app` passes the caller's own
+`Authorization` header to the app, which alone checks it. The plan had the
+proxy check `basic`, `bearer` and `signature` itself; that is withdrawn, and
+those values, which the field's enum still lists, name nothing the platform
+does.
+
+What the entries of the first profiles come to under that, each to be
+confirmed against the app before it is written as an `expose[]` entry:
 
 | Component | Paths | authMode |
 | --- | --- | --- |
 | nextcloud | `/s/*` share links, `/public.php/*`, `/.well-known/*` | `none` — capability in the URL |
-| nextcloud | `/remote.php/dav/*` (WebDAV, CalDAV, CardDAV) | `basic` — app passwords from the broker |
+| nextcloud | `/remote.php/dav/*` (WebDAV, CalDAV, CardDAV) | `app` — the app checks its own app passwords |
 | nextcloud | Collabora WOPI callbacks | `none`, source-restricted to the Collabora instance |
-| element | Matrix client API (today `browserProxy` `forward-bearer`) | `bearer` |
+| element | Matrix client API | `app` — the app checks its own tokens |
 | element | `/.well-known/matrix/*` | `none` |
-| element | Matrix federation | `signature` |
-| openproject | API (today `browserProxy` `forward-bearer`) | `bearer` |
+| element | Matrix federation | `app` — the app checks the signature of each request |
+| openproject | API | `app` — the app checks its own API keys |
 | odoo-website | public website pages | `none` |
 | docmost | public sharing | `none` |
 

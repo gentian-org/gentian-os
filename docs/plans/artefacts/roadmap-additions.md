@@ -163,8 +163,8 @@ authoritative and nothing compares the two.
 
 ## New — Audit integrity against the holder of break-glass
 
-Break-glass holds kubeconfig and, by the WP-10 decision, the director's
-signing key material, so it can act on the cluster and produce commits
+Break-glass holds kubeconfig and, with the recovery kit, signing key
+material Argo CD accepts, so it can act on the cluster and produce commits
 attributed to the director. The stated mitigations are custody and audit —
 but an audit log in a store the same holder can reach is not evidence about
 them.
