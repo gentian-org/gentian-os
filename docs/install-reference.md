@@ -183,11 +183,11 @@ break-glass key, and pushes it.
 
 The deployments repository also holds `profiles/_base.yaml` and
 `profiles/<stage>.yaml`, the values every cluster, and every cluster of one
-stage, share ([deployment.md](deployment.md) §1). Both must exist, committed
-and pushed, even when they set nothing (`{}`): Argo CD reads them as values
-files of the platform's own chart and renders nothing when one is missing, so
-an install into a repository without them stops at `D-01` with no operator.
-Step 0 warns about a missing one and does not write it.
+stage, share ([deployment.md](deployment.md) §1). Both must exist even when
+they set nothing: Argo CD reads them as values files of the platform's own
+chart and renders nothing when one is missing. Step 0 writes a missing one as
+a commented template with an empty map and commits it with the cluster's
+definition; it never changes one that exists.
 
 A value exported in the environment `install.sh` is started from beats the
 same variable in `install.env`, whichever variable it is, and the run says so
