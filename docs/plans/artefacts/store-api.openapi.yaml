@@ -1679,9 +1679,8 @@ components:
             does not know like `message`.
 
             * `free-licence-limit` — the cluster this tenant is on has no
-              subscription. The text states that the free licence covers
-              clusters of fewer than 50 users that are not operated for
-              resale.
+              subscription. The text states the terms in the store's own
+              words.
             * `reports-stale` — the latest licence report is old.
             * `message` — anything else the store has to say.
           examples: [free-licence-limit]
@@ -2414,9 +2413,7 @@ components:
           - type: free-licence-limit
             severity: info
             title: This cluster has no subscription
-            text: >-
-              The free licence covers clusters of fewer than 50 users that are not operated for resale.
-              A cluster beyond that needs a subscription.
+            text: Terms text supplied by the store.
             link:
               rel: subscription
               label: About subscriptions

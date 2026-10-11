@@ -222,7 +222,7 @@ _delete_pvs_for_namespace() {
 #   every Released volume it can see would take that with it.
 #
 #   That last case is not hypothetical: a bare ^gentian- prefix matched
-#   gentian-server and gentian-corp on a real machine — an unrelated product's
+#   gentian-server and one other namespace on a real machine — an unrelated product's
 #   namespaces that happen to share the string, not anything this installer
 #   ever created — and force-patched their live, Bound Postgres PVs to
 #   persistentVolumeReclaimPolicy: Delete before pv-protection blocked the

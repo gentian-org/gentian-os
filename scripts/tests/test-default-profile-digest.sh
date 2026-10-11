@@ -163,10 +163,10 @@ fi
 
 # --- the catalogue declared on the claim --------------------------------------
 new_world; publish operations-console 1.0.0
-printf 'spec:\n  catalogue:\n    sources:\n      - name: gentian\n        url: https://elsewhere.example.test\n      - name: aluvian\n        url: %s/\n' \
+printf 'spec:\n  catalogue:\n    sources:\n      - name: gentian\n        url: https://elsewhere.example.test\n      - name: second\n        url: %s/\n' \
     "${BASE}" > "${CHECKOUT}/clusters/${CLUSTER}/kernel/claims/cluster.yaml"
 out="$(scaffold)"
-if grep -qx '    gentianos.io/catalogue-origin: cluster/aluvian' "${DIR}/operations-console.bundle.yaml" 2>/dev/null; then
+if grep -qx '    gentianos.io/catalogue-origin: cluster/second' "${DIR}/operations-console.bundle.yaml" 2>/dev/null; then
     ok "a catalogue the Cluster claim declares at that address gives the origin its name"
 else
     bad "a catalogue the Cluster claim declares at that address gives the origin its name" "${out}"

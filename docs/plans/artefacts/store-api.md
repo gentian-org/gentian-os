@@ -383,7 +383,7 @@ A tenant the store serves, on a cluster with no subscription:
       "type": "free-licence-limit",
       "severity": "info",
       "title": "This cluster has no subscription",
-      "text": "The free licence covers clusters of fewer than 50 users that are not operated for resale. A cluster beyond that needs a subscription.",
+      "text": "Terms text supplied by the store.",
       "link": {"rel": "subscription", "label": "About subscriptions", "url": "https://store.example/subscription"}
     }
   ]
@@ -453,7 +453,7 @@ reason `tenant-not-claimed`:
 
 | Field | Type | Req. | Meaning |
 |---|---|---|---|
-| `type` | string | yes | Open. `free-licence-limit`: the tenant's cluster has no subscription, and the text states that the free licence covers clusters of fewer than 50 users that are not operated for resale. `reports-stale`: the latest report is old. `message`: anything else. An unknown type is shown like `message` |
+| `type` | string | yes | Open. `free-licence-limit`: the tenant's cluster has no subscription, and the text states the terms in the store's own words. `reports-stale`: the latest report is old. `message`: anything else. An unknown type is shown like `message` |
 | `severity` | `info` \| `warning` | yes | Closed. How prominently to show it |
 | `title` | string ≤ 120 \| null | no | A short heading |
 | `text` | string ≤ 2000 | yes | The notice, plain text, in the language of the request |

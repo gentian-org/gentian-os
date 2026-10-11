@@ -522,7 +522,7 @@ URL in the token against the tenant URLs in the reports it has received.
 |---|---|
 | `served: true` | proceeds, and shows every notice it is given |
 | `served: false`, with a reason — `no-reports-for-tenant`, `tenant-not-claimed`, … | shows the reason in the store's words and offers no acquiring. The catalogue stays readable |
-| a notice `free-licence-limit` — the cluster has no subscription | shows it: the free licence covers clusters of fewer than 50 users that are not operated for resale |
+| a notice `free-licence-limit` — the cluster has no subscription | shows it: the text states the terms in the store's own words |
 
 **Nothing on the cluster is blocked by any of this.** A refusal means the
 store will not let this tenant acquire. Installed apps keep running, and an app
